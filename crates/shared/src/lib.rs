@@ -1,14 +1,20 @@
-//! tokengo 共享层。
+//! tokengo 共享层：腿/模型组的数据结构 + 路由状态机。
 //!
-//! 与上游 `@freellmapi/shared` 对应：放平台标识、模型标识、请求/响应结构、错误码。
-//! 移植原则：上游有的类型这里必须有一份，名字尽量对齐，方便逐字段对拍。
+//! 本项目**不是** FreeLLMAPI 的全量移植，而是按本机实际用量做的自用网关
+//! （见 `docs/02-按需功能清单.md`）。所以这里没有 72 个平台枚举，也没有
+//! 37 个 provider 适配器 —— 现网 9 条腿全部是自定义端点，一个内置适配器都没用到。
 
-pub mod platform;
+pub mod leg;
+pub mod routing;
 
-pub use platform::{Platform, UnknownPlatform};
+pub use leg::{render_header_value, Leg, LegId, ModelGroup};
+pub use routing::{classify_status, AttemptOutcome, GroupState, Router, RoutingConfig};
 
-/// 本机网关自身的版本，用于 `/api/ping`、`/livez` 与面板页脚。
+/// 本机网关版本，用于 `/api/ping`、`/livez`、面板页脚。
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 上游项目的许可与来源，面板"关于"页要展示。
-pub const UPSTREAM: &str = "freellmapi (MIT) — full Rust port";
+/// 面板与服务端共用的品牌名。
+pub const BRAND: &str = "tokengo";
+
+/// 项目来源说明。上游 FreeLLMAPI 的功能取舍与差异见 `docs/02-按需功能清单.md`。
+pub const ORIGIN: &str = "自用网关，参考 freellmapi (MIT) 的端点形状";

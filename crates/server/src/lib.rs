@@ -1,6 +1,5 @@
-//! tokengo 服务端库。
-//!
-//! 二进制入口只有 `main.rs`（起监听），实体都在这里，方便集成测试直接构建整套 app。
+//! tokengo 服务端库。二进制入口只有 `main.rs`（起监听），实体都在这里，
+//! 方便集成测试直接构建整套 app。
 
 pub mod config;
 pub mod routes;
@@ -10,22 +9,21 @@ pub use config::Config;
 use axum::Router;
 use tower_http::trace::TraceLayer;
 
-/// 组装完整网关。**中间件顺序严格照上游 `app.ts` 排**，
-/// 顺序语义见 `docs/01-上游清点.md` 第八节。
+/// 组装完整网关。
+///
+/// **对外只有这些路径。** 上游 FreeLLMAPI 有 45 个端点（含 Gemini / Ollama /
+/// Anthropic / MCP / 媒体 / 搜索 / 审核），本机 3 天实测除对话与向量外全部 0 次调用，
+/// 所以都不做（`docs/02-按需功能清单.md`）。
 pub fn app(cfg: &Config) -> Router {
     let _ = cfg;
     Router::new()
-        // --- 探测端点（无鉴权，先于静态回退注册，否则根路径会落到面板 index）---
+        // 探测端点（无鉴权，先于面板静态回退注册）
         .merge(routes::status::router())
-        // --- 公开 API ---
-        .nest("/v1", routes::v1::router())
-        .nest("/v1beta", routes::v1beta::router())
-        .nest("/mcp", routes::mcp::router())
-        // --- 管理 API（面板用，会话门；阶段 2 接上中间件）---
+        // 对外代理面：对话 / 向量 / 模型清单
+        .nest("/v1", routes::proxy::router())
+        // 面板管理面
         .nest("/api", routes::admin::router())
-        // --- Ollama 兼容层裸挂在根 ---
-        .merge(routes::ollama::router())
-        // --- 面板静态资源 + SPA 回退（阶段 7）---
+        // 面板静态资源 + SPA 回退（阶段 7）
         .merge(routes::web::router())
         .layer(TraceLayer::new_for_http())
 }
