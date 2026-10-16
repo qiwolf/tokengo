@@ -19,6 +19,8 @@ pub enum Status {
     Failed,
     /// 客户端自己中途断开（不算腿的账）
     Canceled,
+    /// 客户端自己的错（400/404/422，腿没毛病，原样返回了）
+    ClientError,
 }
 
 impl Status {
@@ -27,6 +29,7 @@ impl Status {
             Status::Ok => "ok",
             Status::Failed => "failed",
             Status::Canceled => "canceled",
+            Status::ClientError => "client_error",
         }
     }
 }
@@ -165,6 +168,8 @@ pub struct Stats {
     pub ok: i64,
     pub failed: i64,
     pub canceled: i64,
+    /// 客户端自己写错的请求（模型名写错之类）。**不算腿的锅**，单独一列看。
+    pub client_errors: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub by_leg: Vec<LegStat>,
@@ -172,16 +177,28 @@ pub struct Stats {
 
 /// 汇总自 `since_ms` 起的账。
 pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
-    let (total, ok, failed, canceled, inp, out): (i64, i64, i64, i64, i64, i64) = conn.query_row(
+    let (total, ok, failed, canceled, client_errors, inp, out): (i64, i64, i64, i64, i64, i64, i64) =
+        conn.query_row(
         "SELECT COUNT(*),
                 COALESCE(SUM(status = 'ok'), 0),
                 COALESCE(SUM(status = 'failed'), 0),
                 COALESCE(SUM(status = 'canceled'), 0),
+                COALESCE(SUM(status = 'client_error'), 0),
                 COALESCE(SUM(input_tokens), 0),
                 COALESCE(SUM(output_tokens), 0)
            FROM requests WHERE ts_ms >= ?1",
         [since_ms],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        },
     )?;
 
     let mut stmt = conn.prepare(
@@ -226,6 +243,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         ok,
         failed,
         canceled,
+        client_errors,
         input_tokens: inp,
         output_tokens: out,
         by_leg,

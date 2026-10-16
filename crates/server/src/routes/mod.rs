@@ -72,6 +72,20 @@ impl From<crate::crypto::CryptoError> for ApiError {
     }
 }
 
+/// 客户端 IP。优先取反代填的转发头（对外入口是雷池 → Cloudflare，直连 IP 没意义）。
+pub fn client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    for h in ["x-forwarded-for", "x-real-ip"] {
+        if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
+            if let Some(first) = v.split(',').next() {
+                if !first.trim().is_empty() {
+                    return Some(first.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 暂未实现端点的统一响应：明确说"还没做"，并标出属于哪个阶段。
 /// 阶段推进时逐个替换掉，最终应该只剩 0 个调用点。
 pub fn unbuilt(stage: u8, route: &str) -> Response {

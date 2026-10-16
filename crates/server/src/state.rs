@@ -4,6 +4,7 @@
 //! 状态机的读写（微秒级），**绝不能把网络请求圈进去** —— 否则一条腿卡住，
 //! 整个网关的所有请求都跟着排队。
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::path::Path;
 
@@ -13,12 +14,21 @@ use tokengo_shared::routing::Router as RoutingRouter;
 use crate::config::Config;
 use crate::crypto::SecretBox;
 use crate::db;
+use crate::gateway::EndpointKind;
+use crate::gateway_key::GatewayKeyCache;
+use crate::upstream::Upstream;
 
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub routing: Mutex<RoutingRouter>,
     pub secrets: SecretBox,
     pub cfg: Config,
+    /// 打上游的 HTTP 客户端（连接池复用，进程里只有这一个）。
+    pub upstream: Upstream,
+    /// 对外 key 的校验快路径。argon2 太慢，不能每请求跑一遍。
+    key_cache: GatewayKeyCache,
+    /// 每个模型组平时走哪个端点 —— 后台探活要知道，否则给向量组发对话探活必 400。
+    group_endpoints: Mutex<HashMap<String, EndpointKind>>,
 }
 
 impl AppState {
@@ -46,7 +56,54 @@ impl AppState {
             routing: Mutex::new(router),
             secrets,
             cfg,
+            upstream: Upstream::new()?,
+            key_cache: GatewayKeyCache::new(),
+            group_endpoints: Mutex::new(HashMap::new()),
         }))
+    }
+
+    /// 校验对外统一 key。
+    ///
+    /// 第一次真跑 argon2（安全边界没变），之后走内存快路径；换 key 之后必须调
+    /// `forget_gateway_key()`，否则旧 key 还能用最多一个缓存周期。
+    pub fn check_gateway_key(&self, key: &str) -> bool {
+        if key.trim().is_empty() {
+            return false;
+        }
+        let now = db::now_ms();
+        if self.key_cache.hit(key, now) {
+            return true;
+        }
+        let ok = {
+            let conn = self.conn();
+            db::sessions::check_gateway_key(&conn, key).unwrap_or(false)
+        };
+        if ok {
+            self.key_cache.remember(key, now);
+        }
+        ok
+    }
+
+    /// 换 key / 清 key 之后调它。
+    pub fn forget_gateway_key(&self) {
+        self.key_cache.forget();
+    }
+
+    /// 记下这个模型组平时走哪个端点（转发时顺手调，探活用）。
+    pub fn note_group_endpoint(&self, group: &str, kind: EndpointKind) {
+        let mut g = self.group_endpoints.lock().unwrap_or_else(|e| e.into_inner());
+        g.insert(group.to_string(), kind);
+    }
+
+    /// 这个模型组的探活该打哪个端点。没见过流量就按对话探（对话探活对向量组会 400，
+    /// 探活那边把它当"没结论"，不会乱改路由状态）。
+    pub fn group_endpoint(&self, group: &str) -> EndpointKind {
+        self.group_endpoints
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(group)
+            .copied()
+            .unwrap_or(EndpointKind::Chat)
     }
 
     /// 拿数据库锁。锁中毒（有 handler panic 过）时直接恢复继续用 ——

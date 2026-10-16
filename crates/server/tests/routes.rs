@@ -112,19 +112,20 @@ async fn readyz_really_checks_the_database() {
     assert_eq!(v["status"], "degraded", "库坏了还报 ok 就是假探活");
 }
 
-/// 要做的三个端点：现在是 501（还没实现），但**不能是 404**。
+/// 三个对外端点：阶段 2 起是真的了，但**必须带对外 key**；路径本身绝不能是 404。
 #[tokio::test]
-async fn planned_endpoints_are_present_but_unbuilt() {
+async fn v1_endpoints_are_registered_and_gated_by_the_key() {
     let f = fixture();
     for (m, uri) in [
         ("POST", "/v1/chat/completions"),
         ("POST", "/v1/embeddings"),
         ("GET", "/v1/models"),
     ] {
+        let s = status_of(test_app(&f), m, uri).await;
         assert_eq!(
-            status_of(test_app(&f), m, uri).await,
-            StatusCode::NOT_IMPLEMENTED,
-            "{m} {uri} 应该已注册（回 501）"
+            s,
+            StatusCode::UNAUTHORIZED,
+            "{m} {uri} 已注册，没带对外 key 时必须是 401（不是 404 也不是 501）"
         );
     }
 }
@@ -757,10 +758,14 @@ async fn manual_reprobe_resets_the_checkpoint() {
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
-/// 面板上那个"测一下"按钮还没做：必须明说没实现，不能假装通了。
+/// 面板上那个"测一下"按钮（阶段 2 起是真探活了）。
+/// 这里只钉"接口在、要登录、腿不存在要 404"；真探通的用例在 `tests/proxy.rs`。
 #[tokio::test]
-async fn leg_probe_is_honestly_unbuilt() {
+async fn leg_probe_exists_and_needs_a_session() {
     let f = fixture();
+    let (s, _) = send(test_app(&f), "POST", "/api/legs/1/probe", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "探活要登录");
+
     let (_, v) = send(
         test_app(&f),
         "POST",
@@ -770,7 +775,7 @@ async fn leg_probe_is_honestly_unbuilt() {
     )
     .await;
     let token = v["token"].as_str().unwrap().to_string();
-    let (s, v) = send(
+    let (s, _) = send(
         test_app(&f),
         "POST",
         "/api/legs/1/probe",
@@ -778,6 +783,5 @@ async fn leg_probe_is_honestly_unbuilt() {
         None,
     )
     .await;
-    assert_eq!(s, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(v["error"]["type"], "not_implemented");
+    assert_eq!(s, StatusCode::NOT_FOUND, "腿不存在就 404，不许假绿点");
 }

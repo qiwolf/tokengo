@@ -19,6 +19,9 @@ async fn main() -> anyhow::Result<()> {
     // 开库、跑迁移、恢复路由状态、准备主密钥。任何一步失败都不要带着半残状态起服务。
     let state = AppState::init(cfg)?;
 
+    // 后台探活：无流量时也要按时回头试首选腿，否则 10 分钟回切机制在夜里等于没有
+    tokengo_server::prober::spawn(state.clone());
+
     tracing::info!("tokengo {} 监听 {addr}", tokengo_shared::VERSION);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app(state)).await?;

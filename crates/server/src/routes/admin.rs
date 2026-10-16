@@ -10,7 +10,7 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use super::{unbuilt, ApiError};
+use super::{client_ip, unbuilt, ApiError};
 use crate::db::{groups, legs, requests, routing, sessions, settings, now_ms};
 use crate::SharedState;
 
@@ -80,19 +80,6 @@ fn cookie_token(parts: &Parts) -> Option<String> {
     None
 }
 
-fn client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
-    for h in ["x-forwarded-for", "x-real-ip"] {
-        if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
-            if let Some(first) = v.split(',').next() {
-                if !first.trim().is_empty() {
-                    return Some(first.trim().to_string());
-                }
-            }
-        }
-    }
-    None
-}
-
 // ───────────────────────── 基础 ─────────────────────────
 
 async fn ping() -> Json<serde_json::Value> {
@@ -147,6 +134,8 @@ async fn auth_setup(
         _ => (format!("tk-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]), true),
     };
     sessions::set_gateway_key(&conn, &key)?;
+    // 换 key 必须把校验快路径忘掉，否则旧 key 还能用最多一个缓存周期
+    state.forget_gateway_key();
     sessions::purge_expired(&conn)?;
     let token = sessions::create_session(&conn, client_ip(&headers).as_deref())?;
     settings::set(&conn, "panel_password_set_at_ms", &now_ms().to_string())?;
@@ -361,15 +350,114 @@ async fn legs_delete(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+#[derive(Deserialize)]
+struct ProbeQuery {
+    /// 探活打哪个端点：chat（默认）或 embeddings。
+    kind: Option<String>,
+}
+
+/// 面板上的「测一下」：**真发一个请求到这条腿**，回的绿点才是真的。
+///
+/// 三条纪律：
+/// - 探活**不写记账**（它不是用户请求）；
+/// - 探活**不动路由状态**（面板上的一次手动检查凭据，不该改变谁在用）；
+/// - 模型名是这条腿自己配的那个，拿不到就明说"探不了"，不猜（拿 `auto` 去探必然 400）。
 async fn legs_probe(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-) -> Result<axum::response::Response, ApiError> {
-    // 真发一个请求到上游探活属于阶段 2（要连代理和重试策略一起做）。这里明确说没做，
-    // 不能假装"探了一下，通的" —— 面板上那个绿点必须是真的。
-    let _ = (state, id);
-    Ok(unbuilt(2, "POST /api/legs/:id/probe"))
+    Query(q): Query<ProbeQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = tokengo_shared::LegId(id);
+    let endpoint = match q.kind.as_deref() {
+        Some("embeddings") | Some("embedding") | Some("vec") => crate::gateway::EndpointKind::Embeddings,
+        _ => crate::gateway::EndpointKind::Chat,
+    };
+
+    let loaded = {
+        let conn = state.conn();
+        let Some(row) = legs::get(&conn, id)? else {
+            return Err(ApiError::not_found(format!("腿 {id} 不存在")));
+        };
+        let model = row
+            .models
+            .iter()
+            .find_map(|(_, upstream)| upstream.clone().filter(|u| !u.trim().is_empty()))
+            .or_else(|| {
+                row.models
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .find(|n| !n.trim().is_empty())
+            });
+        let secret = legs::secret(&conn, &state.secrets, id)?;
+        let leg = tokengo_shared::Leg {
+            id: row.id,
+            name: row.name.clone(),
+            base_url: row.base_url.clone(),
+            enabled: row.enabled,
+            priority: 0,
+            model_alias: None,
+            headers: row.headers.clone(),
+        };
+        (leg, model, secret, row.has_secret)
+    };
+    let (leg, model, secret, has_secret) = loaded;
+
+    let Some(model) = model else {
+        return Ok(Json(serde_json::json!({
+            "ok": false,
+            "leg_id": leg.id.0,
+            "endpoint": endpoint.as_str(),
+            "note": "这条腿没配任何模型名，没法探活：面板里先给它填一个「该腿认的模型名」。拿 auto 去探必然被上游打回 400，绿点就不真了。",
+            "has_secret": has_secret,
+        })));
+    };
+
+    let timeout = {
+        let cfg = state.routing().cfg.clone();
+        std::time::Duration::from_millis(cfg.attempt_timeout_ms.max(1)).min(std::time::Duration::from_secs(15))
+    };
+    let t0 = now_ms();
+    let r = state
+        .upstream
+        .probe(
+            &leg,
+            secret.as_deref(),
+            endpoint.path(),
+            crate::prober::probe_body(endpoint, &model),
+            timeout,
+            &crate::upstream::new_uuid(),
+            now_ms(),
+        )
+        .await;
+    let latency = now_ms() - t0;
+
+    let (ok, status, note) = match r {
+        Ok(code) => {
+            let kind = tokengo_shared::routing::classify_status(code);
+            let note = match kind {
+                tokengo_shared::routing::AttemptOutcome::Success => "通了".to_string(),
+                tokengo_shared::routing::AttemptOutcome::LegFault => {
+                    format!("这条腿自己的毛病（HTTP {code}）")
+                }
+                _ => format!("上游不接受这个请求（HTTP {code}），多半是模型名或参数不对"),
+            };
+            (kind == tokengo_shared::routing::AttemptOutcome::Success, Some(code), note)
+        }
+        Err(fault) => (false, None, fault.message),
+    };
+
+    Ok(Json(serde_json::json!({
+        "ok": ok,
+        "leg_id": leg.id.0,
+        "leg_name": leg.name,
+        "endpoint": endpoint.as_str(),
+        "model_sent": model,
+        "http_status": status,
+        "latency_ms": latency,
+        "has_secret": has_secret,
+        "note": note,
+    })))
 }
 
 // ───────────────────────── 模型组 ─────────────────────────
@@ -597,6 +685,7 @@ async fn settings_put(
             return Err(ApiError::bad_request("对外 key 不能为空"));
         }
         sessions::set_gateway_key(&conn, k)?;
+        state.forget_gateway_key();
         tracing::info!("对外 key 已更换");
     }
     Ok(Json(serde_json::json!({ "ok": true })))

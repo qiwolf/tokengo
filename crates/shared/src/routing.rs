@@ -49,6 +49,19 @@ impl RoutingConfig {
     }
 }
 
+/// 第 `next_attempt` 次尝试**之前**要等多久（毫秒）。`next_attempt` 从 1 起。
+///
+/// 前两次尝试之间不等待（上游偶尔抖一下就过去了），第 4 次尝试之前等 1 秒 ——
+/// 上游真挂了的时候，不加等待会四条腿一起挤上去，把已经过载的上游再压一层。
+/// 见 `docs/03-路由策略.md` 第三节。
+pub fn retry_delay_ms(next_attempt: u32) -> u64 {
+    if next_attempt >= 4 {
+        1000
+    } else {
+        0
+    }
+}
+
 /// 一次尝试的结果分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttemptOutcome {
@@ -245,6 +258,16 @@ mod tests {
     #[test]
     fn attempts_are_first_plus_retries() {
         assert_eq!(RoutingConfig::default().max_attempts(), 4);
+    }
+
+    /// 重试节拍：前两次立即，第 4 次尝试前等 1 秒。
+    #[test]
+    fn retry_pacing_only_waits_before_the_last_attempt() {
+        assert_eq!(retry_delay_ms(1), 0, "首次不等待");
+        assert_eq!(retry_delay_ms(2), 0);
+        assert_eq!(retry_delay_ms(3), 0);
+        assert_eq!(retry_delay_ms(4), 1000, "第 4 次之前等 1 秒");
+        assert_eq!(retry_delay_ms(5), 1000);
     }
 
     #[test]

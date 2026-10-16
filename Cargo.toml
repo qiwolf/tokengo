@@ -31,6 +31,8 @@ tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip",
 
 # HTTP 客户端（打上游）
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip"] }
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # 本地 crate
 tokengo-shared = { path = "crates/shared" }
