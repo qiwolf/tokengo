@@ -19,8 +19,9 @@ use axum::routing::{get, post};
 use axum::Router;
 
 use super::unbuilt;
+use crate::SharedState;
 
-pub fn router() -> Router {
+pub fn router() -> Router<SharedState> {
     Router::new()
         .route(
             "/chat/completions",

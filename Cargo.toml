@@ -28,7 +28,6 @@ axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "limit"] }
-hyper = { version = "1", features = ["full"] }
 
 # HTTP 客户端（打上游）
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip"] }

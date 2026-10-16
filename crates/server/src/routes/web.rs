@@ -6,7 +6,9 @@
 use axum::routing::get;
 use axum::Router;
 
-pub fn router() -> Router {
+use crate::SharedState;
+
+pub fn router() -> Router<SharedState> {
     Router::new().route("/", get(root))
 }
 

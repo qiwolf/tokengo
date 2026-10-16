@@ -36,3 +36,9 @@ tower.workspace = true
 tower-http.workspace = true
 
 reqwest.workspace = true
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+hex = "0.4.3"
+uuid = { version = "1.28.0", features = ["v4"] }
+aes-gcm = "0.10"
+rand = "0.8"
+argon2 = "0.5"

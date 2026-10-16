@@ -8,13 +8,76 @@ pub mod proxy;
 pub mod status;
 pub mod web;
 
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+
+/// 接口错误。响应体形状沿用现网 FreeLLMAPI 的 `{"error":{"message":…}}`，
+/// 客户端那边不用改解析。
+#[derive(Debug)]
+pub struct ApiError {
+    pub status: StatusCode,
+    pub message: String,
+    /// 机器可读的类型标识，面板按它分支。
+    pub kind: &'static str,
+}
+
+impl ApiError {
+    pub fn new(status: StatusCode, kind: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_request_error", message)
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, "unauthorized", message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_FOUND, "not_found", message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(serde_json::json!({
+                "error": { "message": self.message, "type": self.kind }
+            })),
+        )
+            .into_response()
+    }
+}
+
+impl From<crate::db::DbError> for ApiError {
+    fn from(e: crate::db::DbError) -> Self {
+        Self::internal(e.to_string())
+    }
+}
+
+impl From<crate::crypto::CryptoError> for ApiError {
+    fn from(e: crate::crypto::CryptoError) -> Self {
+        Self::internal(e.to_string())
+    }
+}
+
 /// 暂未实现端点的统一响应：明确说"还没做"，并标出属于哪个阶段。
 /// 阶段推进时逐个替换掉，最终应该只剩 0 个调用点。
-pub fn unbuilt(stage: u8, route: &str) -> axum::response::Response {
-    use axum::response::IntoResponse;
+pub fn unbuilt(stage: u8, route: &str) -> Response {
     (
-        axum::http::StatusCode::NOT_IMPLEMENTED,
-        axum::Json(serde_json::json!({
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
             "error": {
                 "message": format!("{route} 尚未实现（计划在阶段 {stage}）"),
                 "type": "not_implemented",

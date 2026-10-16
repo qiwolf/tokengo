@@ -112,6 +112,12 @@ impl Router {
         &self.states
     }
 
+    /// 从库里恢复一组的状态。进程启动时按组调一遍，之后每次状态变更都要写回库
+    /// —— 否则重启后"当前腿"和"回切检查点"就丢了，会立刻回戳刚坏掉的首选。
+    pub fn restore(&mut self, group: &str, state: GroupState) {
+        self.states.insert(group.to_owned(), state);
+    }
+
     fn entry(&mut self, group: &str) -> &mut GroupState {
         self.states.entry(group.to_owned()).or_default()
     }

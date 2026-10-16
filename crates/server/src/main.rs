@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 
-use tokengo_server::{app, Config};
+use tokengo_server::{app, AppState, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,8 +16,11 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::from_env()?;
     let addr: SocketAddr = cfg.listen.parse()?;
 
+    // 开库、跑迁移、恢复路由状态、准备主密钥。任何一步失败都不要带着半残状态起服务。
+    let state = AppState::init(cfg)?;
+
     tracing::info!("tokengo {} 监听 {addr}", tokengo_shared::VERSION);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app(&cfg)).await?;
+    axum::serve(listener, app(state)).await?;
     Ok(())
 }
