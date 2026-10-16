@@ -1,0 +1,18 @@
+[package]
+name = "tokengo-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "tokengo 命令行（对应上游 cli/，2,870 行）"
+
+[[bin]]
+name = "tokengo"
+path = "src/main.rs"
+
+[dependencies]
+tokengo-shared.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

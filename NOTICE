@@ -1,0 +1,14 @@
+本项目是 freellmapi (https://github.com/tashfeenahmed/freellmapi) 的 Rust 移植。
+上游以 MIT 许可发布，版权归其作者所有。上游的许可全文见 LICENSE。
+
+上游当前版本（移植基准）：
+  commit ffe5327176c3b7c771e262c51de85c22cfd4c149
+  date   2026-10-16
+  subj   feat(decisions): decision models from the catalog, /v1/decisions and a Models → Decision tab (#1537)
+
+各包版本：
+  @freellmapi/server  0.2.1
+  @freellmapi/client  0.0.0
+  @freellmapi/shared  0.1.0
+  freellmapi (cli)    0.8.1
+  freellmapi-desktop  0.15.0

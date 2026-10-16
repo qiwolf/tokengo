@@ -1,0 +1,38 @@
+[package]
+name = "tokengo-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "tokengo 网关服务端（FreeLLMAPI 的 Rust 全量移植）"
+default-run = "tokengo-server"
+
+[lib]
+name = "tokengo_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tokengo-server"
+path = "src/main.rs"
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true }
+
+[dependencies]
+tokengo-shared.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+
+reqwest.workspace = true
