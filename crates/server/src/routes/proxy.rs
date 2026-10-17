@@ -1,10 +1,11 @@
-//! 对外代理面：三个 OpenAI 兼容端点。这是全项目最核心的一块。
+//! 对外代理面：四个 OpenAI 兼容端点。这是全项目最核心的一块。
 //!
 //! 端点取舍依据（3 天 10 万次请求实测）：
 //!
 //! ```text
 //! POST /v1/chat/completions   13,857 次（13.9%）
 //! POST /v1/embeddings         86,146 次（86.1%）
+//! POST /v1/rerank             重排（Hindsight 等调用方用）
 //! GET  /v1/models             面板与客户端发现用
 //! ```
 //!
