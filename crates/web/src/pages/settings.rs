@@ -148,11 +148,15 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
+            <section class="card">
+                <header class="card-head">
             <h2>"对外 key"</h2>
             <p class="muted small">
                 "客户端连网关用的那个 key（" <code>"Authorization: Bearer …"</code>
                 "）。库里只存哈希，面板只能显示提示片段，看不到明文。"
             </p>
+                </header>
+                <div class="card-body">
             <div class="panel">
                 <div class="form-grid">
                     <label>"当前 key 提示"</label>
@@ -170,9 +174,15 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     <button class="ghost" on:click=copy_key>"复制"</button>
                 </div>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"接入信息"</h2>
             <p class="muted small">"把下面的地址和 key 填到客户端即可。"</p>
+                </header>
+                <div class="card-body">
             <div class="panel">
                 <div class="form-grid">
                     <label>"基础 URL"</label>
@@ -190,12 +200,18 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     <div><code>"/v1/models"</code></div>
                 </div>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"账目清理"</h2>
             <p class="muted small">
                 "网关每接一次请求就记一行账。不清理的话账目只进不出，一年能长三四个 G，把容器磁盘占满。"
                 "这里设一个保留天数，超期的老账每小时检查一次、自动清掉；填 " <b>"0"</b> " 就是暂不清理。"
             </p>
+                </header>
+                <div class="card-body">
             <div class="panel">
                 <div class="form-grid">
                     <label>"保留天数"</label>
@@ -229,8 +245,14 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     <button class="ghost" on:click=prune_now>"立即清理一次"</button>
                 </div>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"面板口令"</h2>
+                </header>
+                <div class="card-body">
             <div class="panel">
                 <div class="form-grid">
                     <label>"原口令"</label>
@@ -247,8 +269,14 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     <button class="primary" on:click=change_pw>"改口令"</button>
                 </div>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"这个面板怎么更新的"</h2>
+                </header>
+                <div class="card-body">
             <div class="panel">
                 <p class="muted small">
                     "面板是 Rust 编出来的 WASM，和后端同一个仓库。改了界面要重新构建："
@@ -259,6 +287,8 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     " 可指定），所以换面板**不用重启网关**，浏览器强刷一下就是新的。"
                 </p>
             </div>
+                </div>
+            </section>
         </div>
     }
 }

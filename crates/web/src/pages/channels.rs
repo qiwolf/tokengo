@@ -509,21 +509,23 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             </PageHead>
 
             <div class="toolbar">
-                <span class="muted small">"「测一下」发的是"</span>
-                <button
-                    class="chip"
-                    class:active=move || probe_kind.get() == "chat"
-                    on:click=move |_| probe_kind.set("chat".into())
-                >
-                    "对话请求"
-                </button>
-                <button
-                    class="chip"
-                    class:active=move || probe_kind.get() == "embeddings"
-                    on:click=move |_| probe_kind.set("embeddings".into())
-                >
-                    "向量请求"
-                </button>
+                <span class="seg">
+                    <span class="seg-label">"「测一下」发的是"</span>
+                    <button
+                        class="chip"
+                        class:active=move || probe_kind.get() == "chat"
+                        on:click=move |_| probe_kind.set("chat".into())
+                    >
+                        "对话请求"
+                    </button>
+                    <button
+                        class="chip"
+                        class:active=move || probe_kind.get() == "embeddings"
+                        on:click=move |_| probe_kind.set("embeddings".into())
+                    >
+                        "向量请求"
+                    </button>
+                </span>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
@@ -533,8 +535,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     let v = rows.get();
                     if v.is_empty() {
                         return view! {
-                            <div class="chan-empty muted">
-                                "还没有渠道 —— 点左上「新建渠道」加一条上游。"
+                            <div class="empty">
+                                <p>"还没有渠道。"</p>
+                                <p>"点右上角「新建渠道」加一条上游 —— 填上它的地址和密钥，就能把请求转过去了。"</p>
                             </div>
                         }.into_any();
                     }
