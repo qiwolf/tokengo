@@ -7,9 +7,9 @@ use tokengo_shared::ChannelId;
 use super::{DbError, Result};
 use crate::crypto::SecretBox;
 
-/// 一条渠道的「按渠道模型名」映射：对外名 → 上游名 + 能不能看图。
+/// 一条渠道的「按渠道模型名」映射：对外名 → 上游名 + 能不能看图 + 这个模型要丢的字段。
 ///
-/// 用结构体而不是三元组：这三个字段一起读写，元组顺序错了不会报错、只会静默错位。
+/// 用结构体而不是元组：这些字段一起读写，元组顺序错了不会报错、只会静默错位。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelMapping {
     /// 客户端打的名字（通常就是组名，如 `auto`）。
@@ -18,6 +18,10 @@ pub struct ModelMapping {
     pub upstream: Option<String>,
     /// 这条渠道上的这个模型能不能吃图片输入（面板上勾「能看图」）。
     pub vision: bool,
+    /// 发上游前要丢掉的请求体顶层字段（面板上填「要丢的字段」，逗号分隔）。
+    ///
+    /// 例：opencode 的 `beam-free` 不认 `reasoning_effort`，不删就必然 400。
+    pub drop_fields: Vec<String>,
 }
 
 impl ModelMapping {
@@ -26,7 +30,21 @@ impl ModelMapping {
             model: model.into(),
             upstream,
             vision,
+            drop_fields: Vec::new(),
         }
+    }
+
+    /// 面板上填的是一行文本（`a, b`），库里也存这一行；用的时候拆成表。
+    pub fn drop_fields_from_text(text: &str) -> Vec<String> {
+        text.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// 反过来：存库用的一行文本。
+    pub fn drop_fields_text(&self) -> String {
+        self.drop_fields.join(",")
     }
 }
 
@@ -38,9 +56,11 @@ pub struct ChannelRow {
     pub base_url: String,
     pub enabled: bool,
     pub has_secret: bool,
+    /// 非流式响应外面套了一层壳时自动剥掉（面板上勾「响应解包」）。
+    pub unwrap_envelope: bool,
     /// 自定义请求头（上游没有的能力，本项目增项）
     pub headers: Vec<(String, String)>,
-    /// 该渠道认的模型名（含"能不能看图"）
+    /// 该渠道认的模型名（含"能不能看图"、"要丢的字段"）
     pub models: Vec<ModelMapping>,
 }
 
@@ -50,9 +70,10 @@ pub struct NewChannel {
     pub name: String,
     pub base_url: String,
     pub enabled: bool,
+    pub unwrap_envelope: bool,
 }
 
-const SELECT_CHANNEL: &str = "SELECT l.id, l.name, l.base_url, l.enabled,
+const SELECT_CHANNEL: &str = "SELECT l.id, l.name, l.base_url, l.enabled, l.unwrap_envelope,
        EXISTS(SELECT 1 FROM channel_secrets s WHERE s.channel_id = l.id) AS has_secret
   FROM channels l";
 
@@ -62,7 +83,8 @@ fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
         name: r.get(1)?,
         base_url: r.get(2)?,
         enabled: r.get::<_, i64>(3)? != 0,
-        has_secret: r.get::<_, i64>(4)? != 0,
+        unwrap_envelope: r.get::<_, i64>(4)? != 0,
+        has_secret: r.get::<_, i64>(5)? != 0,
         headers: Vec::new(),
         models: Vec::new(),
     })
@@ -77,7 +99,8 @@ fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
         .collect::<rusqlite::Result<_>>()?;
 
     let mut stmt = conn.prepare(
-        "SELECT model_name, upstream_model, vision FROM channel_models WHERE channel_id = ?1 ORDER BY model_name",
+        "SELECT model_name, upstream_model, vision, drop_fields FROM channel_models
+          WHERE channel_id = ?1 ORDER BY model_name",
     )?;
     channel.models = stmt
         .query_map([channel.id.0], |r| {
@@ -85,6 +108,7 @@ fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
                 model: r.get(0)?,
                 upstream: r.get(1)?,
                 vision: r.get::<_, i64>(2)? != 0,
+                drop_fields: ModelMapping::drop_fields_from_text(&r.get::<_, String>(3)?),
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -117,8 +141,13 @@ pub fn create(conn: &Connection, new: &NewChannel) -> Result<ChannelId> {
         return Err(DbError::Other("base_url 不能为空".into()));
     }
     conn.execute(
-        "INSERT INTO channels (name, base_url, enabled) VALUES (?1, ?2, ?3)",
-        params![new.name.trim(), new.base_url.trim(), new.enabled as i64],
+        "INSERT INTO channels (name, base_url, enabled, unwrap_envelope) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            new.name.trim(),
+            new.base_url.trim(),
+            new.enabled as i64,
+            new.unwrap_envelope as i64
+        ],
     )?;
     Ok(ChannelId(conn.last_insert_rowid()))
 }
@@ -129,11 +158,19 @@ pub fn update(
     name: &str,
     base_url: &str,
     enabled: bool,
+    unwrap_envelope: bool,
 ) -> Result<()> {
     let n = conn.execute(
-        "UPDATE channels SET name = ?2, base_url = ?3, enabled = ?4, updated_at = datetime('now')
+        "UPDATE channels SET name = ?2, base_url = ?3, enabled = ?4, unwrap_envelope = ?5,
+                updated_at = datetime('now')
           WHERE id = ?1",
-        params![id.0, name.trim(), base_url.trim(), enabled as i64],
+        params![
+            id.0,
+            name.trim(),
+            base_url.trim(),
+            enabled as i64,
+            unwrap_envelope as i64
+        ],
     )?;
     if n == 0 {
         return Err(DbError::Other(format!("渠道 {id} 不存在")));
@@ -203,8 +240,15 @@ pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> 
     conn.execute("DELETE FROM channel_models WHERE channel_id = ?1", [id.0])?;
     for m in models {
         conn.execute(
-            "INSERT INTO channel_models (channel_id, model_name, upstream_model, vision) VALUES (?1, ?2, ?3, ?4)",
-            params![id.0, m.model.trim(), m.upstream, m.vision as i64],
+            "INSERT INTO channel_models (channel_id, model_name, upstream_model, vision, drop_fields)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                id.0,
+                m.model.trim(),
+                m.upstream,
+                m.vision as i64,
+                m.drop_fields_text()
+            ],
         )?;
     }
     Ok(())
@@ -246,6 +290,7 @@ mod tests {
             name: "硅基流动".into(),
             base_url: "https://api.siliconflow.cn/v1".into(),
             enabled: true,
+            unwrap_envelope: false,
         }
     }
 
@@ -257,7 +302,7 @@ mod tests {
         assert_eq!(got.name, "硅基流动");
         assert!(!got.has_secret);
 
-        update(&conn, id, "硅基流动 v2", "https://api.siliconflow.cn/v2", false).unwrap();
+        update(&conn, id, "硅基流动 v2", "https://api.siliconflow.cn/v2", false, false).unwrap();
         let got = get(&conn, id).unwrap().unwrap();
         assert_eq!(got.name, "硅基流动 v2");
         assert!(!got.enabled);

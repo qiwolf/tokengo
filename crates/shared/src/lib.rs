@@ -7,7 +7,10 @@
 pub mod channel;
 pub mod routing;
 
-pub use channel::{render_header_value, request_has_image, Channel, ChannelId, ModelGroup};
+pub use channel::{
+    render_header_value, request_has_image, session_id_from_body, short_hash, strip_fields,
+    unwrap_envelope, Channel, ChannelId, ModelGroup,
+};
 pub use routing::{classify_status, AttemptOutcome, GroupState, Router, RoutingConfig};
 
 /// 本机网关版本，用于 `/api/ping`、`/livez`、面板页脚。

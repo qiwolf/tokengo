@@ -186,6 +186,7 @@ mod tests {
                 name: "t".into(),
                 base_url: "http://x/v1".into(),
                 enabled: true,
+                unwrap_envelope: false,
             },
         )
         .unwrap();

@@ -309,6 +309,7 @@ mod tests {
                 name: "command-go".into(),
                 base_url: "https://x/v1".into(),
                 enabled: true,
+                unwrap_envelope: false,
             },
         )
         .unwrap();
@@ -320,6 +321,8 @@ mod tests {
             priority: 0,
             model_alias: Some("deepseek/deepseek-v4.1-flash".into()),
             vision: false,
+            drop_fields: vec![],
+            unwrap_envelope: false,
             headers: vec![],
         };
         assert_eq!(
@@ -337,6 +340,7 @@ mod tests {
                 name: "硅基流动".into(),
                 base_url: "https://x/v1".into(),
                 enabled: true,
+                unwrap_envelope: false,
             },
         )
         .unwrap();
@@ -349,6 +353,8 @@ mod tests {
             priority: 0,
             model_alias: None,
             vision: false,
+            drop_fields: vec![],
+            unwrap_envelope: false,
             headers: vec![],
         };
         assert_eq!(probe_model(&conn, &channel, "auto").as_deref(), Some("BAAI/bge-m3"));
@@ -364,6 +370,7 @@ mod tests {
                 name: "空渠道".into(),
                 base_url: "https://x/v1".into(),
                 enabled: true,
+                unwrap_envelope: false,
             },
         )
         .unwrap();
@@ -375,6 +382,8 @@ mod tests {
             priority: 0,
             model_alias: Some("auto".into()),
             vision: false,
+            drop_fields: vec![],
+            unwrap_envelope: false,
             headers: vec![],
         };
         assert_eq!(probe_model(&conn, &channel, "auto"), None);

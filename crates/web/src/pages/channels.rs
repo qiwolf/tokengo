@@ -53,6 +53,8 @@ pub(crate) fn add_picked_rows(rows: &mut Vec<ModelPair>, picked: &BTreeSet<Strin
             // 刚从上游清单里拉回来的名字，能力未知 —— **不许猜**，
             // 要标能看图得点这一行的「测视觉」实测。
             vision: false,
+            // 要丢的字段也一样不许猜：拉回来的名字默认一个字段都不丢。
+            drop_fields: String::new(),
         });
         added += 1;
     }
@@ -98,6 +100,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let f_key_note = RwSignal::new("");
     let f_headers = RwSignal::new(Vec::<HeaderPair>::new());
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
+    // 这条渠道的非流式响应要不要剥壳（cline.bot 那种 `{"data": {…}, "success": true}`）
+    let f_unwrap = RwSignal::new(false);
     // 表单行的重绘开关：只有加/删行才 +1。**打字时不重绘**，否则输入框会丢焦点。
     let form_ver = RwSignal::new(0u32);
 
@@ -135,6 +139,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_key_note.set("新建时要填密钥；留空表示这条渠道没有密钥。");
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
+        f_unwrap.set(false);
         reset_pull();
         form_ver.update(|v| *v += 1);
         form.set(Form::New);
@@ -152,6 +157,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         });
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
+        f_unwrap.set(l.unwrap_envelope);
         reset_pull();
         form_ver.update(|v| *v += 1);
         form.set(Form::Edit(l.id));
@@ -180,11 +186,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             .filter(|m| !m.model.trim().is_empty())
             .collect::<Vec<_>>();
         let enabled = f_enabled.get_untracked();
+        let unwrap = f_unwrap.get_untracked();
         // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
         let key_arg = if key.trim().is_empty() { None } else { Some(key) };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_channel(id, &name, &url, enabled, key_arg.as_deref(), &headers, &models)
+            match api::save_channel(id, &name, &url, enabled, unwrap, key_arg.as_deref(), &headers, &models)
                 .await
             {
                 Ok(new_id) => {
@@ -217,11 +224,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let name = f_name.get_untracked();
         let url = f_url.get_untracked();
         let enabled = f_enabled.get_untracked();
+        let unwrap = f_unwrap.get_untracked();
         let headers = f_headers.get_untracked();
         let models = f_models.get_untracked();
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
-            match api::save_channel(Some(id), &name, &url, enabled, Some(""), &headers, &models).await {
+            match api::save_channel(Some(id), &name, &url, enabled, unwrap, Some(""), &headers, &models).await {
                 Ok(_) => {
                     f_key_note.set("已清空这条渠道的密钥。");
                     ctx.say("密钥已清空");
@@ -528,6 +536,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         </span>
                                         <span>{format!("请求头：{}", l.headers.len())}</span>
                                         <span>{format!("模型名：{model_txt}")}</span>
+                                        {l.unwrap_envelope.then(|| view! {
+                                            <span class="tag">"响应解包"</span>
+                                        })}
                                     </div>
                                     <div class="chan-actions">
                                         <button class="ghost" on:click=move |_| open_edit(l2.clone())>
@@ -581,12 +592,26 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
                                     <span class="muted small">"停用后不会再往这家上游发请求"</span>
                                 </div>
+                                <label>"响应解包"</label>
+                                <div>
+                                    <input type="checkbox" prop:checked=f_unwrap
+                                        on:change=move |ev| f_unwrap.set(event_target_checked(&ev)) />
+                                    <span class="muted small">
+                                        "这家上游把正常回复包了一层外壳时勾上（形状是 "
+                                        <code>"{\"data\": {…}, \"success\": true}"</code>
+                                        "）。只有认得出那种形状才会剥，认不出就原样回给你。"
+                                        "正常的上游不用勾。"
+                                    </span>
+                                </div>
                             </div>
 
                             <h3>"自定义请求头"</h3>
                             <p class="muted small">
                                 "值支持模板：" <code>"{{uuid}}"</code> "（每次请求换新 UUID）、"
-                                <code>"{{timestamp_ms}}"</code> "（当前毫秒）。"
+                                <code>"{{timestamp_ms}}"</code> "（当前毫秒）、"
+                                <code>"{{session_id}}"</code>
+                                "（同一段对话里保持不变 —— 上游靠它认出\"这还是同一段对话\"，"
+                                "能少算一遍；探活和拉清单没有对话，这个头那时不会发出去）。"
                             </p>
                             <div class="table-wrap">
                             <table class="grid tight">
@@ -879,6 +904,20 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                             </label>
                                                         </td>
                                                         <td>
+                                                            <input type="text" prop:value=m.drop_fields.clone()
+                                                                placeholder="要丢的字段（如 reasoning_effort）"
+                                                                title="发上游之前跟这个模型名一起把这些字段删掉：有的上游收下参数却直接回 400（opencode 的 beam-free 不认 reasoning_effort），不删每次都会失败。多个用逗号分隔；只在顶层删，别的一个字节都不动。"
+                                                                on:input=move |ev| {
+                                                                    let s = event_target_value(&ev);
+                                                                    f_models
+                                                                        .update(|v| {
+                                                                            if let Some(x) = v.get_mut(i) {
+                                                                                x.drop_fields = s;
+                                                                            }
+                                                                        });
+                                                                } />
+                                                        </td>
+                                                        <td>
                                                             <button
                                                                 class="ghost"
                                                                 disabled=move || vt_busy.get().is_some()
@@ -913,7 +952,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     {show_vt.then(|| view! {
                                                         <tr class="probe-row">
                                                             <td></td>
-                                                            <td colspan="5" class=if vt_ok { "probe ok" } else { "probe bad" }>
+                                                            <td colspan="6" class=if vt_ok { "probe ok" } else { "probe bad" }>
                                                                 {vt_text.clone()}
                                                             </td>
                                                         </tr>
@@ -973,6 +1012,7 @@ mod tests {
             model: "bge-m3".into(),
             upstream: Some("x".into()),
             vision: true,
+            drop_fields: String::new(),
         }];
         let mut picked = BTreeSet::new();
         picked.insert("bge-m3".to_string()); // 表里已经有了

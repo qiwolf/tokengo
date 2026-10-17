@@ -41,6 +41,9 @@ enum Reply {
     Slow(u64),
     /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
     SawRed,
+    /// 非流式响应外面套一层壳（cline.bot 的真形状）：`{"data": {…}, "success": true}`。
+    /// 「响应解包」勾上才该剥掉。
+    Enveloped,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +54,9 @@ struct Seen {
     custom: Vec<(String, String)>,
     /// 这次请求的正文里有没有图片内容块 —— 「带图只走能看图的渠道」全靠它证明。
     has_image: bool,
+    /// 发过来的完整请求体 —— 「哪些字段被丢掉了」只能由上游侧回看证明，
+    /// 看网关自己的日志不算。
+    body: Value,
 }
 
 struct MockInner {
@@ -105,7 +111,7 @@ async fn mock_handler(
 ) -> Response {
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("");
-    record(&inner, &headers, &uri, model, body_has_image(&v));
+    record(&inner, &headers, &uri, model, body_has_image(&v), &v);
 
     let reply = next_reply(&inner);
 
@@ -124,6 +130,17 @@ async fn mock_handler(
             "model": "mock",
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "红"}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+        }))
+        .into_response(),
+        Reply::Enveloped => axum::Json(json!({
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "object": "chat.completion",
+                "model": "mock",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "壳里的你好"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 31, "completion_tokens": 4, "total_tokens": 35}
+            },
+            "success": true
         }))
         .into_response(),
         Reply::Status(code, body) => (
@@ -151,7 +168,7 @@ async fn mock_handler(
 /// 假上游的 `/v1/models`：默认回一份 OpenAI 形状的清单；
 /// 队列里排了 `Status(…)` 就先按那个回（用来演"上游压根没做这个端点"）。
 async fn mock_models(State(inner): State<Arc<MockInner>>, headers: HeaderMap, uri: Uri) -> Response {
-    record(&inner, &headers, &uri, "", false);
+    record(&inner, &headers, &uri, "", false, &Value::Null);
     match next_reply(&inner) {
         Reply::Status(code, body) => {
             (StatusCode::from_u16(code).unwrap(), body.to_string()).into_response()
@@ -170,7 +187,14 @@ async fn mock_models(State(inner): State<Arc<MockInner>>, headers: HeaderMap, ur
 
 /// 每次请求都记一条：路径、模型名、Authorization、自定义头、有没有带图。
 /// GET 没有正文，模型名就记空的。
-fn record(inner: &Arc<MockInner>, headers: &HeaderMap, uri: &Uri, model: &str, has_image: bool) {
+fn record(
+    inner: &Arc<MockInner>,
+    headers: &HeaderMap,
+    uri: &Uri,
+    model: &str,
+    has_image: bool,
+    body: &Value,
+) {
     let custom = headers
         .iter()
         .filter(|(k, _)| k.as_str().starts_with("x-"))
@@ -180,6 +204,7 @@ fn record(inner: &Arc<MockInner>, headers: &HeaderMap, uri: &Uri, model: &str, h
         path: uri.path().to_string(),
         model: model.to_string(),
         has_image,
+        body: body.clone(),
         auth: headers
             .get("authorization")
             .and_then(|h| h.to_str().ok())
@@ -243,6 +268,7 @@ impl Fixture {
                 name: name.into(),
                 base_url: base_url.into(),
                 enabled: true,
+                unwrap_envelope: spec.unwrap_envelope,
             },
         )
         .unwrap();
@@ -254,11 +280,18 @@ impl Fixture {
             .models
             .iter()
             .map(|(m, u)| {
-                tokengo_server::db::channels::ModelMapping::new(
+                let mut mapping = tokengo_server::db::channels::ModelMapping::new(
                     m.clone(),
                     u.clone(),
                     spec.vision.iter().any(|v| v == m),
-                )
+                );
+                mapping.drop_fields = spec
+                    .drop_fields
+                    .iter()
+                    .find(|(name, _)| name == m)
+                    .map(|(_, fields)| fields.clone())
+                    .unwrap_or_default();
+                mapping
             })
             .collect();
         tokengo_server::db::channels::set_models(&conn, id, &models).unwrap();
@@ -270,7 +303,8 @@ impl Fixture {
     }
 
     fn fix_channel(&self, id: ChannelId, base_url: &str) {
-        tokengo_server::db::channels::update(&self.state.conn(), id, "修好的渠道", base_url, true).unwrap();
+        tokengo_server::db::channels::update(&self.state.conn(), id, "修好的渠道", base_url, true, false)
+            .unwrap();
     }
 
     fn routing(&self, group: &str) -> tokengo_shared::routing::GroupState {
@@ -324,12 +358,23 @@ struct ChannelSpec {
     models: Vec<(String, Option<String>)>,
     /// 这些模型名在这条渠道上标「能看图」（写模型名，就是 models 里的第一个字段）。
     vision: Vec<String>,
+    /// 这条渠道上某个模型名要丢掉的请求体顶层字段：`(模型名, [字段名, …])`。
+    drop_fields: Vec<(String, Vec<String>)>,
+    /// 这条渠道勾了「响应解包」。
+    unwrap_envelope: bool,
 }
 
 impl ChannelSpec {
     /// 标一个模型名「能看图」。链式用：`ChannelSpec { ..Default::default() }.with_vision("auto")`
     fn with_vision(mut self, model: &str) -> Self {
         self.vision.push(model.into());
+        self
+    }
+
+    /// 给某个模型名配「要丢的字段」。链式用：`.with_drop_fields("beam-free", &["reasoning_effort"])`
+    fn with_drop_fields(mut self, model: &str, fields: &[&str]) -> Self {
+        self.drop_fields
+            .push((model.into(), fields.iter().map(|f| (*f).to_string()).collect()));
         self
     }
 }
@@ -466,6 +511,7 @@ async fn per_channel_model_names_and_custom_headers_reach_the_upstream() {
             ],
             models: vec![("auto".into(), Some("deepseek/deepseek-v4.1-flash".into()))],
             vision: vec![],
+            ..Default::default()
         },
     );
     f.set_group("auto", &[channel]);
@@ -641,7 +687,7 @@ async fn a_group_with_only_disabled_channels_is_404() {
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("停用的渠道", &m.base, ChannelSpec::default());
     f.set_group("auto", &[channel]);
-    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false).unwrap();
+    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false).unwrap();
 
     let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -927,7 +973,7 @@ async fn models_lists_only_what_really_works() {
     f.set_group("auto", &[a]);
     f.set_group("bge-m3", &[a, b]);
     f.set_group("坏组", &[b]);
-    tokengo_server::db::channels::update(&f.state.conn(), b, "b", "http://127.0.0.1:59993/v1", false)
+    tokengo_server::db::channels::update(&f.state.conn(), b, "b", "http://127.0.0.1:59993/v1", false, false)
         .unwrap();
 
     let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
@@ -974,7 +1020,7 @@ async fn failed_before_any_attempt_leaves_no_rows() {
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("停用的渠道", &m.base, ChannelSpec::default());
     f.set_group("auto", &[channel]);
-    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false).unwrap();
+    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false).unwrap();
 
     let _ = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
     assert!(f.request_rows().is_empty());
@@ -1573,4 +1619,192 @@ async fn vision_test_says_what_the_model_actually_answered() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = post_with_token(&f, &format!("/api/channels/{}/vision-test", channel.0), "bad", json!({"model": "auto"})).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+// ───────── 渠道级请求/响应适配：把两条 python 中转（3157 / 3158）的活接过来 ─────────
+
+/// 「要丢的字段」：**只在声明了它的那条渠道的那个模型名上**丢，别的渠道一个字节都不许动。
+///
+/// 依据是现网的账：opencode 的 `beam-free` 不认 `reasoning_effort`（Hermes 默认发
+/// high），4 天里 28 次请求就这么整条失败 —— 现在只能靠外挂 python 中转替它剥。
+#[tokio::test]
+async fn an_unwanted_field_is_dropped_only_where_the_channel_declares_it() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+
+    // 甲渠道：给 beam-free 这个模型名声明「要丢 reasoning_effort」
+    let a = f.add_channel(
+        "声明了要丢字段的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("beam-free".into(), None)],
+            ..Default::default()
+        }
+        .with_drop_fields("beam-free", &["reasoning_effort"]),
+    );
+    f.set_group("beam-free", &[a]);
+    // 乙渠道：同一个上游，一个字都没声明
+    let b = f.add_channel(
+        "没声明任何字段的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("deepseek-v4.1-flash".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.set_group("deepseek-v4.1-flash", &[b]);
+
+    let body = json!({
+        "model": "beam-free",
+        "reasoning_effort": "high",
+        "max_tokens": 64,
+        "messages": [{"role": "user", "content": "你好"}]
+    });
+    let (s, _, _) = post(&f, CHAT, Some(KEY), body.clone()).await;
+    assert_eq!(s, StatusCode::OK);
+    let sent = m.seen().last().cloned().unwrap();
+    assert!(
+        sent.body.get("reasoning_effort").is_none(),
+        "声明了要丢的字段必须真丢掉：{:?}",
+        sent.body
+    );
+    assert_eq!(sent.body["max_tokens"], 64, "别的字段一个都不许动：{:?}", sent.body);
+    assert_eq!(sent.model, "beam-free");
+
+    // 反证：没声明的渠道照原样发（这是「按渠道 + 模型名」的能力，不是全局开关）
+    let mut other = body.clone();
+    other["model"] = json!("deepseek-v4.1-flash");
+    let (s, _, _) = post(&f, CHAT, Some(KEY), other).await;
+    assert_eq!(s, StatusCode::OK);
+    let sent = m.seen().last().cloned().unwrap();
+    assert_eq!(
+        sent.body["reasoning_effort"], "high",
+        "没声明的渠道不许替用户删字段：{:?}",
+        sent.body
+    );
+}
+
+/// `{{session_id}}`：同一段对话的每次请求带同一个值，换一段对话必须换
+/// —— 上游靠它认「这还是同一段对话」（命中提示缓存），现网那条 python 中转就是干这个的。
+#[tokio::test]
+async fn the_session_header_is_stable_within_one_conversation_and_new_for_another() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let a = f.add_channel(
+        "要会话头的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("auto".into(), None)],
+            headers: vec![
+                ("x-opencode-session".into(), "{{session_id}}".into()),
+                ("x-opencode-request".into(), "{{uuid}}".into()),
+            ],
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[a]);
+
+    let turn1 = json!({"model": "auto", "messages": [{"role": "user", "content": "帮我看下这段代码"}]});
+    let (s, _, _) = post(&f, CHAT, Some(KEY), turn1).await;
+    assert_eq!(s, StatusCode::OK);
+    // 同一段对话的下一轮：第一条 user 消息没变，后面接了更多轮
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [
+            {"role": "user", "content": "帮我看下这段代码"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "再改一下"}
+        ]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    // 换一段对话
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "换个问题"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    let seen = m.seen();
+    assert_eq!(seen.len(), 3);
+    let pick = |i: usize, name: &str| {
+        seen[i]
+            .custom
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(pick(0, "x-opencode-session"), pick(1, "x-opencode-session"), "同段对话必须同一个会话 ID");
+    assert_ne!(pick(0, "x-opencode-session"), pick(2, "x-opencode-session"), "换一段对话要换 ID");
+    assert_eq!(pick(0, "x-opencode-session").len(), 32);
+    assert_ne!(
+        pick(0, "x-opencode-request"),
+        pick(1, "x-opencode-request"),
+        "逐请求的那个头还是要每次都不一样"
+    );
+}
+
+/// 「响应解包」：勾了的渠道剥掉外壳（cline.bot 形状），没勾的一律原样透传 —— 网关不替人猜。
+#[tokio::test]
+async fn the_envelope_is_unwrapped_only_when_the_channel_says_so() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Enveloped).await;
+    let a = f.add_channel(
+        "套壳上游（勾了解包）",
+        &m.base,
+        ChannelSpec {
+            models: vec![("auto".into(), None)],
+            unwrap_envelope: true,
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[a]);
+    let b = f.add_channel(
+        "同一个套壳上游（没勾解包）",
+        &m.base,
+        ChannelSpec {
+            models: vec![("raw".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.set_group("raw", &[b]);
+
+    // 勾了的：客户端拿到标准形状，token 账也照样记
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "你好"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["message"]["content"], "壳里的你好", "勾了解包就得剥掉外层：{v}");
+    assert!(v.get("data").is_none(), "外壳不许还在：{v}");
+    assert_eq!(v["success"], true, "外壳上的 success 要留在里层：{v}");
+    let rows = f.request_rows();
+    assert_eq!(rows[0].2, 31, "剥壳之后照样要记上 token 账：{rows:?}");
+    assert_eq!(rows[0].3, 4, "{rows:?}");
+
+    // 反证：没勾的照原样透传
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "raw", "messages": [{"role": "user", "content": "你好"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.get("choices").is_none(), "没勾解包的渠道不许动响应：{v}");
+    assert_eq!(v["data"]["choices"][0]["message"]["content"], "壳里的你好", "{v}");
 }

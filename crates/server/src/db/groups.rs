@@ -124,16 +124,21 @@ pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Chann
         let Some(l) = super::channels::get(conn, *id)? else {
             continue;
         };
-        let mapping: Option<(Option<String>, i64)> = conn
+        let mapping: Option<(Option<String>, i64, String)> = conn
             .query_row(
-                "SELECT upstream_model, vision FROM channel_models WHERE channel_id = ?1 AND model_name = ?2",
+                "SELECT upstream_model, vision, drop_fields FROM channel_models
+                  WHERE channel_id = ?1 AND model_name = ?2",
                 params![id.0, g.name],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let (alias, vision) = match mapping {
-            Some((up, v)) => (up.filter(|u| !u.trim().is_empty()), v != 0),
-            None => (None, false),
+        let (alias, vision, drop_fields) = match mapping {
+            Some((up, v, d)) => (
+                up.filter(|u| !u.trim().is_empty()),
+                v != 0,
+                super::channels::ModelMapping::drop_fields_from_text(&d),
+            ),
+            None => (None, false, Vec::new()),
         };
         out.push(Channel {
             id: l.id,
@@ -143,6 +148,8 @@ pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Chann
             priority: ord as i32,
             model_alias: alias,
             vision,
+            drop_fields,
+            unwrap_envelope: l.unwrap_envelope,
             headers: l.headers,
         });
     }
@@ -194,6 +201,7 @@ mod tests {
                 name: name.into(),
                 base_url: format!("http://127.0.0.1/{}", name),
                 enabled: true,
+                unwrap_envelope: false,
             },
         )
         .unwrap()
@@ -342,7 +350,7 @@ mod tests {
         upsert(&conn, "auto", true, &[text, see]).unwrap();
         assert!(group_can_see(&conn, "auto").unwrap());
 
-        channels::update(&conn, see, "能看图", "http://127.0.0.1/see", false).unwrap();
+        channels::update(&conn, see, "能看图", "http://127.0.0.1/see", false, false).unwrap();
         assert!(!group_can_see(&conn, "auto").unwrap(), "停用的渠道不算数");
 
         upsert(&conn, "空的", true, &[text]).unwrap();
@@ -391,7 +399,7 @@ mod tests {
             }]
         );
 
-        channels::update(&conn, a, "a", "http://x", false).unwrap();
+        channels::update(&conn, a, "a", "http://x", false, false).unwrap();
         assert!(
             list_servable(&conn).unwrap().is_empty(),
             "组里全是停用的渠道，就不该再对外暴露这个模型名"
