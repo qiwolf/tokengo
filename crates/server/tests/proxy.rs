@@ -2446,3 +2446,89 @@ async fn deleting_something_that_is_not_there_says_404_not_500() {
     let resp = app(f.state.clone()).oneshot(req("/api/groups/auto")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND, "删第二下要 404");
 }
+
+/// 「这条请求到底带没带图」要记进账：用户报「模型识别不了图片」时，先看这一列就能分清
+/// 是**客户端根本没把图发上来**，还是网关/上游看不见。
+///
+/// 三种情形都钉住：纯文字 = 不带图；带图且有人能看 = 带图 + 成功；
+/// 带图但一条能看图的渠道都没有 = 带图 + 422（图确实到了网关，只是没人能接）。
+#[tokio::test]
+async fn the_request_log_says_whether_an_image_came_in() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let plain = f.add_channel(
+        "看不见的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("auto".into(), None)],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[plain]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+    let img = json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}});
+
+    // ① 纯文字
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // ② 带图，但这条渠道没标能看图 → 422，账上仍要记「带图」
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "这是什么"},
+            img.clone(),
+        ]}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "没人能看图要给 422");
+
+    // ③ 把渠道标成能看图 → 同样带图的一发应当成功
+    {
+        let conn = f.state.conn();
+        tokengo_server::db::channels::set_model_vision(&conn, plain, "auto", true).unwrap();
+    }
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "这是什么"},
+            img.clone(),
+        ]}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "标了能看图就该走起来");
+
+    // 账上读回来：三条请求的 has_image 依次是 否 / 是 / 是
+    let (s, v) = get_with_token(&f, "/api/logs?limit=10", &token).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let logs = v["logs"].as_array().unwrap();
+    let got: Vec<(String, bool)> = logs
+        .iter()
+        .rev()
+        .map(|r| (r["status"].as_str().unwrap().to_string(), r["has_image"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("ok".to_string(), false),
+            ("client_error".to_string(), true),
+            ("ok".to_string(), true),
+        ],
+        "账上要能分清哪条带了图：{v}"
+    );
+}

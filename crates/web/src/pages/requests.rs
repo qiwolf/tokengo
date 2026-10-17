@@ -153,6 +153,11 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                                         <td data-label="接口">{endpoint}</td>
                                         <td data-label="模型">
                                             <code class="small">{r.model.clone()}</code>
+                                            // 带图的请求单独标出来：用户报「模型识别不了图片」时，
+                                            // 先看这一列就知道图到底有没有发到网关。
+                                            {(r.has_image).then(|| view! {
+                                                <span class="tag" title="这条请求带了图片">"带图"</span>
+                                            })}
                                         </td>
                                         <td data-label="走的渠道">{channel}</td>
                                         <td data-label="结果">

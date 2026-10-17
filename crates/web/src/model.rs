@@ -278,6 +278,9 @@ pub struct LogRow {
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    /// 这条请求是不是在让模型看图（网关记的，跟路由判断同一口径）。
+    #[serde(default)]
+    pub has_image: bool,
     pub error: Option<String>,
 }
 
