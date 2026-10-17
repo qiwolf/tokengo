@@ -150,6 +150,38 @@ pub struct ChannelStat {
     pub success_rate: Option<f64>,
 }
 
+/// 按模型名的账（看的是客户端打了什么名字）。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ModelStat {
+    pub model: String,
+    pub requests: i64,
+    pub ok: i64,
+    pub failed: i64,
+    pub client_errors: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
+
+/// 按客户端的账。`client_ip` 为空 = 没拿到来源地址。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ClientStat {
+    #[serde(default)]
+    pub client_ip: Option<String>,
+    pub requests: i64,
+    pub ok: i64,
+    pub failed: i64,
+    pub client_errors: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
+
+/// 错误分布的一行。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ErrorStat {
+    pub error: String,
+    pub count: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Stats {
     pub since_ms: i64,
@@ -162,6 +194,12 @@ pub struct Stats {
     pub output_tokens: i64,
     #[serde(default)]
     pub by_channel: Vec<ChannelStat>,
+    #[serde(default)]
+    pub by_model: Vec<ModelStat>,
+    #[serde(default)]
+    pub by_client: Vec<ClientStat>,
+    #[serde(default)]
+    pub errors: Vec<ErrorStat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
