@@ -722,7 +722,11 @@ async fn an_unknown_model_is_404_without_touching_any_channel() {
     let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "no-such", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let v: Value = serde_json::from_slice(&body).unwrap();
-    assert!(v["error"]["message"].as_str().unwrap().contains("没有配置"));
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("没有配置"));
+    // **别在报错里点名某个具体模型名**（老文案写着「或者打 auto」）：线上不一定有那个名字，
+    // 用户照着打反而又撞一个 404。
+    assert!(!msg.contains("auto"), "报错不该点名某个模型名：{msg}");
     assert_eq!(m.count(), 0);
     assert!(f.request_rows().is_empty(), "没试过就不该建记账行");
 }
