@@ -59,7 +59,7 @@ Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测�
       server/   网关服务端（axum）— 对外端点 + 面板管理面 + 面板静态服务
       web/      面板（Rust → WASM，Leptos CSR）— 6 个页面，零 npm 依赖
       cli/      命令行
-    docs/       功能清单、路由策略、数据层、阶段 2 真转发、阶段 3 面板、阶段 4 部署预案与部署记录、视觉能力
+    docs/       功能清单、路由策略、数据层、阶段 2 真转发、阶段 3 面板、阶段 4 部署预案与部署记录、视觉能力、协作开发规范
     scratch/    真机验收脚本（起真进程、真发 HTTP、断言直接读库）
     scripts/    工具脚本
 
@@ -90,6 +90,14 @@ python3 scratch/verify_stage2.py   # 真转发 / 重试切换 / 回切 / 流式 
 rustup target add wasm32-unknown-unknown
 cargo install trunk
 ```
+
+## 协作开发
+
+两个人（两个号）在同一台机器上共用工作副本 `/path/to/tokengo`，共享真相是本地裸仓库
+`/path/to/tokengo-shared.git`（远端名 `shared`）。**动手前先 `git pull shared main`，
+改完 `cargo test --workspace` 全绿再 `git push shared main`** —— 完整规矩（铁律、分支、
+冲突、发版检查单、回滚）见 [`docs/10-协作开发.md`](docs/10-协作开发.md)。
+GitHub 还没有远端；未经明确指令不推。
 
 ## 阶段
 
