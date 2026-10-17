@@ -22,6 +22,10 @@ async fn main() -> anyhow::Result<()> {
     // 后台探活：无流量时也要按时回头试首选渠道，否则 10 分钟回切机制在夜里等于没有
     tokengo_server::prober::spawn(state.clone());
 
+    // 后台清扫员：按保留天数清掉旧账（默认 30 天），并每周把腾出来的空间还给磁盘。
+    // 不跑它的话，账目只进不出，一年能长 3–4 GB。
+    tokengo_server::janitor::spawn(state.clone());
+
     tracing::info!("tokengo {} 监听 {addr}", tokengo_shared::VERSION);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app(state)).await?;

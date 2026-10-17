@@ -5,6 +5,7 @@
 
 pub mod groups;
 pub mod channels;
+pub mod maintenance;
 pub mod requests;
 pub mod routing;
 pub mod schema;

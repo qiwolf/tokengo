@@ -72,6 +72,17 @@ fn find_web_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// 环境变量与工作目录是**进程级**状态，而 cargo 的测试是同进程多线程并行跑。
+    /// 一个用例改了 cwd / 环境变量，另一个用例正好在这中间读，就会随机红。
+    /// 所以凡是动这两样的用例都要先拿这把锁（踩过：`env_overrides_win` 偶发
+    /// `web_dir` 变成 None，真相是另一个用例把 cwd 换走了，不是代码错）。
+    static PROCESS_STATE: Mutex<()> = Mutex::new(());
+
+    fn lock_process_state() -> std::sync::MutexGuard<'static, ()> {
+        PROCESS_STATE.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn defaults_are_loopback_only() {
@@ -82,6 +93,7 @@ mod tests {
 
     #[test]
     fn env_overrides_win() {
+        let _g = lock_process_state();
         std::env::set_var("TOKENGO_LISTEN", "0.0.0.0:9999");
         std::env::set_var("TOKENGO_DB", "/tmp/x.db");
         std::env::set_var("TOKENGO_MASTER_KEY_FILE", "/tmp/k");
@@ -103,6 +115,7 @@ mod tests {
 
     #[test]
     fn empty_web_dir_env_is_treated_as_unset() {
+        let _g = lock_process_state();
         std::env::set_var("TOKENGO_WEB_DIR", "   ");
         let c = Config::from_env().unwrap();
         assert_ne!(c.web_dir, Some(PathBuf::from("   ")));
@@ -111,6 +124,7 @@ mod tests {
 
     #[test]
     fn find_web_dir_requires_an_index_html() {
+        let _g = lock_process_state();
         // 产物目录里必须有 index.html：否则面板会打开一个空壳，看着像坏了。
         let base = std::env::temp_dir().join(format!("tokengo-webdir-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(base.join("dist")).unwrap();
