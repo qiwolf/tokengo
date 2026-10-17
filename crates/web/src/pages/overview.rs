@@ -199,6 +199,76 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </table>
             </div>
 
+            <h2>"按类型"</h2>
+            <p class="muted small">
+                "对话 / 向量 / 重排分开看 —— 三条路各有各的用法，混在一起看不出哪条不稳。"
+                "归类看的是这条请求当时实际打的端点，不是模型组现在的类型（组类型随时能改，"
+                "改了不该让历史账跟着变）。耗时只算成功的那些。"
+            </p>
+            <div class="table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th>"类型"</th>
+                            <th class="num">"请求数"</th>
+                            <th class="num">"成功率"</th>
+                            <th class="num">"成功"</th>
+                            <th class="num">"失败"</th>
+                            <th class="num">"客户端错"</th>
+                            <th class="num">"平均耗时"</th>
+                            <th class="num">"Token"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {move || {
+                            let rows = stats.get().stats.by_kind;
+                            if rows.is_empty() {
+                                return view! {
+                                    <tr class="empty-row">
+                                        <td colspan="8" class="muted empty-cell">
+                                            "这个窗口里还没有账（没流量）"
+                                        </td>
+                                    </tr>
+                                }
+                                .into_any();
+                            }
+                            rows.into_iter()
+                                .map(|k| {
+                                    let rate = k.success_rate();
+                                    view! {
+                                        <tr>
+                                            <td>{k.label.clone()}</td>
+                                            <td class="num">{fmt::num(k.requests)}</td>
+                                            <td class="num">
+                                                {if k.requests > 0 {
+                                                    format!("{rate:.1}%")
+                                                } else {
+                                                    "—".to_string()
+                                                }}
+                                            </td>
+                                            <td class="num">{fmt::num(k.ok)}</td>
+                                            <td class="num">
+                                                {if k.failed > 0 {
+                                                    view! { <span class="bad-text">{fmt::num(k.failed)}</span> }.into_any()
+                                                } else {
+                                                    view! { <span class="muted">"0"</span> }.into_any()
+                                                }}
+                                            </td>
+                                            <td class="num">{fmt::num(k.client_errors)}</td>
+                                            <td class="num">
+                                                {if k.ok > 0 { fmt::dur(k.avg_ms) } else { "—".to_string() }}
+                                            </td>
+                                            <td class="num">{fmt::num(k.input_tokens + k.output_tokens)}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    </tbody>
+                </table>
+            </div>
+
             <h2>"各条渠道的账"</h2>
             <p class="muted small">
                 "分母是「被叫了几次」，不是「成功了几次」—— 判断一条渠道值不值得留就看这个。"
@@ -451,4 +521,30 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
 pub fn StatusTag(status: String) -> impl IntoView {
     let (label, class) = status_label(&status);
     view! { <span class=format!("tag {class}")>{label}</span> }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::KindStat;
+
+    /// 成功率的分子分母要跟总览四张卡一个口径：分母是「打进来几次」，不是「试了几次」。
+    #[test]
+    fn kind_success_rate_uses_requests_as_the_denominator() {
+        let mut k = KindStat {
+            kind: "embeddings".into(),
+            label: "向量".into(),
+            requests: 8,
+            ok: 7,
+            ..Default::default()
+        };
+        assert_eq!(k.success_rate(), 87.5);
+        k.requests = 0;
+        assert_eq!(k.success_rate(), 0.0, "没请求时面板显示「—」，不该算出个百分比");
+        // 全成功 / 全失败两个边界
+        k.requests = 3;
+        k.ok = 3;
+        assert_eq!(k.success_rate(), 100.0);
+        k.ok = 0;
+        assert_eq!(k.success_rate(), 0.0);
+    }
 }
