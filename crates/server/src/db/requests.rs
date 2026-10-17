@@ -192,6 +192,44 @@ pub struct ErrorStat {
     pub count: i64,
 }
 
+/// 按端点归类的账：对话 / 向量 / 重排 / 别的。
+///
+/// 为什么要它：同一个网关后面挂着三种用法完全不同的模型，混在一起看不出
+/// 「向量这条路稳不稳」—— 而现网里向量占了 86% 的量（`docs/12-模型类型.md`）。
+///
+/// **按 `endpoint` 归类，不按模型组现在的类型**：`endpoint` 是这条请求当时实际打的端点，
+/// 既成事实；组类型是后来配的、还能随时改，用它会**让历史账跟着变**（今天把某组从
+/// 对话改成向量，昨天那批对话请求就会被算成向量）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct KindStat {
+    /// `chat` / `embeddings` / `rerank` / `""`（认不出来的端点）
+    pub kind: String,
+    /// 给人看的中文名。
+    pub label: String,
+    pub requests: i64,
+    pub ok: i64,
+    pub failed: i64,
+    pub client_errors: i64,
+    pub canceled: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    /// **成功请求**的平均耗时。把失败的一起算进去会让这个数字毫无意义
+    /// （失败请求把重试和超时都算进去了）。
+    pub avg_ms: i64,
+}
+
+impl KindStat {
+    /// 端点字面值 → 类型。不认识的端点归到「别的」（**不猜**）。
+    pub fn kind_of_endpoint(endpoint: &str) -> (&'static str, &'static str) {
+        match endpoint.trim() {
+            "/v1/chat/completions" => ("chat", "对话"),
+            "/v1/embeddings" => ("embeddings", "向量"),
+            "/v1/rerank" => ("rerank", "重排"),
+            _ => ("", "别的"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Stats {
     pub since_ms: i64,
@@ -204,6 +242,8 @@ pub struct Stats {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub by_channel: Vec<ChannelStat>,
+    /// 按端点类型：对话 / 向量 / 重排 / 别的。**固定按这个顺序**，缺的也补 0 行。
+    pub by_kind: Vec<KindStat>,
     pub by_model: Vec<ModelStat>,
     pub by_client: Vec<ClientStat>,
     pub errors: Vec<ErrorStat>,
@@ -297,6 +337,78 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         })?
         .collect::<rusqlite::Result<_>>()?;
 
+    // ── 按端点类型（对话 / 向量 / 重排 / 别的）──
+    // 先按端点字面值分组查，再在 Rust 里按固定顺序摆好、缺的补 0 行 ——
+    // 「今天没有向量请求」也要看得见「向量 0 次」，而不是这一块整个消失。
+    let mut stmt = conn.prepare(
+        "SELECT endpoint,
+                COUNT(*),
+                COALESCE(SUM(status = 'ok'), 0),
+                COALESCE(SUM(status = 'failed'), 0),
+                COALESCE(SUM(status = 'client_error'), 0),
+                COALESCE(SUM(status = 'canceled'), 0),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(CAST(AVG(CASE WHEN status = 'ok' THEN latency_ms END) AS INTEGER), 0)
+           FROM requests WHERE ts_ms >= ?1
+          GROUP BY endpoint",
+    )?;
+    let raw: Vec<(String, i64, i64, i64, i64, i64, i64, i64, i64)> = stmt
+        .query_map([since_ms], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+                r.get(8)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let zero = |kind: &str, label: &str| KindStat {
+        kind: kind.to_string(),
+        label: label.to_string(),
+        requests: 0,
+        ok: 0,
+        failed: 0,
+        client_errors: 0,
+        canceled: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        avg_ms: 0,
+    };
+    let mut by_kind = vec![
+        zero("chat", "对话"),
+        zero("embeddings", "向量"),
+        zero("rerank", "重排"),
+    ];
+    let mut other: Option<KindStat> = None;
+    for (endpoint, n, ok, failed, ce, canceled, inp, out, avg) in raw {
+        let kind = KindStat::kind_of_endpoint(&endpoint).0;
+        let row = if kind.is_empty() {
+            other.get_or_insert_with(|| zero("", "别的"))
+        } else {
+            by_kind.iter_mut().find(|k| k.kind == kind).unwrap()
+        };
+        row.requests += n;
+        row.ok += ok;
+        row.failed += failed;
+        row.client_errors += ce;
+        row.canceled += canceled;
+        row.input_tokens += inp;
+        row.output_tokens += out;
+        // 平均耗时按成功次数加权摊回来（只算成功请求，见 KindStat::avg_ms 的注释）。
+        if avg > 0 && ok > 0 {
+            row.avg_ms = ((row.avg_ms * (row.ok - ok) + avg * ok) / row.ok).max(0);
+        }
+    }
+    if let Some(o) = other {
+        by_kind.push(o);
+    }
+
     // ── 按客户端 ──
     // client_ip 可能是 NULL（内网直连或没取到），也要单独占一行，不能悄悄丢掉。
     let mut stmt = conn.prepare(
@@ -352,6 +464,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         input_tokens: inp,
         output_tokens: out,
         by_channel,
+        by_kind,
         by_model,
         by_client,
         errors,
@@ -443,6 +556,50 @@ mod tests {
             })
             .unwrap();
         assert_eq!(n, 3, "三次尝试都要留痕");
+    }
+
+    /// 按类型分开的账：**按请求实际打的端点**归类；三行始终在（没有的补 0，不是整块消失）。
+    #[test]
+    fn stats_split_requests_by_the_endpoint_they_really_used() {
+        let conn = open_in_memory().unwrap();
+        // 1 个对话（成功，100/50 token，耗时 900），1 个向量（成功，120/0，耗时 30）
+        record(&conn, &[(1, "success")], Status::Ok);
+        let vec_id = start(&conn, "/v1/embeddings", "BAAI/bge-m3", Some("192.0.2.139")).unwrap();
+        finish(&conn, vec_id, Status::Ok, Some(200), Some(1), 30, None, 120, 0, false, None).unwrap();
+        // 一个认不出的端点写成失败 → 归到「别的」，不许悄悄算进任何一种
+        let odd = start(&conn, "/v1/unknown", "x", None).unwrap();
+        finish(&conn, odd, Status::Failed, Some(502), Some(1), 5000, None, 0, 0, false, Some("炸了")).unwrap();
+
+        let s = stats_since(&conn, 0).unwrap();
+        let kinds: Vec<(&str, i64)> = s.by_kind.iter().map(|k| (k.kind.as_str(), k.requests)).collect();
+        assert_eq!(
+            kinds,
+            vec![("chat", 1), ("embeddings", 1), ("rerank", 0), ("", 1)],
+            "固定顺序、缺的补 0、认不出的进「别的」：{kinds:?}"
+        );
+        let chat = &s.by_kind[0];
+        assert_eq!((chat.ok, chat.failed, chat.input_tokens, chat.output_tokens), (1, 0, 100, 50));
+        assert!(chat.avg_ms > 0, "成功请求的平均耗时要有值：{chat:?}");
+        let vec = s.by_kind.iter().find(|k| k.kind == "embeddings").unwrap();
+        assert_eq!((vec.ok, vec.input_tokens, vec.output_tokens), (1, 120, 0));
+        let other = s.by_kind.iter().find(|k| k.kind.is_empty()).unwrap();
+        assert_eq!((other.requests, other.failed), (1, 1), "认不出的端点要单独一行：{other:?}");
+        assert_eq!(other.avg_ms, 0, "这条只有失败，没有「成功请求的平均耗时」可言");
+        assert_eq!(s.by_kind[2].label, "重排");
+        // 总数要对得上：三块 + 别的 = 全部请求
+        let sum: i64 = s.by_kind.iter().map(|k| k.requests).sum();
+        assert_eq!(sum, s.total, "分块的请求数加起来必须等于总数");
+    }
+
+    /// 反证：端点表认不出来就是认不出来 —— 不许把陌生端点猜成对话。
+    #[test]
+    fn an_unknown_endpoint_is_never_guessed_as_chat() {
+        assert_eq!(KindStat::kind_of_endpoint("/v1/chat/completions").0, "chat");
+        assert_eq!(KindStat::kind_of_endpoint("/v1/embeddings").0, "embeddings");
+        assert_eq!(KindStat::kind_of_endpoint("/v1/rerank").0, "rerank");
+        for e in ["", "/v1/chat", "/v1/embeddings/", "/v1/completions", "随便"] {
+            assert_eq!(KindStat::kind_of_endpoint(e).0, "", "{e} 不该被猜成某种类型");
+        }
     }
 
     #[test]

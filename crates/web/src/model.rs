@@ -206,6 +206,37 @@ pub struct ErrorStat {
     pub count: i64,
 }
 
+/// 按端点类型的账：对话 / 向量 / 重排 / 别的。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct KindStat {
+    /// `chat` / `embeddings` / `rerank` / `""`
+    #[serde(default)]
+    pub kind: String,
+    /// 服务端给的中文名（跟着服务端的口径走，面板不自己维护一份）
+    #[serde(default)]
+    pub label: String,
+    pub requests: i64,
+    pub ok: i64,
+    pub failed: i64,
+    pub client_errors: i64,
+    pub canceled: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    /// 只算成功请求的平均耗时。
+    pub avg_ms: i64,
+}
+
+impl KindStat {
+    /// 成功率（%）。分母是「打进来几次」，与总览四张卡一个口径。
+    pub fn success_rate(&self) -> f64 {
+        if self.requests > 0 {
+            (self.ok as f64 / self.requests as f64 * 1000.0).round() / 10.0
+        } else {
+            0.0
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Stats {
     pub since_ms: i64,
@@ -218,6 +249,9 @@ pub struct Stats {
     pub output_tokens: i64,
     #[serde(default)]
     pub by_channel: Vec<ChannelStat>,
+    /// 按端点类型，固定顺序：对话 → 向量 → 重排（缺的也有一行 0）。
+    #[serde(default)]
+    pub by_kind: Vec<KindStat>,
     #[serde(default)]
     pub by_model: Vec<ModelStat>,
     #[serde(default)]
