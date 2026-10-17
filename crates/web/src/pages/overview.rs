@@ -259,6 +259,153 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </table>
             </div>
 
+            <h2>"按模型名"</h2>
+            <p class="muted small">
+                "看的是客户端打了什么名字 —— 哪个名字最常被调、哪个在报错，一眼能看出来。"
+            </p>
+            <div class="table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th>"模型名"</th>
+                            <th class="num">"请求"</th>
+                            <th class="num">"成功"</th>
+                            <th class="num">"失败"</th>
+                            <th class="num">"客户端错"</th>
+                            <th class="num">"Token"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {move || {
+                            let rows = stats.get().stats.by_model;
+                            if rows.is_empty() {
+                                return view! {
+                                    <tr class="empty-row">
+                                        <td colspan="6" class="muted empty-cell">"这个窗口里还没有账"</td>
+                                    </tr>
+                                }
+                                .into_any();
+                            }
+                            rows.into_iter()
+                                .map(|m| {
+                                    view! {
+                                        <tr>
+                                            <td><code>{m.model}</code></td>
+                                            <td class="num">{fmt::num(m.requests)}</td>
+                                            <td class="num">{fmt::num(m.ok)}</td>
+                                            <td class="num">
+                                                {if m.failed > 0 {
+                                                    view! { <span class="bad-text">{fmt::num(m.failed)}</span> }.into_any()
+                                                } else {
+                                                    view! { <span class="muted">"0"</span> }.into_any()
+                                                }}
+                                            </td>
+                                            <td class="num">{fmt::num(m.client_errors)}</td>
+                                            <td class="num">{fmt::num(m.input_tokens + m.output_tokens)}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    </tbody>
+                </table>
+            </div>
+
+            <h2>"按客户端"</h2>
+            <p class="muted small">
+                "谁在调这个网关、各自多少请求。没取到来源地址的单独占一行（显示「未知」），不藏起来。"
+            </p>
+            <div class="table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th>"来源"</th>
+                            <th class="num">"请求"</th>
+                            <th class="num">"成功"</th>
+                            <th class="num">"失败"</th>
+                            <th class="num">"客户端错"</th>
+                            <th class="num">"Token"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {move || {
+                            let rows = stats.get().stats.by_client;
+                            if rows.is_empty() {
+                                return view! {
+                                    <tr class="empty-row">
+                                        <td colspan="6" class="muted empty-cell">"这个窗口里还没有账"</td>
+                                    </tr>
+                                }
+                                .into_any();
+                            }
+                            rows.into_iter()
+                                .map(|c| {
+                                    view! {
+                                        <tr>
+                                            <td>
+                                                <code>{c.client_ip.unwrap_or_else(|| "未知".into())}</code>
+                                            </td>
+                                            <td class="num">{fmt::num(c.requests)}</td>
+                                            <td class="num">{fmt::num(c.ok)}</td>
+                                            <td class="num">
+                                                {if c.failed > 0 {
+                                                    view! { <span class="bad-text">{fmt::num(c.failed)}</span> }.into_any()
+                                                } else {
+                                                    view! { <span class="muted">"0"</span> }.into_any()
+                                                }}
+                                            </td>
+                                            <td class="num">{fmt::num(c.client_errors)}</td>
+                                            <td class="num">{fmt::num(c.input_tokens + c.output_tokens)}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    </tbody>
+                </table>
+            </div>
+
+            <h2>"错误分布"</h2>
+            <p class="muted small">
+                "失败和客户端错各自是什么原因、各多少次。没记原因的也占一行，免得「一堆失败却看不到原因」。"
+            </p>
+            <div class="table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th>"原因"</th>
+                            <th class="num">"次数"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {move || {
+                            let rows = stats.get().stats.errors;
+                            if rows.is_empty() {
+                                return view! {
+                                    <tr class="empty-row">
+                                        <td colspan="2" class="muted empty-cell">"这个窗口里没有失败"</td>
+                                    </tr>
+                                }
+                                .into_any();
+                            }
+                            rows.into_iter()
+                                .map(|e| {
+                                    view! {
+                                        <tr>
+                                            <td class="small">{e.error}</td>
+                                            <td class="num">{fmt::num(e.count)}</td>
+                                        </tr>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    </tbody>
+                </table>
+            </div>
+
             <h2>"能被调用的模型名"</h2>
             <p class="muted small">
                 "客户端填这些名字才打得通（和 "

@@ -161,6 +161,37 @@ pub struct ChannelStat {
     pub output_tokens: i64,
 }
 
+/// 按模型名的账。看的是**客户端打了什么名字**，与最终落哪条渠道无关。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ModelStat {
+    pub model: String,
+    pub requests: i64,
+    pub ok: i64,
+    pub failed: i64,
+    pub client_errors: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
+
+/// 按客户端的账。`client_ip` 为 `None` 表示没拿到来源地址。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ClientStat {
+    pub client_ip: Option<String>,
+    pub requests: i64,
+    pub ok: i64,
+    pub failed: i64,
+    pub client_errors: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
+
+/// 错误分布：同一条错误话术被记了多少次。**只数失败与客户端错**。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ErrorStat {
+    pub error: String,
+    pub count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Stats {
     pub since_ms: i64,
@@ -173,6 +204,9 @@ pub struct Stats {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub by_channel: Vec<ChannelStat>,
+    pub by_model: Vec<ModelStat>,
+    pub by_client: Vec<ClientStat>,
+    pub errors: Vec<ErrorStat>,
 }
 
 /// 汇总自 `since_ms` 起的账。
@@ -237,6 +271,77 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         s.output_tokens = o;
     }
 
+    // ── 按模型名 ──
+    let mut stmt = conn.prepare(
+        "SELECT model,
+                COUNT(*),
+                COALESCE(SUM(status = 'ok'), 0),
+                COALESCE(SUM(status = 'failed'), 0),
+                COALESCE(SUM(status = 'client_error'), 0),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0)
+           FROM requests WHERE ts_ms >= ?1
+          GROUP BY model ORDER BY COUNT(*) DESC LIMIT 50",
+    )?;
+    let by_model: Vec<ModelStat> = stmt
+        .query_map([since_ms], |r| {
+            Ok(ModelStat {
+                model: r.get(0)?,
+                requests: r.get(1)?,
+                ok: r.get(2)?,
+                failed: r.get(3)?,
+                client_errors: r.get(4)?,
+                input_tokens: r.get(5)?,
+                output_tokens: r.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    // ── 按客户端 ──
+    // client_ip 可能是 NULL（内网直连或没取到），也要单独占一行，不能悄悄丢掉。
+    let mut stmt = conn.prepare(
+        "SELECT client_ip,
+                COUNT(*),
+                COALESCE(SUM(status = 'ok'), 0),
+                COALESCE(SUM(status = 'failed'), 0),
+                COALESCE(SUM(status = 'client_error'), 0),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0)
+           FROM requests WHERE ts_ms >= ?1
+          GROUP BY client_ip ORDER BY COUNT(*) DESC LIMIT 50",
+    )?;
+    let by_client: Vec<ClientStat> = stmt
+        .query_map([since_ms], |r| {
+            Ok(ClientStat {
+                client_ip: r.get(0)?,
+                requests: r.get(1)?,
+                ok: r.get(2)?,
+                failed: r.get(3)?,
+                client_errors: r.get(4)?,
+                input_tokens: r.get(5)?,
+                output_tokens: r.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    // ── 错误分布 ──
+    // 只数失败/客户端错；没写 error 的用「（没记原因）」占一行，
+    // 否则「失败 12 次但一条原因都看不到」会让人以为面板坏了。
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(TRIM(error), ''), '（没记原因）') AS e, COUNT(*)
+           FROM requests
+          WHERE ts_ms >= ?1 AND status IN ('failed', 'client_error')
+          GROUP BY e ORDER BY COUNT(*) DESC LIMIT 20",
+    )?;
+    let errors: Vec<ErrorStat> = stmt
+        .query_map([since_ms], |r| {
+            Ok(ErrorStat {
+                error: r.get(0)?,
+                count: r.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
     Ok(Stats {
         since_ms,
         total,
@@ -247,6 +352,9 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         input_tokens: inp,
         output_tokens: out,
         by_channel,
+        by_model,
+        by_client,
+        errors,
     })
 }
 
@@ -358,6 +466,75 @@ mod tests {
         assert_eq!(cg.attempts, 1);
         assert_eq!(cg.successes, 1);
         assert_eq!(cg.output_tokens, 50, "token 归给最终接住请求的渠道");
+    }
+
+    /// 打一条指定模型名 / 来源 / 错误话术的账，用来看三个新维度。
+    fn record_detail(
+        conn: &Connection,
+        model: &str,
+        ip: Option<&str>,
+        status: Status,
+        error: Option<&str>,
+    ) -> i64 {
+        let id = start(conn, "/v1/chat/completions", model, ip).unwrap();
+        add_attempt(conn, id, 0, 44, "success", Some(200), 10, None).unwrap();
+        finish(
+            conn,
+            id,
+            status,
+            Some(200),
+            Some(44),
+            30,
+            Some(5),
+            100,
+            50,
+            false,
+            error,
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn stats_break_down_by_model_client_and_error() {
+        let conn = open_in_memory().unwrap();
+        record_detail(&conn, "auto", Some("192.0.2.139"), Status::Ok, None);
+        record_detail(&conn, "auto", Some("192.0.2.139"), Status::Ok, None);
+        record_detail(&conn, "auto", Some("192.0.2.101"), Status::Failed, Some("硅基流动：连接超时"));
+        record_detail(&conn, "bge-m3", Some("192.0.2.139"), Status::Ok, None);
+        record_detail(&conn, "写错的模型", None, Status::ClientError, Some("模型 写错的模型 没有配置"));
+
+        let s = stats_since(&conn, 0).unwrap();
+
+        // 按模型：auto 3 次（2 成 1 败）、bge-m3 1 次、写错的模型 1 次
+        assert_eq!(s.by_model.len(), 3);
+        let auto = s.by_model.iter().find(|m| m.model == "auto").unwrap();
+        assert_eq!((auto.requests, auto.ok, auto.failed), (3, 2, 1));
+        let bad = s.by_model.iter().find(|m| m.model == "写错的模型").unwrap();
+        assert_eq!(bad.client_errors, 1, "客户端写错要单独列出来，不算渠道的锅");
+
+        // 按客户端：两条内网地址 + 一条没有来源
+        let a = s.by_client.iter().find(|c| c.client_ip.as_deref() == Some("192.0.2.139")).unwrap();
+        assert_eq!(a.requests, 3);
+        let b = s.by_client.iter().find(|c| c.client_ip.as_deref() == Some("192.0.2.101")).unwrap();
+        assert_eq!(b.failed, 1);
+        let none = s.by_client.iter().find(|c| c.client_ip.is_none()).unwrap();
+        assert_eq!(none.requests, 1, "没拿到来源地址的请求也要占一行，不能丢");
+
+        // 错误分布：两条不同原因各 1 次，成功的不进这个榜
+        assert_eq!(s.errors.len(), 2);
+        assert_eq!(s.errors.iter().map(|e| e.count).sum::<i64>(), 2);
+        assert!(s.errors.iter().any(|e| e.error.contains("连接超时")));
+    }
+
+    #[test]
+    fn a_failure_without_a_recorded_reason_still_shows_up() {
+        let conn = open_in_memory().unwrap();
+        record_detail(&conn, "auto", Some("10.0.0.1"), Status::Failed, None);
+        let s = stats_since(&conn, 0).unwrap();
+        assert_eq!(s.errors.len(), 1);
+        assert_eq!(s.errors[0].error, "（没记原因）");
+        assert_eq!(s.errors[0].count, 1);
     }
 
     #[test]
