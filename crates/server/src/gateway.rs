@@ -223,6 +223,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let cfg = state.routing().cfg.clone();
     let attempt_timeout = Duration::from_millis(cfg.attempt_timeout_ms.max(1));
 
+    // 同一段对话稳定不变的会话 ID（自定义头 `{{session_id}}` 用）。
+    // **按客户端原样的请求体算一次**：改成上游的模型名之后再算，同一个客户端模型名
+    // 落到不同渠道会得出不同的会话 ID，上游看到的就不再是"同一段对话"了。
+    let session = tokengo_shared::session_id_from_body(&req.body);
+
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
     let mut last_http: Option<UpstreamError> = None;
@@ -232,7 +237,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let Some(channel) = plan.channel(channel_id) else { continue };
         last_channel = channel.id;
         let sent_model = channel.upstream_model(&req.model).to_string();
-        let body = rewrite_model(&req.body, &sent_model);
+        // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
+        // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
+        // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
+        let adapted = tokengo_shared::strip_fields(&req.body, &channel.drop_fields);
+        let body = rewrite_model(&adapted, &sent_model);
         let body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
 
         for attempt_no in 1..=cfg.max_attempts() {
@@ -272,6 +281,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     attempt_timeout,
                     &uuid,
                     now_ms(),
+                    session.as_deref(),
                 )
                 .await;
 
@@ -312,7 +322,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         let (resp, input, output) = if req.endpoint == EndpointKind::Rerank {
                             buffer_rerank_passthrough(resp, http, &req.body).await
                         } else {
-                            buffer_passthrough(resp, http).await
+                            buffer_passthrough(resp, http, channel.unwrap_envelope).await
                         };
                         guard.finish(
                             &state,
@@ -517,21 +527,36 @@ pub fn usage_from_value(v: &Value) -> (i64, i64) {
 }
 
 /// 非流式：整段读下来再回给客户端（顺带把 token 账记上）。
+///
+/// `unwrap_envelope`：这条渠道勾了「响应解包」时，先把外面那层壳剥掉再回客户端与记账
+/// （cline.bot 的形状：`{"data": {<标准响应>}, "success": true}`，不剥客户端读顶层
+/// `choices` 只能读到空）。**只在真认出那种形状时才剥**，其余一律原样透传。
 async fn buffer_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
+    unwrap_envelope: bool,
 ) -> (Response, i64, i64) {
     let ctype = content_type(&resp);
     let bytes = resp.bytes().await.unwrap_or_default();
-    let (input, output) = serde_json::from_slice::<Value>(&bytes)
-        .map(|v| usage_from_value(&v))
-        .unwrap_or((0, 0));
+    let mut out = bytes.clone();
+    let (input, output) = match serde_json::from_slice::<Value>(&bytes) {
+        Ok(mut v) => {
+            if unwrap_envelope && tokengo_shared::unwrap_envelope(&mut v) {
+                match serde_json::to_vec(&v) {
+                    Ok(b) => out = Bytes::from(b),
+                    Err(e) => tracing::warn!("剥壳后重新序列化失败，原样回：{e}"),
+                }
+            }
+            usage_from_value(&v)
+        }
+        Err(_) => (0, 0),
+    };
     let mut b = Response::builder().status(status);
     if let Some(ct) = ctype {
         b = b.header(header::CONTENT_TYPE, ct);
     }
     (
-        b.body(Body::from(bytes))
+        b.body(Body::from(out))
             .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()),
         input,
         output,

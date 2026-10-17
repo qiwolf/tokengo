@@ -49,6 +49,10 @@ impl Upstream {
     /// 返回 Ok 只表示"上游回了 HTTP 响应"，**不代表成功** —— 状态码是 200 还是 429
     /// 由调用方按 `classify_status` 判。返回 Err 表示网络层就没通（连不上/超时/TLS），
     /// 这属于渠道的毛病。
+    ///
+    /// `session` 是同一段对话稳定不变的会话 ID（自定义头 `{{session_id}}` 用）；
+    /// 探活/拉清单这类没有请求体的场合传 `None` —— 那时这个头不会发出去。
+    #[allow(clippy::too_many_arguments)]
     pub async fn call(
         &self,
         channel: &Channel,
@@ -59,6 +63,7 @@ impl Upstream {
         timeout: Duration,
         uuid: &str,
         now_ms: i64,
+        session: Option<&str>,
     ) -> Result<reqwest::Response, ChannelFault> {
         let url = join_url(&channel.base_url, path);
         let mut rb = self
@@ -71,7 +76,7 @@ impl Upstream {
         if stream {
             rb = rb.header(reqwest::header::ACCEPT, "text/event-stream");
         }
-        for (name, value) in build_headers(channel, secret, uuid, now_ms) {
+        for (name, value) in build_headers(channel, secret, uuid, now_ms, session) {
             rb = rb.header(name, value);
         }
         rb.send().await.map_err(|e| ChannelFault {
@@ -92,7 +97,7 @@ impl Upstream {
         now_ms: i64,
     ) -> Result<u16, ChannelFault> {
         let r = self
-            .call(channel, secret, path, body, false, timeout, uuid, now_ms)
+            .call(channel, secret, path, body, false, timeout, uuid, now_ms, None)
             .await?;
         Ok(r.status().as_u16())
     }
@@ -113,7 +118,7 @@ impl Upstream {
         now_ms: i64,
     ) -> Result<(u16, String), ChannelFault> {
         let r = self
-            .call(channel, secret, path, body, false, timeout, uuid, now_ms)
+            .call(channel, secret, path, body, false, timeout, uuid, now_ms, None)
             .await?;
         let code = r.status().as_u16();
         let text = r.text().await.unwrap_or_default();
@@ -140,7 +145,7 @@ impl Upstream {
             .get(&url)
             .timeout(timeout)
             .header(reqwest::header::ACCEPT, "application/json");
-        for (name, value) in build_headers(channel, secret, uuid, now_ms) {
+        for (name, value) in build_headers(channel, secret, uuid, now_ms, None) {
             rb = rb.header(name, value);
         }
         let r = rb.send().await.map_err(|e| ChannelFault {
@@ -283,12 +288,17 @@ pub fn cap_chars(s: &str, max: usize) -> String {
 /// 这条渠道本次请求要带的头（自定义头在前，Authorization 最后 ——
 /// 免得用户自定义头里写了个 Authorization 又被覆盖，反过来更好查）。
 ///
-/// 模板逐请求求值：`{{uuid}}` 每次都是新的，就是这个让 OpenCode 那条路能通。
+/// 模板逐请求求值：`{{uuid}}` 每次都是新的，就是这个让 OpenCode 那条路能通；
+/// `{{session_id}}` 是同一段对话稳定不变的那个（`session` 为 None 时 —— 探活、
+/// 拉清单 —— 渲染成空，**整条头不发**：宁可这个头不发出去，也不要发一个空值去上游碰运气）。
+///
+/// 名字为空、值渲染后为空的头一律丢掉。
 pub fn build_headers(
     channel: &Channel,
     secret: Option<&str>,
     uuid: &str,
     now_ms: i64,
+    session: Option<&str>,
 ) -> Vec<(String, String)> {
     let mut out = Vec::with_capacity(channel.headers.len() + 1);
     for (name, value) in &channel.headers {
@@ -296,7 +306,11 @@ pub fn build_headers(
         if name.is_empty() || name.eq_ignore_ascii_case("authorization") && secret.is_none() {
             continue;
         }
-        out.push((name.to_string(), render_header_value(value, uuid, now_ms)));
+        let value = render_header_value(value, uuid, now_ms, session);
+        if value.trim().is_empty() {
+            continue;
+        }
+        out.push((name.to_string(), value));
     }
     if let Some(s) = secret.filter(|s| !s.trim().is_empty()) {
         out.push(("authorization".to_string(), format!("Bearer {}", s.trim())));
@@ -323,6 +337,8 @@ mod tests {
             priority: 0,
             model_alias: Some("deepseek/deepseek-v4.1-flash".into()),
             vision: false,
+            drop_fields: vec![],
+            unwrap_envelope: false,
             headers: headers
                 .into_iter()
                 .map(|(a, b)| (a.to_string(), b.to_string()))
@@ -349,16 +365,22 @@ mod tests {
 
     #[test]
     fn the_channel_key_becomes_a_bearer_header() {
-        let h = build_headers(&channel("https://x/v1", vec![]), Some("sk-abc"), "u", 1);
+        let h = build_headers(
+            &channel("https://x/v1", vec![]),
+            Some("sk-abc"),
+            "u",
+            1,
+            None,
+        );
         assert_eq!(h, vec![("authorization".to_string(), "Bearer sk-abc".to_string())]);
     }
 
     #[test]
     fn a_channel_without_a_key_sends_no_authorization_at_all() {
         // OpenCode Zen 这类上游不需要 key，塞个空的 Bearer 反而被打回
-        let h = build_headers(&channel("https://x/v1", vec![]), None, "u", 1);
+        let h = build_headers(&channel("https://x/v1", vec![]), None, "u", 1, None);
         assert!(h.is_empty(), "没有 key 就不该带头: {h:?}");
-        let h = build_headers(&channel("https://x/v1", vec![]), Some("   "), "u", 1);
+        let h = build_headers(&channel("https://x/v1", vec![]), Some("   "), "u", 1, None);
         assert!(h.is_empty());
     }
 
@@ -373,12 +395,34 @@ mod tests {
                 ("x-ts", "{{timestamp_ms}}"),
             ],
         );
-        let a = build_headers(&l, None, "AAA", 1000);
-        let b = build_headers(&l, None, "BBB", 1000);
+        let a = build_headers(&l, None, "AAA", 1000, None);
+        let b = build_headers(&l, None, "BBB", 1000, None);
         assert_eq!(a[0], ("x-opencode-client".to_string(), "cli".to_string()));
         assert_eq!(a[1], ("x-opencode-session".to_string(), "AAA".to_string()));
         assert_eq!(b[1], ("x-opencode-session".to_string(), "BBB".to_string()));
         assert_eq!(a[2].1, "1000");
+    }
+
+    /// 会话 ID 走的是**另一个**模板：同一段对话两次请求必须带同一个值。
+    #[test]
+    fn the_session_header_carries_the_stable_id_and_is_dropped_when_there_is_none() {
+        let l = channel(
+            "https://x/v1",
+            vec![
+                ("x-opencode-session", "{{session_id}}"),
+                ("x-opencode-request", "{{uuid}}"),
+            ],
+        );
+        let a = build_headers(&l, None, "AAA", 1000, Some("sess-1"));
+        let b = build_headers(&l, None, "BBB", 1000, Some("sess-1"));
+        assert_eq!(a[0].1, "sess-1");
+        assert_eq!(b[0].1, "sess-1", "会话头不许跟着 uuid 一起变");
+        assert_eq!(a[1].1, "AAA");
+        assert_eq!(b[1].1, "BBB");
+        // 探活/拉清单：没有会话 → 这个头整条不发（不是发一个空值）
+        let c = build_headers(&l, None, "AAA", 1000, None);
+        assert_eq!(c.len(), 1, "空值的头必须被丢掉: {c:?}");
+        assert_eq!(c[0].0, "x-opencode-request");
     }
 
     #[test]

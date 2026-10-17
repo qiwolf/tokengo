@@ -43,6 +43,11 @@ pub struct ModelPair {
     /// 这个模型名在这条渠道上能不能吃图片输入（面板上的「能看图」勾选）。
     #[serde(default)]
     pub vision: bool,
+    /// 发上游前要丢掉的请求体顶层字段，逗号分隔（面板上的「要丢的字段」输入框）。
+    ///
+    /// 例：opencode 的 `beam-free` 不认 `reasoning_effort`，不丢就必然 400。
+    #[serde(default)]
+    pub drop_fields: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -52,6 +57,9 @@ pub struct Channel {
     pub base_url: String,
     pub enabled: bool,
     pub has_secret: bool,
+    /// 非流式响应外面套了一层壳时自动剥掉（面板上的「响应解包」勾选）。
+    #[serde(default)]
+    pub unwrap_envelope: bool,
     #[serde(default)]
     pub headers: Vec<HeaderPair>,
     #[serde(default)]

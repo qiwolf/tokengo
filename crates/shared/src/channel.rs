@@ -7,6 +7,7 @@
 //! **全部**是 `platform=custom`，一个内置适配器都没用到 —— 所以那些代码一行都不要。
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// 渠道的数据库主键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -42,6 +43,21 @@ pub struct Channel {
     /// 或让上游回一个含糊的 400）。
     #[serde(default)]
     pub vision: bool,
+    /// 这个模型名发过去之前要**丢掉哪些请求体顶层字段**（面板上填「要丢的字段」）。
+    ///
+    /// 有的上游收下参数却直接回 400：opencode 的 `beam-free` 不认 `reasoning_effort`
+    /// （Hermes 默认发 high），实测 4 天里 28 次请求就这么整条失败 —— 现在只能靠外挂
+    /// python 中转替它剥掉。**挂在「按渠道模型名」这一行上**，因为同一个上游对不同
+    /// 模型认的参数不一样，挂渠道上会把别的模型一起改坏。
+    #[serde(default)]
+    pub drop_fields: Vec<String>,
+    /// **非流式响应外面套了一层壳时自动剥掉**（面板上勾「响应解包」）。
+    ///
+    /// 有的上游不直接回 OpenAI 形状，而是包一层：`{"data": {<标准响应>}, "success": true}`
+    /// （cline.bot 的 ClinePass 就是这样）。不剥的话客户端读顶层的 `choices` 只能读到空。
+    /// 只在「`data` 是对象、且它里面有 `choices`」时才剥，别的一律原样透传 —— 不猜。
+    #[serde(default)]
+    pub unwrap_envelope: bool,
     /// 自定义请求头。上游 FreeLLMAPI 没有这个能力，本项目主动加上。
     /// 值支持模板：`{{uuid}}`、`{{timestamp_ms}}`，逐请求求值。
     #[serde(default)]
@@ -84,9 +100,88 @@ impl ModelGroup {
 /// 有的上游要求逐请求变化的头（OpenCode Zen 的 `x-opencode-session` 要新 UUID），
 /// 写死的头做不到 —— 上游 FreeLLMAPI 当年就是因为这个（把 extraHeaders 从
 /// 「可传函数」退回「只能传死值」）彻底放弃了 OpenCode 那条路。
-pub fn render_header_value(tpl: &str, uuid: &str, now_ms: i64) -> String {
+///
+/// 现在支持三个模板：
+///
+/// - `{{uuid}}`：每次尝试一个新 UUID（要「逐请求都不一样」的头用它）；
+/// - `{{timestamp_ms}}`：当前毫秒时间戳；
+/// - `{{session_id}}`：**同一段对话稳定不变**（要「同一段对话保持一致」的头用它，
+///   见 [`session_id_from_body`]；探活/拉清单这类没有请求体的场合会渲染成空，
+///   空的头不发出去）。
+pub fn render_header_value(tpl: &str, uuid: &str, now_ms: i64, session: Option<&str>) -> String {
     tpl.replace("{{uuid}}", uuid)
         .replace("{{timestamp_ms}}", &now_ms.to_string())
+        // 没有会话的场合（探活、拉模型清单）替换成空串，由 build_headers 把「渲染后为空」
+        // 的头整条丢掉：宁可这个头不发出去，也不要发一个空的 x-opencode-session 去上游碰运气。
+        .replace("{{session_id}}", session.unwrap_or(""))
+}
+
+/// 从请求体里算一个**同一段对话稳定不变**的会话 ID（32 位十六进制）。
+///
+/// 为什么要它：OpenCode Zen 这类上游靠 `x-opencode-session` 认「这还是同一段对话」——
+/// 同一个 ID 的后续请求能命中上游的提示缓存；用 `{{uuid}}` 每轮都换新 ID，等于每轮都
+/// 让上游从头算一遍，又慢又贵。现网那个 python 中转（`ocgo-relay`）就是干这个的，
+/// 这里是它的等价物，好让那条中转可以退役。
+///
+/// 取法：**首条 user 消息的正文** → 哈希取前 32 位。同段对话的第一条 user 消息不变，
+/// 所以 ID 稳定；换一段对话必然不同。三种形状都认：
+///
+/// - `content` 是字符串（最常见）；
+/// - `content` 是数组（多模态）→ 只取其中的文字段，图片那一段不参与（base64 又长又变）；
+/// - 一条 user 消息都没有（工具调用接力之类）→ 退化成**整个请求体的哈希**，
+///   仍然稳定、仍然不随机。
+///
+/// 只有连退化都做不到（空请求体）才返回 `None`，交给调用方决定怎么兜。
+///
+/// 输入一律先截断再哈希：上万个 token 的大 prompt 不该为了算个 ID 被完整哈希一遍。
+pub fn session_id_from_body(body: &Value) -> Option<String> {
+    /// 只取头一段，够区分对话就行；也挡住超大 prompt / base64 图的哈希开销。
+    const MAX_SEED: usize = 4096;
+
+    let seed: Option<String> = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .and_then(|msgs| {
+            msgs.iter()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                .map(|m| m.get("content"))
+        })
+        .and_then(|content| match content {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            Some(Value::Array(parts)) => {
+                let text: String = parts
+                    .iter()
+                    .filter_map(|p| {
+                        matches!(
+                            p.get("type").and_then(|t| t.as_str()),
+                            Some("text") | Some("input_text") | None
+                        )
+                        .then(|| p.get("text").and_then(|t| t.as_str()))
+                        .flatten()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (!text.is_empty()).then_some(text)
+            }
+            _ => None,
+        });
+
+    let seed = match seed {
+        Some(s) => s,
+        // 退化：整个请求体的稳定序列化（serde_json 的键序由数据决定，同一个 Value 每次一样）
+        None => serde_json::to_string(body).ok().filter(|s| s != "null" && s != "{}")?,
+    };
+    let seed: String = seed.chars().take(MAX_SEED).collect();
+    Some(short_hash(&seed))
+}
+
+/// 32 位十六进制的短哈希（sha256 前 16 字节）。算会话 ID 与请求指纹都用它。
+pub fn short_hash(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let d = h.finalize();
+    d[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// 这个请求体里有没有图片（客户端是不是在让模型看图）。
@@ -120,6 +215,60 @@ pub fn request_has_image(body: &serde_json::Value) -> bool {
     })
 }
 
+/// 发上游之前把这条渠道/这个模型不认的顶层字段丢掉。返回新体（**不改原体**）。
+///
+/// 为什么要有它：有的上游是「收下参数再回 400」—— opencode 的 `beam-free` 不认
+/// `reasoning_effort`，Hermes 默认发 high，于是整条请求必然失败（现网实测 4 天 28 次）。
+/// 上游 FreeLLMAPI 没这个能力，只能在外挂 python 中转里写死 `if 模型 == beam-free
+/// 就删掉这个字段`；这里改成按「渠道 + 模型名」配一份清单，代码不认模型名。
+///
+/// 只在顶层删（`messages` 里的字段不碰）；字段名逐字符精确匹配，大小写敏感 ——
+/// 宁可少删（上游报错看得见）也不要凭大小写猜着删（静默改坏请求体最难查）。
+pub fn strip_fields(body: &Value, fields: &[String]) -> Value {
+    let mut v = body.clone();
+    if fields.is_empty() {
+        return v;
+    }
+    if let Some(obj) = v.as_object_mut() {
+        for name in fields {
+            let name = name.trim();
+            if !name.is_empty() {
+                obj.remove(name);
+            }
+        }
+    }
+    v
+}
+
+/// 非流式响应外面套了一层壳时，把它剥掉。剥到了返回 true。
+///
+/// 认得的形状只有一种（cline.bot 的 ClinePass）：
+///
+/// ```json
+/// {"data": {"choices": [...], "usage": {...}}, "success": true}
+/// ```
+///
+/// **只在 `data` 是对象且里面有 `choices` 时才剥**，别的一律原样透传 —— 这跟面板上
+/// 「响应解包」那个勾选是配套的：用户明确知道这条上游是这种形状才勾，网关不猜。
+/// 剥的时候把外壳的 `success`（如果有）留在里层，客户端原来能读到的字段不会丢。
+pub fn unwrap_envelope(body: &mut Value) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let Some(inner) = obj.get("data").and_then(|d| d.as_object()) else {
+        return false;
+    };
+    if !inner.contains_key("choices") {
+        return false;
+    }
+    let mut inner = inner.clone();
+    if let Some(success) = obj.get("success").filter(|s| s.is_boolean()) {
+        inner.entry("success".to_string()).or_insert(success.clone());
+    }
+    *body = Value::Object(inner);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +282,8 @@ mod tests {
             priority: id as i32,
             model_alias: alias.map(str::to_owned),
             vision: false,
+            drop_fields: vec![],
+            unwrap_envelope: false,
             headers: vec![],
         }
     }
@@ -172,10 +323,157 @@ mod tests {
 
     #[test]
     fn header_templates_are_rendered_per_request() {
-        let a = render_header_value("sess-{{uuid}}", "AAA", 1);
-        let b = render_header_value("sess-{{uuid}}", "BBB", 1);
+        let a = render_header_value("sess-{{uuid}}", "AAA", 1, None);
+        let b = render_header_value("sess-{{uuid}}", "BBB", 1, None);
         assert_ne!(a, b, "逐请求必须生成不同的值");
-        assert_eq!(render_header_value("t={{timestamp_ms}}", "x", 1234), "t=1234");
+        assert_eq!(render_header_value("t={{timestamp_ms}}", "x", 1234, None), "t=1234");
+    }
+
+    #[test]
+    fn the_session_template_uses_the_stable_id() {
+        assert_eq!(
+            render_header_value("{{session_id}}", "u", 1, Some("deadbeef")),
+            "deadbeef"
+        );
+        assert_eq!(
+            render_header_value("s-{{session_id}}", "u", 1, None),
+            "s-",
+            "没有会话的场合（探活/拉清单）渲染成空，由 build_headers 整条丢掉"
+        );
+    }
+
+    /// 会话 ID 的全部意义就在这两条：同段对话稳定、换段对话必须变。
+    #[test]
+    fn the_session_id_is_stable_for_one_conversation_and_changes_for_another() {
+        let body = |text: &str| {
+            serde_json::json!({
+                "model": "auto",
+                "messages": [
+                    {"role": "system", "content": "你是助手"},
+                    {"role": "user", "content": text},
+                    {"role": "assistant", "content": "好的"},
+                ]
+            })
+        };
+        let a = session_id_from_body(&body("帮我看下这段代码")).unwrap();
+        // 同一段对话的下一轮：第一条 user 消息没变，后面接了更多轮
+        let mut later = body("帮我看下这段代码");
+        later["messages"].as_array_mut().unwrap().extend([
+            serde_json::json!({"role": "user", "content": "再改一下"}),
+        ]);
+        assert_eq!(a, session_id_from_body(&later).unwrap(), "同段对话必须同一个 ID");
+        assert_eq!(a.len(), 32);
+        // 换一段对话必须换 ID（不然两段对话会共用上游的提示缓存）
+        assert_ne!(a, session_id_from_body(&body("帮我看下这段日志")).unwrap());
+    }
+
+    /// 多模态：只认文字段（图片 base64 又长又变，参与哈希会让 ID 每次都变）。
+    #[test]
+    fn a_multimodal_first_message_hashes_only_its_text_parts() {
+        let body = |url: &str| {
+            serde_json::json!({
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": "这张图里是什么"},
+                    {"type": "image_url", "image_url": {"url": url}}
+                ]}]
+            })
+        };
+        let a = session_id_from_body(&body("data:image/png;base64,AAAA")).unwrap();
+        let b = session_id_from_body(&body("data:image/png;base64,BBBB")).unwrap();
+        assert_eq!(a, b, "换一张图不该换会话 ID（图内容不进哈希）");
+        // 文字变了就一定要变
+        let mut other = body("data:image/png;base64,AAAA");
+        other["messages"][0]["content"][0]["text"] = serde_json::json!("换个问题");
+        assert_ne!(a, session_id_from_body(&other).unwrap());
+    }
+
+    /// 没有 user 消息（工具调用接力）→ 退化成整包哈希，**不随机**。
+    #[test]
+    fn a_body_without_a_user_message_falls_back_to_the_whole_body_and_stays_stable() {
+        let body = serde_json::json!({
+            "messages": [{"role": "assistant", "tool_calls": [{"id": "1"}]}],
+            "tools": [{"type": "function"}]
+        });
+        let a = session_id_from_body(&body).unwrap();
+        assert_eq!(a, session_id_from_body(&body).unwrap(), "退化路径也必须是稳定的");
+        assert_ne!(
+            a,
+            session_id_from_body(&serde_json::json!({
+                "messages": [{"role": "assistant", "tool_calls": [{"id": "2"}]}]
+            }))
+            .unwrap()
+        );
+        // 连退化都做不到才返回 None（调用方自己兜一个随机的）
+        assert!(session_id_from_body(&serde_json::json!({})).is_none());
+        assert!(session_id_from_body(&serde_json::Value::Null).is_none());
+    }
+
+    /// 大 prompt 不该为了算 ID 被整段哈希（现网那条 python 中转就是在这上面吃满内存的）。
+    #[test]
+    fn a_huge_prompt_is_truncated_before_hashing() {
+        let long = "字".repeat(200_000);
+        let mut body = serde_json::json!({
+            "messages": [{"role": "user", "content": long.clone()}]
+        });
+        let a = session_id_from_body(&body).unwrap();
+        // 只改第 100 万个字符之后的内容：ID 不变（说明哈希只看了开头那段）
+        body["messages"][0]["content"] = serde_json::json!(format!("{long}{}", "尾".repeat(50_000)));
+        assert_eq!(a, session_id_from_body(&body).unwrap());
+        assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn drop_fields_removes_only_the_listed_top_level_fields() {
+        let body = serde_json::json!({
+            "model": "beam-free",
+            "reasoning_effort": "high",
+            "messages": [{"role": "user", "content": "hi", "extra": 1}],
+            "stream": false
+        });
+        let out = strip_fields(&body, &["reasoning_effort".to_string()]);
+        assert!(out.get("reasoning_effort").is_none());
+        // 别的字段一个都不能动（尤其 messages 里面同名的字段）
+        assert_eq!(out["model"], "beam-free");
+        assert_eq!(out["stream"], false);
+        assert_eq!(out["messages"][0]["extra"], 1);
+        // 原体不被改（调用方还要拿它记别的账）
+        assert_eq!(body["reasoning_effort"], "high");
+        // 空白项、项外的字段名都不许误伤
+        let out = strip_fields(&body, &["  ".to_string(), "Reasoning_Effort".to_string()]);
+        assert_eq!(out["reasoning_effort"], "high", "大小写不匹配就不许删");
+        // 空清单 = 原样
+        assert_eq!(strip_fields(&body, &[]), body);
+    }
+
+    #[test]
+    fn an_enveloped_response_is_unwrapped_only_when_it_really_is_one() {
+        // cline.bot 的真形状
+        let mut v = serde_json::json!({
+            "data": {"choices": [{"message": {"content": "你好"}}], "usage": {"prompt_tokens": 3}},
+            "success": true
+        });
+        assert!(unwrap_envelope(&mut v));
+        assert_eq!(v["choices"][0]["message"]["content"], "你好");
+        assert_eq!(v["usage"]["prompt_tokens"], 3);
+        assert_eq!(v["success"], true, "外壳上的 success 要留在里层");
+
+        // 反证：普通 OpenAI 响应（顶层就有 choices）一个字节都不该动
+        let mut v = serde_json::json!({"choices": [{"message": {"content": "x"}}], "usage": {}});
+        let before = v.clone();
+        assert!(!unwrap_envelope(&mut v));
+        assert_eq!(v, before);
+
+        // 反证：data 是数组 / data 里没有 choices / 不是对象 —— 都不猜
+        for mut v in [
+            serde_json::json!({"data": [1, 2, 3], "success": true}),
+            serde_json::json!({"data": {"result": "ok"}, "success": true}),
+            serde_json::json!({"data": "字符串", "success": true}),
+            serde_json::json!({"success": true}),
+        ] {
+            let before = v.clone();
+            assert!(!unwrap_envelope(&mut v), "不该剥的形状被剥了：{before}");
+            assert_eq!(v, before);
+        }
     }
 
     #[test]

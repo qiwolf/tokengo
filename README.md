@@ -53,7 +53,18 @@ Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测�
 
 自定义请求头是**上游没有、本项目主动加的**能力：FreeLLMAPI 的 `api_keys` 表
 18 个字段里没有 header 列，面板也没入口，所以 OpenCode Go 这类要求特定请求头的上游
-只能靠外挂脚本中转。这里加了，且支持逐请求变化的模板（`{{uuid}}`、`{{timestamp_ms}}`）。
+只能靠外挂脚本中转。这里加了，且支持逐请求变化的模板（`{{uuid}}`、`{{timestamp_ms}}`、
+`{{session_id}}` —— 同一个 ID 在同一段对话里不变，上游靠它认「这还是同一段对话」）。
+
+## 渠道级请求/响应适配（把两条外挂 python 中转接过来）
+
+现网有两件事只能靠外挂 python 中转干，网关自己不会（见 `docs/11-渠道适配.md`）：
+OpenCode Go 要求带上「同一段对话同一个 ID」的会话头，cline.bot 的正常回复外面套了一层壳。
+现在有了这三项，两条中转（3157 / 3158）可以退役：
+
+    {{session_id}} 模板   同一段对话稳定不变（首条 user 消息 → 哈希），首条没取到就退化成整包哈希
+    要丢的字段            按「渠道 + 模型名」声明发上游前删哪些顶层字段（beam-free 不认 reasoning_effort）
+    响应解包              勾了才剥 cline.bot 那种 {"data": {…}, "success": true} 外壳
 
 ## 工作区
 
@@ -70,7 +81,7 @@ Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测�
 
 ```bash
 cargo build --release -p tokengo-server
-cargo test  --workspace                 # 178 条测试（服务端 + 面板纯逻辑）
+cargo test  --workspace                 # 226 条测试（服务端 + 面板纯逻辑）
 cargo run   -p tokengo-cli -- routing   # 把默认路由参数走一遍状态机
 ```
 
@@ -114,6 +125,7 @@ GitHub 还没有远端；未经明确指令不推。
 | 4 | 部署到 LXC + 影子并行 + 切换 | **已部署到 CT112 并接上 `gateway.example.com`（只部署、未切换）** —— 见 `docs/08-CT112-部署记录.md`；切换步骤见 `docs/07-阶段4-部署预案.md`，待批准 |
 | 4.1 | 视觉能力标记（哪些模型能看图） | **已完成并上 CT112** —— 能力只认真机实测，带图请求只走标了「能看图」的渠道，一条都没有就 422 `no_vision_model`。见 `docs/09-视觉能力.md` |
 | 4.2 | 面板改版：手机端重排 + 日间/夜间主题 + 术语「腿」→「渠道」 | **已完成并上 CT112（v0.2.0）** —— 手机 375–390px 逐页自检过（表格变卡片、抽屉导航、弹窗整屏、输入框 16px 防缩放）；桌面端样式不变。见 `docs/06-面板.md` |
+| 4.4 | 渠道级请求/响应适配（`{{session_id}}` / 要丢的字段 / 响应解包） | **已完成，待发版（v0.3.2）** —— 让现网两条外挂 python 中转（3157 opencode-go、3158 cline.bot）可以退役；依据是现网 4 天 10 万次请求的账。见 `docs/11-渠道适配.md` |
 
 ## 与现网 FreeLLMAPI 的差异
 

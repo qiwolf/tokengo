@@ -224,11 +224,13 @@ fn channel_json(l: &channels::ChannelRow) -> serde_json::Value {
         "base_url": l.base_url,
         "enabled": l.enabled,
         "has_secret": l.has_secret,
+        "unwrap_envelope": l.unwrap_envelope,
         "headers": l.headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect::<Vec<_>>(),
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
             "upstream": m.upstream,
             "vision": m.vision,
+            "drop_fields": m.drop_fields_text(),
         })).collect::<Vec<_>>(),
         // 这条渠道上「能看图」的模型名有几个 —— 渠道列表里直接显示，不用展开也知道。
         "vision_count": l.models.iter().filter(|m| m.vision).count(),
@@ -259,6 +261,9 @@ struct ModelIn {
     /// 这个模型名在这条渠道上能不能吃图片输入（面板上的「能看图」勾选）。
     #[serde(default)]
     vision: bool,
+    /// 发上游前要丢掉的请求体顶层字段，逗号分隔（如 `reasoning_effort`）。
+    #[serde(default)]
+    drop_fields: String,
 }
 
 #[derive(Deserialize)]
@@ -267,6 +272,9 @@ struct ChannelBody {
     base_url: String,
     #[serde(default = "default_true")]
     enabled: bool,
+    /// 非流式响应外面套了一层壳时自动剥掉（面板上的「响应解包」勾选）。
+    #[serde(default)]
+    unwrap_envelope: bool,
     /// 明文密钥。留空表示不改动已存的（新建时留空 = 没密钥）。
     key: Option<String>,
     #[serde(default)]
@@ -293,11 +301,14 @@ impl ChannelBody {
             .iter()
             .filter(|m| !m.model.trim().is_empty())
             .map(|m| {
-                channels::ModelMapping::new(
+                let mut mapping = channels::ModelMapping::new(
                     m.model.clone(),
                     m.upstream.clone().filter(|u| !u.trim().is_empty()),
                     m.vision,
-                )
+                );
+                mapping.drop_fields =
+                    channels::ModelMapping::drop_fields_from_text(&m.drop_fields);
+                mapping
             })
             .collect()
     }
@@ -318,6 +329,7 @@ async fn channels_create(
                 name: body.name.clone(),
                 base_url: body.base_url.clone(),
                 enabled: body.enabled,
+                unwrap_envelope: body.unwrap_envelope,
             },
         )?;
         if let Some(k) = body.key.as_deref().filter(|k| !k.trim().is_empty()) {
@@ -342,7 +354,14 @@ async fn channels_update(
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
     crate::db::in_tx(&conn, |c| {
-        channels::update(c, id, &body.name, &body.base_url, body.enabled)?;
+        channels::update(
+            c,
+            id,
+            &body.name,
+            &body.base_url,
+            body.enabled,
+            body.unwrap_envelope,
+        )?;
         // 密钥：传了才改；传空串 = 明确要清掉
         match body.key.as_deref() {
             Some("") => channels::clear_secret(c, id)?,
@@ -402,6 +421,8 @@ fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<O
             priority: 0,
             model_alias: None,
             vision: false,
+            drop_fields: vec![],
+            unwrap_envelope: false,
             headers: row.headers.clone(),
         },
         secret,

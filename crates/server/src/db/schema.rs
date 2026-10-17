@@ -168,4 +168,25 @@ DROP INDEX IF EXISTS idx_requests_leg;
 CREATE INDEX idx_requests_channel ON requests (channel_id, ts_ms DESC);
 "#,
     ),
+    (
+        4,
+        r#"
+-- 渠道级请求/响应适配（2026-10-17）：把现网两条 python 中转（ocgo-relay 3157、
+-- cline-relay 3158）的活接过来，这样它们才能退役。下面两项都不是猜出来的，是现网
+-- 4 天 10 万次请求的账算出来的（第三项「稳定会话 ID」是请求头模板 {{session_id}}，
+-- 不需要建表：见 shared::channel::session_id_from_body）：
+--
+-- 1. `channel_models.drop_fields` —— 有的上游收下参数再回 400。opencode 的
+--    `beam-free` 不认 `reasoning_effort`（Hermes 默认发 high），实测 28 次请求
+--    整条失败。挂在「客户端模型名 → 上游模型名」这一行上：同一个上游对不同模型
+--    认的参数不一样（同一条 ocgo 渠道上 `deepseek-v4.1-flash` 就认），挂渠道上
+--    会把别的模型一起改坏。逗号分隔的顶层字段名。
+ALTER TABLE channel_models ADD COLUMN drop_fields TEXT NOT NULL DEFAULT '';
+
+-- 2. `channels.unwrap_envelope` —— cline.bot 的非流式响应被包了一层
+--    `{"data": {<标准 OpenAI 响应>}, "success": true}`，不剥客户端读顶层
+--    `choices` 只能读到空。默认 0 = 不剥（不认识的形状一个字节都不动）。
+ALTER TABLE channels ADD COLUMN unwrap_envelope INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
 ];
