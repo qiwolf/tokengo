@@ -588,6 +588,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 "值支持模板：" <code>"{{uuid}}"</code> "（每次请求换新 UUID）、"
                                 <code>"{{timestamp_ms}}"</code> "（当前毫秒）。"
                             </p>
+                            <div class="table-wrap">
                             <table class="grid tight">
                                 <tbody>
                                     {move || {
@@ -648,6 +649,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     }}
                                 </tbody>
                             </table>
+                            </div>
                             <button class="ghost" on:click=move |_| {
                                 f_headers.update(|v| v.push(HeaderPair::default()));
                                 form_ver.update(|v| *v += 1);
