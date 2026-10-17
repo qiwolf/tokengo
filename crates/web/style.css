@@ -326,6 +326,9 @@ details.fold > summary {
 }
 details.fold > summary:hover { color: var(--text); }
 details.fold[open] > summary { margin-bottom: .4rem; }
+/* 弹窗里的说明折叠区：不要那条大上边距，它在表格和标题之间只是个小提示 */
+details.fold.tight { margin: .6rem 0 .2rem; border-top: none; padding-top: 0; }
+details.fold.tight > summary { font-size: .85rem; }
 
 /* ══════ 平板及以上：内容宽一点、字段变两栏 ══════ */
 @media (min-width: 601px) {
