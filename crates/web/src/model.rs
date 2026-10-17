@@ -347,6 +347,12 @@ pub struct VisionTest {
     pub http_status: Option<i64>,
     #[serde(default)]
     pub latency_ms: Option<i64>,
+    /// 这次给了多少输出额度（被截断时能看出来是我们额度给少了）。
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// 第一发被截断（`finish_reason=length`）、又给更多额度重问过一次。
+    #[serde(default)]
+    pub retried_with_more_tokens: bool,
     /// 上游回的话（原样，不加工）—— 人自己判断它是不是真看见了。
     #[serde(default)]
     pub reply: Option<String>,

@@ -374,6 +374,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     if let Some(ms) = r.latency_ms {
                         s.push_str(&format!("；{}", fmt::dur(ms)));
                     }
+                    if r.retried_with_more_tokens {
+                        s.push_str("；第一次给的额度不够、回复被截断，已给更多额度重问过");
+                    } else if !r.ok {
+                        if let Some(t) = r.max_tokens {
+                            s.push_str(&format!("；这次给了 {t} 输出额度"));
+                        }
+                    }
                     if let Some(reply) = r.reply.as_deref().filter(|x| !x.trim().is_empty()) {
                         s.push_str(&format!("；它回的话「{reply}」"));
                     }
