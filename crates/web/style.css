@@ -147,6 +147,7 @@ table.grid tr:hover td { background: rgba(255,255,255,.02); }
 .tag.muted { color: var(--muted); }
 
 .banner { border-radius: 8px; padding: .5rem .8rem; margin-bottom: .75rem; }
+.banner.ok { background: rgba(52,211,153,.12); color: var(--ok); border: 1px solid rgba(52,211,153,.35); }
 .banner.bad { background: rgba(248,113,113,.12); color: var(--bad); border: 1px solid rgba(248,113,113,.35); }
 .probe-row td { background: rgba(255,255,255,.02); }
 .probe.ok { color: var(--ok); }
@@ -166,6 +167,22 @@ table.grid tr:hover td { background: rgba(255,255,255,.02); }
   padding: 1.25rem; width: min(46rem, 96vw);
 }
 .modal-foot { display: flex; gap: .5rem; align-items: center; margin-top: 1.25rem; }
+
+/* ── 拉上游模型清单 ── */
+.pull-bar { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: .4rem 0 .6rem; }
+.pull-list {
+  border: 1px solid var(--line); border-radius: 8px; padding: .6rem .7rem;
+  background: var(--panel-2); margin-bottom: .8rem;
+}
+.pull-head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .5rem; }
+.pull-head input[type="text"] { flex: 1 1 14rem; min-width: 10rem; }
+.pull-rows {
+  max-height: 16rem; overflow-y: auto; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .15rem .8rem;
+}
+.pick { display: flex; gap: .4rem; align-items: center; cursor: pointer; padding: .1rem 0; }
+.pick code { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick input[type="checkbox"] { flex: none; }
 
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
 @media (max-width: 60rem) {

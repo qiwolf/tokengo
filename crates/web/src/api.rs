@@ -161,6 +161,9 @@ pub async fn legs() -> Result<Vec<Leg>, ApiErr> {
 }
 
 /// 建腿/改腿。`key` 为 `None` = 不改密钥；`Some("")` = 明确清掉。
+///
+/// 返回新建腿的 id（改腿时返回 `None`）—— 面板新建完要马上能用这条腿自己的
+/// 凭据去拉上游模型清单，所以得知道它的 id。
 pub async fn save_leg(
     id: Option<i64>,
     name: &str,
@@ -169,7 +172,7 @@ pub async fn save_leg(
     key: Option<&str>,
     headers: &[HeaderPair],
     models: &[ModelPair],
-) -> Result<(), ApiErr> {
+) -> Result<Option<i64>, ApiErr> {
     let body = json!({
         "name": name,
         "base_url": base_url,
@@ -179,8 +182,11 @@ pub async fn save_leg(
         "models": models,
     });
     match id {
-        Some(i) => call("PUT", &format!("/api/legs/{i}"), Some(body)).await.map(|_| ()),
-        None => call("POST", "/api/legs", Some(body)).await.map(|_| ()),
+        Some(i) => call("PUT", &format!("/api/legs/{i}"), Some(body)).await.map(|_| None),
+        None => {
+            let v = call("POST", "/api/legs", Some(body)).await?;
+            Ok(v.get("id").and_then(|x| x.as_i64()))
+        }
     }
 }
 
@@ -191,6 +197,11 @@ pub async fn delete_leg(id: i64) -> Result<(), ApiErr> {
 /// 测一下连通性。`kind` 是 `chat` 或 `embeddings`。
 pub async fn probe_leg(id: i64, kind: &str) -> Result<ProbeResp, ApiErr> {
     typed("POST", &format!("/api/legs/{id}/probe?kind={kind}"), None).await
+}
+
+/// 拉这条腿的上游模型清单（真打它的 `GET /v1/models`）。
+pub async fn pull_leg_models(id: i64) -> Result<ModelPull, ApiErr> {
+    typed("POST", &format!("/api/legs/{id}/models"), None).await
 }
 
 pub async fn groups() -> Result<GroupsResp, ApiErr> {

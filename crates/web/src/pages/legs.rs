@@ -1,11 +1,15 @@
-//! 腿管理：增删改查 + 自定义请求头 + 按腿改模型名 + 「测一下」连通性。
+//! 腿管理：增删改查 + 自定义请求头 + 按腿改模型名 + 「测一下」连通性 + 拉上游模型清单。
 //!
-//! 两条纪律都落在界面上：
+//! 三条纪律都落在界面上：
 //!
 //! - **「测一下」不给假绿点**：真发一个请求，连不上/上游不收都如实报红，并写清原因；
 //!   这条腿没配模型名就直接说"探不了"，而不是拿虚拟组名 `auto` 去凑一个 400。
 //! - **密钥留空 = 不改**：编辑一条腿时密钥框留空表示沿用已存的；想清掉要**明确**点
 //!   「清空密钥」。不然每次改个名字都得重输一遍密钥。
+//! - **清单是上游说的，不是我们编的**：拉不到就只说实话（连不上/HTTP 404/格式没认出），
+//!   绝不给一份看着挺像的假清单。勾选也**默认一个不勾**，要加哪几条自己挑。
+
+use std::collections::BTreeSet;
 
 use leptos::prelude::*;
 
@@ -13,6 +17,39 @@ use crate::api;
 use crate::fmt;
 use crate::model::{HeaderPair, Leg, ModelPair};
 use crate::Ctx;
+
+/// 上游清单一次最多显示这么多行（真有上游报上千个模型，全塞进 DOM 会卡）。
+const SHOW_LIMIT: usize = 200;
+
+/// 按关键字过滤上游报的模型名（大小写不敏感），最多取 `limit` 个。
+pub(crate) fn filter_models(all: &[String], filter: &str, limit: usize) -> Vec<String> {
+    let needle = filter.trim().to_lowercase();
+    all.iter()
+        .filter(|m| needle.is_empty() || m.to_lowercase().contains(&needle))
+        .take(limit)
+        .cloned()
+        .collect()
+}
+
+/// 把勾选的模型名追加成「该腿认的模型名」表单行，返回加了几个。
+///
+/// 空名字跳过、表里已有的**不重复加**（否则连点两次就一堆重复行）。
+/// 加进来的行右边留空 = 同名发给上游；要改名人在右框里自己填。
+pub(crate) fn add_picked_rows(rows: &mut Vec<ModelPair>, picked: &BTreeSet<String>) -> usize {
+    let mut added = 0;
+    for name in picked {
+        let name = name.trim();
+        if name.is_empty() || rows.iter().any(|m| m.model.trim() == name) {
+            continue;
+        }
+        rows.push(ModelPair {
+            model: name.to_string(),
+            upstream: None,
+        });
+        added += 1;
+    }
+    added
+}
 
 /// 编辑表单的状态。
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +71,13 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     let probe_kind = RwSignal::new("chat".to_string());
     let probe_msg = RwSignal::new(None::<(i64, String, bool)>);
 
+    // 「拉取上游模型清单」的状态
+    let pulled = RwSignal::new(Vec::<String>::new());
+    let picked = RwSignal::new(BTreeSet::<String>::new());
+    let pull_msg = RwSignal::new(None::<(String, bool)>);
+    let pulling = RwSignal::new(false);
+    let pull_filter = RwSignal::new(String::new());
+
     // 表单字段
     let f_name = RwSignal::new(String::new());
     let f_url = RwSignal::new(String::new());
@@ -44,6 +88,14 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
     // 表单行的重绘开关：只有加/删行才 +1。**打字时不重绘**，否则输入框会丢焦点。
     let form_ver = RwSignal::new(0u32);
+
+    // 重新进表单：清掉上一次拉的清单，免得看着像这条腿的
+    let reset_pull = move || {
+        pulled.set(Vec::new());
+        picked.set(BTreeSet::new());
+        pull_msg.set(None);
+        pull_filter.set(String::new());
+    };
 
     let reload = move || {
         busy.set(true);
@@ -71,6 +123,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         f_key_note.set("新建时要填密钥；留空表示这条腿没有密钥。");
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
+        reset_pull();
         form_ver.update(|v| *v += 1);
         form.set(Form::New);
     };
@@ -87,6 +140,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         });
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
+        reset_pull();
         form_ver.update(|v| *v += 1);
         form.set(Form::Edit(l.id));
     };
@@ -121,9 +175,21 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
             match api::save_leg(id, &name, &url, enabled, key_arg.as_deref(), &headers, &models)
                 .await
             {
-                Ok(()) => {
-                    form.set(Form::Closed);
-                    ctx.say(if id.is_some() { "腿已保存" } else { "腿已新建" });
+                Ok(new_id) => {
+                    match new_id {
+                        // 新建：**表单不关**，直接切成"编辑这条新腿" ——
+                        // 这样能马上用它的 URL/密钥去拉上游模型清单，不用先关再点编辑
+                        Some(i) => {
+                            form.set(Form::Edit(i));
+                            f_key.set(String::new());
+                            f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
+                            ctx.say("腿已新建 —— 接着可以点「拉取上游模型清单」");
+                        }
+                        None => {
+                            form.set(Form::Closed);
+                            ctx.say("腿已保存");
+                        }
+                    }
                     reload();
                 }
                 Err(e) => {
@@ -144,7 +210,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
             match api::save_leg(Some(id), &name, &url, enabled, Some(""), &headers, &models).await {
-                Ok(()) => {
+                Ok(_) => {
                     f_key_note.set("已清空这条腿的密钥。");
                     ctx.say("密钥已清空");
                     reload();
@@ -216,6 +282,90 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                 }
             }
         });
+    };
+
+    // 拉这条腿的上游模型清单：真打一次 GET /v1/models。
+    let pull = move |_| {
+        let Form::Edit(id) = form.get_untracked() else {
+            ctx.say("这条腿还没保存：先点「保存」，再用它自己的 URL 和密钥去拉清单");
+            return;
+        };
+        pulling.set(true);
+        pull_msg.set(Some(("正在真打上游的 /v1/models…".into(), true)));
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::pull_leg_models(id).await {
+                Ok(r) => {
+                    pulling.set(false);
+                    let mut s = String::new();
+                    s.push_str(if r.ok {
+                        "拉到清单了"
+                    } else {
+                        "没拉到清单"
+                    });
+                    if r.ok {
+                        s.push_str(&format!("：{} 个模型名", r.count));
+                    }
+                    if let Some(u) = &r.url {
+                        s.push_str(&format!("；打的地址 {u}"));
+                    }
+                    if let Some(code) = r.http_status {
+                        s.push_str(&format!("；HTTP {code}"));
+                    }
+                    if let Some(ms) = r.latency_ms {
+                        s.push_str(&format!("；{}", fmt::dur(ms)));
+                    }
+                    if let Some(n) = &r.note {
+                        // 成功时 note 是"拉到 N 个模型名"，前面写过了
+                        if !(r.ok && n.starts_with("拉到")) {
+                            s.push_str(&format!("；{n}"));
+                        }
+                    }
+                    pull_msg.set(Some((s, r.ok)));
+                    // 默认**一个都不勾**：真要哪个自己挑，免得一把加进来几十条
+                    picked.set(BTreeSet::new());
+                    pull_filter.set(String::new());
+                    pulled.set(r.models);
+                }
+                Err(e) => {
+                    pulling.set(false);
+                    ctx.note_err(&e);
+                    pull_msg.set(Some((format!("拉不了：{}", e.message), false)));
+                }
+            }
+        });
+    };
+
+    // 勾选「当前显示的那些」
+    let select_shown = move |_| {
+        let names = filter_models(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT);
+        picked.update(|s| {
+            for n in names {
+                s.insert(n);
+            }
+        });
+    };
+
+    // 把勾选的模型名加进「该腿认的模型名」表
+    let add_picked = move |_| {
+        let sel = picked.get_untracked();
+        if sel.is_empty() {
+            ctx.say("先勾选要加的模型名");
+            return;
+        }
+        let added = {
+            let mut rows = f_models.get_untracked();
+            let n = add_picked_rows(&mut rows, &sel);
+            f_models.set(rows);
+            n
+        };
+        form_ver.update(|v| *v += 1);
+        if added == 0 {
+            ctx.say("勾选的这些已经在表里了");
+        } else {
+            ctx.say(format!(
+                "加了 {added} 条 —— 右边留空就是同名发出去，要改名在这填"
+            ));
+        }
     };
 
     view! {
@@ -440,6 +590,124 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                             }>"加一个请求头"</button>
 
                             <h3>"该腿认的模型名"</h3>
+
+                            <div class="pull-bar">
+                                <button
+                                    class="ghost"
+                                    disabled=move || pulling.get() || !matches!(form.get(), Form::Edit(_))
+                                    on:click=pull
+                                >
+                                    {move || if pulling.get() { "拉取中…" } else { "拉取上游模型清单" }}
+                                </button>
+                                <span class="muted small">
+                                    "用这条腿自己的 base_url、密钥和自定义请求头，真打一次 "
+                                    <code>"GET /v1/models"</code>
+                                    "；拉不到就如实报错，不会给你一份编出来的清单。"
+                                </span>
+                            </div>
+                            {move || if matches!(form.get(), Form::New) {
+                                view! {
+                                    <p class="muted small">
+                                        "这条腿还没保存，所以还拿不到它的凭据去拉 —— 先点下面的「保存」，接着就能拉了。"
+                                    </p>
+                                }
+                                    .into_any()
+                            } else {
+                                ().into_any()
+                            }}
+                            {move || {
+                                pull_msg
+                                    .get()
+                                    .map(|(m, ok)| {
+                                        view! {
+                                            <div class=if ok { "banner ok" } else { "banner bad" }>
+                                                {m}
+                                            </div>
+                                        }
+                                    })
+                            }}
+                            {move || {
+                                let all = pulled.get();
+                                if all.is_empty() {
+                                    return ().into_any();
+                                }
+                                let shown = filter_models(&all, &pull_filter.get(), SHOW_LIMIT);
+                                let total = all.len();
+                                let shown_n = shown.len();
+                                let picked_n = picked.get().len();
+                                let rows = shown
+                                    .into_iter()
+                                    .map(|name| {
+                                        let key = name.clone();
+                                        let checked = picked.get().contains(&name);
+                                        let already = f_models
+                                            .get_untracked()
+                                            .iter()
+                                            .any(|m| m.model.trim() == name.trim());
+                                        let key2 = key.clone();
+                                        view! {
+                                            <label class="pick">
+                                                <input
+                                                    type="checkbox"
+                                                    prop:checked=checked
+                                                    on:change=move |ev| {
+                                                        if event_target_checked(&ev) {
+                                                            picked.update(|s| {
+                                                                s.insert(key.clone());
+                                                            });
+                                                        } else {
+                                                            picked.update(|s| {
+                                                                s.remove(&key);
+                                                            });
+                                                        }
+                                                    }
+                                                />
+                                                <code>{key2}</code>
+                                                {already
+                                                    .then(|| view! { <span class="tag muted">"已在表里"</span> })}
+                                            </label>
+                                        }
+                                    })
+                                    .collect_view();
+                                view! {
+                                    <div class="pull-list">
+                                        <div class="pull-head">
+                                            <input
+                                                type="text"
+                                                prop:value=move || pull_filter.get()
+                                                placeholder="按关键字过滤，如 deepseek"
+                                                on:input=move |ev| pull_filter.set(event_target_value(&ev))
+                                            />
+                                            <button class="ghost" on:click=select_shown>"全选当前显示"</button>
+                                            <button
+                                                class="ghost"
+                                                on:click=move |_| picked.set(BTreeSet::new())
+                                            >
+                                                "全部取消"
+                                            </button>
+                                            <button class="ghost" on:click=add_picked>
+                                                "把勾选的加进下表"
+                                            </button>
+                                            <span class="muted small">
+                                                {format!(
+                                                    "共 {total} 个，列出 {shown_n} 个，已勾选 {picked_n} 个",
+                                                )}
+                                            </span>
+                                        </div>
+                                        <div class="pull-rows">{rows}</div>
+                                        {(total > shown_n)
+                                            .then(|| {
+                                                view! {
+                                                    <p class="muted small">
+                                                        "列表只列出了前面这些 —— 用上面的过滤框找具体的名字（勾选状态不会丢）。"
+                                                    </p>
+                                                }
+                                            })}
+                                    </div>
+                                }
+                                    .into_any()
+                            }}
+
                             <p class="muted small">
                                 "同一条腿对不同模型组可能要用不同的名字（比如这条腿要"
                                 <code>"deepseek/deepseek-v4.1-flash"</code>
@@ -533,5 +801,47 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                 }.into_any()
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn filter_is_case_insensitive_and_limited() {
+        let all = names(&["deepseek-v4.1-flash", "BGE-M3", "gpt-oss"]);
+        assert_eq!(filter_models(&all, "", 10).len(), 3, "不过滤就全列");
+        assert_eq!(filter_models(&all, "deep", 10), names(&["deepseek-v4.1-flash"]));
+        assert_eq!(filter_models(&all, "BGE", 10), names(&["BGE-M3"]), "过滤不分大小写");
+        assert_eq!(filter_models(&all, "  gpt  ", 10), names(&["gpt-oss"]), "两头空白忽略");
+        assert_eq!(filter_models(&all, "", 2).len(), 2, "显示有上限，免得塞爆 DOM");
+        assert!(filter_models(&all, "没有这个名字", 10).is_empty());
+    }
+
+    #[test]
+    fn adding_never_duplicates_and_never_adds_blanks() {
+        let mut rows = vec![ModelPair {
+            model: "bge-m3".into(),
+            upstream: Some("x".into()),
+        }];
+        let mut picked = BTreeSet::new();
+        picked.insert("bge-m3".to_string()); // 表里已经有了
+        picked.insert("   ".to_string()); // 空白，跳过
+        picked.insert("deepseek-v4.1-flash".to_string());
+
+        assert_eq!(add_picked_rows(&mut rows, &picked), 1);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].model, "deepseek-v4.1-flash");
+        assert_eq!(rows[1].upstream, None, "加进来的默认同名发出去");
+        assert_eq!(rows[0].upstream.as_deref(), Some("x"), "已有的行不许被动过");
+
+        // 连点两次不该堆重复行
+        assert_eq!(add_picked_rows(&mut rows, &picked), 0);
+        assert_eq!(rows.len(), 2);
     }
 }

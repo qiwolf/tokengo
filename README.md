@@ -67,7 +67,7 @@ Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测�
 
 ```bash
 cargo build --release -p tokengo-server
-cargo test  --workspace                 # 166 条测试（服务端 + 面板纯逻辑）
+cargo test  --workspace                 # 178 条测试（服务端 + 面板纯逻辑）
 cargo run   -p tokengo-cli -- routing   # 把默认路由参数走一遍状态机
 ```
 
@@ -99,6 +99,7 @@ cargo install trunk
 | 1 | 数据层（腿 / 模型组 / 记账）+ 面板会话鉴权 | 已完成 |
 | 2 | 三个端点真转发（重试 / 切换 / 回切 / 流式 / 记账） | 已完成（真机 30 项验收全过） |
 | 3 | 面板 6 页（Rust → WASM，零 npm） | 已完成（真浏览器 + DOM 断言 + 真点击验收） |
+| 3.1 | 「拉取上游模型清单」（加腿不用手打模型名） | 已完成（真打上游 `/v1/models`，7 种情形实测） |
 | 4 | 部署到 LXC + 影子并行 + 切换 | 未开始 |
 
 ## 与现网 FreeLLMAPI 的差异

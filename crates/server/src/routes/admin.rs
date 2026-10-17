@@ -27,6 +27,7 @@ pub fn router() -> Router<SharedState> {
         .route("/legs", get(legs_list).post(legs_create))
         .route("/legs/{id}", put(legs_update).delete(legs_delete))
         .route("/legs/{id}/probe", post(legs_probe))
+        .route("/legs/{id}/models", post(legs_models))
         .route("/groups", get(groups_list).post(groups_upsert))
         .route("/groups/{name}", delete(groups_delete))
         .route("/routing", get(routing_state))
@@ -356,6 +357,39 @@ struct ProbeQuery {
     kind: Option<String>,
 }
 
+/// 一条"能真发请求"的腿：解密好的密钥 + 自定义头 + 配的模型名。
+///
+/// 探活和「拉上游模型清单」都要这一套。抽出来是因为这两件事的加载逻辑一模一样，
+/// 各写一份迟早会有一边忘了解密密钥（现象是"这条腿明明有 key，面板却说没有"）。
+struct ReadyLeg {
+    leg: tokengo_shared::Leg,
+    secret: Option<String>,
+    has_secret: bool,
+    models: Vec<(String, Option<String>)>,
+}
+
+fn ready_leg(state: &SharedState, id: tokengo_shared::LegId) -> Result<Option<ReadyLeg>, ApiError> {
+    let conn = state.conn();
+    let Some(row) = legs::get(&conn, id)? else {
+        return Ok(None);
+    };
+    let secret = legs::secret(&conn, &state.secrets, id)?;
+    Ok(Some(ReadyLeg {
+        leg: tokengo_shared::Leg {
+            id: row.id,
+            name: row.name.clone(),
+            base_url: row.base_url.clone(),
+            enabled: row.enabled,
+            priority: 0,
+            model_alias: None,
+            headers: row.headers.clone(),
+        },
+        secret,
+        has_secret: row.has_secret,
+        models: row.models.clone(),
+    }))
+}
+
 /// 面板上的「测一下」：**真发一个请求到这条腿**，回的绿点才是真的。
 ///
 /// 三条纪律：
@@ -374,34 +408,25 @@ async fn legs_probe(
         _ => crate::gateway::EndpointKind::Chat,
     };
 
-    let loaded = {
-        let conn = state.conn();
-        let Some(row) = legs::get(&conn, id)? else {
-            return Err(ApiError::not_found(format!("腿 {id} 不存在")));
-        };
-        let model = row
-            .models
-            .iter()
-            .find_map(|(_, upstream)| upstream.clone().filter(|u| !u.trim().is_empty()))
-            .or_else(|| {
-                row.models
-                    .iter()
-                    .map(|(name, _)| name.clone())
-                    .find(|n| !n.trim().is_empty())
-            });
-        let secret = legs::secret(&conn, &state.secrets, id)?;
-        let leg = tokengo_shared::Leg {
-            id: row.id,
-            name: row.name.clone(),
-            base_url: row.base_url.clone(),
-            enabled: row.enabled,
-            priority: 0,
-            model_alias: None,
-            headers: row.headers.clone(),
-        };
-        (leg, model, secret, row.has_secret)
+    let Some(ready) = ready_leg(&state, id)? else {
+        return Err(ApiError::not_found(format!("腿 {id} 不存在")));
     };
-    let (leg, model, secret, has_secret) = loaded;
+    let ReadyLeg {
+        leg,
+        secret,
+        has_secret,
+        models,
+    } = ready;
+
+    let model = models
+        .iter()
+        .find_map(|(_, upstream)| upstream.clone().filter(|u| !u.trim().is_empty()))
+        .or_else(|| {
+            models
+                .iter()
+                .map(|(name, _)| name.clone())
+                .find(|n| !n.trim().is_empty())
+        });
 
     let Some(model) = model else {
         return Ok(Json(serde_json::json!({
@@ -460,7 +485,109 @@ async fn legs_probe(
     })))
 }
 
-// ───────────────────────── 模型组 ─────────────────────────
+/// 面板上的「拉取上游模型清单」：用这条腿自己的 URL、key、自定义头真打
+/// `GET {base_url}/models`，把上游说它支持的模型名列出来。
+///
+/// 和探活同纪律：**不写记账、不动路由状态** —— 它是面板上的一次人工查询，
+/// 不是用户请求，不该污染统计（否则"请求总数"会莫名其妙涨）。
+///
+/// 如实报三种失败，绝不给一份编出来的清单：
+/// - 连不上/超时 → 说清是哪个 URL；
+/// - 上游回了非 2xx → 把状态码报出来（404 很常见：这个上游压根没做 /v1/models）；
+/// - 2xx 但格式不像模型清单 → 说"没认出"，并附上正文开头让人自己看。
+async fn legs_models(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = tokengo_shared::LegId(id);
+    let Some(ready) = ready_leg(&state, id)? else {
+        return Err(ApiError::not_found(format!("腿 {id} 不存在")));
+    };
+    let ReadyLeg { leg, secret, .. } = ready;
+
+    let timeout = {
+        let cfg = state.routing().cfg.clone();
+        std::time::Duration::from_millis(cfg.attempt_timeout_ms.max(1))
+            .min(std::time::Duration::from_secs(15))
+    };
+    let t0 = now_ms();
+    let r = state
+        .upstream
+        .fetch_models(&leg, secret.as_deref(), timeout, &crate::upstream::new_uuid(), now_ms())
+        .await;
+    let latency = now_ms() - t0;
+    let url = crate::upstream::join_url(&leg.base_url, "models");
+
+    let (ok, status, models, note) = match r {
+        Ok((code, body)) if (200..300).contains(&code) => {
+            let models = crate::upstream::parse_model_ids(&body);
+            if models.is_empty() {
+                let note = if crate::upstream::looks_like_a_model_list(&body) {
+                    format!(
+                        "上游回的是清单形状，但里面一个模型名都没有 —— 它自己没报。正文：{}",
+                        snippet(&body)
+                    )
+                } else {
+                    format!(
+                        "拉回来了（HTTP {code}），但没认出模型清单 —— 可能这个上游的 /v1/models 回的不是那种格式。正文开头：{}",
+                        snippet(&body)
+                    )
+                };
+                (false, Some(code), Vec::new(), note)
+            } else {
+                // 成功时的说明文字在下面统一拼（要带上真实个数）
+                (true, Some(code), models, String::new())
+            }
+        }
+        Ok((code, body)) => (
+            false,
+            Some(code),
+            Vec::new(),
+            format!(
+                "上游回了 HTTP {code}（{url}）：多半是这个上游不支持 /v1/models。正文开头：{}",
+                snippet(&body)
+            ),
+        ),
+        Err(fault) => (false, None, Vec::new(), fault.message),
+    };
+
+    let note = if ok {
+        format!("拉到 {} 个模型名", models.len())
+    } else {
+        note
+    };
+
+    tracing::info!(
+        "拉腿 {id} 的上游模型清单：{}（{} 个，{latency} ms）",
+        if ok { "成功" } else { "失败" },
+        models.len()
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": ok,
+        "leg_id": leg.id.0,
+        "leg_name": leg.name,
+        "url": url,
+        "http_status": status,
+        "latency_ms": latency,
+        "count": models.len(),
+        "models": models,
+        "note": note,
+    })))
+}
+
+/// 出错时给人看的一小段正文（不整段塞回来：上游可能吐几 MB）。
+fn snippet(body: &str) -> String {
+    let t = body.trim();
+    let cut = t.char_indices().nth(300).map(|(i, _)| i).unwrap_or(t.len());
+    let head = t[..cut].replace('\n', " ");
+    if cut < t.len() {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
 
 async fn groups_list(
     _auth: PanelAuth,

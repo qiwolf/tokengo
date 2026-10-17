@@ -80,6 +80,7 @@ async fn start_mock(default: Reply) -> Mock {
     let app = Router::new()
         .route("/v1/chat/completions", route_post(mock_handler))
         .route("/v1/embeddings", route_post(mock_handler))
+        .route("/v1/models", axum::routing::get(mock_models))
         .with_state(inner.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -99,34 +100,10 @@ async fn mock_handler(
     body: Bytes,
 ) -> Response {
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let custom = headers
-        .iter()
-        .filter(|(k, _)| {
-            let k = k.as_str();
-            k.starts_with("x-")
-        })
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-        .collect::<Vec<_>>();
-    inner.seen.lock().unwrap().push(Seen {
-        path: uri.path().to_string(),
-        model: v
-            .get("model")
-            .and_then(|m| m.as_str())
-            .unwrap_or("")
-            .to_string(),
-        auth: headers
-            .get("authorization")
-            .and_then(|h| h.to_str().ok())
-            .map(str::to_string),
-        custom,
-    });
+    let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("");
+    record(&inner, &headers, &uri, model);
 
-    let reply = inner
-        .replies
-        .lock()
-        .unwrap()
-        .pop_front()
-        .unwrap_or_else(|| inner.default.clone());
+    let reply = next_reply(&inner);
 
     match reply {
         Reply::Ok => axum::Json(json!({
@@ -157,6 +134,54 @@ async fn mock_handler(
             ))
             .unwrap(),
     }
+}
+
+/// 假上游的 `/v1/models`：默认回一份 OpenAI 形状的清单；
+/// 队列里排了 `Status(…)` 就先按那个回（用来演"上游压根没做这个端点"）。
+async fn mock_models(State(inner): State<Arc<MockInner>>, headers: HeaderMap, uri: Uri) -> Response {
+    record(&inner, &headers, &uri, "");
+    match next_reply(&inner) {
+        Reply::Status(code, body) => {
+            (StatusCode::from_u16(code).unwrap(), body.to_string()).into_response()
+        }
+        _ => axum::Json(json!({
+            "object": "list",
+            "data": [
+                {"id": "mock-chat-a", "object": "model"},
+                {"id": "mock-chat-a", "object": "model"},
+                {"id": "mock-embed-b", "object": "model"}
+            ]
+        }))
+        .into_response(),
+    }
+}
+
+/// 每次请求都记一条：路径、模型名、Authorization、自定义头。
+/// GET 没有正文，模型名就记空的。
+fn record(inner: &Arc<MockInner>, headers: &HeaderMap, uri: &Uri, model: &str) {
+    let custom = headers
+        .iter()
+        .filter(|(k, _)| k.as_str().starts_with("x-"))
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect::<Vec<_>>();
+    inner.seen.lock().unwrap().push(Seen {
+        path: uri.path().to_string(),
+        model: model.to_string(),
+        auth: headers
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_string),
+        custom,
+    });
+}
+
+fn next_reply(inner: &Arc<MockInner>) -> Reply {
+    inner
+        .replies
+        .lock()
+        .unwrap()
+        .pop_front()
+        .unwrap_or_else(|| inner.default.clone())
 }
 
 // ───────────────────────── 网关侧夹具 ─────────────────────────
@@ -973,4 +998,121 @@ async fn get_via_post(f: &Fixture, uri: &str, session: &str) -> (StatusCode, Val
     let status = resp.status();
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+// ───────────────────────── 拉上游模型清单 ─────────────────────────
+
+/// 面板「拉取上游模型清单」：真打这条腿的 `GET /v1/models`，用它自己的 key 和自定义头。
+#[tokio::test]
+async fn the_panel_can_pull_the_upstream_model_list() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let leg = f.add_leg(
+        "mock",
+        &m.base,
+        LegSpec {
+            secret: Some("sk-mock".into()),
+            headers: vec![("x-opencode-client".into(), "cli".into())],
+            ..Default::default()
+        },
+    );
+    let conn = f.state.conn();
+    let token = tokengo_server::db::sessions::create_session(&conn, None).unwrap();
+    drop(conn);
+
+    let (s, v) = get_via_post(&f, &format!("/api/legs/{}/models", leg.0), &token).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    // 重复的名字只留一个，顺序按上游给的
+    assert_eq!(v["models"], json!(["mock-chat-a", "mock-embed-b"]), "{v}");
+    assert_eq!(v["count"], 2);
+    assert!(v["url"].as_str().unwrap().ends_with("/v1/models"), "{v}");
+
+    // 真的发出去了，而且带的是**这条腿自己的** key 和自定义头
+    let seen = m.seen();
+    assert_eq!(seen.len(), 1, "清单必须真去上游拉，不能是本地编的");
+    assert_eq!(seen[0].path, "/v1/models");
+    assert_eq!(seen[0].auth.as_deref(), Some("Bearer sk-mock"));
+    assert_eq!(seen[0].custom, vec![("x-opencode-client".to_string(), "cli".to_string())]);
+
+    // 和探活一个纪律：这不是用户请求，不许写记账
+    assert!(f.request_rows().is_empty(), "拉清单不许写记账");
+    assert!(f.attempts().is_empty(), "拉清单不许写尝试");
+}
+
+#[tokio::test]
+async fn pulling_the_model_list_reports_a_real_failure() {
+    let f = fixture();
+    f.with_key();
+    let conn = f.state.conn();
+    let token = tokengo_server::db::sessions::create_session(&conn, None).unwrap();
+    drop(conn);
+
+    // 连不上：说清是哪个 URL，不许给一份编出来的清单
+    let dead = f.add_leg("死腿", "http://127.0.0.1:59993/v1", LegSpec::default());
+    let (s, v) = get_via_post(&f, &format!("/api/legs/{}/models", dead.0), &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["models"], json!([]));
+    assert!(v["note"].as_str().unwrap().contains("连不上"), "{v}");
+    assert!(v["note"].as_str().unwrap().contains("59993"), "{v}");
+
+    // 上游没做这个端点（404）：把状态码报出来，并附上正文开头
+    let m = start_mock(Reply::Ok).await;
+    m.inner.replies.lock().unwrap().push_back(Reply::Status(404, "404 page not found"));
+    let leg = f.add_leg("没有清单的腿", &m.base, LegSpec::default());
+    let (s, v) = get_via_post(&f, &format!("/api/legs/{}/models", leg.0), &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["http_status"], 404);
+    assert!(v["note"].as_str().unwrap().contains("不支持"), "{v}");
+
+    // 200 但回的不是模型清单（常见：回的是一段 HTML 或错误 JSON）→ 说"没认出"，不编
+    m.inner
+        .replies
+        .lock()
+        .unwrap()
+        .push_back(Reply::Status(200, r#"{"detail":"Not Found"}"#));
+    let (s, v) = get_via_post(&f, &format!("/api/legs/{}/models", leg.0), &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["http_status"], 200);
+    assert!(v["note"].as_str().unwrap().contains("没认出"), "{v}");
+    assert!(v["note"].as_str().unwrap().contains("Not Found"), "{v}");
+
+    // 200 且是清单形状但空的 → 那是"上游自己没报模型"，别说成"没认出"
+    m.inner
+        .replies
+        .lock()
+        .unwrap()
+        .push_back(Reply::Status(200, r#"{"object":"list","data":[]}"#));
+    let (s, v) = get_via_post(&f, &format!("/api/legs/{}/models", leg.0), &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["count"], 0);
+    assert!(v["note"].as_str().unwrap().contains("一个模型名都没有"), "{v}");
+    assert!(
+        !v["note"].as_str().unwrap().contains("没认出"),
+        "空清单和格式没认出是两回事：{v}"
+    );
+
+    assert!(f.request_rows().is_empty());
+}
+
+/// 腿不存在时是 404，不能悄悄去打个空 URL。
+#[tokio::test]
+async fn pulling_models_for_an_unknown_leg_is_404() {
+    let f = fixture();
+    f.with_key();
+    let conn = f.state.conn();
+    let token = tokengo_server::db::sessions::create_session(&conn, None).unwrap();
+    drop(conn);
+
+    let (s, _) = get_via_post(&f, "/api/legs/9999/models", &token).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // 没有面板会话同样不行：管理面全部要登录
+    let (s, _) = get_via_post(&f, "/api/legs/9999/models", "not-a-session").await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
 }

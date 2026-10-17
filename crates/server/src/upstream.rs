@@ -96,6 +96,138 @@ impl Upstream {
             .await?;
         Ok(r.status().as_u16())
     }
+
+    /// 拉这条腿支持的模型清单：`GET {base_url}/models`，用这条腿自己的
+    /// URL、key 和自定义请求头（头里的模板照旧逐请求求值）。
+    ///
+    /// **面板专用的只读动作**，和探活一个纪律：不写记账、不动路由状态。
+    /// 返回 `(状态码, 正文)` —— 正文交给 `parse_model_ids` 挑名字，
+    /// 状态码交给调用方判断"上游是不是根本不支持这个端点"。
+    pub async fn fetch_models(
+        &self,
+        leg: &Leg,
+        secret: Option<&str>,
+        timeout: Duration,
+        uuid: &str,
+        now_ms: i64,
+    ) -> Result<(u16, String), LegFault> {
+        let url = join_url(&leg.base_url, "models");
+        let mut rb = self
+            .client
+            .get(&url)
+            .timeout(timeout)
+            .header(reqwest::header::ACCEPT, "application/json");
+        for (name, value) in build_headers(leg, secret, uuid, now_ms) {
+            rb = rb.header(name, value);
+        }
+        let r = rb.send().await.map_err(|e| LegFault {
+            message: fault_message(&url, &e),
+        })?;
+        let status = r.status().as_u16();
+        let text = r.text().await.unwrap_or_default();
+        Ok((status, clamp_body(text)))
+    }
+}
+
+/// 上游模型清单的正文上限。真有上游吐上千个模型，超过就当拉不到 ——
+/// 面板本来也塞不下那个量级，硬留着只会把网关内存顶起来。
+const MAX_MODELS_BODY: usize = 2 * 1024 * 1024;
+
+fn clamp_body(text: String) -> String {
+    if text.len() <= MAX_MODELS_BODY {
+        return text;
+    }
+    let mut cut = MAX_MODELS_BODY;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
+}
+
+/// 从上游 `/v1/models` 的响应里挑出模型名。
+///
+/// 三种**真实见过**的形状都认：
+///
+/// - OpenAI 标准：`{"data":[{"id":"gpt-x","object":"model"}, …]}`
+/// - `{"models":[{"name":"llama3"}, …]}`（Ollama 风格）
+/// - 直接一个字符串数组：`["a","b"]`
+///
+/// **认不出来就回空列表** —— 面板会说"拉回来了但没认出清单"，绝不编造名字。
+/// 顺序按上游给的来（不排序），只去重、去空白、限量。
+pub fn parse_model_ids(body: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        let s = s.trim();
+        if !s.is_empty() && !out.iter().any(|x| x == s) {
+            out.push(s.to_string());
+        }
+    };
+
+    let from_array = |arr: &Vec<serde_json::Value>| {
+        let mut ids: Vec<String> = Vec::new();
+        for item in arr {
+            let name = match item {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Object(o) => ["id", "name", "model"]
+                    .iter()
+                    .find_map(|k| o.get(*k).and_then(|x| x.as_str()).map(str::to_owned)),
+                _ => None,
+            };
+            if let Some(n) = name {
+                let n = n.trim().to_string();
+                if !n.is_empty() && !ids.contains(&n) {
+                    ids.push(n);
+                }
+            }
+        }
+        ids
+    };
+
+    match &v {
+        serde_json::Value::Array(arr) => {
+            for id in from_array(arr) {
+                push(&id);
+            }
+        }
+        serde_json::Value::Object(o) => {
+            for key in ["data", "models"] {
+                if let Some(arr) = o.get(key).and_then(|x| x.as_array()) {
+                    for id in from_array(arr) {
+                        push(&id);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    out.truncate(MAX_MODEL_IDS);
+    out
+}
+
+/// 面板列表里最多显示这么多模型名。
+const MAX_MODEL_IDS: usize = 2000;
+
+/// 这份正文是不是"模型清单那种形状"（哪怕里面一个名字都没有）。
+///
+/// 用来把两种 200 分开：**上游有清单但空**（它就是不报模型）和
+/// **上游回的压根不是清单**（一段 HTML、一个错误 JSON）。前者说"它没报任何模型"，
+/// 后者说"没认出"，别混成一句话。
+pub fn looks_like_a_model_list(body: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    match &v {
+        serde_json::Value::Array(_) => true,
+        serde_json::Value::Object(o) => ["data", "models"]
+            .iter()
+            .any(|k| o.get(*k).map(|x| x.is_array()).unwrap_or(false)),
+        _ => false,
+    }
 }
 
 /// 网络错分类成人能看懂的话。**不要把 key 打进日志。**
@@ -217,7 +349,60 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_but_well_formed_list_is_not_confused_with_junk() {
+        // 上游"有清单但空"和"回的压根不是清单"要能分开说
+        assert!(looks_like_a_model_list(r#"{"object":"list","data":[]}"#));
+        assert!(looks_like_a_model_list(r#"{"models":[]}"#));
+        assert!(looks_like_a_model_list(r#"[]"#));
+        assert!(!looks_like_a_model_list(r#"{"detail":"Not Found"}"#));
+        assert!(!looks_like_a_model_list("<html>502</html>"));
+        assert!(!looks_like_a_model_list(""));
+    }
+
+    #[test]
     fn uuid_is_a_fresh_one_each_time() {
         assert_ne!(new_uuid(), new_uuid());
+    }
+
+    #[test]
+    fn openai_style_model_list_is_parsed() {
+        let body = r#"{"object":"list","data":[
+            {"id":"deepseek-v4.1-flash","object":"model"},
+            {"id":"bge-m3","object":"model"},
+            {"id":"deepseek-v4.1-flash","object":"model"}
+        ]}"#;
+        // 顺序按上游给的，重复的只留一个
+        assert_eq!(parse_model_ids(body), vec!["deepseek-v4.1-flash", "bge-m3"]);
+    }
+
+    #[test]
+    fn other_real_shapes_are_recognised_too() {
+        // Ollama 风格用 name
+        assert_eq!(
+            parse_model_ids(r#"{"models":[{"name":"llama3.2"},{"name":"qwen3"}]}"#),
+            vec!["llama3.2", "qwen3"]
+        );
+        // 有的上游直接回字符串数组
+        assert_eq!(parse_model_ids(r#"["a","b"]"#), vec!["a", "b"]);
+        // 只有 model 字段也认
+        assert_eq!(parse_model_ids(r#"{"data":[{"model":"m1"}]}"#), vec!["m1"]);
+    }
+
+    #[test]
+    fn junk_never_becomes_a_model_name() {
+        // 认不出来就回空，**绝不编造名字** —— 面板会如实说"没认出清单"
+        assert!(parse_model_ids("").is_empty());
+        assert!(parse_model_ids("<html>502 Bad Gateway</html>").is_empty());
+        assert!(parse_model_ids(r#"{"error":{"message":"unauthorized"}}"#).is_empty());
+        assert!(parse_model_ids(r#"{"data":[{"nope":1},{"id":"  "},3]}"#).is_empty());
+        assert!(parse_model_ids(r#"{"data":null}"#).is_empty());
+    }
+
+    #[test]
+    fn whitespace_is_trimmed_and_blanks_dropped() {
+        assert_eq!(
+            parse_model_ids(r#"{"data":[{"id":"  spaced  "},{"id":""},{"id":"ok"}]}"#),
+            vec!["spaced", "ok"]
+        );
     }
 }

@@ -193,6 +193,29 @@ pub struct ProbeResp {
     pub note: Option<String>,
 }
 
+/// 「拉取上游模型清单」的响应。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ModelPull {
+    pub ok: bool,
+    pub leg_id: i64,
+    #[serde(default)]
+    pub leg_name: Option<String>,
+    /// 真去打的 URL（界面上写出来，好让人自己核）
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub http_status: Option<i64>,
+    #[serde(default)]
+    pub latency_ms: Option<i64>,
+    #[serde(default)]
+    pub count: i64,
+    /// 上游报的模型名。**拉不到就是空**，界面不许自己编。
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct SettingsResp {
     pub routing_config: RoutingCfg,
