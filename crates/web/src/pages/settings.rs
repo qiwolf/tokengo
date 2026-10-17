@@ -13,7 +13,6 @@ use crate::Ctx;
 pub fn Settings(ctx: Ctx) -> impl IntoView {
     let info = RwSignal::new(crate::model::SettingsResp::default());
     let err = RwSignal::new(None::<String>);
-    let new_key = RwSignal::new(String::new());
     let generated = RwSignal::new(None::<String>);
     let old_pw = RwSignal::new(String::new());
     let new_pw = RwSignal::new(String::new());
@@ -34,34 +33,12 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
     };
     reload();
 
-    let save_key = move |_| {
-        let k = new_key.get_untracked();
-        if k.trim().is_empty() {
-            ctx.say("对外 key 不能为空");
-            return;
-        }
-        wasm_bindgen_futures::spawn_local(async move {
-            match api::set_gateway_key(k.trim()).await {
-                Ok(()) => {
-                    new_key.set(String::new());
-                    ctx.say("对外 key 已更换 —— 客户端要同步改成新的，否则会一直 401");
-                    reload();
-                }
-                Err(e) => {
-                    ctx.note_err(&e);
-                    ctx.say(format!("换 key 失败：{}", e.message));
-                }
-            }
-        });
-    };
-
     let generate_key = move |_| {
         wasm_bindgen_futures::spawn_local(async move {
             match api::generate_gateway_key().await {
                 Ok(k) => {
-                    new_key.set(k.clone());
                     generated.set(Some(k.clone()));
-                    ctx.say(format!("已生成新 key：{}（已填入下方输入框）", k));
+                    ctx.say(format!("已生成新 key：{}（已填入下方，可复制）", k));
                     reload();
                 }
                 Err(e) => {
@@ -123,18 +100,34 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     <div>
                         <code>{move || info.get().gateway_key_hint.unwrap_or_else(|| "（没设置）".into())}</code>
                     </div>
-                    <label>"换成新 key"</label>
-                    <div>
-                        <input type="text" prop:value=new_key placeholder="新 key（明文，只提交不保存）"
-                            on:input=move |ev| new_key.set(event_target_value(&ev)) />
-                        <div class="muted small">
-                            "点了保存就立刻生效：正在用旧 key 的客户端会马上 401，记得一起改。"
-                        </div>
-                    </div>
                 </div>
+                {move || generated.get().map(|k| view! {
+                    <div class="banner ok" style="margin-top:8px;word-break:break-all">
+                        "新 key（只显示这一次）：" <code>{k}</code>
+                    </div>
+                })}
                 <div class="modal-foot">
                     <button class="ghost" on:click=generate_key>"生成新 key"</button>
-                    <button class="primary" on:click=save_key>"更换对外 key"</button>
+                </div>
+            </div>
+
+            <h2>"接入信息"</h2>
+            <p class="muted small">"把下面的地址和 key 填到客户端即可。"</p>
+            <div class="panel">
+                <div class="form-grid">
+                    <label>"基础 URL"</label>
+                    <div><code>{move || {
+                        let origin = web_sys::window().and_then(|w| w.location().origin().ok()).unwrap_or_default();
+                        format!("{}/v1", origin)
+                    }}</code></div>
+                    <label>"对话"</label>
+                    <div><code>"/v1/chat/completions"</code></div>
+                    <label>"嵌入"</label>
+                    <div><code>"/v1/embeddings"</code></div>
+                    <label>"重排"</label>
+                    <div><code>"/v1/rerank"</code></div>
+                    <label>"模型列表"</label>
+                    <div><code>"/v1/models"</code></div>
                 </div>
             </div>
 

@@ -475,112 +475,82 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
-            <div class="table-wrap">
-            <table class="grid wide">
-                <thead>
-                    <tr>
-                        <th class="num">"#"</th>
-                        <th>"名称"</th>
-                        <th>"base_url"</th>
-                        <th>"状态"</th>
-                        <th>"密钥"</th>
-                        <th class="num">"请求头"</th>
-                        <th class="num">"模型名"</th>
-                        <th>"操作"</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {move || {
-                        let v = rows.get();
-                        if v.is_empty() {
-                            return view! {
-                                <tr class="empty-row">
-                                    <td colspan="8" class="muted empty-cell">
-                                        "还没有渠道 —— 点左上「新建渠道」加一条上游。"
-                                    </td>
-                                </tr>
-                            }.into_any();
-                        }
-                        v.into_iter()
-                            .map(|l| {
-                                let l2 = l.clone();
-                                let l3 = l.clone();
-                                let l4 = l.clone();
-                                let (pid, pmsg, pok) = probe_msg
-                                    .get()
-                                    .map(|(i, m, ok)| (Some(i), m, ok))
-                                    .unwrap_or((None, String::new(), false));
-                                let show_probe = pid == Some(l.id) && !pmsg.is_empty();
-                                view! {
-                                    // data-label：手机上表格变卡片时当左侧小标签用
-                                    <tr>
-                                        <td class="num muted" data-label="#">{l.id}</td>
-                                        <td data-label="名称">
-                                            <b>{l.name.clone()}</b>
-                                        </td>
-                                        <td data-label="base_url">
-                                            <code class="small">{l.base_url.clone()}</code>
-                                        </td>
-                                        <td data-label="状态">
-                                            {if l.enabled {
-                                                view! { <span class="tag ok">"启用"</span> }.into_any()
-                                            } else {
-                                                view! { <span class="tag muted">"停用"</span> }.into_any()
-                                            }}
-                                        </td>
-                                        <td data-label="密钥">
+            <div class="chan-list">
+                {move || {
+                    let v = rows.get();
+                    if v.is_empty() {
+                        return view! {
+                            <div class="chan-empty muted">
+                                "还没有渠道 —— 点左上「新建渠道」加一条上游。"
+                            </div>
+                        }.into_any();
+                    }
+                    v.into_iter()
+                        .map(|l| {
+                            let l2 = l.clone();
+                            let l3 = l.clone();
+                            let l4 = l.clone();
+                            let (pid, pmsg, pok) = probe_msg
+                                .get()
+                                .map(|(i, m, ok)| (Some(i), m, ok))
+                                .unwrap_or((None, String::new(), false));
+                            let show_probe = pid == Some(l.id) && !pmsg.is_empty();
+                            let model_txt = if l.models.is_empty() {
+                                "原样透传".to_string()
+                            } else if l.vision_count > 0 {
+                                format!("{} 个（{} 条能看图）", l.models.len(), l.vision_count)
+                            } else {
+                                format!("{} 个", l.models.len())
+                            };
+                            view! {
+                                <div class="chan-card">
+                                    <div class="chan-head">
+                                        <span class="chan-id">"#" {l.id}</span>
+                                        <b class="chan-name">{l.name.clone()}</b>
+                                        <span class="spacer"></span>
+                                        {if l.enabled {
+                                            view! { <span class="tag ok">"启用"</span> }.into_any()
+                                        } else {
+                                            view! { <span class="tag muted">"停用"</span> }.into_any()
+                                        }}
+                                    </div>
+                                    <div class="chan-url">
+                                        <code class="small">{l.base_url.clone()}</code>
+                                    </div>
+                                    <div class="chan-meta">
+                                        <span>
+                                            "密钥："
                                             {if l.has_secret {
                                                 view! { <span class="tag ok">"有"</span> }.into_any()
                                             } else {
                                                 view! { <span class="tag warn">"没有"</span> }.into_any()
                                             }}
-                                        </td>
-                                        <td class="num" data-label="请求头">{l.headers.len()}</td>
-                                        <td class="num" data-label="模型名">
-                                            {if l.models.is_empty() {
-                                                view! { <span class="muted">"原样透传"</span> }.into_any()
-                                            } else if l.vision_count > 0 {
-                                                // 这条渠道上有能看图的模型名 —— 一眼就能看见
-                                                view! {
-                                                    <span>
-                                                        {l.models.len()}
-                                                        <span class="tag vision" title="这些模型名能收图片输入">
-                                                            {format!("{} 条能看图", l.vision_count)}
-                                                        </span>
-                                                    </span>
-                                                }
-                                                    .into_any()
-                                            } else {
-                                                view! { <span>{l.models.len()}</span> }.into_any()
-                                            }}
-                                        </td>
-                                        <td class="actions">
-                                            <button class="ghost" on:click=move |_| open_edit(l2.clone())>
-                                                "编辑"
-                                            </button>
-                                            <button class="ghost" on:click=move |_| probe(l3.clone())>
-                                                "测一下"
-                                            </button>
-                                            <button class="ghost danger" on:click=move |_| remove(l4.clone())>
-                                                "删除"
-                                            </button>
-                                        </td>
-                                    </tr>
+                                        </span>
+                                        <span>{format!("请求头：{}", l.headers.len())}</span>
+                                        <span>{format!("模型名：{model_txt}")}</span>
+                                    </div>
+                                    <div class="chan-actions">
+                                        <button class="ghost" on:click=move |_| open_edit(l2.clone())>
+                                            "编辑"
+                                        </button>
+                                        <button class="ghost" on:click=move |_| probe(l3.clone())>
+                                            "测一下"
+                                        </button>
+                                        <button class="ghost danger" on:click=move |_| remove(l4.clone())>
+                                            "删除"
+                                        </button>
+                                    </div>
                                     {show_probe.then(|| view! {
-                                        <tr class="probe-row">
-                                            <td></td>
-                                            <td colspan="7" class=move || if pok { "probe ok" } else { "probe bad" }>
-                                                {pmsg.clone()}
-                                            </td>
-                                        </tr>
+                                        <div class=move || if pok { "chan-probe ok" } else { "chan-probe bad" }>
+                                            {pmsg.clone()}
+                                        </div>
                                     })}
-                                }
-                            })
-                            .collect_view()
-                            .into_any()
-                    }}
-                </tbody>
-            </table>
+                                </div>
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                }}
             </div>
 
             {move || if form.get() == Form::Closed {

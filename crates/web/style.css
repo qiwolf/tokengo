@@ -89,6 +89,24 @@ code.small { color: var(--muted); }
 .centered { display: grid; place-items: center; height: 100vh; }
 .bad-text { color: var(--bad); }
 
+/* ── 渠道：卡片式列表（参考 freellmapi 的 provider 卡片，手机上一屏一条） ── */
+.chan-list { display: flex; flex-direction: column; gap: .6rem; margin-top: .4rem; }
+.chan-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: .7rem .8rem; display: flex; flex-direction: column; gap: .4rem;
+}
+.chan-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.chan-id { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.chan-name { font-size: 1rem; }
+.chan-url { word-break: break-all; }
+.chan-url code { font-size: .82rem; color: var(--muted); }
+.chan-meta { display: flex; flex-wrap: wrap; gap: .35rem .9rem; font-size: .85rem; color: var(--muted); }
+.chan-actions { display: flex; gap: .4rem; flex-wrap: wrap; padding-top: .35rem; border-top: 1px solid var(--line); }
+.chan-probe { font-size: .85rem; padding-top: .3rem; }
+.chan-probe.ok { color: var(--ok); }
+.chan-probe.bad { color: var(--bad); }
+.chan-empty { padding: 1.2rem 0; }
+
 /* ── 登录 / 初始化 ── */
 .auth-wrap { display: grid; place-items: center; min-height: 100vh; padding: 1rem; }
 .auth-card {
