@@ -195,7 +195,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             form.set(Form::Edit(i));
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
-                            ctx.say("渠道已新建 —— 接着可以点「拉取上游模型清单」");
+                            ctx.say("渠道已新建 —— 接着可以点「问一下它有哪些模型」");
                         }
                         None => {
                             form.set(Form::Closed);
@@ -655,7 +655,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 form_ver.update(|v| *v += 1);
                             }>"加一个请求头"</button>
 
-                            <h3>"该渠道认的模型名"</h3>
+                            <h3>"这条渠道支持哪些模型"</h3>
 
                             <div class="pull-bar">
                                 <button
@@ -663,16 +663,16 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     disabled=move || pulling.get() || !matches!(form.get(), Form::Edit(_))
                                     on:click=pull
                                 >
-                                    {move || if pulling.get() { "拉取中…" } else { "拉取上游模型清单" }}
+                                    {move || if pulling.get() { "正在问…" } else { "问一下它有哪些模型" }}
                                 </button>
                                 <span class="muted small">
-                                    "去问这家上游：你手上有哪些模型？真发一次请求，问不到就报错，不会编一份名单给你。"
+                                    "直接问这条渠道：你支持哪些模型？问不到就如实报错，不会编一份名单给你。"
                                 </span>
                             </div>
                             {move || if matches!(form.get(), Form::New) {
                                 view! {
                                     <p class="muted small">
-                                        "这条渠道还没保存，所以还拿不到它的凭据去拉 —— 先点下面的「保存」，接着就能拉了。"
+                                        "这条渠道还没保存，拿不到它的密钥去问 —— 先点下面「保存」。"
                                     </p>
                                 }
                                     .into_any()
@@ -775,7 +775,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             // 两段说明原来平铺在表格上面，手机上一屏放不下，用户以为「内容看不见」。
                             // 折起来：标题一句话说清这节在讲什么，想看细节再点开。
                             <details class="fold tight">
-                                <summary>"这两列怎么填 / 怎么确认一个模型名能收图"</summary>
+                                <summary>"这两列怎么填 · 怎么确认能收图"</summary>
                                 <p class="muted small">
                                     "同一个模型，在不同上游可能叫不同名字（比如这家上游要"
                                     <code>"deepseek/deepseek-v4.1-flash"</code>
@@ -784,7 +784,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 </p>
                                 <p class="muted small">
                                     "「能看图」= 这个名字能收图片。"
-                                    <b>"别猜名字，点「测视觉」"</b>
+                                    <b>"别猜名字，点「测一下能不能看图」"</b>
                                     "：它会真发一张图问一个只有看图才答得出的问题（左上角什么颜色），"
                                     "答对了才勾上。带图的请求只会发给勾了的渠道；一条都没勾就回 422 说清楚，"
                                     "而不是把图悄悄丢掉。"
@@ -799,7 +799,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             return view! {
                                                 <tr>
                                                     <td class="muted">
-                                                        "还没填。不填就是客户端写什么名字、就发什么名字过去"
+                                                        "还没填。不填就是客户端写什么名字、就原样发什么名字过去"
                                                     </td>
                                                 </tr>
                                             }.into_any();
@@ -841,7 +841,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         <td class="arrow">"→"</td>
                                                         <td>
                                                             <input type="text" prop:value=up0
-                                                                placeholder="这条渠道要发的名字（留空=同名）"
+                                                                placeholder="这条渠道实际叫的名字（不填=一样）"
                                                                 on:input=move |ev| {
                                                                     let s = event_target_value(&ev);
                                                                     f_models
@@ -857,7 +857,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                 } />
                                                         </td>
                                                         <td class="vision-cell">
-                                                            <label class="pick" title="这个模型名能不能收图片输入（带图的请求只会发给勾了的渠道）">
+                                                            <label class="pick" title="这个模型收不收得下图片（带图的请求只发给勾了的渠道）">
                                                                 <input type="checkbox"
                                                                     prop:checked=move || {
                                                                         f_models
@@ -894,13 +894,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                         None => {
                                                                             ctx
                                                                                 .say(
-                                                                                    "这条渠道还没保存：先点「保存」，再测它认不认得图",
+                                                                                    "还没保存：先点「保存」，再测它认不认得图",
                                                                                 )
                                                                         }
                                                                     }
                                                                 }
                                                             >
-                                                                "测视觉"
+                                                                "测一下能不能看图"
                                                             </button>
                                                         </td>
                                                         <td>
@@ -928,7 +928,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             <button class="ghost" on:click=move |_| {
                                 f_models.update(|v| v.push(ModelPair::default()));
                                 form_ver.update(|v| *v += 1);
-                            }>"加一条模型名"</button>
+                            }>"加一行"</button>
 
                             <div class="modal-foot">
                                 <button class="primary" on:click=save>"保存"</button>
