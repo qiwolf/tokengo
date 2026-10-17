@@ -14,7 +14,7 @@ use crate::Ctx;
 pub fn Overview(ctx: Ctx) -> impl IntoView {
     let (hours, set_hours) = signal(24i64);
     let stats = RwSignal::new(StatsResp::default());
-    let servable = RwSignal::new(Vec::<String>::new());
+    let servable = RwSignal::new(Vec::<crate::model::Servable>::new());
     let sessions = RwSignal::new(0i64);
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
@@ -191,6 +191,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <p class="muted small">
                 "客户端填这些名字才打得通（和 " <code>"/v1/models"</code>
                 " 用的是同一份判断：组是开着的，且组里至少有一条可用腿）。"
+                "标了" <span class="tag vision">"视觉"</span>
+                "的名字后面有能看图的腿 —— 带图请求要打这类名字，"
+                "打到没标的会回 422（说清楚，不悄悄丢图）。"
             </p>
             <div class="chips">
                 {move || {
@@ -200,7 +203,14 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                             .into_any();
                     }
                     v.into_iter()
-                        .map(|m| view! { <code class="chip code">{m}</code> })
+                        .map(|m| {
+                            view! {
+                                <code class="chip code" title=if m.vision { "收得下图片输入" } else { "纯文本：带图的请求会被回 422" }>
+                                    {m.name}
+                                    {m.vision.then(|| view! { <span class="tag vision">"视觉"</span> })}
+                                </code>
+                            }
+                        })
                         .collect_view()
                         .into_any()
                 }}

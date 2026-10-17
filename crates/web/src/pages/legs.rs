@@ -8,6 +8,10 @@
 //!   「清空密钥」。不然每次改个名字都得重输一遍密钥。
 //! - **清单是上游说的，不是我们编的**：拉不到就只说实话（连不上/HTTP 404/格式没认出），
 //!   绝不给一份看着挺像的假清单。勾选也**默认一个不勾**，要加哪几条自己挑。
+//! - **「能不能看图」只认实测**：模型名里带 vl/vision 不代表能看图（deepseek 的 flash
+//!   就能读图，有些带 vision 的名字反倒是纯文本）。所以每一行都有「测视觉」按钮：
+//!   真发一张图问一个只有看图才答得出的问题（左上角什么颜色），答对了才勾上。
+//!   勾了才有资格接带图的请求 —— 没勾的腿，带图请求一条都不会发给它。
 
 use std::collections::BTreeSet;
 
@@ -45,6 +49,9 @@ pub(crate) fn add_picked_rows(rows: &mut Vec<ModelPair>, picked: &BTreeSet<Strin
         rows.push(ModelPair {
             model: name.to_string(),
             upstream: None,
+            // 刚从上游清单里拉回来的名字，能力未知 —— **不许猜**，
+            // 要标能看图得点这一行的「测视觉」实测。
+            vision: false,
         });
         added += 1;
     }
@@ -77,6 +84,10 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     let pull_msg = RwSignal::new(None::<(String, bool)>);
     let pulling = RwSignal::new(false);
     let pull_filter = RwSignal::new(String::new());
+
+    // 「测视觉」的状态：(这行的腿 id, 给人看的结果, 好不好)
+    let vt_msg = RwSignal::new(None::<(i64, String, bool)>);
+    let vt_busy = RwSignal::new(None::<i64>);
 
     // 表单字段
     let f_name = RwSignal::new(String::new());
@@ -284,6 +295,67 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         });
     };
 
+    // 「测视觉」：给这一行真发一张带图的小请求，看这条腿认不认得出来。
+    //
+    // 为什么要真发：我们不像上游 FreeLLMAPI 那样有一份带能力标记的目录
+    // （本项目的上游全是自己加的），而"名字里带 vl"这种推断经常错。
+    // 测通了我们顺手把这行标上（服务端的 apply），界面上勾也随之亮起。
+    let vision_test = move |(leg_id, model, upstream): (i64, String, String)| {
+        if model.trim().is_empty() {
+            ctx.say("先填左边的模型名（客户端打的那个），不然不知道该测哪一行");
+            return;
+        }
+        vt_busy.set(Some(leg_id));
+        vt_msg.set(Some((
+            leg_id,
+            format!("正在给「{model}」真发一张图（问它左上角是什么颜色）…"),
+            true,
+        )));
+        wasm_bindgen_futures::spawn_local(async move {
+            let up = upstream.trim().to_string();
+            let up_arg = if up.is_empty() { None } else { Some(up.as_str()) };
+            match api::vision_test(leg_id, &model, up_arg).await {
+                Ok(r) => {
+                    vt_busy.set(None);
+                    let mut s = if r.ok { "能看图".to_string() } else { "没测出来".to_string() };
+                    if let Some(m) = &r.model_sent {
+                        s.push_str(&format!("；发给上游的是 {m}"));
+                    }
+                    if let Some(code) = r.http_status {
+                        s.push_str(&format!("；HTTP {code}"));
+                    }
+                    if let Some(ms) = r.latency_ms {
+                        s.push_str(&format!("；{}", fmt::dur(ms)));
+                    }
+                    if let Some(reply) = r.reply.as_deref().filter(|x| !x.trim().is_empty()) {
+                        s.push_str(&format!("；它回的话「{reply}」"));
+                    }
+                    if r.applied {
+                        s.push_str("；已顺手勾上「能看图」");
+                        // 把表里这一行的勾也点亮（勾=服务端真落库了，不是本地糊弄）
+                        f_models.update(|v| {
+                            if let Some(x) = v
+                                .iter_mut()
+                                .find(|x| x.model.trim() == model.trim())
+                            {
+                                x.vision = true;
+                            }
+                        });
+                    }
+                    if let Some(n) = &r.note {
+                        s.push_str(&format!("；{n}"));
+                    }
+                    vt_msg.set(Some((leg_id, s, r.ok)));
+                }
+                Err(e) => {
+                    vt_busy.set(None);
+                    ctx.note_err(&e);
+                    vt_msg.set(Some((leg_id, format!("测不了：{}", e.message), false)));
+                }
+            }
+        });
+    };
+
     // 拉这条腿的上游模型清单：真打一次 GET /v1/models。
     let pull = move |_| {
         let Form::Edit(id) = form.get_untracked() else {
@@ -457,6 +529,17 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                         <td class="num">
                                             {if l.models.is_empty() {
                                                 view! { <span class="muted">"原样透传"</span> }.into_any()
+                                            } else if l.vision_count > 0 {
+                                                // 这条腿上有能看图的模型名 —— 一眼就能看见
+                                                view! {
+                                                    <span>
+                                                        {l.models.len()}
+                                                        <span class="tag vision" title="这些模型名能收图片输入">
+                                                            {format!("{} 条能看图", l.vision_count)}
+                                                        </span>
+                                                    </span>
+                                                }
+                                                    .into_any()
                                             } else {
                                                 view! { <span>{l.models.len()}</span> }.into_any()
                                             }}
@@ -714,6 +797,13 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                 "，别的腿只要 " <code>"v4.1flash"</code>
                                 "）。左填客户端打的模型名，右填这条腿要发的名字；右边留空 = 同名发出去。"
                             </p>
+                            <p class="muted small">
+                                "「能看图」= 这个模型名收得下图片输入。"
+                                <b>"别猜名字，点「测视觉」"</b>
+                                "：它会真发一张图问一个只有看图才答得出的问题（左上角什么颜色），"
+                                "答对了才勾上。带图的请求只会发给勾了的腿；一条都没勾就回 422 说清楚，"
+                                "而不是把图悄悄丢掉。"
+                            </p>
                             <table class="grid tight">
                                 <tbody>
                                     {move || {
@@ -734,6 +824,19 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                 let m = m.clone();
                                                 let model0 = m.model.clone();
                                                 let up0 = m.upstream.clone().unwrap_or_default();
+                                                // 「测视觉」要知道这一行属于哪条腿（表单里必须是已保存的腿）
+                                                let leg_for_test = match form.get_untracked() {
+                                                    Form::Edit(id) => Some(id),
+                                                    _ => None,
+                                                };
+                                                let model_for_test = m.model.clone();
+                                                let up_for_test = m.upstream.clone().unwrap_or_default();
+                                                // 结果行：这一条的腿 id 对上了才显示
+                                                let (vt_show, vt_text, vt_ok) = vt_msg
+                                                    .get()
+                                                    .map(|(id, t, ok)| (Some(id), t, ok))
+                                                    .unwrap_or((None, String::new(), false));
+                                                let show_vt = vt_show == leg_for_test.filter(|_| !vt_text.is_empty());
                                                 view! {
                                                     <tr>
                                                         <td>
@@ -767,6 +870,53 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                                         });
                                                                 } />
                                                         </td>
+                                                        <td class="vision-cell">
+                                                            <label class="pick" title="这个模型名能不能收图片输入（带图的请求只会发给勾了的腿）">
+                                                                <input type="checkbox"
+                                                                    prop:checked=move || {
+                                                                        f_models
+                                                                            .get()
+                                                                            .get(i)
+                                                                            .map(|x| x.vision)
+                                                                            .unwrap_or(false)
+                                                                    }
+                                                                    on:change=move |ev| {
+                                                                        let on = event_target_checked(&ev);
+                                                                        f_models
+                                                                            .update(|v| {
+                                                                                if let Some(x) = v.get_mut(i) {
+                                                                                    x.vision = on;
+                                                                                }
+                                                                            });
+                                                                    } />
+                                                                "能看图"
+                                                            </label>
+                                                        </td>
+                                                        <td>
+                                                            <button
+                                                                class="ghost"
+                                                                disabled=move || vt_busy.get().is_some()
+                                                                on:click=move |_| {
+                                                                    match leg_for_test {
+                                                                        Some(id) => {
+                                                                            vision_test((
+                                                                                id,
+                                                                                model_for_test.clone(),
+                                                                                up_for_test.clone(),
+                                                                            ))
+                                                                        }
+                                                                        None => {
+                                                                            ctx
+                                                                                .say(
+                                                                                    "这条腿还没保存：先点「保存」，再测它认不认得图",
+                                                                                )
+                                                                        }
+                                                                    }
+                                                                }
+                                                            >
+                                                                "测视觉"
+                                                            </button>
+                                                        </td>
                                                         <td>
                                                             <button class="ghost danger" on:click=move |_| {
                                                                 f_models.update(|v| { v.remove(i); });
@@ -774,6 +924,14 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                             }>"删"</button>
                                                         </td>
                                                     </tr>
+                                                    {show_vt.then(|| view! {
+                                                        <tr class="probe-row">
+                                                            <td></td>
+                                                            <td colspan="5" class=if vt_ok { "probe ok" } else { "probe bad" }>
+                                                                {vt_text.clone()}
+                                                            </td>
+                                                        </tr>
+                                                    })}
                                                 }
                                             })
                                             .collect_view()
@@ -828,6 +986,7 @@ mod tests {
         let mut rows = vec![ModelPair {
             model: "bge-m3".into(),
             upstream: Some("x".into()),
+            vision: true,
         }];
         let mut picked = BTreeSet::new();
         picked.insert("bge-m3".to_string()); // 表里已经有了
@@ -839,6 +998,9 @@ mod tests {
         assert_eq!(rows[1].model, "deepseek-v4.1-flash");
         assert_eq!(rows[1].upstream, None, "加进来的默认同名发出去");
         assert_eq!(rows[0].upstream.as_deref(), Some("x"), "已有的行不许被动过");
+        // 从上游清单加进来的行**不许猜能力**：一律先当纯文本，要标得实测
+        assert!(!rows[1].vision, "拉回来的模型名不能自动当能看图");
+        assert!(rows[0].vision, "已有行的标记不许被动过");
 
         // 连点两次不该堆重复行
         assert_eq!(add_picked_rows(&mut rows, &picked), 0);

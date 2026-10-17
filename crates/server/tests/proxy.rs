@@ -39,6 +39,8 @@ enum Reply {
     Sse,
     /// 先睡一会儿再回 200 —— 用来测"客户端中途断开"
     Slow(u64),
+    /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
+    SawRed,
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +49,8 @@ struct Seen {
     model: String,
     auth: Option<String>,
     custom: Vec<(String, String)>,
+    /// 这次请求的正文里有没有图片内容块 —— 「带图只走能看图的腿」全靠它证明。
+    has_image: bool,
 }
 
 struct MockInner {
@@ -101,7 +105,7 @@ async fn mock_handler(
 ) -> Response {
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("");
-    record(&inner, &headers, &uri, model);
+    record(&inner, &headers, &uri, model, body_has_image(&v));
 
     let reply = next_reply(&inner);
 
@@ -112,6 +116,14 @@ async fn mock_handler(
             "model": "mock",
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "你好"}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+        }))
+        .into_response(),
+        Reply::SawRed => axum::Json(json!({
+            "id": "chatcmpl-mock",
+            "object": "chat.completion",
+            "model": "mock",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "红"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
         }))
         .into_response(),
         Reply::Status(code, body) => (
@@ -139,7 +151,7 @@ async fn mock_handler(
 /// 假上游的 `/v1/models`：默认回一份 OpenAI 形状的清单；
 /// 队列里排了 `Status(…)` 就先按那个回（用来演"上游压根没做这个端点"）。
 async fn mock_models(State(inner): State<Arc<MockInner>>, headers: HeaderMap, uri: Uri) -> Response {
-    record(&inner, &headers, &uri, "");
+    record(&inner, &headers, &uri, "", false);
     match next_reply(&inner) {
         Reply::Status(code, body) => {
             (StatusCode::from_u16(code).unwrap(), body.to_string()).into_response()
@@ -156,9 +168,9 @@ async fn mock_models(State(inner): State<Arc<MockInner>>, headers: HeaderMap, ur
     }
 }
 
-/// 每次请求都记一条：路径、模型名、Authorization、自定义头。
+/// 每次请求都记一条：路径、模型名、Authorization、自定义头、有没有带图。
 /// GET 没有正文，模型名就记空的。
-fn record(inner: &Arc<MockInner>, headers: &HeaderMap, uri: &Uri, model: &str) {
+fn record(inner: &Arc<MockInner>, headers: &HeaderMap, uri: &Uri, model: &str, has_image: bool) {
     let custom = headers
         .iter()
         .filter(|(k, _)| k.as_str().starts_with("x-"))
@@ -167,6 +179,7 @@ fn record(inner: &Arc<MockInner>, headers: &HeaderMap, uri: &Uri, model: &str) {
     inner.seen.lock().unwrap().push(Seen {
         path: uri.path().to_string(),
         model: model.to_string(),
+        has_image,
         auth: headers
             .get("authorization")
             .and_then(|h| h.to_str().ok())
@@ -237,7 +250,18 @@ impl Fixture {
             tokengo_server::db::legs::set_secret(&conn, &self.state.secrets, id, &s).unwrap();
         }
         tokengo_server::db::legs::set_headers(&conn, id, &spec.headers).unwrap();
-        tokengo_server::db::legs::set_models(&conn, id, &spec.models).unwrap();
+        let models: Vec<_> = spec
+            .models
+            .iter()
+            .map(|(m, u)| {
+                tokengo_server::db::legs::ModelMapping::new(
+                    m.clone(),
+                    u.clone(),
+                    spec.vision.iter().any(|v| v == m),
+                )
+            })
+            .collect();
+        tokengo_server::db::legs::set_models(&conn, id, &models).unwrap();
         id
     }
 
@@ -298,6 +322,16 @@ struct LegSpec {
     secret: Option<String>,
     headers: Vec<(String, String)>,
     models: Vec<(String, Option<String>)>,
+    /// 这些模型名在这条腿上标「能看图」（写模型名，就是 models 里的第一个字段）。
+    vision: Vec<String>,
+}
+
+impl LegSpec {
+    /// 标一个模型名「能看图」。链式用：`LegSpec { ..Default::default() }.with_vision("auto")`
+    fn with_vision(mut self, model: &str) -> Self {
+        self.vision.push(model.into());
+        self
+    }
 }
 
 async fn post(
@@ -431,6 +465,7 @@ async fn per_leg_model_names_and_custom_headers_reach_the_upstream() {
                 ("x-opencode-session".into(), "{{uuid}}".into()),
             ],
             models: vec![("auto".into(), Some("deepseek/deepseek-v4.1-flash".into()))],
+            vision: vec![],
         },
     );
     f.set_group("auto", &[leg]);
@@ -1000,6 +1035,35 @@ async fn get_via_post(f: &Fixture, uri: &str, session: &str) -> (StatusCode, Val
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
+/// 面板会话 + JSON 正文的 POST（管理面写操作用）。
+async fn post_with_token(f: &Fixture, uri: &str, session: &str, body: Value) -> (StatusCode, Value) {
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {session}"))
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// 面板会话的 GET（管理面读操作用）。
+async fn get_with_token(f: &Fixture, uri: &str, session: &str) -> (StatusCode, Value) {
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header("authorization", format!("Bearer {session}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
 // ───────────────────────── 拉上游模型清单 ─────────────────────────
 
 /// 面板「拉取上游模型清单」：真打这条腿的 `GET /v1/models`，用它自己的 key 和自定义头。
@@ -1114,5 +1178,399 @@ async fn pulling_models_for_an_unknown_leg_is_404() {
 
     // 没有面板会话同样不行：管理面全部要登录
     let (s, _) = get_via_post(&f, "/api/legs/9999/models", "not-a-session").await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+// ───────────────────── 视觉能力标记（阶段 4.1） ─────────────────────
+
+/// 假上游自己判断"这次请求带没带图"。**故意不复用网关的实现**（`request_has_image`）：
+/// 两边共用一份判断的话，一起错也测不出来。
+fn body_has_image(v: &Value) -> bool {
+    v.get("messages")
+        .and_then(|m| m.as_array())
+        .map(|ms| {
+            ms.iter().any(|m| {
+                m.get("content")
+                    .and_then(|c| c.as_array())
+                    .map(|ps| {
+                        ps.iter()
+                            .any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url"))
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// 一条带图的对话请求（形状就是客户端真会发的那个）。
+fn image_chat_body(model: &str) -> Value {
+    json!({
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "这张图左上角那格是什么颜色？"},
+            {"type": "image_url", "image_url": {
+                "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIklEQVR42mP4z8CAFTH8JxGNaqBIAy6Z//8ZsKJRDTTRAACmXD7QsJ/a+gAAAABJRU5ErkJggg=="
+            }}
+        ]}]
+    })
+}
+
+/// 核心规矩：**带图的请求只走标了「能看图」的腿**。
+///
+/// 两条腿都配了同一个模型名，只有第二条标了能看图：
+/// 图必须落到第二条上，而且**图得真发出去**（不是被网关剥掉再转发）。
+#[tokio::test]
+async fn an_image_request_only_goes_to_a_leg_marked_as_seeing() {
+    let f = fixture();
+    f.with_key();
+    let text_only = start_mock(Reply::Ok).await;
+    let can_see = start_mock(Reply::Ok).await;
+
+    let a = f.add_leg(
+        "纯文本上游",
+        &text_only.base,
+        LegSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    let b = f.add_leg(
+        "能看图的上游",
+        &can_see.base,
+        LegSpec {
+            secret: Some("sk-b".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        }
+        .with_vision("auto"),
+    );
+    f.set_group("auto", &[a, b]);
+
+    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("auto")).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+    let seen = can_see.seen();
+    assert_eq!(seen.len(), 1, "图应该落到标了能看图的那条腿上：{seen:?}");
+    assert_eq!(seen[0].model, "m", "发出去的是这条腿认的模型名");
+    assert!(seen[0].has_image, "图必须真发到上游，不能被网关吞掉");
+    assert_eq!(
+        text_only.count(),
+        0,
+        "没标能看图的腿一次都不该被碰（否则上游会回一个含糊的 400）"
+    );
+
+    // 记账：成功一次，腿是第二条
+    let rows = f.request_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "ok");
+    assert_eq!(rows[0].1, Some(b.0), "账上记的必须是真干活的腿");
+}
+
+/// 不带图的普通请求**不受视觉标记影响**：还是按优先级走第一条。
+#[tokio::test]
+async fn a_text_request_ignores_the_vision_marker() {
+    let f = fixture();
+    f.with_key();
+    let text_only = start_mock(Reply::Ok).await;
+    let can_see = start_mock(Reply::Ok).await;
+
+    let a = f.add_leg(
+        "纯文本上游",
+        &text_only.base,
+        LegSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    let b = f.add_leg(
+        "能看图的上游",
+        &can_see.base,
+        LegSpec {
+            secret: Some("sk-b".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        }
+        .with_vision("auto"),
+    );
+    f.set_group("auto", &[a, b]);
+
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": [{"role":"user","content":"你好"}]})).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(text_only.count(), 1, "普通请求还是走首选腿");
+    assert_eq!(can_see.count(), 0);
+}
+
+/// 带图请求**不许把整组的「当前腿」改掉**。
+///
+/// 这是一个真踩过的坑：一开始把"筛过能看图的那几条腿"当成整组的候选名单喂给
+/// 路由状态机，结果一条带图请求命中那条能看图的腿之后，状态机就把**整组**的当前腿
+/// 改成了它 —— 后面十分钟的纯文字请求全被一起改道。带图请求只该在能看图的小圈子里
+/// 挑腿，挑完之后纯文字请求还是走原来的首选。
+#[tokio::test]
+async fn an_image_request_does_not_reroute_the_plain_traffic() {
+    let f = fixture();
+    f.with_key();
+    let text_only = start_mock(Reply::Ok).await;
+    let can_see = start_mock(Reply::SawRed).await;
+
+    let a = f.add_leg(
+        "纯文本上游（首选）",
+        &text_only.base,
+        LegSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    let b = f.add_leg(
+        "能看图的上游（备选）",
+        &can_see.base,
+        LegSpec {
+            secret: Some("sk-b".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        }
+        .with_vision("auto"),
+    );
+    f.set_group("auto", &[a, b]);
+
+    let plain = json!({"model": "auto", "messages": [{"role": "user", "content": "你好"}]});
+    let (s, _, _) = post(&f, CHAT, Some(KEY), plain.clone()).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!((text_only.count(), can_see.count()), (1, 0), "纯文字：走首选");
+
+    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("auto")).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        (text_only.count(), can_see.count()),
+        (1, 1),
+        "带图：只有能看图的那条腿该收到图"
+    );
+
+    // ← 关键的一半：带图请求发完之后，纯文字请求的走向必须没变
+    let (s, _, _) = post(&f, CHAT, Some(KEY), plain).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        (text_only.count(), can_see.count()),
+        (2, 1),
+        "带图请求把整组的当前腿改掉了：纯文字请求被带偏到能看图的那条腿上"
+    );
+
+    // 顺带看住记账（第 1 行纯文字、第 2 行带图、第 3 行纯文字）
+    let rows = f.request_rows();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert_eq!(rows[1].1, Some(b.0), "带图请求该记在能看图的那条腿上");
+    assert_eq!(rows[2].1, Some(a.0), "带图之后那发纯文字还是记在首选腿上");
+}
+
+/// 一条能看图的腿都没有时：**当场 422 说清楚**，不发上游、不把图悄悄丢掉。
+#[tokio::test]
+async fn an_image_request_without_a_seeing_leg_is_refused_up_front() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let leg = f.add_leg(
+        "纯文本上游",
+        &m.base,
+        LegSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[leg]);
+
+    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("auto")).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{}", String::from_utf8_lossy(&body));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["error"]["code"], "no_vision_model", "{v}");
+    assert_eq!(v["error"]["type"], "invalid_request_error", "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("能看图"), "要说清怎么解决：{msg}");
+    assert!(msg.contains("测视觉"), "要指出去哪儿实测：{msg}");
+
+    assert_eq!(m.count(), 0, "一条腿都不该被碰");
+    assert!(f.attempts().is_empty(), "没发过上游就没有尝试记录");
+
+    // 记账要看得见这次被拦下的请求，且算客户端错（不是腿的毛病）
+    let rows = f.request_rows();
+    assert_eq!(rows.len(), 1, "被拦下的请求也要落一条账：{rows:?}");
+    assert_eq!(rows[0].0, "client_error");
+    assert!(rows[0].5.as_deref().unwrap_or("").contains("能看图"));
+}
+
+/// `/v1/models` 要如实说每个模型名能不能吃图 —— 客户端据此决定发不发图。
+#[tokio::test]
+async fn the_model_list_says_which_names_can_see_images() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let text = f.add_leg(
+        "纯文本",
+        &m.base,
+        LegSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into())), ("BAAI/bge-m3".into(), None)],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    let see = f.add_leg(
+        "能看图",
+        &m.base,
+        LegSpec {
+            secret: Some("sk-b".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        }
+        .with_vision("auto"),
+    );
+    f.set_group("auto", &[text, see]);
+    f.set_group("BAAI/bge-m3", &[text]);
+
+    let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(s, StatusCode::OK);
+    let data = v["data"].as_array().unwrap();
+    let auto = data.iter().find(|x| x["id"] == "auto").unwrap();
+    let vecm = data.iter().find(|x| x["id"] == "BAAI/bge-m3").unwrap();
+    assert_eq!(auto["vision"], true, "{v}");
+    assert_eq!(vecm["vision"], false, "{v}");
+}
+
+/// 面板要能标「能看图」，也要能读回来（列表 + 每条腿的个数）。
+#[tokio::test]
+async fn the_panel_can_mark_a_model_as_seeing_and_reads_it_back() {
+    let f = fixture();
+    f.with_key();
+    let conn = f.state.conn();
+    let token = tokengo_server::db::sessions::create_session(&conn, None).unwrap();
+    drop(conn);
+
+    let (s, v) = post_with_token(
+        &f,
+        "/api/legs",
+        &token,
+        json!({
+            "name": "能看图的腿",
+            "base_url": "http://127.0.0.1:1/v1",
+            "enabled": true,
+            "key": "sk-x",
+            "headers": [],
+            "models": [
+                {"model": "auto", "upstream": "glm-4v-flash", "vision": true},
+                {"model": "BAAI/bge-m3", "upstream": null, "vision": false}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["vision_count"], 1, "这条腿上有一个能看图的模型名：{v}");
+    let auto = v["models"].as_array().unwrap().iter().find(|m| m["model"] == "auto").unwrap();
+    assert_eq!(auto["vision"], true, "{v}");
+    let vecm = v["models"].as_array().unwrap().iter().find(|m| m["model"] == "BAAI/bge-m3").unwrap();
+    assert_eq!(vecm["vision"], false, "{v}");
+
+    // 重新读一遍（不是拿着刚写进去的回显糊弄）
+    let (s, v) = get_with_token(&f, "/api/legs", &token).await;
+    assert_eq!(s, StatusCode::OK);
+    let leg = v["legs"].as_array().unwrap().iter().find(|l| l["id"] == 1).unwrap();
+    assert_eq!(leg["vision_count"], 1, "{v}");
+
+    // 模型组列表要带 can_see：这条腿在这一组里是能看图的
+    f.set_group("auto", &[LegId(1)]);
+    let (s, v) = get_with_token(&f, "/api/groups", &token).await;
+    assert_eq!(s, StatusCode::OK);
+    let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "auto").unwrap();
+    assert_eq!(g["can_see"], true, "{v}");
+}
+
+/// 「测视觉」：真发一张带图的请求，看上游答的是什么。
+///
+/// - 答"红" → 通了，而且**顺手把这行标上**（面板点一下就该有结果，不该再让人回去勾一遍）；
+/// - 上游回 400（不收图）→ 明说不支持；
+/// - 两种情况都**不写记账、不动路由状态**（跟探活、拉清单同纪律）。
+#[tokio::test]
+async fn vision_test_says_what_the_model_actually_answered() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::SawRed).await;
+    let leg = f.add_leg(
+        "某条腿",
+        &m.base,
+        LegSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            vision: vec![],
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[leg]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+
+    let (s, v) = post_with_token(
+        &f,
+        &format!("/api/legs/{}/vision-test", leg.0),
+        &token,
+        json!({"model": "auto", "upstream": "m"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["reply"], "红", "{v}");
+    assert_eq!(v["applied"], true, "测通了要顺手标上：{v}");
+    assert!(v["note"].as_str().unwrap().contains("真看见了"), "{v}");
+
+    // 上游收到的必须是真带图、且用这条腿自己的 key
+    let seen = m.seen();
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].has_image, "「测视觉」要真发图");
+    assert_eq!(seen[0].auth.as_deref(), Some("Bearer sk-a"));
+
+    // 标上了，而且读得回来
+    let (_, v) = get_with_token(&f, "/api/legs", &token).await;
+    let l = v["legs"].as_array().unwrap().iter().find(|l| l["id"] == leg.0).unwrap();
+    assert_eq!(l["vision_count"], 1, "{v}");
+
+    // 一次人工测试不许污染统计、不许动路由状态
+    assert!(f.request_rows().is_empty(), "「测视觉」不该写记账");
+    assert!(f.attempts().is_empty());
+    assert_eq!(f.routing("auto").switch_count, 0);
+
+    // 反证：上游不收图（400）→ 不标绿，也不给一句含糊的"通了"
+    m.inner
+        .replies
+        .lock()
+        .unwrap()
+        .push_back(Reply::Status(400, r#"{"error":{"message":"This model does not support image inputs"}}"#));
+    let (s, v) = post_with_token(
+        &f,
+        &format!("/api/legs/{}/vision-test", leg.0),
+        &token,
+        json!({"model": "auto", "upstream": "m"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["http_status"], 400, "{v}");
+    assert!(v["note"].as_str().unwrap().contains("不支持图像输入"), "{v}");
+    assert!(f.request_rows().is_empty());
+
+    // 腿不存在是 404，没有面板会话是 401
+    let (s, _) = post_with_token(&f, "/api/legs/9999/vision-test", &token, json!({"model": "auto"})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = post_with_token(&f, &format!("/api/legs/{}/vision-test", leg.0), "bad", json!({"model": "auto"})).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }

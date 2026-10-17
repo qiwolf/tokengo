@@ -6,8 +6,18 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::model::{Group, Leg};
+use crate::model::{Group, Leg, Servable};
 use crate::Ctx;
+
+/// 顶部那一排「客户端能打的模型名」要显示什么：勾了「只看含视觉的」就只留能收图的。
+///
+/// 抽成纯函数是为了能测 —— 面板的筛选逻辑一旦写错，人看到的是"明明标了视觉却不显示"。
+pub(crate) fn filter_servable(all: &[Servable], only_vision: bool) -> Vec<Servable> {
+    all.iter()
+        .filter(|m| !only_vision || m.vision)
+        .cloned()
+        .collect()
+}
 
 /// 正在编辑的组（草稿状态，保存前只存在浏览器里）。
 #[derive(Debug, Clone, PartialEq)]
@@ -23,7 +33,9 @@ struct Draft {
 pub fn Groups(ctx: Ctx) -> impl IntoView {
     let groups = RwSignal::new(Vec::<Group>::new());
     let legs = RwSignal::new(Vec::<Leg>::new());
-    let servable = RwSignal::new(Vec::<String>::new());
+    let servable = RwSignal::new(Vec::<Servable>::new());
+    // 「只看含视觉的」：模型多了以后，一眼找出哪个模型名能收图
+    let only_vision = RwSignal::new(false);
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let draft = RwSignal::new(None::<Draft>);
@@ -147,15 +159,27 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                 <span class="spacer"></span>
                 <span class="muted small">"客户端能打的模型名："</span>
                 {move || {
-                    let v = servable.get();
+                    let v = filter_servable(&servable.get(), only_vision.get());
                     if v.is_empty() {
                         return view! { <span class="muted small">"（一个都没有）"</span> }.into_any();
                     }
                     v.into_iter()
-                        .map(|m| view! { <code class="chip code">{m}</code> })
+                        .map(|m| {
+                            view! {
+                                <code class="chip code" title=if m.vision { "这个模型名收得下图片输入" } else { "纯文本：带图的请求会被回 422" }>
+                                    {m.name}
+                                    {m.vision.then(|| view! { <span class="tag vision">"视觉"</span> })}
+                                </code>
+                            }
+                        })
                         .collect_view()
                         .into_any()
                 }}
+                <label class="pick" title="只看后面有「能看图」的腿的模型名">
+                    <input type="checkbox" prop:checked=move || only_vision.get()
+                        on:change=move |ev| only_vision.set(event_target_checked(&ev)) />
+                    "只看含视觉的"
+                </label>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
@@ -189,6 +213,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                         let g2 = g.clone();
                                         let g3 = g.clone();
                                         let name = g.name.clone();
+                                        let can_see = g.can_see;
                                         let legs_txt = g
                                             .legs
                                             .iter()
@@ -199,6 +224,16 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                             <tr>
                                                 <td>
                                                     <b>{name.clone()}</b>
+                                                    {can_see.then(|| view! {
+                                                        <span class="tag vision" title="这一组里有「能看图」的腿，带图的请求走得通">
+                                                            "视觉"
+                                                        </span>
+                                                    })}
+                                                    {(!can_see).then(|| view! {
+                                                        <span class="tag muted" title="这一组里没有能看图的腿：带图的请求会被回 422（说清楚，不悄悄丢图）">
+                                                            "不收图"
+                                                        </span>
+                                                    })}
                                                     <div class="muted small">{legs_txt}</div>
                                                 </td>
                                                 <td>
@@ -369,5 +404,31 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn m(name: &str, vision: bool) -> Servable {
+        Servable {
+            name: name.into(),
+            vision,
+        }
+    }
+
+    #[test]
+    fn vision_filter_keeps_everything_when_off() {
+        let all = vec![m("auto", true), m("BAAI/bge-m3", false)];
+        assert_eq!(filter_servable(&all, false).len(), 2);
+    }
+
+    #[test]
+    fn vision_filter_keeps_only_the_ones_that_can_see() {
+        let all = vec![m("auto", true), m("BAAI/bge-m3", false), m("glm-4v", true)];
+        let got = filter_servable(&all, true);
+        let names: Vec<&str> = got.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["auto", "glm-4v"], "顺序要保持原样");
     }
 }

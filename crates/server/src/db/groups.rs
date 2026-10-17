@@ -112,6 +112,9 @@ pub fn resolve(conn: &Connection, name: &str) -> Result<Option<ModelGroup>> {
 ///
 /// `model_alias` 按 **组名** 查（客户端打 `auto`，就把腿表里 model_name=`auto`
 /// 的那行当别名）。查不到就 None = 原样透传。
+///
+/// **视觉能力也挂在同一行上**：`auto` 在 A 腿上落到能看图的模型、在 B 腿上落到
+/// 纯文本模型是常事，所以 `vision` 跟着这条腿这一行的标记走，不做全局推断。
 pub fn resolve_legs(conn: &Connection, group_name: &str) -> Result<Vec<Leg>> {
     let Some(g) = get(conn, group_name)? else {
         return Ok(Vec::new());
@@ -121,14 +124,17 @@ pub fn resolve_legs(conn: &Connection, group_name: &str) -> Result<Vec<Leg>> {
         let Some(l) = super::legs::get(conn, *id)? else {
             continue;
         };
-        let alias: Option<String> = conn
+        let mapping: Option<(Option<String>, i64)> = conn
             .query_row(
-                "SELECT upstream_model FROM leg_models WHERE leg_id = ?1 AND model_name = ?2",
+                "SELECT upstream_model, vision FROM leg_models WHERE leg_id = ?1 AND model_name = ?2",
                 params![id.0, g.name],
-                |r| r.get::<_, Option<String>>(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
-            .optional()?
-            .flatten();
+            .optional()?;
+        let (alias, vision) = match mapping {
+            Some((up, v)) => (up.filter(|u| !u.trim().is_empty()), v != 0),
+            None => (None, false),
+        };
         out.push(Leg {
             id: l.id,
             name: l.name,
@@ -136,14 +142,22 @@ pub fn resolve_legs(conn: &Connection, group_name: &str) -> Result<Vec<Leg>> {
             enabled: l.enabled,
             priority: ord as i32,
             model_alias: alias,
+            vision,
             headers: l.headers,
         });
     }
     Ok(out)
 }
 
+/// 对外可见的一个模型名 + 它这条组能不能吃图片（组里**任意**一条腿标了能看图就算）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Servable {
+    pub name: String,
+    pub vision: bool,
+}
+
 /// 对外可见的模型名清单（供 `/v1/models`）。只列真实配好的组，且组里至少有一条可用腿。
-pub fn list_servable(conn: &Connection) -> Result<Vec<String>> {
+pub fn list_servable(conn: &Connection) -> Result<Vec<Servable>> {
     let mut out = Vec::new();
     for g in list(conn)? {
         if !g.enabled {
@@ -151,16 +165,26 @@ pub fn list_servable(conn: &Connection) -> Result<Vec<String>> {
         }
         let legs = resolve_legs(conn, &g.name)?;
         if legs.iter().any(|l| l.routable()) {
-            out.push(g.name);
+            out.push(Servable {
+                name: g.name.clone(),
+                vision: group_can_see(conn, &g.name)?,
+            });
         }
     }
     Ok(out)
 }
 
+/// 这一组现在有没有「能看图」的可用腿。带图的请求要按它决定走不走得通。
+pub fn group_can_see(conn: &Connection, group_name: &str) -> Result<bool> {
+    Ok(resolve_legs(conn, group_name)?
+        .iter()
+        .any(|l| l.routable() && l.vision))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::legs::{self, NewLeg};
+    use crate::db::legs::{self, ModelMapping, NewLeg};
     use crate::db::open_in_memory;
 
     fn leg(conn: &Connection, name: &str) -> LegId {
@@ -245,8 +269,16 @@ mod tests {
         let conn = open_in_memory().unwrap();
         let sf = leg(&conn, "硅基流动");
         let cg = leg(&conn, "command-go");
-        legs::set_models(&conn, cg, &[("auto".into(), Some("deepseek/deepseek-v4.1-flash".into()))])
-            .unwrap();
+        legs::set_models(
+            &conn,
+            cg,
+            &[ModelMapping::new(
+                "auto",
+                Some("deepseek/deepseek-v4.1-flash".into()),
+                false,
+            )],
+        )
+        .unwrap();
         upsert(&conn, "auto", true, &[sf, cg]).unwrap();
 
         let ls = resolve_legs(&conn, "auto").unwrap();
@@ -261,6 +293,61 @@ mod tests {
             "deepseek/deepseek-v4.1-flash",
             "按腿改名的关键是这个"
         );
+    }
+
+    /// 视觉标记必须**按组名那一行**取：同一批腿，`auto` 这行标了能看图，
+    /// 别的组名那行没标，各自算各自的。
+    #[test]
+    fn resolve_legs_carries_the_vision_flag_of_that_group_name() {
+        let conn = open_in_memory().unwrap();
+        let a = leg(&conn, "能看图的上游");
+        let b = leg(&conn, "纯文本上游");
+        legs::set_models(
+            &conn,
+            a,
+            &[ModelMapping::new("auto", Some("glm-4v-flash".into()), true)],
+        )
+        .unwrap();
+        legs::set_models(
+            &conn,
+            b,
+            &[ModelMapping::new("auto", Some("deepseek-v4.1-flash".into()), false)],
+        )
+        .unwrap();
+        upsert(&conn, "auto", true, &[a, b]).unwrap();
+
+        let ls = resolve_legs(&conn, "auto").unwrap();
+        assert!(ls[0].vision, "标了能看图的腿要带出来");
+        assert!(!ls[1].vision);
+
+        // 换个组名：这条腿上没有那一行 → 一律按"不能看图"算，绝不靠猜
+        upsert(&conn, "BAAI/bge-m3", true, &[a]).unwrap();
+        let ls = resolve_legs(&conn, "BAAI/bge-m3").unwrap();
+        assert!(!ls[0].vision, "换了个组名就是另一行，不能沿用 auto 那行的标记");
+    }
+
+    /// 带图的请求能不能走这一组：只要有一条**可用且标了**的腿就算能走。
+    /// 停用的腿不算（否则图会发到一条已经关掉的腿的配置上，等于没有）。
+    #[test]
+    fn group_can_see_needs_a_routable_vision_leg() {
+        let conn = open_in_memory().unwrap();
+        let text = leg(&conn, "纯文本");
+        let see = leg(&conn, "能看图");
+        legs::set_models(
+            &conn,
+            see,
+            &[ModelMapping::new("auto", Some("glm-4v-flash".into()), true)],
+        )
+        .unwrap();
+        upsert(&conn, "auto", true, &[text, see]).unwrap();
+        assert!(group_can_see(&conn, "auto").unwrap());
+
+        legs::update(&conn, see, "能看图", "http://127.0.0.1/see", false).unwrap();
+        assert!(!group_can_see(&conn, "auto").unwrap(), "停用的腿不算数");
+
+        upsert(&conn, "空的", true, &[text]).unwrap();
+        assert!(!group_can_see(&conn, "空的").unwrap());
+        assert!(!group_can_see(&conn, "没这组").unwrap());
     }
 
     #[test]
@@ -296,13 +383,45 @@ mod tests {
         upsert(&conn, "auto", true, &[a]).unwrap();
         upsert(&conn, "empty", true, &[]).unwrap();
         upsert(&conn, "off", false, &[a]).unwrap();
-        assert_eq!(list_servable(&conn).unwrap(), vec!["auto".to_string()]);
+        assert_eq!(
+            list_servable(&conn).unwrap(),
+            vec![Servable {
+                name: "auto".into(),
+                vision: false
+            }]
+        );
 
         legs::update(&conn, a, "a", "http://x", false).unwrap();
         assert!(
             list_servable(&conn).unwrap().is_empty(),
             "组里全是停用的腿，就不该再对外暴露这个模型名"
         );
+    }
+
+    /// 清单里要如实说这个模型名能不能吃图 —— 客户端（Hermes 之类）按它决定
+    /// 要不要把图发过来。
+    #[test]
+    fn the_servable_list_says_which_model_names_can_see() {
+        let conn = open_in_memory().unwrap();
+        let a = leg(&conn, "能看图");
+        let b = leg(&conn, "纯文本");
+        legs::set_models(
+            &conn,
+            a,
+            &[
+                ModelMapping::new("auto", Some("glm-4v-flash".into()), true),
+                ModelMapping::new("BAAI/bge-m3", None, false),
+            ],
+        )
+        .unwrap();
+        upsert(&conn, "auto", true, &[b, a]).unwrap();
+        upsert(&conn, "BAAI/bge-m3", true, &[a]).unwrap();
+
+        let m = list_servable(&conn).unwrap();
+        let auto = m.iter().find(|s| s.name == "auto").unwrap();
+        let vec = m.iter().find(|s| s.name == "BAAI/bge-m3").unwrap();
+        assert!(auto.vision, "auto 后面有能看图的腿");
+        assert!(!vec.vision, "向量那条组里没有能看图的腿");
     }
 
     /// `/v1/models` 只列真实能用的 —— 用户明确要求过。
@@ -312,7 +431,7 @@ mod tests {
         let a = leg(&conn, "a");
         upsert(&conn, "auto", true, &[a]).unwrap();
         upsert(&conn, "deepseek-v4.1-flash", true, &[a]).unwrap();
-        let m = list_servable(&conn).unwrap();
+        let m: Vec<String> = list_servable(&conn).unwrap().into_iter().map(|s| s.name).collect();
         assert_eq!(m, vec!["auto".to_string(), "deepseek-v4.1-flash".to_string()]);
         // 库里没有目录表，模型名只来自用户亲手建的组
         let n: i64 = conn

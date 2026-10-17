@@ -192,3 +192,13 @@ table.grid tr:hover td { background: rgba(255,255,255,.02); }
   .sidebar-foot { margin: 0 0 0 auto; }
   .split, .form-grid { grid-template-columns: 1fr; }
 }
+
+/* 「能看图」标记与「测视觉」结果行（阶段 4.1）。
+   用青色跟别的标签区分：绿色=正常、黄色=注意、青色=能力标记。 */
+.tag.vision {
+  color: var(--accent, #22d3ee);
+  border-color: rgba(34, 211, 238, .45);
+  background: rgba(34, 211, 238, .12);
+  margin-left: .35rem;
+}
+.vision-cell .pick { margin: 0; white-space: nowrap; }

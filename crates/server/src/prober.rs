@@ -211,11 +211,11 @@ pub fn probe_model(
     let _ = group;
     row.models
         .iter()
-        .find_map(|(_, upstream)| upstream.clone().filter(|u| !u.trim().is_empty()))
+        .find_map(|m| m.upstream.clone().filter(|u| !u.trim().is_empty()))
         .or_else(|| {
             row.models
                 .iter()
-                .map(|(name, _)| name.clone())
+                .map(|m| m.model.clone())
                 .find(|n| !n.trim().is_empty())
         })
 }
@@ -235,6 +235,44 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
         }),
     };
     bytes::Bytes::from(serde_json::to_vec(&v).unwrap_or_default())
+}
+
+/// 「测视觉」用的那张 16×16 小图：四格分别是 左上红 / 右上绿 / 左下蓝 / 右下黄。
+///
+/// 为什么要造图而不用现成图片：**要能判对错**。问一句"左上角是什么颜色"，
+/// 真看了图的模型会答"红"，纯文本模型要么报 400（不支持图片输入），要么答个
+/// 别的颜色 —— 三种情况一眼分得清。91 字节，数据 URL 一共 124 个字符。
+pub const VISION_TEST_IMAGE_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIklEQVR42mP4z8CAFTH8JxGNaqBIAy6Z//8ZsKJRDTTRAACmXD7QsJ/a+gAAAABJRU5ErkJggg==";
+
+/// 「测视觉」问题的标准问法 + 判对错时认的词。
+pub const VISION_TEST_QUESTION: &str = "这张图左上角那一格是什么颜色？只回一个词。";
+
+/// 「测视觉」的请求体：带图的一发最小对话请求。
+///
+/// 和探活同一条纪律：模型名是**这条腿自己认的那个**（拿虚拟组名 `auto` 去问
+/// 必然 400，绿点就不真了）；`max_tokens` 给 8 够回一个颜色词。
+pub fn vision_test_body(model: &str) -> bytes::Bytes {
+    let v = serde_json::json!({
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": VISION_TEST_QUESTION},
+                {"type": "image_url", "image_url": {
+                    "url": format!("data:image/png;base64,{}", VISION_TEST_IMAGE_PNG_B64)
+                }}
+            ]
+        }],
+        "max_tokens": 8,
+        "stream": false,
+    });
+    bytes::Bytes::from(serde_json::to_vec(&v).unwrap_or_default())
+}
+
+/// 这个回复算不算"真看见了"：认出红色就算。中文简繁、英文都认。
+pub fn answer_says_red(reply: &str) -> bool {
+    let t = reply.to_lowercase();
+    t.contains('红') || t.contains('紅') || t.contains("red")
 }
 
 #[cfg(test)]
@@ -275,6 +313,7 @@ mod tests {
             enabled: true,
             priority: 0,
             model_alias: Some("deepseek/deepseek-v4.1-flash".into()),
+            vision: false,
             headers: vec![],
         };
         assert_eq!(
@@ -295,7 +334,7 @@ mod tests {
             },
         )
         .unwrap();
-        legs::set_models(&conn, id, &[("bge-m3".into(), Some("BAAI/bge-m3".into()))]).unwrap();
+        legs::set_models(&conn, id, &[legs::ModelMapping::new("bge-m3", Some("BAAI/bge-m3".into()), false)]).unwrap();
         let leg = Leg {
             id,
             name: "硅基流动".into(),
@@ -303,6 +342,7 @@ mod tests {
             enabled: true,
             priority: 0,
             model_alias: None,
+            vision: false,
             headers: vec![],
         };
         assert_eq!(probe_model(&conn, &leg, "auto").as_deref(), Some("BAAI/bge-m3"));
@@ -328,8 +368,38 @@ mod tests {
             enabled: true,
             priority: 0,
             model_alias: Some("auto".into()),
+            vision: false,
             headers: vec![],
         };
         assert_eq!(probe_model(&conn, &leg, "auto"), None);
+    }
+
+    /// 「测视觉」的请求体：必须真带一张图，模型名是这条腿自己认的那个，
+    /// 而且要小（面板按钮点一下不该花掉一堆 token）。
+    #[test]
+    fn vision_test_body_carries_a_real_image() {
+        let b = vision_test_body("glm-4v-flash");
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["model"], "glm-4v-flash");
+        assert_eq!(v["max_tokens"], 8);
+        assert_eq!(v["stream"], false);
+        let parts = v["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"), "得是内嵌图片：{url}");
+        assert!(url.len() < 400, "别把请求撑大：{} 字符", url.len());
+        assert!(b.len() < 700, "整个请求体要小：{} 字节", b.len());
+    }
+
+    /// 判对错只认「红」：答别的颜色不算看见了。
+    #[test]
+    fn only_red_counts_as_seeing_the_image() {
+        for yes in ["红", "红色", "紅色", "Red", "RED.", "左上角是红色"] {
+            assert!(answer_says_red(yes), "{yes} 应该算看见了");
+        }
+        for no in ["绿", "蓝色", "yellow", "我不确定", ""] {
+            assert!(!answer_says_red(no), "{no} 不该算看见了");
+        }
     }
 }

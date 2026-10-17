@@ -7,6 +7,29 @@ use tokengo_shared::LegId;
 use super::{DbError, Result};
 use crate::crypto::SecretBox;
 
+/// 一条腿的「按腿模型名」映射：对外名 → 上游名 + 能不能看图。
+///
+/// 用结构体而不是三元组：这三个字段一起读写，元组顺序错了不会报错、只会静默错位。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelMapping {
+    /// 客户端打的名字（通常就是组名，如 `auto`）。
+    pub model: String,
+    /// 发给上游的名字。None = 原样透传。
+    pub upstream: Option<String>,
+    /// 这条腿上的这个模型能不能吃图片输入（面板上勾「能看图」）。
+    pub vision: bool,
+}
+
+impl ModelMapping {
+    pub fn new(model: impl Into<String>, upstream: Option<String>, vision: bool) -> Self {
+        Self {
+            model: model.into(),
+            upstream,
+            vision,
+        }
+    }
+}
+
 /// 库里的一条腿（不含明文密钥，只带"有没有配密钥"）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LegRow {
@@ -17,8 +40,8 @@ pub struct LegRow {
     pub has_secret: bool,
     /// 自定义请求头（上游没有的能力，本项目增项）
     pub headers: Vec<(String, String)>,
-    /// 该腿认的模型名：(对外名, 上游名)。上游名为 None 表示原样透传。
-    pub models: Vec<(String, Option<String>)>,
+    /// 该腿认的模型名（含"能不能看图"）
+    pub models: Vec<ModelMapping>,
 }
 
 /// 新建腿要给的字段。
@@ -53,10 +76,17 @@ fn load_children(conn: &Connection, leg: &mut LegRow) -> Result<()> {
         .query_map([leg.id.0], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
 
-    let mut stmt = conn
-        .prepare("SELECT model_name, upstream_model FROM leg_models WHERE leg_id = ?1 ORDER BY model_name")?;
+    let mut stmt = conn.prepare(
+        "SELECT model_name, upstream_model, vision FROM leg_models WHERE leg_id = ?1 ORDER BY model_name",
+    )?;
     leg.models = stmt
-        .query_map([leg.id.0], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map([leg.id.0], |r| {
+            Ok(ModelMapping {
+                model: r.get(0)?,
+                upstream: r.get(1)?,
+                vision: r.get::<_, i64>(2)? != 0,
+            })
+        })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(())
 }
@@ -169,15 +199,38 @@ pub fn set_headers(conn: &Connection, id: LegId, headers: &[(String, String)]) -
 }
 
 /// 整体替换一条腿的模型名映射。
-pub fn set_models(conn: &Connection, id: LegId, models: &[(String, Option<String>)]) -> Result<()> {
+pub fn set_models(conn: &Connection, id: LegId, models: &[ModelMapping]) -> Result<()> {
     conn.execute("DELETE FROM leg_models WHERE leg_id = ?1", [id.0])?;
-    for (name, upstream) in models {
+    for m in models {
         conn.execute(
-            "INSERT INTO leg_models (leg_id, model_name, upstream_model) VALUES (?1, ?2, ?3)",
-            params![id.0, name.trim(), upstream],
+            "INSERT INTO leg_models (leg_id, model_name, upstream_model, vision) VALUES (?1, ?2, ?3, ?4)",
+            params![id.0, m.model.trim(), m.upstream, m.vision as i64],
         )?;
     }
     Ok(())
+}
+
+/// 只改「这个模型名在这条腿上能不能看图」。
+///
+/// 面板上的「测视觉」实测通过后直接落到这一行（不必整条腿重存一遍，
+/// 免得把用户正在编辑、还没保存的其它字段一起写坏）。
+pub fn set_model_vision(
+    conn: &Connection,
+    id: LegId,
+    model_name: &str,
+    vision: bool,
+) -> Result<usize> {
+    let n = conn.execute(
+        "UPDATE leg_models SET vision = ?3 WHERE leg_id = ?1 AND model_name = ?2",
+        params![id.0, model_name.trim(), vision as i64],
+    )?;
+    if n == 0 {
+        return Err(DbError::Other(format!(
+            "腿 {id} 上没有「{}」这个模型名，没法标视觉能力",
+            model_name.trim()
+        )));
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -292,8 +345,8 @@ mod tests {
             &conn,
             id,
             &[
-                ("deepseek-v4.1-flash".into(), Some("deepseek/deepseek-v4.1-flash".into())),
-                ("bge-m3".into(), None),
+                ModelMapping::new("deepseek-v4.1-flash", Some("deepseek/deepseek-v4.1-flash".into()), false),
+                ModelMapping::new("bge-m3", None, false),
             ],
         )
         .unwrap();
@@ -302,7 +355,70 @@ mod tests {
         assert!(got
             .models
             .iter()
-            .any(|(n, u)| n == "bge-m3" && u.is_none()));
+            .any(|m| m.model == "bge-m3" && m.upstream.is_none()));
+    }
+
+    /// 视觉标记要跟着模型名一起落库、一起读回来。
+    #[test]
+    fn vision_flag_round_trips_per_model_name() {
+        let conn = open_in_memory().unwrap();
+        let id = create(&conn, &new_leg()).unwrap();
+        set_models(
+            &conn,
+            id,
+            &[
+                ModelMapping::new("auto", Some("glm-4v-flash".into()), true),
+                ModelMapping::new("BAAI/bge-m3", None, false),
+            ],
+        )
+        .unwrap();
+        let got = get(&conn, id).unwrap().unwrap();
+        let auto = got.models.iter().find(|m| m.model == "auto").unwrap();
+        let vec = got.models.iter().find(|m| m.model == "BAAI/bge-m3").unwrap();
+        assert!(auto.vision, "标了能看图的要读回来");
+        assert!(!vec.vision, "没标的就是不能看图");
+    }
+
+    /// 反证：**老库升上来的行没有这一列，读出来必须是"不能看图"（false），
+    /// 不能是 true**。默认 true 会让纯文本模型被当成能看图，图发过去就报错。
+    #[test]
+    fn rows_written_without_the_column_default_to_not_vision() {
+        let conn = open_in_memory().unwrap();
+        let id = create(&conn, &new_leg()).unwrap();
+        conn.execute(
+            "INSERT INTO leg_models (leg_id, model_name, upstream_model) VALUES (?1, 'auto', 'deepseek-v4.1-flash')",
+            [id.0],
+        )
+        .unwrap();
+        let got = get(&conn, id).unwrap().unwrap();
+        assert_eq!(got.models.len(), 1);
+        assert!(!got.models[0].vision, "没这一列的老行必须按「不能看图」算");
+    }
+
+    #[test]
+    fn set_model_vision_only_touches_that_one_row() {
+        let conn = open_in_memory().unwrap();
+        let id = create(&conn, &new_leg()).unwrap();
+        set_models(
+            &conn,
+            id,
+            &[
+                ModelMapping::new("auto", Some("a".into()), false),
+                ModelMapping::new("deepseek-v4.1-flash", Some("b".into()), false),
+            ],
+        )
+        .unwrap();
+        assert_eq!(set_model_vision(&conn, id, "auto", true).unwrap(), 1);
+        let got = get(&conn, id).unwrap().unwrap();
+        assert!(got.models.iter().find(|m| m.model == "auto").unwrap().vision);
+        assert!(!got
+            .models
+            .iter()
+            .find(|m| m.model == "deepseek-v4.1-flash")
+            .unwrap()
+            .vision);
+        // 没有这个模型名时必须报错，不能悄悄成功
+        assert!(set_model_vision(&conn, id, "没这个名", true).is_err());
     }
 
     #[test]
@@ -337,8 +453,8 @@ mod tests {
                 c,
                 id,
                 &[
-                    ("auto".into(), None),
-                    ("auto".into(), Some("dup".into())),
+                    ModelMapping::new("auto", None, false),
+                    ModelMapping::new("auto", Some("dup".into()), false),
                 ],
             )?;
             Ok(id)
@@ -363,7 +479,10 @@ mod tests {
         let r = set_models(
             &conn,
             id,
-            &[("auto".into(), None), ("auto".into(), Some("x".into()))],
+            &[
+                ModelMapping::new("auto", None, false),
+                ModelMapping::new("auto", Some("x".into()), false),
+            ],
         );
         assert!(r.is_err());
     }

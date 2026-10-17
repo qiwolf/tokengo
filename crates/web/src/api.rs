@@ -204,6 +204,19 @@ pub async fn pull_leg_models(id: i64) -> Result<ModelPull, ApiErr> {
     typed("POST", &format!("/api/legs/{id}/models"), None).await
 }
 
+/// 「测视觉」：给这条腿真发一张带图的小请求，看它认不认得出来。
+///
+/// `model` 是这一行的对外模型名（要测哪一行），`upstream` 是发给上游的名字
+/// （留空 = 跟保存的语义一样，原样透传）。
+pub async fn vision_test(id: i64, model: &str, upstream: Option<&str>) -> Result<VisionTest, ApiErr> {
+    typed(
+        "POST",
+        &format!("/api/legs/{id}/vision-test"),
+        Some(json!({ "model": model, "upstream": upstream, "apply": true })),
+    )
+    .await
+}
+
 pub async fn groups() -> Result<GroupsResp, ApiErr> {
     typed("GET", "/api/groups", None).await
 }

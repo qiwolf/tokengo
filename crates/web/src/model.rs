@@ -40,6 +40,9 @@ pub struct ModelPair {
     pub model: String,
     #[serde(default)]
     pub upstream: Option<String>,
+    /// 这个模型名在这条腿上能不能吃图片输入（面板上的「能看图」勾选）。
+    #[serde(default)]
+    pub vision: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -53,6 +56,9 @@ pub struct Leg {
     pub headers: Vec<HeaderPair>,
     #[serde(default)]
     pub models: Vec<ModelPair>,
+    /// 这条腿上「能看图」的模型名有几个（服务端算好的，列表里直接显示）。
+    #[serde(default)]
+    pub vision_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -67,6 +73,18 @@ pub struct Group {
     pub enabled: bool,
     #[serde(default)]
     pub legs: Vec<i64>,
+    /// 这一组现在有没有「能看图」的可用腿。带图的请求能不能走这条组就看它。
+    #[serde(default)]
+    pub can_see: bool,
+}
+
+/// 一个真能被调用的模型名 + 它能不能吃图。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Servable {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub vision: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -75,7 +93,7 @@ pub struct GroupsResp {
     pub groups: Vec<Group>,
     /// 真能被调用的模型名（组开着、且组里至少有一条可用腿）。
     #[serde(default)]
-    pub servable: Vec<String>,
+    pub servable: Vec<Servable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
@@ -212,6 +230,33 @@ pub struct ModelPull {
     /// 上游报的模型名。**拉不到就是空**，界面不许自己编。
     #[serde(default)]
     pub models: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// 「测视觉」的响应：真发一张图之后，上游到底说了什么。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct VisionTest {
+    pub ok: bool,
+    pub leg_id: i64,
+    #[serde(default)]
+    pub leg_name: Option<String>,
+    /// 测的是哪个对外模型名（通常就是组名）。
+    #[serde(default)]
+    pub model: Option<String>,
+    /// 真发给上游的名字。
+    #[serde(default)]
+    pub model_sent: Option<String>,
+    #[serde(default)]
+    pub http_status: Option<i64>,
+    #[serde(default)]
+    pub latency_ms: Option<i64>,
+    /// 上游回的话（原样，不加工）—— 人自己判断它是不是真看见了。
+    #[serde(default)]
+    pub reply: Option<String>,
+    /// 测通了、有没有顺手把这行标上。
+    #[serde(default)]
+    pub applied: bool,
     #[serde(default)]
     pub note: Option<String>,
 }
