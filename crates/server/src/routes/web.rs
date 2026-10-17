@@ -24,7 +24,7 @@ pub fn router() -> Router<SharedState> {
         .route("/", get(root))
         .route("/ui", get(index))
         .route("/ui/", get(index))
-        // 深链（/ui/legs 这类）与静态资源（/ui/pkg/xxx.wasm）都走这里
+        // 深链（/ui/channels 这类）与静态资源（/ui/pkg/xxx.wasm）都走这里
         .route("/ui/{*path}", get(asset))
 }
 

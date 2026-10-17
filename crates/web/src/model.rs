@@ -40,13 +40,13 @@ pub struct ModelPair {
     pub model: String,
     #[serde(default)]
     pub upstream: Option<String>,
-    /// 这个模型名在这条腿上能不能吃图片输入（面板上的「能看图」勾选）。
+    /// 这个模型名在这条渠道上能不能吃图片输入（面板上的「能看图」勾选）。
     #[serde(default)]
     pub vision: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct Leg {
+pub struct Channel {
     pub id: i64,
     pub name: String,
     pub base_url: String,
@@ -56,15 +56,15 @@ pub struct Leg {
     pub headers: Vec<HeaderPair>,
     #[serde(default)]
     pub models: Vec<ModelPair>,
-    /// 这条腿上「能看图」的模型名有几个（服务端算好的，列表里直接显示）。
+    /// 这条渠道上「能看图」的模型名有几个（服务端算好的，列表里直接显示）。
     #[serde(default)]
     pub vision_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct LegsResp {
+pub struct ChannelsResp {
     #[serde(default)]
-    pub legs: Vec<Leg>,
+    pub channels: Vec<Channel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -72,8 +72,8 @@ pub struct Group {
     pub name: String,
     pub enabled: bool,
     #[serde(default)]
-    pub legs: Vec<i64>,
-    /// 这一组现在有没有「能看图」的可用腿。带图的请求能不能走这条组就看它。
+    pub channels: Vec<i64>,
+    /// 这一组现在有没有「能看图」的可用渠道。带图的请求能不能走这条组就看它。
     #[serde(default)]
     pub can_see: bool,
 }
@@ -91,7 +91,7 @@ pub struct Servable {
 pub struct GroupsResp {
     #[serde(default)]
     pub groups: Vec<Group>,
-    /// 真能被调用的模型名（组开着、且组里至少有一条可用腿）。
+    /// 真能被调用的模型名（组开着、且组里至少有一条可用渠道）。
     #[serde(default)]
     pub servable: Vec<Servable>,
 }
@@ -116,15 +116,15 @@ impl RoutingCfg {
 pub struct RoutingGroup {
     pub group: String,
     pub enabled: bool,
-    pub primary_leg_id: Option<i64>,
-    pub active_leg_id: Option<i64>,
+    pub primary_channel_id: Option<i64>,
+    pub active_channel_id: Option<i64>,
     pub switched: bool,
     pub switch_count: i64,
     pub last_switch_at_ms: Option<i64>,
     pub next_probe_at_ms: Option<i64>,
     pub now_ms: i64,
     #[serde(default)]
-    pub legs: Vec<i64>,
+    pub channels: Vec<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -135,13 +135,13 @@ pub struct RoutingResp {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct LegStat {
-    pub leg_id: i64,
+pub struct ChannelStat {
+    pub channel_id: i64,
     #[serde(default)]
-    pub leg_name: Option<String>,
+    pub channel_name: Option<String>,
     pub attempts: i64,
     pub successes: i64,
-    pub leg_faults: i64,
+    pub channel_faults: i64,
     pub avg_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -161,7 +161,7 @@ pub struct Stats {
     pub input_tokens: i64,
     pub output_tokens: i64,
     #[serde(default)]
-    pub by_leg: Vec<LegStat>,
+    pub by_channel: Vec<ChannelStat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -178,7 +178,7 @@ pub struct LogRow {
     pub model: String,
     pub status: String,
     pub http_status: Option<i64>,
-    pub leg_id: Option<i64>,
+    pub channel_id: Option<i64>,
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -194,9 +194,9 @@ pub struct LogsResp {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ProbeResp {
     pub ok: bool,
-    pub leg_id: i64,
+    pub channel_id: i64,
     #[serde(default)]
-    pub leg_name: Option<String>,
+    pub channel_name: Option<String>,
     #[serde(default)]
     pub endpoint: Option<String>,
     #[serde(default)]
@@ -215,9 +215,9 @@ pub struct ProbeResp {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ModelPull {
     pub ok: bool,
-    pub leg_id: i64,
+    pub channel_id: i64,
     #[serde(default)]
-    pub leg_name: Option<String>,
+    pub channel_name: Option<String>,
     /// 真去打的 URL（界面上写出来，好让人自己核）
     #[serde(default)]
     pub url: Option<String>,
@@ -238,9 +238,9 @@ pub struct ModelPull {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct VisionTest {
     pub ok: bool,
-    pub leg_id: i64,
+    pub channel_id: i64,
     #[serde(default)]
-    pub leg_name: Option<String>,
+    pub channel_name: Option<String>,
     /// 测的是哪个对外模型名（通常就是组名）。
     #[serde(default)]
     pub model: Option<String>,
@@ -301,20 +301,20 @@ mod tests {
     #[test]
     fn real_server_json_parses() {
         // 直接拿服务端真会吐的 JSON 当样本，字段名对不上就会在这里炸。
-        let legs: LegsResp = serde_json::from_str(
-            r#"{"legs":[{"id":44,"name":"硅基流动","base_url":"https://api.siliconflow.cn/v1",
+        let channels: ChannelsResp = serde_json::from_str(
+            r#"{"channels":[{"id":44,"name":"硅基流动","base_url":"https://api.siliconflow.cn/v1",
                 "enabled":true,"has_secret":true,
                 "headers":[{"name":"x-a","value":"{{uuid}}"}],
                 "models":[{"model":"auto","upstream":"BAAI/bge-m3"}]}]}"#,
         )
         .unwrap();
-        assert_eq!(legs.legs[0].id, 44);
-        assert!(legs.legs[0].has_secret);
-        assert_eq!(legs.legs[0].models[0].upstream.as_deref(), Some("BAAI/bge-m3"));
+        assert_eq!(channels.channels[0].id, 44);
+        assert!(channels.channels[0].has_secret);
+        assert_eq!(channels.channels[0].models[0].upstream.as_deref(), Some("BAAI/bge-m3"));
 
         let logs: LogsResp = serde_json::from_str(
             r#"{"logs":[{"id":1,"ts_ms":1000,"endpoint":"embeddings","model":"bge-m3",
-                "status":"ok","http_status":200,"leg_id":44,"latency_ms":310,
+                "status":"ok","http_status":200,"channel_id":44,"latency_ms":310,
                 "input_tokens":11,"output_tokens":0,"error":null}]}"#,
         )
         .unwrap();
@@ -324,13 +324,13 @@ mod tests {
         let st: StatsResp = serde_json::from_str(
             r#"{"window_hours":24,"stats":{"since_ms":0,"total":3,"ok":2,"failed":1,
                 "canceled":0,"client_errors":0,"input_tokens":5,"output_tokens":7,
-                "by_leg":[{"leg_id":44,"attempts":3,"successes":2,"leg_faults":1,
-                "avg_ms":120,"input_tokens":5,"output_tokens":7,"leg_name":"硅基流动",
+                "by_channel":[{"channel_id":44,"attempts":3,"successes":2,"channel_faults":1,
+                "avg_ms":120,"input_tokens":5,"output_tokens":7,"channel_name":"硅基流动",
                 "success_rate":66.7}]}}"#,
         )
         .unwrap();
-        assert_eq!(st.stats.by_leg[0].leg_name.as_deref(), Some("硅基流动"));
-        assert_eq!(st.stats.by_leg[0].success_rate, Some(66.7));
+        assert_eq!(st.stats.by_channel[0].channel_name.as_deref(), Some("硅基流动"));
+        assert_eq!(st.stats.by_channel[0].success_rate, Some(66.7));
     }
 
     #[test]

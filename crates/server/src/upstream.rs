@@ -4,24 +4,24 @@
 //!
 //! 1. **URL 拼接**：面板里填的 base_url 结尾有没有斜杠、有没有多写一段路径，
 //!    都得好使（`https://x/v1` + `chat/completions`，以及 `https://x/v1/`）。
-//! 2. **请求头**：Authorization 用这条腿自己的 key；自定义请求头里的
+//! 2. **请求头**：Authorization 用这条渠道自己的 key；自定义请求头里的
 //!    `{{uuid}}` / `{{timestamp_ms}}` 逐请求求值（上游 FreeLLMAPI 没有这个能力，
 //!    本机要它就是因为 OpenCode 那条路要求每次带新的 session id）。
-//! 3. **错误分类**：网络错/超时算腿的毛病；4xx（客户端的错）不算 —— 分类在
+//! 3. **错误分类**：网络错/超时算渠道的毛病；4xx（客户端的错）不算 —— 分类在
 //!    `tokengo_shared::routing::classify_status`，这里只负责把两种情形区分开。
 
 use std::time::Duration;
 
 use bytes::Bytes;
-use tokengo_shared::leg::{render_header_value, Leg};
+use tokengo_shared::channel::{render_header_value, Channel};
 
-/// 一次尝试直接失败（网络层），没有拿到任何 HTTP 响应。算腿的毛病。
+/// 一次尝试直接失败（网络层），没有拿到任何 HTTP 响应。算渠道的毛病。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LegFault {
+pub struct ChannelFault {
     pub message: String,
 }
 
-impl std::fmt::Display for LegFault {
+impl std::fmt::Display for ChannelFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
     }
@@ -44,14 +44,14 @@ impl Upstream {
         Ok(Self { client })
     }
 
-    /// 往一条腿上发一次请求。
+    /// 往一条渠道上发一次请求。
     ///
     /// 返回 Ok 只表示"上游回了 HTTP 响应"，**不代表成功** —— 状态码是 200 还是 429
     /// 由调用方按 `classify_status` 判。返回 Err 表示网络层就没通（连不上/超时/TLS），
-    /// 这属于腿的毛病。
+    /// 这属于渠道的毛病。
     pub async fn call(
         &self,
-        leg: &Leg,
+        channel: &Channel,
         secret: Option<&str>,
         path: &str,
         body: Bytes,
@@ -59,8 +59,8 @@ impl Upstream {
         timeout: Duration,
         uuid: &str,
         now_ms: i64,
-    ) -> Result<reqwest::Response, LegFault> {
-        let url = join_url(&leg.base_url, path);
+    ) -> Result<reqwest::Response, ChannelFault> {
+        let url = join_url(&channel.base_url, path);
         let mut rb = self
             .client
             .post(&url)
@@ -71,10 +71,10 @@ impl Upstream {
         if stream {
             rb = rb.header(reqwest::header::ACCEPT, "text/event-stream");
         }
-        for (name, value) in build_headers(leg, secret, uuid, now_ms) {
+        for (name, value) in build_headers(channel, secret, uuid, now_ms) {
             rb = rb.header(name, value);
         }
-        rb.send().await.map_err(|e| LegFault {
+        rb.send().await.map_err(|e| ChannelFault {
             message: fault_message(&url, &e),
         })
     }
@@ -83,16 +83,16 @@ impl Upstream {
     #[allow(clippy::too_many_arguments)]
     pub async fn probe(
         &self,
-        leg: &Leg,
+        channel: &Channel,
         secret: Option<&str>,
         path: &str,
         body: Bytes,
         timeout: Duration,
         uuid: &str,
         now_ms: i64,
-    ) -> Result<u16, LegFault> {
+    ) -> Result<u16, ChannelFault> {
         let r = self
-            .call(leg, secret, path, body, false, timeout, uuid, now_ms)
+            .call(channel, secret, path, body, false, timeout, uuid, now_ms)
             .await?;
         Ok(r.status().as_u16())
     }
@@ -104,23 +104,23 @@ impl Upstream {
     #[allow(clippy::too_many_arguments)]
     pub async fn call_and_read(
         &self,
-        leg: &Leg,
+        channel: &Channel,
         secret: Option<&str>,
         path: &str,
         body: Bytes,
         timeout: Duration,
         uuid: &str,
         now_ms: i64,
-    ) -> Result<(u16, String), LegFault> {
+    ) -> Result<(u16, String), ChannelFault> {
         let r = self
-            .call(leg, secret, path, body, false, timeout, uuid, now_ms)
+            .call(channel, secret, path, body, false, timeout, uuid, now_ms)
             .await?;
         let code = r.status().as_u16();
         let text = r.text().await.unwrap_or_default();
         Ok((code, cap_chars(&text, 4000)))
     }
 
-    /// 拉这条腿支持的模型清单：`GET {base_url}/models`，用这条腿自己的
+    /// 拉这条渠道支持的模型清单：`GET {base_url}/models`，用这条渠道自己的
     /// URL、key 和自定义请求头（头里的模板照旧逐请求求值）。
     ///
     /// **面板专用的只读动作**，和探活一个纪律：不写记账、不动路由状态。
@@ -128,22 +128,22 @@ impl Upstream {
     /// 状态码交给调用方判断"上游是不是根本不支持这个端点"。
     pub async fn fetch_models(
         &self,
-        leg: &Leg,
+        channel: &Channel,
         secret: Option<&str>,
         timeout: Duration,
         uuid: &str,
         now_ms: i64,
-    ) -> Result<(u16, String), LegFault> {
-        let url = join_url(&leg.base_url, "models");
+    ) -> Result<(u16, String), ChannelFault> {
+        let url = join_url(&channel.base_url, "models");
         let mut rb = self
             .client
             .get(&url)
             .timeout(timeout)
             .header(reqwest::header::ACCEPT, "application/json");
-        for (name, value) in build_headers(leg, secret, uuid, now_ms) {
+        for (name, value) in build_headers(channel, secret, uuid, now_ms) {
             rb = rb.header(name, value);
         }
-        let r = rb.send().await.map_err(|e| LegFault {
+        let r = rb.send().await.map_err(|e| ChannelFault {
             message: fault_message(&url, &e),
         })?;
         let status = r.status().as_u16();
@@ -280,18 +280,18 @@ pub fn cap_chars(s: &str, max: usize) -> String {
     }
 }
 
-/// 这条腿本次请求要带的头（自定义头在前，Authorization 最后 ——
+/// 这条渠道本次请求要带的头（自定义头在前，Authorization 最后 ——
 /// 免得用户自定义头里写了个 Authorization 又被覆盖，反过来更好查）。
 ///
 /// 模板逐请求求值：`{{uuid}}` 每次都是新的，就是这个让 OpenCode 那条路能通。
 pub fn build_headers(
-    leg: &Leg,
+    channel: &Channel,
     secret: Option<&str>,
     uuid: &str,
     now_ms: i64,
 ) -> Vec<(String, String)> {
-    let mut out = Vec::with_capacity(leg.headers.len() + 1);
-    for (name, value) in &leg.headers {
+    let mut out = Vec::with_capacity(channel.headers.len() + 1);
+    for (name, value) in &channel.headers {
         let name = name.trim();
         if name.is_empty() || name.eq_ignore_ascii_case("authorization") && secret.is_none() {
             continue;
@@ -312,11 +312,11 @@ pub fn new_uuid() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokengo_shared::LegId;
+    use tokengo_shared::ChannelId;
 
-    fn leg(base_url: &str, headers: Vec<(&str, &str)>) -> Leg {
-        Leg {
-            id: LegId(1),
+    fn channel(base_url: &str, headers: Vec<(&str, &str)>) -> Channel {
+        Channel {
+            id: ChannelId(1),
             name: "opencode-go".into(),
             base_url: base_url.into(),
             enabled: true,
@@ -348,24 +348,24 @@ mod tests {
     }
 
     #[test]
-    fn the_leg_key_becomes_a_bearer_header() {
-        let h = build_headers(&leg("https://x/v1", vec![]), Some("sk-abc"), "u", 1);
+    fn the_channel_key_becomes_a_bearer_header() {
+        let h = build_headers(&channel("https://x/v1", vec![]), Some("sk-abc"), "u", 1);
         assert_eq!(h, vec![("authorization".to_string(), "Bearer sk-abc".to_string())]);
     }
 
     #[test]
-    fn a_leg_without_a_key_sends_no_authorization_at_all() {
+    fn a_channel_without_a_key_sends_no_authorization_at_all() {
         // OpenCode Zen 这类上游不需要 key，塞个空的 Bearer 反而被打回
-        let h = build_headers(&leg("https://x/v1", vec![]), None, "u", 1);
+        let h = build_headers(&channel("https://x/v1", vec![]), None, "u", 1);
         assert!(h.is_empty(), "没有 key 就不该带头: {h:?}");
-        let h = build_headers(&leg("https://x/v1", vec![]), Some("   "), "u", 1);
+        let h = build_headers(&channel("https://x/v1", vec![]), Some("   "), "u", 1);
         assert!(h.is_empty());
     }
 
     /// 关键增项：自定义请求头里的模板**逐请求**求值。
     #[test]
     fn custom_headers_are_rendered_per_request() {
-        let l = leg(
+        let l = channel(
             "https://x/v1",
             vec![
                 ("x-opencode-client", "cli"),

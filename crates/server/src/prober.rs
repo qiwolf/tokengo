@@ -1,4 +1,4 @@
-//! 后台探活：无流量时主动试首选腿，成功就切回来。
+//! 后台探活：无流量时主动试首选渠道，成功就切回来。
 //!
 //! 为什么必须有它：切换之后 "10 分钟后回头试首选" 只在**有流量**时靠下一个请求触发。
 //! 半夜没人用的时候，20 分钟、一小时都不会有任何请求 —— 没有后台探活，第二天早上
@@ -7,19 +7,19 @@
 //!
 //! 三条纪律：
 //!
-//! - 探活**不写记账**。它不是用户请求，混进 `requests`/`attempts` 会把"这条腿被叫了
+//! - 探活**不写记账**。它不是用户请求，混进 `requests`/`attempts` 会把"这条渠道被叫了
 //!   几次"的账搅浑。只在日志里留痕。
 //! - 探活请求要小：对话用 `max_tokens=1`，向量用 1 个字符。
-//! - **发出去的是这条腿真认的模型名**。组名 `auto` 是个虚拟名，上游不认 —— 拿 `auto`
-//!   去探活必然 400，而 400 按规矩不算腿的毛病，探活就永远得不出结论。
+//! - **发出去的是这条渠道真认的模型名**。组名 `auto` 是个虚拟名，上游不认 —— 拿 `auto`
+//!   去探活必然 400，而 400 按规矩不算渠道的毛病，探活就永远得不出结论。
 
 use std::time::Duration;
 
-use tokengo_shared::leg::Leg;
+use tokengo_shared::channel::Channel;
 use tokengo_shared::routing::{classify_status, AttemptOutcome};
-use tokengo_shared::LegId;
+use tokengo_shared::ChannelId;
 
-use crate::db::{groups, legs, now_ms};
+use crate::db::{groups, channels, now_ms};
 use crate::gateway::EndpointKind;
 use crate::SharedState;
 
@@ -43,7 +43,7 @@ pub enum ProbeOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeResult {
     pub group: String,
-    pub leg: LegId,
+    pub channel: ChannelId,
     pub outcome: ProbeOutcome,
 }
 
@@ -58,9 +58,9 @@ pub fn spawn(state: SharedState) -> tokio::task::JoinHandle<()> {
             t.tick().await;
             for r in tick(&state, now_ms()).await {
                 tracing::info!(
-                    "探活 {} → 腿 {}：{:?}",
+                    "探活 {} → 渠道 {}：{:?}",
                     r.group,
-                    r.leg.0,
+                    r.channel.0,
                     r.outcome
                 );
             }
@@ -84,41 +84,41 @@ pub async fn tick(state: &SharedState, now: i64) -> Vec<ProbeResult> {
     out
 }
 
-/// 探一个组的首选腿。
+/// 探一个组的首选渠道。
 pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeResult {
     let endpoint = state.group_endpoint(group);
 
     // 一次性把要用的东西捞齐（同步短锁，绝不在持锁期间 await）
     let loaded = {
         let conn = state.conn();
-        let legs_all = groups::resolve_legs(&conn, group).unwrap_or_default();
-        let Some(primary) = legs_all.into_iter().find(|l| l.routable()) else {
+        let channels_all = groups::resolve_channels(&conn, group).unwrap_or_default();
+        let Some(primary) = channels_all.into_iter().find(|l| l.routable()) else {
             return ProbeResult {
                 group: group.to_string(),
-                leg: LegId(0),
-                outcome: ProbeOutcome::Skipped("这组没有可用腿".into()),
+                channel: ChannelId(0),
+                outcome: ProbeOutcome::Skipped("这组没有可用渠道".into()),
             };
         };
         let model = probe_model(&conn, &primary, group);
-        let secret = legs::secret(&conn, &state.secrets, primary.id).unwrap_or(None);
+        let secret = channels::secret(&conn, &state.secrets, primary.id).unwrap_or(None);
         (primary, model, secret)
     };
-    let (leg, model, secret) = loaded;
+    let (channel, model, secret) = loaded;
 
     let Some(model) = model else {
         return ProbeResult {
             group: group.to_string(),
-            leg: leg.id,
+            channel: channel.id,
             outcome: ProbeOutcome::Skipped(format!(
-                "腿 {} 没配任何模型名，拿不到能发出去的模型名，跳过（不猜）",
-                leg.name
+                "渠道 {} 没配任何模型名，拿不到能发出去的模型名，跳过（不猜）",
+                channel.name
             )),
         };
     };
 
-    let ids: Vec<LegId> = {
+    let ids: Vec<ChannelId> = {
         let conn = state.conn();
-        groups::resolve_legs(&conn, group)
+        groups::resolve_channels(&conn, group)
             .unwrap_or_default()
             .into_iter()
             .filter(|l| l.routable())
@@ -136,7 +136,7 @@ pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeRes
     let status = state
         .upstream
         .probe(
-            &leg,
+            &channel,
             secret.as_deref(),
             endpoint.path(),
             body,
@@ -148,44 +148,44 @@ pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeRes
 
     let outcome = match status {
         Err(fault) => {
-            tracing::warn!("探活 {} 腿 {} 连不上：{fault}", group, leg.name);
-            mark_exhausted(state, group, leg.id, &ids, now);
+            tracing::warn!("探活 {} 渠道 {} 连不上：{fault}", group, channel.name);
+            mark_exhausted(state, group, channel.id, &ids, now);
             ProbeOutcome::StillDown
         }
         Ok(code) => match classify_status(code) {
             AttemptOutcome::Success => {
                 {
                     let mut r = state.routing();
-                    r.on_success(group, leg.id, &ids, now);
+                    r.on_success(group, channel.id, &ids, now);
                 }
                 if let Err(e) = state.persist_state(group) {
                     tracing::error!("探活成功后落库失败：{e}");
                 }
                 ProbeOutcome::SwitchedBack
             }
-            AttemptOutcome::LegFault => {
-                mark_exhausted(state, group, leg.id, &ids, now);
+            AttemptOutcome::ChannelFault => {
+                mark_exhausted(state, group, channel.id, &ids, now);
                 ProbeOutcome::StillDown
             }
-            // 400/404/422：多半是探活用的模型名这条腿不认（配置问题），不是腿坏了。
+            // 400/404/422：多半是探活用的模型名这条渠道不认（配置问题），不是渠道坏了。
             // **什么都不动** —— 宁可让下次真流量去试，也不能凭一个 400 就把账号切成坏的。
             AttemptOutcome::ClientFault | AttemptOutcome::ClientGone => ProbeOutcome::Inconclusive(
-                format!("HTTP {code}（模型名 {model} 这条腿不认？探活没结论，不动路由状态）"),
+                format!("HTTP {code}（模型名 {model} 这条渠道不认？探活没结论，不动路由状态）"),
             ),
         },
     };
 
     ProbeResult {
         group: group.to_string(),
-        leg: leg.id,
+        channel: channel.id,
         outcome,
     }
 }
 
-fn mark_exhausted(state: &SharedState, group: &str, leg: LegId, ids: &[LegId], now: i64) {
+fn mark_exhausted(state: &SharedState, group: &str, channel: ChannelId, ids: &[ChannelId], now: i64) {
     {
         let mut r = state.routing();
-        r.on_leg_exhausted(group, leg, ids, now);
+        r.on_channel_exhausted(group, channel, ids, now);
     }
     if let Err(e) = state.persist_state(group) {
         tracing::error!("探活失败后落库失败：{e}");
@@ -193,21 +193,21 @@ fn mark_exhausted(state: &SharedState, group: &str, leg: LegId, ids: &[LegId], n
 }
 
 /// 探活该用哪个模型名。优先级：
-///   1. 这条腿为这个组名配的别名（`auto` → `deepseek/deepseek-v4.1-flash`）；
-///   2. 这条腿配的任意一个上游模型名；
-///   3. 这条腿配的任意一个模型名（原样透传）。
+///   1. 这条渠道为这个组名配的别名（`auto` → `deepseek/deepseek-v4.1-flash`）；
+///   2. 这条渠道配的任意一个上游模型名；
+///   3. 这条渠道配的任意一个模型名（原样透传）。
 /// 都没有就不探 —— 拿组名 `auto` 去探一定被上游 400，探也是白探。
 pub fn probe_model(
     conn: &rusqlite::Connection,
-    leg: &Leg,
+    channel: &Channel,
     group: &str,
 ) -> Option<String> {
-    if let Some(a) = leg.model_alias.as_deref() {
+    if let Some(a) = channel.model_alias.as_deref() {
         if !a.trim().is_empty() && a != group {
             return Some(a.to_string());
         }
     }
-    let row = legs::get(conn, leg.id).ok().flatten()?;
+    let row = channels::get(conn, channel.id).ok().flatten()?;
     let _ = group;
     row.models
         .iter()
@@ -249,7 +249,7 @@ pub const VISION_TEST_QUESTION: &str = "这张图左上角那一格是什么颜�
 
 /// 「测视觉」的请求体：带图的一发最小对话请求。
 ///
-/// 和探活同一条纪律：模型名是**这条腿自己认的那个**（拿虚拟组名 `auto` 去问
+/// 和探活同一条纪律：模型名是**这条渠道自己认的那个**（拿虚拟组名 `auto` 去问
 /// 必然 400，绿点就不真了）；`max_tokens` 给 8 够回一个颜色词。
 pub fn vision_test_body(model: &str) -> bytes::Bytes {
     let v = serde_json::json!({
@@ -278,7 +278,7 @@ pub fn answer_says_red(reply: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{legs, open_in_memory};
+    use crate::db::{channels, open_in_memory};
 
     #[test]
     fn probe_body_stays_tiny() {
@@ -297,16 +297,16 @@ mod tests {
     #[test]
     fn probe_model_prefers_the_alias_for_this_group() {
         let conn = open_in_memory().unwrap();
-        let id = legs::create(
+        let id = channels::create(
             &conn,
-            &legs::NewLeg {
+            &channels::NewChannel {
                 name: "command-go".into(),
                 base_url: "https://x/v1".into(),
                 enabled: true,
             },
         )
         .unwrap();
-        let leg = Leg {
+        let channel = Channel {
             id,
             name: "command-go".into(),
             base_url: "https://x/v1".into(),
@@ -317,25 +317,25 @@ mod tests {
             headers: vec![],
         };
         assert_eq!(
-            probe_model(&conn, &leg, "auto").as_deref(),
+            probe_model(&conn, &channel, "auto").as_deref(),
             Some("deepseek/deepseek-v4.1-flash")
         );
     }
 
     #[test]
-    fn probe_model_falls_back_to_whatever_the_leg_actually_serves() {
+    fn probe_model_falls_back_to_whatever_the_channel_actually_serves() {
         let conn = open_in_memory().unwrap();
-        let id = legs::create(
+        let id = channels::create(
             &conn,
-            &legs::NewLeg {
+            &channels::NewChannel {
                 name: "硅基流动".into(),
                 base_url: "https://x/v1".into(),
                 enabled: true,
             },
         )
         .unwrap();
-        legs::set_models(&conn, id, &[legs::ModelMapping::new("bge-m3", Some("BAAI/bge-m3".into()), false)]).unwrap();
-        let leg = Leg {
+        channels::set_models(&conn, id, &[channels::ModelMapping::new("bge-m3", Some("BAAI/bge-m3".into()), false)]).unwrap();
+        let channel = Channel {
             id,
             name: "硅基流动".into(),
             base_url: "https://x/v1".into(),
@@ -345,25 +345,25 @@ mod tests {
             vision: false,
             headers: vec![],
         };
-        assert_eq!(probe_model(&conn, &leg, "auto").as_deref(), Some("BAAI/bge-m3"));
+        assert_eq!(probe_model(&conn, &channel, "auto").as_deref(), Some("BAAI/bge-m3"));
     }
 
-    /// 反证：什么模型名都没配的腿，**不许拿组名 `auto` 去探**（那一定 400）。
+    /// 反证：什么模型名都没配的渠道，**不许拿组名 `auto` 去探**（那一定 400）。
     #[test]
     fn probe_model_refuses_to_guess_the_virtual_name() {
         let conn = open_in_memory().unwrap();
-        let id = legs::create(
+        let id = channels::create(
             &conn,
-            &legs::NewLeg {
-                name: "空腿".into(),
+            &channels::NewChannel {
+                name: "空渠道".into(),
                 base_url: "https://x/v1".into(),
                 enabled: true,
             },
         )
         .unwrap();
-        let leg = Leg {
+        let channel = Channel {
             id,
-            name: "空腿".into(),
+            name: "空渠道".into(),
             base_url: "https://x/v1".into(),
             enabled: true,
             priority: 0,
@@ -371,10 +371,10 @@ mod tests {
             vision: false,
             headers: vec![],
         };
-        assert_eq!(probe_model(&conn, &leg, "auto"), None);
+        assert_eq!(probe_model(&conn, &channel, "auto"), None);
     }
 
-    /// 「测视觉」的请求体：必须真带一张图，模型名是这条腿自己认的那个，
+    /// 「测视觉」的请求体：必须真带一张图，模型名是这条渠道自己认的那个，
     /// 而且要小（面板按钮点一下不该花掉一堆 token）。
     #[test]
     fn vision_test_body_carries_a_real_image() {

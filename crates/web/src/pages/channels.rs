@@ -1,17 +1,17 @@
-//! 腿管理：增删改查 + 自定义请求头 + 按腿改模型名 + 「测一下」连通性 + 拉上游模型清单。
+//! 渠道管理：增删改查 + 自定义请求头 + 按渠道改模型名 + 「测一下」连通性 + 拉上游模型清单。
 //!
 //! 三条纪律都落在界面上：
 //!
 //! - **「测一下」不给假绿点**：真发一个请求，连不上/上游不收都如实报红，并写清原因；
-//!   这条腿没配模型名就直接说"探不了"，而不是拿虚拟组名 `auto` 去凑一个 400。
-//! - **密钥留空 = 不改**：编辑一条腿时密钥框留空表示沿用已存的；想清掉要**明确**点
+//!   这条渠道没配模型名就直接说"探不了"，而不是拿虚拟组名 `auto` 去凑一个 400。
+//! - **密钥留空 = 不改**：编辑一条渠道时密钥框留空表示沿用已存的；想清掉要**明确**点
 //!   「清空密钥」。不然每次改个名字都得重输一遍密钥。
 //! - **清单是上游说的，不是我们编的**：拉不到就只说实话（连不上/HTTP 404/格式没认出），
 //!   绝不给一份看着挺像的假清单。勾选也**默认一个不勾**，要加哪几条自己挑。
 //! - **「能不能看图」只认实测**：模型名里带 vl/vision 不代表能看图（deepseek 的 flash
 //!   就能读图，有些带 vision 的名字反倒是纯文本）。所以每一行都有「测视觉」按钮：
 //!   真发一张图问一个只有看图才答得出的问题（左上角什么颜色），答对了才勾上。
-//!   勾了才有资格接带图的请求 —— 没勾的腿，带图请求一条都不会发给它。
+//!   勾了才有资格接带图的请求 —— 没勾的渠道，带图请求一条都不会发给它。
 
 use std::collections::BTreeSet;
 
@@ -19,7 +19,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{HeaderPair, Leg, ModelPair};
+use crate::model::{HeaderPair, Channel, ModelPair};
 use crate::Ctx;
 
 /// 上游清单一次最多显示这么多行（真有上游报上千个模型，全塞进 DOM 会卡）。
@@ -35,7 +35,7 @@ pub(crate) fn filter_models(all: &[String], filter: &str, limit: usize) -> Vec<S
         .collect()
 }
 
-/// 把勾选的模型名追加成「该腿认的模型名」表单行，返回加了几个。
+/// 把勾选的模型名追加成「该渠道认的模型名」表单行，返回加了几个。
 ///
 /// 空名字跳过、表里已有的**不重复加**（否则连点两次就一堆重复行）。
 /// 加进来的行右边留空 = 同名发给上游；要改名人在右框里自己填。
@@ -65,13 +65,13 @@ enum Form {
     Closed,
     /// 新建
     New,
-    /// 改已存在的腿
+    /// 改已存在的渠道
     Edit(i64),
 }
 
 #[component]
-pub fn Legs(ctx: Ctx) -> impl IntoView {
-    let rows = RwSignal::new(Vec::<Leg>::new());
+pub fn Channels(ctx: Ctx) -> impl IntoView {
+    let rows = RwSignal::new(Vec::<Channel>::new());
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let form = RwSignal::new(Form::Closed);
@@ -85,7 +85,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     let pulling = RwSignal::new(false);
     let pull_filter = RwSignal::new(String::new());
 
-    // 「测视觉」的状态：(这行的腿 id, 给人看的结果, 好不好)
+    // 「测视觉」的状态：(这行的渠道 id, 给人看的结果, 好不好)
     let vt_msg = RwSignal::new(None::<(i64, String, bool)>);
     let vt_busy = RwSignal::new(None::<i64>);
 
@@ -100,7 +100,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     // 表单行的重绘开关：只有加/删行才 +1。**打字时不重绘**，否则输入框会丢焦点。
     let form_ver = RwSignal::new(0u32);
 
-    // 重新进表单：清掉上一次拉的清单，免得看着像这条腿的
+    // 重新进表单：清掉上一次拉的清单，免得看着像这条渠道的
     let reset_pull = move || {
         pulled.set(Vec::new());
         picked.set(BTreeSet::new());
@@ -111,7 +111,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     let reload = move || {
         busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            match api::legs().await {
+            match api::channels().await {
                 Ok(v) => {
                     rows.set(v);
                     err.set(None);
@@ -131,7 +131,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         f_url.set(String::new());
         f_enabled.set(true);
         f_key.set(String::new());
-        f_key_note.set("新建时要填密钥；留空表示这条腿没有密钥。");
+        f_key_note.set("新建时要填密钥；留空表示这条渠道没有密钥。");
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
         reset_pull();
@@ -139,7 +139,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         form.set(Form::New);
     };
 
-    let open_edit = move |l: Leg| {
+    let open_edit = move |l: Channel| {
         f_name.set(l.name.clone());
         f_url.set(l.base_url.clone());
         f_enabled.set(l.enabled);
@@ -147,7 +147,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         f_key_note.set(if l.has_secret {
             "留空 = 沿用已存的密钥；要清掉请点「清空密钥」。"
         } else {
-            "这条腿现在没有密钥。"
+            "这条渠道现在没有密钥。"
         });
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
@@ -179,26 +179,26 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
             .filter(|m| !m.model.trim().is_empty())
             .collect::<Vec<_>>();
         let enabled = f_enabled.get_untracked();
-        // 编辑时留空 = 不改（传 None）；新建时空 = 这条腿没密钥（也传 None，后端一样）
+        // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
         let key_arg = if key.trim().is_empty() { None } else { Some(key) };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_leg(id, &name, &url, enabled, key_arg.as_deref(), &headers, &models)
+            match api::save_channel(id, &name, &url, enabled, key_arg.as_deref(), &headers, &models)
                 .await
             {
                 Ok(new_id) => {
                     match new_id {
-                        // 新建：**表单不关**，直接切成"编辑这条新腿" ——
+                        // 新建：**表单不关**，直接切成"编辑这条新渠道" ——
                         // 这样能马上用它的 URL/密钥去拉上游模型清单，不用先关再点编辑
                         Some(i) => {
                             form.set(Form::Edit(i));
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
-                            ctx.say("腿已新建 —— 接着可以点「拉取上游模型清单」");
+                            ctx.say("渠道已新建 —— 接着可以点「拉取上游模型清单」");
                         }
                         None => {
                             form.set(Form::Closed);
-                            ctx.say("腿已保存");
+                            ctx.say("渠道已保存");
                         }
                     }
                     reload();
@@ -220,9 +220,9 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         let models = f_models.get_untracked();
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
-            match api::save_leg(Some(id), &name, &url, enabled, Some(""), &headers, &models).await {
+            match api::save_channel(Some(id), &name, &url, enabled, Some(""), &headers, &models).await {
                 Ok(_) => {
-                    f_key_note.set("已清空这条腿的密钥。");
+                    f_key_note.set("已清空这条渠道的密钥。");
                     ctx.say("密钥已清空");
                     reload();
                 }
@@ -234,17 +234,17 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    let remove = move |l: Leg| {
+    let remove = move |l: Channel| {
         let ok = web_sys::window()
-            .and_then(|w| w.confirm_with_message(&format!("确定删掉腿「{}」？这条腿的历史账会留着。", l.name)).ok())
+            .and_then(|w| w.confirm_with_message(&format!("确定删掉渠道「{}」？这条渠道的历史账会留着。", l.name)).ok())
             .unwrap_or(false);
         if !ok {
             return;
         }
         wasm_bindgen_futures::spawn_local(async move {
-            match api::delete_leg(l.id).await {
+            match api::delete_channel(l.id).await {
                 Ok(()) => {
-                    ctx.say("腿已删除");
+                    ctx.say("渠道已删除");
                     reload();
                 }
                 Err(e) => {
@@ -255,11 +255,11 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    let probe = move |l: Leg| {
+    let probe = move |l: Channel| {
         let kind = probe_kind.get_untracked();
         probe_msg.set(Some((l.id, "正在真发一个请求…".into(), true)));
         wasm_bindgen_futures::spawn_local(async move {
-            match api::probe_leg(l.id, &kind).await {
+            match api::probe_channel(l.id, &kind).await {
                 Ok(r) => {
                     let mut s = String::new();
                     if r.ok {
@@ -277,7 +277,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                         s.push_str(&format!("；{}", fmt::dur(ms)));
                     }
                     if !r.has_secret {
-                        s.push_str("；注意：这条腿没配密钥");
+                        s.push_str("；注意：这条渠道没配密钥");
                     }
                     if let Some(n) = &r.note {
                         // 成功时 note 就是"通了"，前面已经写过一次，别重复
@@ -295,26 +295,26 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    // 「测视觉」：给这一行真发一张带图的小请求，看这条腿认不认得出来。
+    // 「测视觉」：给这一行真发一张带图的小请求，看这条渠道认不认得出来。
     //
     // 为什么要真发：我们不像上游 FreeLLMAPI 那样有一份带能力标记的目录
     // （本项目的上游全是自己加的），而"名字里带 vl"这种推断经常错。
     // 测通了我们顺手把这行标上（服务端的 apply），界面上勾也随之亮起。
-    let vision_test = move |(leg_id, model, upstream): (i64, String, String)| {
+    let vision_test = move |(channel_id, model, upstream): (i64, String, String)| {
         if model.trim().is_empty() {
             ctx.say("先填左边的模型名（客户端打的那个），不然不知道该测哪一行");
             return;
         }
-        vt_busy.set(Some(leg_id));
+        vt_busy.set(Some(channel_id));
         vt_msg.set(Some((
-            leg_id,
+            channel_id,
             format!("正在给「{model}」真发一张图（问它左上角是什么颜色）…"),
             true,
         )));
         wasm_bindgen_futures::spawn_local(async move {
             let up = upstream.trim().to_string();
             let up_arg = if up.is_empty() { None } else { Some(up.as_str()) };
-            match api::vision_test(leg_id, &model, up_arg).await {
+            match api::vision_test(channel_id, &model, up_arg).await {
                 Ok(r) => {
                     vt_busy.set(None);
                     let mut s = if r.ok { "能看图".to_string() } else { "没测出来".to_string() };
@@ -345,27 +345,27 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                     if let Some(n) = &r.note {
                         s.push_str(&format!("；{n}"));
                     }
-                    vt_msg.set(Some((leg_id, s, r.ok)));
+                    vt_msg.set(Some((channel_id, s, r.ok)));
                 }
                 Err(e) => {
                     vt_busy.set(None);
                     ctx.note_err(&e);
-                    vt_msg.set(Some((leg_id, format!("测不了：{}", e.message), false)));
+                    vt_msg.set(Some((channel_id, format!("测不了：{}", e.message), false)));
                 }
             }
         });
     };
 
-    // 拉这条腿的上游模型清单：真打一次 GET /v1/models。
+    // 拉这条渠道的上游模型清单：真打一次 GET /v1/models。
     let pull = move |_| {
         let Form::Edit(id) = form.get_untracked() else {
-            ctx.say("这条腿还没保存：先点「保存」，再用它自己的 URL 和密钥去拉清单");
+            ctx.say("这条渠道还没保存：先点「保存」，再用它自己的 URL 和密钥去拉清单");
             return;
         };
         pulling.set(true);
         pull_msg.set(Some(("正在真打上游的 /v1/models…".into(), true)));
         wasm_bindgen_futures::spawn_local(async move {
-            match api::pull_leg_models(id).await {
+            match api::pull_channel_models(id).await {
                 Ok(r) => {
                     pulling.set(false);
                     let mut s = String::new();
@@ -417,7 +417,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    // 把勾选的模型名加进「该腿认的模型名」表
+    // 把勾选的模型名加进「该渠道认的模型名」表
     let add_picked = move |_| {
         let sel = picked.get_untracked();
         if sel.is_empty() {
@@ -443,7 +443,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
     view! {
         <div class="page">
             <div class="toolbar">
-                <button class="primary" on:click=open_new>"新建腿"</button>
+                <button class="primary" on:click=open_new>"新建渠道"</button>
                 <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
                     {move || if busy.get() { "刷新中…" } else { "刷新" }}
                 </button>
@@ -487,7 +487,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                             return view! {
                                 <tr>
                                     <td colspan="8" class="muted">
-                                        "还没有腿 —— 点左上「新建腿」加一条上游。"
+                                        "还没有渠道 —— 点左上「新建渠道」加一条上游。"
                                     </td>
                                 </tr>
                             }.into_any();
@@ -530,7 +530,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                             {if l.models.is_empty() {
                                                 view! { <span class="muted">"原样透传"</span> }.into_any()
                                             } else if l.vision_count > 0 {
-                                                // 这条腿上有能看图的模型名 —— 一眼就能看见
+                                                // 这条渠道上有能看图的模型名 —— 一眼就能看见
                                                 view! {
                                                     <span>
                                                         {l.models.len()}
@@ -579,7 +579,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                 view! {
                     <div class="modal-backdrop">
                         <div class="modal">
-                            <h2>{if editing { "编辑腿" } else { "新建腿" }}</h2>
+                            <h2>{if editing { "编辑渠道" } else { "新建渠道" }}</h2>
                             <div class="form-grid">
                                 <label>"名称"</label>
                                 <input type="text" prop:value=f_name placeholder="如：硅基流动"
@@ -598,7 +598,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                 <div>
                                     <input type="checkbox" prop:checked=f_enabled
                                         on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
-                                    <span class="muted small">"停用后这条腿不再参与路由"</span>
+                                    <span class="muted small">"停用后这条渠道不再参与路由"</span>
                                 </div>
                             </div>
 
@@ -672,7 +672,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                 form_ver.update(|v| *v += 1);
                             }>"加一个请求头"</button>
 
-                            <h3>"该腿认的模型名"</h3>
+                            <h3>"该渠道认的模型名"</h3>
 
                             <div class="pull-bar">
                                 <button
@@ -683,7 +683,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                     {move || if pulling.get() { "拉取中…" } else { "拉取上游模型清单" }}
                                 </button>
                                 <span class="muted small">
-                                    "用这条腿自己的 base_url、密钥和自定义请求头，真打一次 "
+                                    "用这条渠道自己的 base_url、密钥和自定义请求头，真打一次 "
                                     <code>"GET /v1/models"</code>
                                     "；拉不到就如实报错，不会给你一份编出来的清单。"
                                 </span>
@@ -691,7 +691,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                             {move || if matches!(form.get(), Form::New) {
                                 view! {
                                     <p class="muted small">
-                                        "这条腿还没保存，所以还拿不到它的凭据去拉 —— 先点下面的「保存」，接着就能拉了。"
+                                        "这条渠道还没保存，所以还拿不到它的凭据去拉 —— 先点下面的「保存」，接着就能拉了。"
                                     </p>
                                 }
                                     .into_any()
@@ -792,16 +792,16 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                             }}
 
                             <p class="muted small">
-                                "同一条腿对不同模型组可能要用不同的名字（比如这条腿要"
+                                "同一条渠道对不同模型组可能要用不同的名字（比如这条渠道要"
                                 <code>"deepseek/deepseek-v4.1-flash"</code>
-                                "，别的腿只要 " <code>"v4.1flash"</code>
-                                "）。左填客户端打的模型名，右填这条腿要发的名字；右边留空 = 同名发出去。"
+                                "，别的渠道只要 " <code>"v4.1flash"</code>
+                                "）。左填客户端打的模型名，右填这条渠道要发的名字；右边留空 = 同名发出去。"
                             </p>
                             <p class="muted small">
                                 "「能看图」= 这个模型名收得下图片输入。"
                                 <b>"别猜名字，点「测视觉」"</b>
                                 "：它会真发一张图问一个只有看图才答得出的问题（左上角什么颜色），"
-                                "答对了才勾上。带图的请求只会发给勾了的腿；一条都没勾就回 422 说清楚，"
+                                "答对了才勾上。带图的请求只会发给勾了的渠道；一条都没勾就回 422 说清楚，"
                                 "而不是把图悄悄丢掉。"
                             </p>
                             <table class="grid tight">
@@ -824,19 +824,19 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                 let m = m.clone();
                                                 let model0 = m.model.clone();
                                                 let up0 = m.upstream.clone().unwrap_or_default();
-                                                // 「测视觉」要知道这一行属于哪条腿（表单里必须是已保存的腿）
-                                                let leg_for_test = match form.get_untracked() {
+                                                // 「测视觉」要知道这一行属于哪条渠道（表单里必须是已保存的渠道）
+                                                let channel_for_test = match form.get_untracked() {
                                                     Form::Edit(id) => Some(id),
                                                     _ => None,
                                                 };
                                                 let model_for_test = m.model.clone();
                                                 let up_for_test = m.upstream.clone().unwrap_or_default();
-                                                // 结果行：这一条的腿 id 对上了才显示
+                                                // 结果行：这一条的渠道 id 对上了才显示
                                                 let (vt_show, vt_text, vt_ok) = vt_msg
                                                     .get()
                                                     .map(|(id, t, ok)| (Some(id), t, ok))
                                                     .unwrap_or((None, String::new(), false));
-                                                let show_vt = vt_show == leg_for_test.filter(|_| !vt_text.is_empty());
+                                                let show_vt = vt_show == channel_for_test.filter(|_| !vt_text.is_empty());
                                                 view! {
                                                     <tr>
                                                         <td>
@@ -855,7 +855,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                         <td>"→"</td>
                                                         <td>
                                                             <input type="text" prop:value=up0
-                                                                placeholder="这条腿要发的名字（留空=同名）"
+                                                                placeholder="这条渠道要发的名字（留空=同名）"
                                                                 on:input=move |ev| {
                                                                     let s = event_target_value(&ev);
                                                                     f_models
@@ -871,7 +871,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                                 } />
                                                         </td>
                                                         <td class="vision-cell">
-                                                            <label class="pick" title="这个模型名能不能收图片输入（带图的请求只会发给勾了的腿）">
+                                                            <label class="pick" title="这个模型名能不能收图片输入（带图的请求只会发给勾了的渠道）">
                                                                 <input type="checkbox"
                                                                     prop:checked=move || {
                                                                         f_models
@@ -897,7 +897,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                                 class="ghost"
                                                                 disabled=move || vt_busy.get().is_some()
                                                                 on:click=move |_| {
-                                                                    match leg_for_test {
+                                                                    match channel_for_test {
                                                                         Some(id) => {
                                                                             vision_test((
                                                                                 id,
@@ -908,7 +908,7 @@ pub fn Legs(ctx: Ctx) -> impl IntoView {
                                                                         None => {
                                                                             ctx
                                                                                 .say(
-                                                                                    "这条腿还没保存：先点「保存」，再测它认不认得图",
+                                                                                    "这条渠道还没保存：先点「保存」，再测它认不认得图",
                                                                                 )
                                                                         }
                                                                     }
