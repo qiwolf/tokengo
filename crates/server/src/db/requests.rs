@@ -35,11 +35,17 @@ impl Status {
 }
 
 /// 开一条请求记录，返回它的 id。
-pub fn start(conn: &Connection, endpoint: &str, model: &str, client_ip: Option<&str>) -> Result<i64> {
+pub fn start(
+    conn: &Connection,
+    endpoint: &str,
+    model: &str,
+    client_ip: Option<&str>,
+    has_image: bool,
+) -> Result<i64> {
     conn.execute(
-        "INSERT INTO requests (ts_ms, endpoint, model, status, client_ip)
-         VALUES (?1, ?2, ?3, 'failed', ?4)",
-        params![now_ms(), endpoint, model, client_ip],
+        "INSERT INTO requests (ts_ms, endpoint, model, status, client_ip, has_image)
+         VALUES (?1, ?2, ?3, 'failed', ?4, ?5)",
+        params![now_ms(), endpoint, model, client_ip, has_image as i64],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -119,13 +125,15 @@ pub struct RequestRow {
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    /// 这条请求是不是在让模型看图（口径与路由用的那个判断完全一致）。
+    pub has_image: bool,
     pub error: Option<String>,
 }
 
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, error
+                input_tokens, output_tokens, has_image, error
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt
@@ -141,7 +149,8 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
                 latency_ms: r.get(7)?,
                 input_tokens: r.get(8)?,
                 output_tokens: r.get(9)?,
-                error: r.get(10)?,
+                has_image: r.get::<_, i64>(10)? != 0,
+                error: r.get(11)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -482,7 +491,7 @@ mod tests {
     use crate::db::open_in_memory;
 
     fn record(conn: &Connection, channels: &[(i64, &str)], status: Status) -> i64 {
-        let id = start(conn, "/v1/chat/completions", "auto", Some("192.0.2.9")).unwrap();
+        let id = start(conn, "/v1/chat/completions", "auto", Some("192.0.2.9"), false).unwrap();
         for (ord, (channel, outcome)) in channels.iter().enumerate() {
             add_attempt(conn, id, ord as u32, *channel, outcome, None, 10, None).unwrap();
         }
@@ -507,7 +516,7 @@ mod tests {
     #[test]
     fn a_request_survives_the_whole_lifecycle() {
         let conn = open_in_memory().unwrap();
-        let id = start(&conn, "/v1/embeddings", "bge-m3", Some("10.0.0.1")).unwrap();
+        let id = start(&conn, "/v1/embeddings", "bge-m3", Some("10.0.0.1"), false).unwrap();
         finish(
             &conn,
             id,
@@ -533,7 +542,7 @@ mod tests {
     #[test]
     fn default_status_is_failed_so_a_crash_still_counts_as_a_failure() {
         let conn = open_in_memory().unwrap();
-        let id = start(&conn, "/v1/chat/completions", "auto", None).unwrap();
+        let id = start(&conn, "/v1/chat/completions", "auto", None, false).unwrap();
         // 进程崩了没来得及调 finish —— 记录不能显示成"成功"
         let rows = recent(&conn, 1).unwrap();
         assert_eq!(rows[0].status, "failed");
@@ -564,10 +573,10 @@ mod tests {
         let conn = open_in_memory().unwrap();
         // 1 个对话（成功，100/50 token，耗时 900），1 个向量（成功，120/0，耗时 30）
         record(&conn, &[(1, "success")], Status::Ok);
-        let vec_id = start(&conn, "/v1/embeddings", "BAAI/bge-m3", Some("192.0.2.139")).unwrap();
+        let vec_id = start(&conn, "/v1/embeddings", "BAAI/bge-m3", Some("192.0.2.139"), false).unwrap();
         finish(&conn, vec_id, Status::Ok, Some(200), Some(1), 30, None, 120, 0, false, None).unwrap();
         // 一个认不出的端点写成失败 → 归到「别的」，不许悄悄算进任何一种
-        let odd = start(&conn, "/v1/unknown", "x", None).unwrap();
+        let odd = start(&conn, "/v1/unknown", "x", None, false).unwrap();
         finish(&conn, odd, Status::Failed, Some(502), Some(1), 5000, None, 0, 0, false, Some("炸了")).unwrap();
 
         let s = stats_since(&conn, 0).unwrap();
@@ -633,7 +642,7 @@ mod tests {
         status: Status,
         error: Option<&str>,
     ) -> i64 {
-        let id = start(conn, "/v1/chat/completions", model, ip).unwrap();
+        let id = start(conn, "/v1/chat/completions", model, ip, false).unwrap();
         add_attempt(conn, id, 0, 44, "success", Some(200), 10, None).unwrap();
         finish(
             conn,

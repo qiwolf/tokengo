@@ -648,8 +648,14 @@ async fn stats_and_logs_read_from_the_database() {
     // 模拟一条完整请求：渠道 1 失败两次，渠道 2 接住
     {
         let conn = f.state.conn();
-        let id = tokengo_server::db::requests::start(&conn, "/v1/embeddings", "auto", Some("1.1.1.1"))
-            .unwrap();
+        let id = tokengo_server::db::requests::start(
+            &conn,
+            "/v1/embeddings",
+            "auto",
+            Some("1.1.1.1"),
+            false,
+        )
+        .unwrap();
         tokengo_server::db::requests::add_attempt(&conn, id, 0, 1, "channel_fault", Some(429), 12, None)
             .unwrap();
         tokengo_server::db::requests::add_attempt(&conn, id, 1, 1, "channel_fault", Some(500), 20, None)

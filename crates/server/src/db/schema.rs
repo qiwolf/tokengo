@@ -205,4 +205,15 @@ ALTER TABLE model_groups ADD COLUMN kind TEXT NOT NULL DEFAULT '';
 ALTER TABLE model_groups ADD COLUMN kind_source TEXT NOT NULL DEFAULT '';
 "#,
     ),
+    (
+        6,
+        r#"
+-- 这条请求是不是在让模型看图（2026-10-18，v0.3.10）。
+--
+-- 为什么要有它：用户报「加了图片，模型识别不了」时，**分不清是客户端根本没把图发上来，
+-- 还是网关把图丢了，还是上游看不见**。记下这一位，面板「请求」页就能直接回答这个问题。
+-- 判定口径与路由用的完全一致（tokengo_shared::request_has_image），不另立一套。
+ALTER TABLE requests ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
 ];

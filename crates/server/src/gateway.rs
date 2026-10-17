@@ -198,7 +198,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         );
         let request_id = {
             let conn = state.conn();
-            requests::start(&conn, req.endpoint.as_str(), &req.model, req.client_ip.as_deref())?
+            requests::start(
+                &conn,
+                req.endpoint.as_str(),
+                &req.model,
+                req.client_ip.as_deref(),
+                wants_vision,
+            )?
         };
         let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
         guard.finish(
@@ -241,7 +247,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
     let request_id = {
         let conn = state.conn();
-        requests::start(&conn, req.endpoint.as_str(), &req.model, req.client_ip.as_deref())?
+        requests::start(
+                &conn,
+                req.endpoint.as_str(),
+                &req.model,
+                req.client_ip.as_deref(),
+                wants_vision,
+            )?
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
 
