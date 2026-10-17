@@ -243,21 +243,34 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
     bytes::Bytes::from(serde_json::to_vec(&v).unwrap_or_default())
 }
 
-/// 「测视觉」用的那张 16×16 小图：四格分别是 左上红 / 右上绿 / 左下蓝 / 右下黄。
+/// 「测视觉」用的那张 64×64 小图：四格分别是 左上红 / 右上绿 / 左下蓝 / 右下黄。
 ///
 /// 为什么要造图而不用现成图片：**要能判对错**。问一句"左上角是什么颜色"，
 /// 真看了图的模型会答"红"，纯文本模型要么报 400（不支持图片输入），要么答个
-/// 别的颜色 —— 三种情况一眼分得清。91 字节，数据 URL 一共 124 个字符。
-pub const VISION_TEST_IMAGE_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIklEQVR42mP4z8CAFTH8JxGNaqBIAy6Z//8ZsKJRDTTRAACmXD7QsJ/a+gAAAABJRU5ErkJggg==";
+/// 别的颜色 —— 三种情况一眼分得清。
+///
+/// 图**不能太小**：早先那版是 16×16（每格只有 8×8 像素），上游把图标归一化/切块之后
+/// 四格糊在一起，回答就容易含糊，判成"看不见"是冤枉它。现在 64×64，四格各 32×32。
+/// 压缩后 141 字节（数据 URL 188 个字符），请求还是很小。
+pub const VISION_TEST_IMAGE_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAVElEQVR42u3PsQkAMADDsPz/dHpDhwwtAu9GaTItfTwAAAAAAAAAAAAAAAAAAAAAAAAAAACADwHrQ5tpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADXHfsF7R5fMRs4AAAAAElFTkSuQmCC";
 
 /// 「测视觉」问题的标准问法 + 判对错时认的词。
 pub const VISION_TEST_QUESTION: &str = "这张图左上角那一格是什么颜色？只回一个词。";
 
+/// 「测视觉」第一发给多少输出 token。
+///
+/// **别压到 8**（踩过）：模型不总是乖乖「只回一个词」，先来半句开场白或先写一句
+/// 推理，额度就用光了，颜色词还没出口 —— 于是明明看见了却被判成看不见。给够 64。
+pub const VISION_TEST_TOKENS: u32 = 64;
+
+/// 第一发被 `finish_reason=length` 截断时，再给这么多重问一次。
+pub const VISION_TEST_TOKENS_RETRY: u32 = 256;
+
 /// 「测视觉」的请求体：带图的一发最小对话请求。
 ///
 /// 和探活同一条纪律：模型名是**这条渠道自己认的那个**（拿虚拟组名 `auto` 去问
-/// 必然 400，绿点就不真了）；`max_tokens` 给 8 够回一个颜色词。
-pub fn vision_test_body(model: &str) -> bytes::Bytes {
+/// 必然 400，绿点就不真了）。
+pub fn vision_test_body(model: &str, max_tokens: u32) -> bytes::Bytes {
     let v = serde_json::json!({
         "model": model,
         "messages": [{
@@ -269,10 +282,25 @@ pub fn vision_test_body(model: &str) -> bytes::Bytes {
                 }}
             ]
         }],
-        "max_tokens": 8,
+        "max_tokens": max_tokens,
         "stream": false,
     });
     bytes::Bytes::from(serde_json::to_vec(&v).unwrap_or_default())
+}
+
+/// 上游回的这个 200 是不是被 token 额度截断了（话没说完）。
+/// 判成"看不见"之前要看一眼这个：截断属于**我们额度给少了**，不是模型看不见。
+pub fn reply_was_truncated(body: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    v.get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("finish_reason"))
+        .and_then(|f| f.as_str())
+        .map(|f| f == "length")
+        .unwrap_or(false)
 }
 
 /// 这个回复算不算"真看见了"：认出红色就算。中文简繁、英文都认。
@@ -393,10 +421,12 @@ mod tests {
     /// 而且要小（面板按钮点一下不该花掉一堆 token）。
     #[test]
     fn vision_test_body_carries_a_real_image() {
-        let b = vision_test_body("glm-4v-flash");
+        let b = vision_test_body("glm-4v-flash", VISION_TEST_TOKENS);
         let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert_eq!(v["model"], "glm-4v-flash");
-        assert_eq!(v["max_tokens"], 8);
+        // **别压到 8**：模型先来半句开场白就把额度用光，颜色词还没出口就被判成「看不见」。
+        assert_eq!(v["max_tokens"], 64);
+        assert!(v["max_tokens"].as_u64().unwrap() >= 64, "额度要给够一个词 + 一句开场白");
         assert_eq!(v["stream"], false);
         let parts = v["messages"][0]["content"].as_array().unwrap();
         assert_eq!(parts[0]["type"], "text");
@@ -405,6 +435,24 @@ mod tests {
         assert!(url.starts_with("data:image/png;base64,"), "得是内嵌图片：{url}");
         assert!(url.len() < 400, "别把请求撑大：{} 字符", url.len());
         assert!(b.len() < 700, "整个请求体要小：{} 字节", b.len());
+        // 重问那一发要真的给更多
+        let b2 = vision_test_body("m", VISION_TEST_TOKENS_RETRY);
+        let v2: serde_json::Value = serde_json::from_slice(&b2).unwrap();
+        assert!(v2["max_tokens"].as_u64().unwrap() > 64, "{v2}");
+    }
+
+    /// 截断要认得出来：只有 `finish_reason=length` 才算「话没说完」。
+    #[test]
+    fn truncation_is_recognised_only_from_finish_reason_length() {
+        let long = |fr: &str| {
+            format!(
+                r#"{{"choices":[{{"index":0,"message":{{"role":"assistant","content":"这张图的左上角那一"}},"finish_reason":"{fr}"}}]}}"#
+            )
+        };
+        assert!(reply_was_truncated(&long("length")), "被额度截断要认出来");
+        assert!(!reply_was_truncated(&long("stop")), "正常停下来不算截断");
+        assert!(!reply_was_truncated("不是 JSON"), "认不出来一律当没截断");
+        assert!(!reply_was_truncated(r#"{"choices":[]}"#));
     }
 
     /// 判对错只认「红」：答别的颜色不算看见了。

@@ -682,19 +682,44 @@ async fn channels_vision_test(
             .min(std::time::Duration::from_secs(30))
     };
     let t0 = now_ms();
-    let r = state
+    // 第一发给 64 token。**被截断就再给 256 重问一次** ——
+    // 「话没说完」是我们额度给少了，不能算模型看不见（8 token 那版就是这么冤枉模型的）。
+    let mut budget = crate::prober::VISION_TEST_TOKENS;
+    let mut r = state
         .upstream
         .call_and_read(
             &channel,
             secret.as_deref(),
             crate::gateway::EndpointKind::Chat.path(),
-            crate::prober::vision_test_body(&sent),
+            crate::prober::vision_test_body(&sent, budget),
             timeout,
             &crate::upstream::new_uuid(),
             now_ms(),
         )
         .await;
-    let latency = now_ms() - t0;
+    let mut latency = now_ms() - t0;
+    let mut retried_with_more_tokens = false;
+    if let Ok((code, text)) = &r {
+        let said_red = crate::prober::answer_says_red(&extract_reply(text));
+        if (200..300).contains(code) && !said_red && crate::prober::reply_was_truncated(text) {
+            budget = crate::prober::VISION_TEST_TOKENS_RETRY;
+            retried_with_more_tokens = true;
+            let t1 = now_ms();
+            r = state
+                .upstream
+                .call_and_read(
+                    &channel,
+                    secret.as_deref(),
+                    crate::gateway::EndpointKind::Chat.path(),
+                    crate::prober::vision_test_body(&sent, budget),
+                    timeout,
+                    &crate::upstream::new_uuid(),
+                    now_ms(),
+                )
+                .await;
+            latency = now_ms() - t1;
+        }
+    }
 
     let (ok, status, reply, note) = match r {
         Ok((code, text)) => {
@@ -718,15 +743,27 @@ async fn channels_vision_test(
                     "真看见了：它认出了左上角是红色（纯文本模型答不出这个）".to_string(),
                 )
             } else if reply.trim().is_empty() {
+                let why = if crate::prober::reply_was_truncated(&text) {
+                    format!("（给了 {budget} token 还是被截断，一句话都没说完）")
+                } else {
+                    String::new()
+                };
                 (
                     false,
                     Some(code),
                     reply,
-                    "上游收了图但回了个空回复，看不出它到底看没看见 —— 别勾，先用一张真图在客户端里试一次".to_string(),
+                    format!(
+                        "上游收了图但回了个空回复{why}，看不出它到底看没看见 —— 别勾，先用一张真图在客户端里试一次"
+                    ),
                 )
             } else {
+                let why = if crate::prober::reply_was_truncated(&text) {
+                    format!("而且回复被 {budget} token 截断了（话没说完，不一定是它看不见）")
+                } else {
+                    String::new()
+                };
                 let note = format!(
-                    "上游收了图，但答的不是红色（它说：{}）—— 多半没真看图，或者这模型认不了这张图。别勾。",
+                    "上游收了图，但答的不是红色（它说：{}）{why} —— 多半没真看图，或者这模型认不了这张图。别勾。",
                     snippet(&reply)
                 );
                 (false, Some(code), reply, note)
@@ -763,6 +800,9 @@ async fn channels_vision_test(
         "latency_ms": latency,
         "reply": crate::upstream::cap_chars(&reply, 300),
         "applied": applied,
+        // 用了多少额度、有没有因为截断重问一次 —— 面板把这句写出来，省得人以为一次就灵
+        "max_tokens": budget,
+        "retried_with_more_tokens": retried_with_more_tokens,
         "note": note,
     })))
 }

@@ -41,6 +41,9 @@ enum Reply {
     Slow(u64),
     /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
     SawRed,
+    /// 请求里 `max_tokens` 小于 N 就只说半句（`finish_reason=length`），给够了才答"红"。
+    /// 用来演「额度给少了导致假红」和「多给额度就答对」。
+    TruncatesBelow(u32),
     /// 非流式响应外面套一层壳（cline.bot 的真形状）：`{"data": {…}, "success": true}`。
     /// 「响应解包」勾上才该剥掉。
     Enveloped,
@@ -136,6 +139,31 @@ async fn mock_handler(
             "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
         }))
         .into_response(),
+        // 演「额度给少了」：请求里 max_tokens 小于 N 就只说半句（finish_reason=length），
+        // 给够了才答「红」。**别把额度压到 8** 的回归就靠它 —— 8 那版在这儿必然被截断。
+        Reply::TruncatesBelow(n) => {
+            let given = v.get("max_tokens").and_then(|m| m.as_u64()).unwrap_or(0);
+            if given < n as u64 {
+                axum::Json(json!({
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion",
+                    "model": "mock",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "这张图的左上角那一"},
+                                 "finish_reason": "length"}],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": given, "total_tokens": 12 + given}
+                }))
+                .into_response()
+            } else {
+                axum::Json(json!({
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion",
+                    "model": "mock",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "红"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+                }))
+                .into_response()
+            }
+        }
         Reply::Enveloped => axum::Json(json!({
             "data": {
                 "id": "chatcmpl-wrapped",
@@ -2210,4 +2238,111 @@ async fn the_panel_switch_disables_a_channel_and_traffic_moves_off_it() {
     // 不存在的渠道 → 404
     let (s, _) = put_with_token(&f, "/api/channels/9999/enabled", &token, json!({"enabled": false})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// 「测视觉」的额度不能压到 8：模型先来半句铺垫就把额度用光，颜色词还没出口，
+/// 明明能看图的模型被误判成「看不见」—— 用户报的就是这个假红。
+///
+/// 这一版：第一发给 64 token，够答；真的被 `finish_reason=length` 截断时，
+/// 再给 256 重问一次，并且如实把「重问过」写进回答里。
+#[tokio::test]
+async fn vision_test_gives_enough_room_and_retries_when_truncated() {
+    let f = fixture();
+    f.with_key();
+    // 额度 < 32 才截断：给 64 就一次答对（回归「别压到 8」）
+    let roomy = start_mock(Reply::TruncatesBelow(32)).await;
+    let a = f.add_channel(
+        "够额度的渠道",
+        &roomy.base,
+        ChannelSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            ..Default::default()
+        },
+    );
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+    let (s, v) = post_with_token(
+        &f,
+        &format!("/api/channels/{}/vision-test", a.0),
+        &token,
+        json!({"model": "auto", "upstream": "m"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], true, "给了 64 就该答对：{v}");
+    assert_eq!(v["max_tokens"], 64, "{v}");
+    assert_eq!(v["retried_with_more_tokens"], false, "一次就成，不必重问：{v}");
+    assert_eq!(roomy.count(), 1, "只该打一发");
+
+    // 额度 < 200 才截断：第一发 64 会被截断，重问 256 才答对
+    let tight = start_mock(Reply::TruncatesBelow(200)).await;
+    let b = f.add_channel(
+        "要更多额度的渠道",
+        &tight.base,
+        ChannelSpec {
+            secret: Some("sk-b".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            ..Default::default()
+        },
+    );
+    let (s, v) = post_with_token(
+        &f,
+        &format!("/api/channels/{}/vision-test", b.0),
+        &token,
+        json!({"model": "auto", "upstream": "m"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], true, "截断之后多给额度答对了，要算它能看图：{v}");
+    assert_eq!(v["retried_with_more_tokens"], true, "{v}");
+    assert_eq!(v["max_tokens"], 256, "重问要给更多：{v}");
+    assert_eq!(v["reply"], "红", "{v}");
+    assert!(v["note"].as_str().unwrap().contains("真看见了"), "{v}");
+    assert_eq!(tight.count(), 2, "截断那一发 + 重问那一发 = 两发");
+    // 两发都要真带图
+    let seen = tight.seen();
+    assert!(seen.iter().all(|x| x.has_image), "重问也要带图");
+}
+
+/// 一直截断（额度怎么给都不够）：不许判成「能看图」，而且要说清是**被截断**，
+/// 别让用户以为模型看不见。
+#[tokio::test]
+async fn a_reply_that_stays_truncated_is_not_a_yes_and_says_so() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::TruncatesBelow(99_999)).await;
+    let ch = f.add_channel(
+        "永远截断的渠道",
+        &m.base,
+        ChannelSpec {
+            secret: Some("sk-a".into()),
+            models: vec![("auto".into(), Some("m".into()))],
+            ..Default::default()
+        },
+    );
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+    let (s, v) = post_with_token(
+        &f,
+        &format!("/api/channels/{}/vision-test", ch.0),
+        &token,
+        json!({"model": "auto", "upstream": "m"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], false, "没答出颜色就不许判成能看图：{v}");
+    assert_eq!(v["applied"], false, "更不许把标记落库：{v}");
+    let note = v["note"].as_str().unwrap();
+    assert!(note.contains("截断"), "要明说是被截断：{note}");
+    assert!(note.contains("256"), "要把给了多少额度说出来：{note}");
+    assert_eq!(m.count(), 2, "截断 + 重问 = 两发，不多打");
+    // 没标上
+    let (_, v) = get_with_token(&f, "/api/channels", &token).await;
+    let l = v["channels"].as_array().unwrap().iter().find(|l| l["id"] == ch.0).unwrap();
+    assert_eq!(l["vision_count"], 0, "{v}");
 }
