@@ -387,7 +387,12 @@ async fn channels_delete(
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
-    channels::delete(&conn, tokengo_shared::ChannelId(id))?;
+    let cid = tokengo_shared::ChannelId(id);
+    // 不在了就老老实实说 404（以前漏了这一步，删两下第二下回的是 500「内部错误」）
+    if channels::get(&conn, cid)?.is_none() {
+        return Err(ApiError::not_found(format!("渠道 {cid} 不存在")));
+    }
+    channels::delete(&conn, cid)?;
     tracing::info!("删除渠道 #{id}");
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -986,7 +991,12 @@ async fn groups_delete(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    groups::delete(&state.conn(), &name)?;
+    let conn = state.conn();
+    // 同渠道那条：不在了就 404（不假装删成功，也不回 500）
+    if groups::get(&conn, &name)?.is_none() {
+        return Err(ApiError::not_found(format!("模型组 {name} 不存在")));
+    }
+    groups::delete(&conn, &name)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

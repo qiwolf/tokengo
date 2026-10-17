@@ -2346,3 +2346,99 @@ async fn a_reply_that_stays_truncated_is_not_a_yes_and_says_so() {
     let l = v["channels"].as_array().unwrap().iter().find(|l| l["id"] == ch.0).unwrap();
     assert_eq!(l["vision_count"], 0, "{v}");
 }
+
+/// 组名里带斜杠（`BAAI/bge-m3` 这种）时，面板必须把它转义了再进 URL ——
+/// 不转义就是用户报的「删除模型 → 删除失败 HTTP404」。
+///
+/// 这条钉两件事：① 服务端认 `%2F` 这种写法（转义之后能匹配上路由）；
+/// ② 不转义的写法确实是 404（所以面板那边必须转义，不能手拼）。
+#[tokio::test]
+async fn a_group_name_with_a_slash_can_be_deleted_when_it_is_escaped() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let a = f.add_channel(
+        "渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("BAAI/bge-m3".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.set_group("BAAI/bge-m3", &[a]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+
+    // 不转义：路由匹配不上（这就是那个 404 的来源）
+    let req = axum::http::Request::builder()
+        .method("DELETE")
+        .uri("/api/groups/BAAI/bge-m3")
+        .header("authorization", format!("Bearer {token}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "不转义就该匹配不上");
+
+    // 转义之后：删得掉，而且真从库里没了
+    let req = axum::http::Request::builder()
+        .method("DELETE")
+        .uri("/api/groups/BAAI%2Fbge-m3")
+        .header("authorization", format!("Bearer {token}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "转义之后要删得掉");
+    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
+    assert!(
+        !v["groups"].as_array().unwrap().iter().any(|g| g["name"] == "BAAI/bge-m3"),
+        "删完就不该还在：{v}"
+    );
+
+    // 同理，回切检查点那一条也得转义（面板上「立刻试首选」用的就是它）
+    f.set_group("BAAI/bge-m3", &[a]);
+    let (s, _) = post_with_token(&f, "/api/routing/BAAI%2Fbge-m3/reprobe", &token, json!({})).await;
+    assert_eq!(s, StatusCode::OK, "转义的组名也要能回切");
+}
+
+/// 删一个已经不在的东西：要老实回 404（以前渠道那条漏了检查，回的是 500「内部错误」；
+/// 组那条更糟 —— 假装成功回 200）。面板上「删除失败」的文案就靠这个状态码分辨。
+#[tokio::test]
+async fn deleting_something_that_is_not_there_says_404_not_500() {
+    let f = fixture();
+    f.with_key();
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+
+    // 渠道：建了再删（200），删第二下要 404
+    let m = start_mock(Reply::Ok).await;
+    let ch = f.add_channel("删两次的渠道", &m.base, ChannelSpec::default());
+    let req = |uri: &str| {
+        axum::http::Request::builder()
+            .method("DELETE")
+            .uri(uri.to_string())
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap()
+    };
+    let resp = app(f.state.clone())
+        .oneshot(req(&format!("/api/channels/{}", ch.0)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app(f.state.clone())
+        .oneshot(req(&format!("/api/channels/{}", ch.0)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "删第二下要 404，不许 500");
+
+    // 组：建了再删（200），删第二下要 404（不许假装成功）
+    f.set_group("auto", &[]);
+    let resp = app(f.state.clone()).oneshot(req("/api/groups/auto")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app(f.state.clone()).oneshot(req("/api/groups/auto")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "删第二下要 404");
+}

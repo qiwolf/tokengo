@@ -103,7 +103,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     })
                     .collect_view()}
                 <span class="spacer"></span>
-                <span class="muted small">"在线会话 " {move || sessions.get()}</span>
+                <span class="chip">"在线会话 " <b>{move || sessions.get()}</b></span>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
