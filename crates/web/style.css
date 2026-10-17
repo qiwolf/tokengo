@@ -1,10 +1,9 @@
 /* tokengo 面板样式。手写，不引任何前端框架 —— 面板是自用的管理界面，
    目标是「信息密度高、状态一眼看清、手机上真能用」。
 
- * 口径：**移动优先**。先写手机能用的样子，再用 min-width 断点补桌面。
- *   手机（< 600px）  单栏；侧栏变抽屉；表格每行变一张卡片；弹窗整屏铺开
- *   平板（600–900）  单栏；侧栏仍是抽屉；表格仍是卡片
- *   桌面（≥ 901）    左栏 + 内容两栏；表格回到真表格
+ * 排法照 freellmapi 面板：顶上一条横菜单；每页「大标题 + 一句话 + 一条横线」；
+ * 内容就是普通表格 —— **手机上表格还是表格，左右滑动看全，不做一张张卡片**
+ * （卡片会把一行拆成好几块，一屏只看得到一两条，反倒更难看懂）。
  *
  * 主题：两套变量。深色是默认（:root），浅色挂在 html[data-theme="light"]。
  * **颜色一律走变量**，尤其那些原来写死的半透明白 —— 写死的话浅色主题下会看不见。
@@ -105,48 +104,71 @@ code.small { color: var(--muted); }
 }
 .notice { border-left: 3px solid var(--accent); padding-left: .9rem; }
 
-/* ── 壳：手机单栏 + 抽屉侧栏；桌面才变两栏 ── */
+/* ── 壳：顶上一条横菜单 ── */
 .shell { min-height: 100vh; display: block; }
-
-.sidebar {
-  position: fixed; z-index: 30; top: 0; bottom: 0; left: 0;
-  width: 15rem; max-width: 84vw;
-  background: var(--panel); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; padding: 1rem .75rem;
-  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-  gap: .25rem;
-  transform: translateX(-102%);
-  transition: transform .18s ease;
-}
-.shell.nav-open .sidebar { transform: none; box-shadow: var(--shadow); }
-
-/* 抽屉打开时的遮罩：点一下就关掉（手机上侧栏不占版面） */
-.nav-scrim {
-  position: fixed; inset: 0; z-index: 25; display: none;
-  background: var(--backdrop); border: none; border-radius: 0; padding: 0;
-  min-height: 0;
-}
-.shell.nav-open .nav-scrim { display: block; }
-
-.brand { display: flex; align-items: baseline; gap: .4rem; padding: .25rem .5rem 1rem; }
-.brand-name { font-weight: 700; letter-spacing: .02em; }
-.sidebar nav { display: flex; flex-direction: column; gap: .15rem; }
-.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: .35rem; }
-.main { display: flex; flex-direction: column; min-width: 0; }
 .topbar {
-  display: flex; align-items: center; gap: .6rem;
-  padding: .5rem .7rem;
-  padding-top: calc(.5rem + env(safe-area-inset-top, 0px));
-  border-bottom: 1px solid var(--line); background: var(--panel);
-  position: sticky; top: 0; z-index: 10;
+  position: sticky; top: 0; z-index: 20;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  padding-top: env(safe-area-inset-top, 0px);
 }
-.topbar h1 { flex: 1 1 auto; min-width: 0; font-size: 1rem; }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: .4rem; flex: none; }
-.toast { color: var(--warn); font-size: .82rem; max-width: 45vw; overflow: hidden; text-overflow: ellipsis; }
-.nav-toggle { display: inline-flex; }
-.theme-toggle { width: 2.4rem; padding: 0; font-size: 1.05rem; line-height: 1; }
-.content { padding: .9rem .75rem calc(2.5rem + env(safe-area-inset-bottom, 0px)); }
-.page { max-width: 84rem; }
+.topbar-inner {
+  display: flex; align-items: center; gap: .5rem;
+  max-width: 84rem; margin: 0 auto;
+  padding: .45rem .7rem;
+}
+.brand { display: inline-flex; align-items: baseline; gap: .4rem; font-weight: 700; letter-spacing: .02em; flex: none; }
+.topnav { display: flex; align-items: center; gap: .1rem; margin-left: .75rem; }
+button.nav {
+  background: transparent; border: none; color: var(--muted);
+  padding: .35rem .65rem; border-radius: 6px; min-height: 32px; font-size: .95rem;
+}
+button.nav:hover { background: var(--panel-2); color: var(--text); border: none; }
+button.nav.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+.icon-btn { width: 2.2rem; padding: 0; font-size: 1.05rem; line-height: 1; flex: none; }
+.toast {
+  color: var(--warn); font-size: .82rem; max-width: 40vw;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.menu-wrap { position: relative; flex: none; }
+.nav-toggle { display: none; }
+.nav-scrim {
+  position: fixed; inset: 0; z-index: 25; display: block;
+  background: transparent; border: none; border-radius: 0; padding: 0; min-height: 0;
+}
+.menu-pop {
+  position: absolute; z-index: 30; top: calc(100% + .4rem); right: 0;
+  min-width: 16rem; max-width: 88vw;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--shadow); padding: .35rem;
+}
+.menu-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: .05rem;
+  width: 100%; text-align: left; background: transparent; border: none;
+  padding: .45rem .6rem; border-radius: 6px; min-height: 0;
+}
+.menu-item:hover { background: var(--panel-2); border: none; }
+.menu-item.active { background: var(--panel-2); font-weight: 600; }
+.menu-item.danger { color: var(--bad); }
+.menu-sep { height: 1px; background: var(--line); margin: .3rem .2rem; }
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.content {
+  width: 100%; max-width: 84rem; margin: 0 auto;
+  padding: .9rem .7rem calc(2.5rem + env(safe-area-inset-bottom, 0px));
+}
+.page { max-width: 100%; }
+
+/* ── 每页顶上那一块：大标题 + 一句话 + 右侧按钮，底下一道横线 ── */
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: .8rem 1rem; flex-wrap: wrap;
+  padding-bottom: .9rem; margin-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.page-head-text { min-width: 0; }
+.page-head h1 { font-size: 1.35rem; margin: 0; letter-spacing: .01em; }
+.page-head p { margin: .2rem 0 0; font-size: .85rem; }
+.page-head-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 
 /* ── 控件：按钮一律描边小按钮（不要实色大块） ── */
 button {
@@ -160,13 +182,6 @@ button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; }
 button.danger { color: var(--bad); border-color: var(--bad-line); }
-button.nav {
-  display: flex; align-items: center; gap: .55rem; text-align: left; width: 100%;
-  background: transparent; border: none; padding: .45rem .6rem; border-radius: 6px; color: var(--muted);
-}
-button.nav:hover { background: var(--panel-2); color: var(--text); border: none; }
-button.nav.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
-.nav-icon { width: 1rem; text-align: center; opacity: .8; }
 button.chip { border-radius: 999px; padding: .2rem .7rem; font-size: .85rem; color: var(--muted); min-height: 30px; }
 button.chip.active { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
 
@@ -178,7 +193,7 @@ input[type=text], input[type=password], input[type=number], select, textarea {
 input[type=checkbox] { width: auto; min-height: 0; accent-color: var(--accent); }
 input:disabled { color: var(--muted); background: var(--panel-2); }
 
-.toolbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.toolbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: .9rem; }
 .chips { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .chip.code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: .15rem .5rem; }
 .panel {
@@ -190,17 +205,19 @@ input:disabled { color: var(--muted); background: var(--panel-2); }
 .form-grid > label { color: var(--muted); font-size: .87rem; }
 .form-grid > .field-note { margin: -.1rem 0 .6rem; }
 
-/* ── 卡片 ── */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .6rem; }
-.card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem;
+/* ── 顶上那几个数：并排的数字条（不是卡片，靠竖线分隔） ── */
+.stats {
+  display: flex; flex-wrap: wrap; gap: .8rem 1.4rem;
+  padding-bottom: .9rem; margin-bottom: .2rem; border-bottom: 1px solid var(--line);
 }
-.card-title { color: var(--muted); font-size: .85rem; }
-.card-value { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.card-sub { margin-top: .2rem; }
+.stat { min-width: 7.5rem; padding-left: .8rem; border-left: 2px solid var(--line); }
+.stat-title { color: var(--muted); font-size: .82rem; }
+.stat-value { font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.stat-sub { color: var(--muted); font-size: .8rem; }
 
-/* ── 表格 ── */
-table.grid { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+/* ── 表格：手机上也是表格，外层左右滑动看全 ── */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.grid { width: 100%; border-collapse: collapse; margin-top: .4rem; }
 table.grid.tight td, table.grid.tight th { padding: .25rem .4rem; }
 table.grid th {
   text-align: left; font-weight: 600; color: var(--muted); font-size: .82rem;
@@ -235,7 +252,7 @@ table.grid.tight td.arrow { width: 1.5rem; text-align: center; color: var(--mute
 
 /* ── 弹窗：手机整屏铺开，桌面临窗 ── */
 .modal-backdrop {
-  position: fixed; inset: 0; background: var(--backdrop); z-index: 20;
+  position: fixed; inset: 0; background: var(--backdrop); z-index: 40;
   display: grid; place-items: stretch; overflow-y: auto;
 }
 .modal {
@@ -280,10 +297,21 @@ table.grid.tight td.arrow { width: 1.5rem; text-align: center; color: var(--mute
 }
 .vision-cell .pick { margin: 0; white-space: nowrap; }
 
-/* ══════ 平板：内容宽一点，仍是单栏（侧栏还是抽屉） ══════ */
+/* 空态那一行：一句话灰字（别做成一行占满的卡片） */
+tr.empty-row td.empty-cell { color: var(--muted); padding: .9rem .6rem; }
+
+/* 折叠区（路由参数这类「平时不用看」的东西） */
+details.fold { margin-top: 1.5rem; border-top: 1px solid var(--line); padding-top: .9rem; }
+details.fold > summary {
+  cursor: pointer; color: var(--muted); font-size: .9rem; min-height: 32px;
+  display: flex; align-items: center; gap: .4rem;
+}
+details.fold > summary:hover { color: var(--text); }
+details.fold[open] > summary { margin-bottom: .4rem; }
+
+/* ══════ 平板及以上：内容宽一点、字段变两栏 ══════ */
 @media (min-width: 601px) {
-  .content { padding: 1.1rem 1.2rem 3rem; }
-  .cards { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .75rem; }
+  .content { padding: 1.2rem 1.2rem 3rem; }
   .pull-rows { grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .1rem .8rem; }
   .pick-grid { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
   .form-grid { grid-template-columns: 13rem 1fr; gap: .6rem 1rem; align-items: start; }
@@ -294,27 +322,27 @@ table.grid.tight td.arrow { width: 1.5rem; text-align: center; color: var(--mute
   .modal-foot { position: static; border-top: none; padding: 0; }
 }
 
-/* ══════ 桌面：左栏固定 + 内容两栏，表格回到真表格 ══════ */
+/* ══════ 桌面：横排菜单全显、内容更宽 ══════ */
 @media (min-width: 901px) {
-  .shell { display: grid; grid-template-columns: 13rem 1fr; }
-  .sidebar {
-    position: static; transform: none; width: auto; max-width: none;
-    padding: 1rem .75rem; box-shadow: none; transition: none;
-  }
-  .nav-scrim, .shell.nav-open .nav-scrim { display: none; }
-  .nav-toggle { display: none; }
-  .topbar { padding: .9rem 1.25rem; }
-  .topbar h1 { font-size: 1.1rem; }
-  .content { padding: 1.25rem 1.5rem 3rem; }
+  .topbar-inner { padding: .6rem 1.25rem; }
+  .content { padding: 1.5rem 1.5rem 3.5rem; }
   .split { grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-  .cards { grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+  .nav-toggle { display: none; }
 }
 
-/* ══════ 手机：可点区域够大、字号够大（免得一聚焦就被 iOS 放大页面） ══════ */
-@media (max-width: 600px) {
+/* ══════ 手机：菜单收进右上角、可点区域够大（免得一聚焦就被 iOS 放大） ══════ */
+@media (max-width: 760px) {
+  .topnav { display: none; }
+  .nav-toggle { display: inline-flex; }
+  .toast { max-width: 38vw; }
+  .page-head h1 { font-size: 1.2rem; }
+  .page-head-actions { width: 100%; }
+  .page-head-actions > button { flex: 1 1 auto; }
+
   button { min-height: 42px; padding: .45rem .8rem; }
   button.chip { min-height: 36px; }
-  button.nav { min-height: 46px; font-size: 1rem; }
+  button.nav { min-height: 40px; font-size: .95rem; }
+  .icon-btn { width: 2.6rem; min-height: 42px; }
   input[type=text], input[type=password], input[type=number], select, textarea {
     min-height: 44px; font-size: 16px;
   }
@@ -324,42 +352,12 @@ table.grid.tight td.arrow { width: 1.5rem; text-align: center; color: var(--mute
   .modal-foot > button { flex: 1 1 auto; }
   .modal-foot > button.primary { flex: 1 1 100%; }
 
-  /* 表格 → 卡片：一行一块，左边小标签、右边值（标签来自 td 的 data-label） */
-  table.grid:not(.tight) { display: block; margin-top: .35rem; }
-  table.grid:not(.tight) thead { display: none; }
-  table.grid:not(.tight) tbody { display: block; }
-  table.grid:not(.tight) tr {
-    display: block; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 10px; padding: .5rem .75rem; margin-bottom: .6rem;
+  /* 手机上表格**还是表格**：一行就是一行，左右滑看全。
+     列宽按内容撑开（不挤成一列两字），只有点名要换行的列（长错误文本）才让它换行。 */
+  .table-wrap table.grid { width: auto; min-width: 100%; }
+  .table-wrap table.grid td { white-space: nowrap; }
+  .table-wrap table.grid td.wrap {
+    white-space: normal; min-width: 11rem; max-width: 18rem;
   }
-  table.grid:not(.tight) tr:hover td { background: transparent; }
-  table.grid:not(.tight) td {
-    display: flex; align-items: center; justify-content: space-between; gap: .75rem;
-    border: none; padding: .22rem 0; text-align: left;
-  }
-  table.grid:not(.tight) td::before {
-    content: attr(data-label); color: var(--muted); font-size: .8rem;
-    flex: none; white-space: nowrap;
-  }
-  table.grid:not(.tight) td:not([data-label])::before { content: none; }
-  table.grid:not(.tight) td.num { text-align: right; }
-  table.grid:not(.tight) td.actions {
-    justify-content: flex-start; gap: .4rem; padding-top: .55rem; margin-top: .3rem;
-    border-top: 1px solid var(--line);
-  }
-  /* 空态那行（colspan 一句话）：不当卡片，直接一句灰字 */
-  table.grid:not(.tight) tr.empty-row { background: transparent; border: none; padding: .25rem 0; margin-bottom: .2rem; }
-  table.grid:not(.tight) td.empty-cell { display: block; text-align: left; }
-  table.grid:not(.tight) td.empty-cell::before { content: none; }
-  /* 「测一下」结果行：跟在上面那张卡片后面，不另起一张卡 */
-  table.grid:not(.tight) tr.probe-row { background: transparent; border: none; padding: 0; margin: -.45rem 0 .7rem; }
-  table.grid:not(.tight) tr.probe-row td { display: block; text-align: left; padding: .1rem .15rem; }
-  table.grid:not(.tight) tr.probe-row td::before { content: none; }
-
-  /* 弹窗里的内嵌小表（请求头、模型名、优先级顺序）：竖排，一行 = 一条记录 */
-  table.grid.tight tr { display: block; padding: .45rem 0; border-bottom: 1px solid var(--line); }
-  table.grid.tight tr:hover td { background: transparent; }
-  table.grid.tight td { display: block; width: 100%; border: none; padding: .2rem 0; }
-  table.grid.tight td.arrow { display: none; }
-  table.grid.tight td.actions { justify-content: flex-start; padding-top: .3rem; }
+  .table-wrap table.grid td.empty-cell { white-space: normal; }
 }

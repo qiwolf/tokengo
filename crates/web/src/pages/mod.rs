@@ -1,19 +1,23 @@
 //! 页面清单与页面之间的公共约定。
+//!
+//! 面板只做本机真正用得上的 5 页：总览 · 渠道 · 模型 · 请求 · 设置。
+//! 原先把「模型组」和「路由状态」拆成两页，看的人得来回翻才知道
+//! 「这个模型名现在到底在走哪条渠道」—— 现在并成一页。
 
-pub mod groups;
 pub mod channels;
+pub mod models;
 pub mod overview;
 pub mod requests;
-pub mod routing;
 pub mod settings;
 
-/// 面板的页面。**顺序就是侧栏顺序。**
+use leptos::prelude::*;
+
+/// 面板的页面。**顺序就是顶栏顺序。**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Overview,
     Channels,
-    Groups,
-    Routing,
+    Models,
     Requests,
     Settings,
 }
@@ -22,8 +26,7 @@ impl Page {
     pub const ALL: &'static [Page] = &[
         Page::Overview,
         Page::Channels,
-        Page::Groups,
-        Page::Routing,
+        Page::Models,
         Page::Requests,
         Page::Settings,
     ];
@@ -33,48 +36,76 @@ impl Page {
         match self {
             Page::Overview => "overview",
             Page::Channels => "channels",
-            Page::Groups => "groups",
-            Page::Routing => "routing",
+            Page::Models => "models",
             Page::Requests => "requests",
             Page::Settings => "settings",
         }
     }
 
+    /// 顶栏与菜单上显示的名字。**两个字的短名，手机上排得下。**
     pub fn title(self) -> &'static str {
         match self {
             Page::Overview => "总览",
-            Page::Channels => "渠道管理",
-            Page::Groups => "模型组",
-            Page::Routing => "路由状态",
-            Page::Requests => "请求流水",
+            Page::Channels => "渠道",
+            Page::Models => "模型",
+            Page::Requests => "请求",
             Page::Settings => "设置",
         }
     }
 
-    /// 侧栏图标。用字符，不引图标库（少一个依赖，也少一堆字体文件）。
-    pub fn icon(self) -> &'static str {
+    /// 每个页面顶上那句话说明 —— 「这一页是干什么的」。
+    pub fn blurb(self) -> &'static str {
         match self {
-            Page::Overview => "▤",
-            Page::Channels => "⇄",
-            Page::Groups => "≡",
-            Page::Routing => "◈",
-            Page::Requests => "☰",
-            Page::Settings => "⚙",
+            Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
+            Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
+            Page::Models => "客户端打过来的模型名，按什么顺序走哪条渠道。",
+            Page::Requests => "每个请求走了哪条渠道、成没成、花了多久、错在哪。",
+            Page::Settings => "对外 key、面板口令、登录着的设备。",
         }
     }
 
-    /// 从 URL hash 猜当前页（`#channels` → 渠道管理）。认不出就回总览。
+    /// 从 URL hash 猜当前页（`#channels` → 渠道）。认不出就回总览。
+    ///
+    /// 旧的 `#groups` / `#routing` 也认 —— 这两个页面并进了「模型」，
+    /// 老书签不该变成「打开就跳回总览」。
     pub fn from_hash() -> Page {
         let raw = web_sys::window()
             .and_then(|w| w.location().hash().ok())
             .unwrap_or_default();
         let name = raw.trim_start_matches('#').trim_start_matches('/');
         let name = name.split('/').next().unwrap_or("");
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|p| p.slug() == name)
-            .unwrap_or(Page::Overview)
+        match name {
+            "groups" | "routing" => Page::Models,
+            _ => Self::ALL
+                .iter()
+                .copied()
+                .find(|p| p.slug() == name)
+                .unwrap_or(Page::Overview),
+        }
+    }
+}
+
+/// 每个页面顶上的那一块：大标题 + 一句话说明 + 右侧操作按钮，底下一条横线。
+///
+/// 抽出来是为了**五个页面长得一样** —— 到哪一页都知道「标题在哪、按钮在哪」。
+#[component]
+pub fn PageHead(
+    /// 大标题（跟顶栏那个词一致，别换叫法）
+    title: &'static str,
+    /// 一句话说明这一页是干什么的
+    desc: &'static str,
+    /// 右侧操作区（按钮）。不传就是空的。
+    #[prop(optional)]
+    children: Option<Children>,
+) -> impl IntoView {
+    view! {
+        <div class="page-head">
+            <div class="page-head-text">
+                <h1>{title}</h1>
+                <p class="muted">{desc}</p>
+            </div>
+            {children.map(|c| view! { <div class="page-head-actions">{c()}</div> })}
+        </div>
     }
 }
 
@@ -84,14 +115,15 @@ mod tests {
 
     #[test]
     fn every_page_has_a_unique_slug_and_a_title() {
-        // 侧栏靠 slug 跳页，重复的 slug 会让某一页永远打不开。
+        // 顶栏靠 slug 跳页，重复的 slug 会让某一页永远打不开。
         let mut slugs: Vec<&str> = Page::ALL.iter().map(|p| p.slug()).collect();
         slugs.sort_unstable();
         let before = slugs.len();
         slugs.dedup();
         assert_eq!(slugs.len(), before, "slug 必须唯一");
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
-        // 计划的 5 页 + 设置页
-        assert_eq!(Page::ALL.len(), 6);
+        assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
+        // 五页：总览 · 渠道 · 模型 · 请求 · 设置
+        assert_eq!(Page::ALL.len(), 5);
     }
 }
