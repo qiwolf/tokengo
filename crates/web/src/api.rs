@@ -273,3 +273,38 @@ pub async fn generate_gateway_key() -> Result<String, ApiErr> {
     let r: R = typed("POST", "/api/settings/generate-gateway-key", None).await?;
     Ok(r.gateway_key)
 }
+
+// ───────────────────────── 账目维护 ─────────────────────────
+
+pub async fn maintenance() -> Result<MaintenanceResp, ApiErr> {
+    typed("GET", "/api/maintenance", None).await
+}
+
+pub async fn set_retention_days(days: i64) -> Result<(), ApiErr> {
+    call(
+        "POST",
+        "/api/maintenance",
+        Some(json!({ "retention_days": days })),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// 「立即清理一次」：返回后端那句人话结果（清掉多少、还剩多少）。
+pub async fn prune_now() -> Result<PruneResp, ApiErr> {
+    typed("POST", "/api/maintenance/prune", None).await
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PruneResp {
+    #[serde(default)]
+    pub deleted: i64,
+    #[serde(default)]
+    pub remaining: i64,
+    #[serde(default)]
+    pub db_bytes: i64,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub notice: String,
+}

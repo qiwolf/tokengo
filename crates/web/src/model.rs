@@ -272,6 +272,28 @@ pub struct SettingsResp {
     pub reprobe_interval_minutes: i64,
 }
 
+/// 「账目维护」这一块的状态（`GET /api/maintenance`）。
+///
+/// 面板上只让用户填一个数：保留多少天。剩下三行是只读的实话：
+/// 库现在多大、最老一条是什么时候、上次清掉多少 —— 用户靠这三行判断
+/// 「清扫员到底干没干活」。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MaintenanceResp {
+    /// 0 = 不清理
+    #[serde(default)]
+    pub retention_days: i64,
+    #[serde(default)]
+    pub total_requests: i64,
+    #[serde(default)]
+    pub oldest_ts_ms: Option<i64>,
+    #[serde(default)]
+    pub db_bytes: i64,
+    #[serde(default)]
+    pub last_prune_at_ms: Option<i64>,
+    #[serde(default)]
+    pub last_prune_count: i64,
+}
+
 /// 请求终态的中文说法 + 配色类名。**面板里所有地方都走这一个映射**，
 /// 免得"成功"在一个页面写中文、在另一个页面写英文。
 pub fn status_label(status: &str) -> (&'static str, &'static str) {

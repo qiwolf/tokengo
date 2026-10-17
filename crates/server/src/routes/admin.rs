@@ -11,7 +11,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
-use crate::db::{groups, channels, requests, routing, sessions, settings, now_ms};
+use crate::db::{groups, channels, maintenance, requests, routing, sessions, settings, now_ms};
 use crate::SharedState;
 
 pub fn router() -> Router<SharedState> {
@@ -39,6 +39,8 @@ pub fn router() -> Router<SharedState> {
         .route("/timeline", get(|| async { unbuilt(5, "GET /api/timeline") }))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/settings/generate-gateway-key", post(generate_gateway_key))
+        .route("/maintenance", get(maintenance_get).post(maintenance_set))
+        .route("/maintenance/prune", post(maintenance_prune))
 }
 
 // ───────────────────────── 鉴权 ─────────────────────────
@@ -1016,6 +1018,78 @@ async fn generate_gateway_key(
         "ok": true,
         "gateway_key": key,
         "notice": "新 key 已生效；正在用旧 key 的客户端会马上 401，请同步更新。",
+    })))
+}
+
+// ───────────────────────── 账目维护 ─────────────────────────
+
+async fn maintenance_get(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    let i = maintenance::info(&conn).map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "retention_days": i.retention_days,
+        "total_requests": i.total_requests,
+        "oldest_ts_ms": i.oldest_ts_ms,
+        "db_bytes": i.db_bytes,
+        "last_prune_at_ms": i.last_prune_at_ms,
+        "last_prune_count": i.last_prune_count,
+    })))
+}
+
+#[derive(Deserialize)]
+struct MaintenanceBody {
+    /// 保留多少天。0 = 不清理。
+    retention_days: i64,
+}
+
+async fn maintenance_set(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Json(body): Json<MaintenanceBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.retention_days < 0 {
+        return Err(ApiError::bad_request("保留天数不能是负数（0 = 不清理）"));
+    }
+    let conn = state.conn();
+    let d = maintenance::set_retention_days(&conn, body.retention_days)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    tracing::info!("账目保留天数改为 {d} 天");
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "retention_days": d,
+        "notice": if d == 0 {
+            "已关闭自动清理：旧账不会再被删掉".to_string()
+        } else {
+            format!("以后只保留最近 {d} 天的请求记录")
+        },
+    })))
+}
+
+/// 立刻清一次（不等一天间隔）。面板上那个「立即清理一次」按钮打这里。
+async fn maintenance_prune(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let run = crate::janitor::prune_now(&state)
+        .await
+        .map_err(|e| ApiError::internal(format!("清理失败：{e}")))?;
+    let conn = state.conn();
+    let i = maintenance::info(&conn).map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "deleted": run.deleted,
+        "batches": run.batches,
+        "disabled": run.disabled,
+        "remaining": i.total_requests,
+        "db_bytes": i.db_bytes,
+        "notice": if run.disabled {
+            "保留天数是 0，清理处于关闭状态 —— 想清的话先把天数改成 30 之类".to_string()
+        } else {
+            format!("清掉 {} 条过期请求，还剩 {} 条", run.deleted, i.total_requests)
+        },
     })))
 }
 

@@ -6,6 +6,7 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::fmt;
 use crate::pages::PageHead;
 use crate::Ctx;
 
@@ -16,6 +17,23 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
     let generated = RwSignal::new(None::<String>);
     let old_pw = RwSignal::new(String::new());
     let new_pw = RwSignal::new(String::new());
+
+    // 账目维护：只让用户填一个数（保留天数），其余三行是只读实话
+    let maint = RwSignal::new(crate::model::MaintenanceResp::default());
+    let days = RwSignal::new(30i64);
+    let maint_msg = RwSignal::new(None::<String>);
+
+    let reload_maint = move || {
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::maintenance().await {
+                Ok(m) => {
+                    days.set(m.retention_days);
+                    maint.set(m);
+                }
+                Err(e) => maint_msg.set(Some(e.message)),
+            }
+        });
+    };
 
     let reload = move || {
         wasm_bindgen_futures::spawn_local(async move {
@@ -32,6 +50,36 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
         });
     };
     reload();
+    reload_maint();
+
+    let save_days = move |_| {
+        let d = days.get_untracked();
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::set_retention_days(d).await {
+                Ok(()) => {
+                    maint_msg.set(Some(if d == 0 {
+                        "已关闭自动清理：旧账不会再被删掉".to_string()
+                    } else {
+                        format!("以后只保留最近 {d} 天的请求记录")
+                    }));
+                    reload_maint();
+                }
+                Err(e) => maint_msg.set(Some(format!("保存失败：{}", e.message))),
+            }
+        });
+    };
+
+    let prune_now = move |_| {
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::prune_now().await {
+                Ok(r) => {
+                    maint_msg.set(Some(r.notice));
+                    reload_maint();
+                }
+                Err(e) => maint_msg.set(Some(format!("清理失败：{}", e.message))),
+            }
+        });
+    };
 
     let generate_key = move |_| {
         wasm_bindgen_futures::spawn_local(async move {
@@ -140,6 +188,45 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     <div><code>"/v1/rerank"</code></div>
                     <label>"模型列表"</label>
                     <div><code>"/v1/models"</code></div>
+                </div>
+            </div>
+
+            <h2>"账目清理"</h2>
+            <p class="muted small">
+                "网关每接一次请求就记一行账。不清理的话账目只进不出，一年能长三四个 G，把容器磁盘占满。"
+                "这里设一个保留天数，超期的老账每小时检查一次、自动清掉；填 " <b>"0"</b> " 就是暂不清理。"
+            </p>
+            <div class="panel">
+                <div class="form-grid">
+                    <label>"保留天数"</label>
+                    <div>
+                        <input type="number" min="0" prop:value=move || days.get().to_string()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i64>() { days.set(v.max(0)); }
+                            } />
+                        <div class="muted small">"默认 30 天。填 0 = 停止自动清理。"</div>
+                    </div>
+                    <label>"现在有多少条"</label>
+                    <div>{move || fmt::num(maint.get().total_requests)}</div>
+                    <label>"最老一条"</label>
+                    <div>{move || maint.get().oldest_ts_ms.map(|t| fmt::ts(t)).unwrap_or_else(|| "（还没记录）".into())}</div>
+                    <label>"库有多大"</label>
+                    <div>{move || format!("{:.1} MB", maint.get().db_bytes as f64 / 1_048_576.0)}</div>
+                    <label>"上次清理"</label>
+                    <div>{move || {
+                        let m = maint.get();
+                        match m.last_prune_at_ms {
+                            Some(t) => format!("{}（清掉 {} 条）", fmt::ts(t), m.last_prune_count),
+                            None => "还没跑过".into(),
+                        }
+                    }}</div>
+                </div>
+                {move || maint_msg.get().map(|m| view! {
+                    <div class="banner ok" style="margin-top:8px">{m}</div>
+                })}
+                <div class="modal-foot">
+                    <button class="primary" on:click=save_days>"保存天数"</button>
+                    <button class="ghost" on:click=prune_now>"立即清理一次"</button>
                 </div>
             </div>
 
