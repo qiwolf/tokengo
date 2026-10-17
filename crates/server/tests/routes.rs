@@ -120,6 +120,7 @@ async fn v1_endpoints_are_registered_and_gated_by_the_key() {
     for (m, uri) in [
         ("POST", "/v1/chat/completions"),
         ("POST", "/v1/embeddings"),
+        ("POST", "/v1/rerank"),
         ("GET", "/v1/models"),
     ] {
         let s = status_of(test_app(&f), m, uri).await;
@@ -136,7 +137,6 @@ async fn v1_endpoints_are_registered_and_gated_by_the_key() {
 async fn dropped_upstream_endpoints_are_really_absent() {
     let f = fixture();
     for (m, uri) in [
-        ("POST", "/v1/rerank"),
         ("POST", "/v1/moderations"),
         ("POST", "/v1/search"),
         ("POST", "/v1/responses"),

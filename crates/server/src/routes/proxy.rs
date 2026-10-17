@@ -31,6 +31,7 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/chat/completions", post(chat_completions))
         .route("/embeddings", post(embeddings))
+        .route("/rerank", post(rerank))
         .route("/models", get(models))
 }
 
@@ -109,6 +110,25 @@ async fn embeddings(
     .await
 }
 
+async fn rerank(
+    _key: GatewayKey,
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    let (model, value, _) = parse_body(&body, EndpointKind::Rerank)?;
+    gateway::forward(
+        state,
+        ForwardRequest {
+            endpoint: EndpointKind::Rerank,
+            model,
+            body: value,
+            stream: false,
+            client_ip: client_ip(&headers),
+        },
+    )
+    .await
+}
 /// 模型清单。**只列真的能用的**：组是开着的、组里至少有一条可用渠道。
 /// 面板与客户端看同一份判断（`groups::list_servable`），不会出现"清单里有、打了 404"。
 ///
