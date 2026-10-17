@@ -3,11 +3,11 @@
 //! 只做本机真正用得上的 6 页（原计划 5 页；多出来的「设置」页放改口令 / 换对外 key /
 //! 登出 —— 这三件事没有别的合适位置，硬塞进别的页面更乱）：
 //!
-//!   1. 总览      请求量、成功率、各条腿的分布、能被调用的模型名
-//!   2. 腿管理    增删改查 + 自定义请求头 + 按腿改模型名 + 「测一下」连通性
+//!   1. 总览      请求量、成功率、各条渠道的分布、能被调用的模型名
+//!   2. 渠道管理    增删改查 + 自定义请求头 + 按渠道改模型名 + 「测一下」连通性
 //!   3. 模型组    给每个模型组排优先级（`auto` 的成员就是这些）
 //!   4. 路由状态  active / 首选 / 下次回切时间 / 切换次数 + 手动回切 + 路由参数
-//!   5. 请求流水  模型、腿、状态、延迟、token、错误原因
+//!   5. 请求流水  模型、渠道、状态、延迟、token、错误原因
 //!   6. 设置      对外 key、面板口令、在线会话、退出登录
 //!
 //! 后端始终是唯一数据源：面板**不做本地缓存**，每次进页面重新拉 ——
@@ -127,14 +127,14 @@ pub fn App() -> impl IntoView {
                     phase.set(Phase::Login);
                     return;
                 }
-                match api::legs().await {
+                match api::channels().await {
                     Ok(_) => phase.set(Phase::Ready),
                     Err(e) => {
                         if e.is_unauthorized() {
                             api::clear_token();
                             ctx.say("会话过期了，请重新登录");
                         } else {
-                            ctx.say(format!("读腿列表失败：{}", e.message));
+                            ctx.say(format!("读渠道列表失败：{}", e.message));
                         }
                         phase.set(Phase::Login);
                     }
@@ -350,7 +350,7 @@ fn Shell(ctx: Ctx) -> impl IntoView {
                 <section class="content">
                     {move || match ctx.page.get() {
                         Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
-                        Page::Legs => view! { <pages::legs::Legs ctx=ctx /> }.into_any(),
+                        Page::Channels => view! { <pages::channels::Channels ctx=ctx /> }.into_any(),
                         Page::Groups => view! { <pages::groups::Groups ctx=ctx /> }.into_any(),
                         Page::Routing => view! { <pages::routing::Routing ctx=ctx /> }.into_any(),
                         Page::Requests => view! { <pages::requests::Requests ctx=ctx /> }.into_any(),

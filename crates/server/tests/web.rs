@@ -111,8 +111,8 @@ async fn panel_index_and_assets_are_served_with_right_types() {
 async fn deep_links_fall_back_to_index_but_missing_assets_do_not() {
     let f = Fixture::new(true);
 
-    // /ui/legs 是前端路由，服务端回 index.html 交给前端自己找页
-    let (status, headers, body) = get(f.router(), "/ui/legs").await;
+    // /ui/channels 是前端路由，服务端回 index.html 交给前端自己找页
+    let (status, headers, body) = get(f.router(), "/ui/channels").await;
     assert_eq!(status, StatusCode::OK, "深链刷新不能 404");
     assert!(headers["content-type"].to_str().unwrap().starts_with("text/html"));
     assert!(body.contains("面板占位"));
@@ -164,7 +164,7 @@ async fn without_a_build_the_panel_says_it_is_not_built() {
     // 面板没构建不影响后端：探测端点与管理面照常
     let (status, _, _) = get(f.router(), "/livez").await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = get(f.router(), "/api/legs").await;
+    let (status, _, _) = get(f.router(), "/api/channels").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "无会话该 401，不是 404");
 }
 

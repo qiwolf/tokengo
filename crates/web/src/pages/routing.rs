@@ -1,19 +1,19 @@
-//! 路由状态：现在到底在走哪条腿、什么时候会回头试首选、切了几次，以及路由参数。
+//! 路由状态：现在到底在走哪条渠道、什么时候会回头试首选、切了几次，以及路由参数。
 //!
-//! 这一页回答的是"为什么现在走的是这条腿" —— 出问题时第一个要看的页。
+//! 这一页回答的是"为什么现在走的是这条渠道" —— 出问题时第一个要看的页。
 //! 「手动回切」把检查点归零，不用干等 10 分钟。
 
 use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{Leg, RoutingCfg, RoutingGroup};
+use crate::model::{Channel, RoutingCfg, RoutingGroup};
 use crate::Ctx;
 
 #[component]
 pub fn Routing(ctx: Ctx) -> impl IntoView {
     let rows = RwSignal::new(Vec::<RoutingGroup>::new());
-    let legs = RwSignal::new(Vec::<Leg>::new());
+    let channels = RwSignal::new(Vec::<Channel>::new());
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
 
@@ -47,8 +47,8 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
                     err.set(Some(e.message));
                 }
             }
-            match api::legs().await {
-                Ok(v) => legs.set(v),
+            match api::channels().await {
+                Ok(v) => channels.set(v),
                 Err(e) => ctx.note_err(&e),
             }
             busy.set(false);
@@ -56,21 +56,21 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
     };
     reload();
 
-    let leg_name = move |id: Option<i64>| match id {
+    let channel_name = move |id: Option<i64>| match id {
         None => "—".to_string(),
-        Some(i) => legs
+        Some(i) => channels
             .get()
             .iter()
             .find(|l| l.id == i)
             .map(|l| format!("{} (#{i})", l.name))
-            .unwrap_or_else(|| format!("已删除的腿 #{i}")),
+            .unwrap_or_else(|| format!("已删除的渠道 #{i}")),
     };
 
     let do_reprobe = move |g: String| {
         wasm_bindgen_futures::spawn_local(async move {
             match api::reprobe(&g).await {
                 Ok(()) => {
-                    ctx.say(format!("{g}：下次请求会先试首选腿"));
+                    ctx.say(format!("{g}：下次请求会先试首选渠道"));
                     reload();
                 }
                 Err(e) => {
@@ -120,7 +120,7 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
                 <thead>
                     <tr>
                         <th>"模型组"</th>
-                        <th>"首选腿"</th>
+                        <th>"首选渠道"</th>
                         <th>"当前在用"</th>
                         <th>"状态"</th>
                         <th class="num">"切换次数"</th>
@@ -143,8 +143,8 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
                             .map(|g| {
                                 let name = g.group.clone();
                                 let g2 = g.clone();
-                                let active = leg_name(g.active_leg_id);
-                                let primary = leg_name(g.primary_leg_id);
+                                let active = channel_name(g.active_channel_id);
+                                let primary = channel_name(g.primary_channel_id);
                                 let switched = g.switched;
                                 let next = g.next_probe_at_ms.map(|t| fmt::ago(g.now_ms, t));
                                 let last = g.last_switch_at_ms.map(|t| fmt::ago(g.now_ms, t));
@@ -185,7 +185,7 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
 
             <h2>"路由参数"</h2>
             <p class="muted small">
-                "「重试次数」是首次失败后再试几次：填 3 = 单条腿最多试 4 次，全败才换腿。"
+                "「重试次数」是首次失败后再试几次：填 3 = 单条渠道最多试 4 次，全败才换渠道。"
             </p>
             <div class="panel">
                 <div class="form-grid">

@@ -22,7 +22,7 @@ async fn livez() -> Json<serde_json::Value> {
 async fn readyz(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let db_ok = {
         let conn = state.conn();
-        conn.query_row("SELECT COUNT(*) FROM legs", [], |r| r.get::<_, i64>(0))
+        conn.query_row("SELECT COUNT(*) FROM channels", [], |r| r.get::<_, i64>(0))
             .is_ok()
     };
     let routing_ok = state.routing().all_states().len();

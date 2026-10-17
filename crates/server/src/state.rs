@@ -1,7 +1,7 @@
 //! 进程共享状态。所有 handler 拿到的都是 `Arc<AppState>`。
 //!
-//! 两把锁分工：`db` 管持久化，`routing` 管"当前在用哪条腿"。路由锁只圈住内存
-//! 状态机的读写（微秒级），**绝不能把网络请求圈进去** —— 否则一条腿卡住，
+//! 两把锁分工：`db` 管持久化，`routing` 管"当前在用哪条渠道"。路由锁只圈住内存
+//! 状态机的读写（微秒级），**绝不能把网络请求圈进去** —— 否则一条渠道卡住，
 //! 整个网关的所有请求都跟着排队。
 
 use std::collections::HashMap;
@@ -117,7 +117,7 @@ impl AppState {
         self.routing.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// 改了路由状态就立刻落库 —— 不然重启会丢掉"当前腿"和"回切检查点"。
+    /// 改了路由状态就立刻落库 —— 不然重启会丢掉"当前渠道"和"回切检查点"。
     ///
     /// **用 `try_lock` 而不是死等**：这个方法内部要同时拿路由锁和数据库锁。
     /// 如果调用方自己已经握着其中一把（比如函数开头 `let conn = state.conn();`
@@ -173,18 +173,18 @@ mod tests {
 
         // 第二次启动复用同一把钥匙：A 存的密钥 B 能解
         let b = AppState::init(cfg.clone()).unwrap();
-        let id = db::legs::create(
+        let id = db::channels::create(
             &a.conn(),
-            &db::legs::NewLeg {
+            &db::channels::NewChannel {
                 name: "t".into(),
                 base_url: "http://x/v1".into(),
                 enabled: true,
             },
         )
         .unwrap();
-        db::legs::set_secret(&a.conn(), &a.secrets, id, "sk-abc").unwrap();
+        db::channels::set_secret(&a.conn(), &a.secrets, id, "sk-abc").unwrap();
         assert_eq!(
-            db::legs::secret(&b.conn(), &b.secrets, id).unwrap().unwrap(),
+            db::channels::secret(&b.conn(), &b.secrets, id).unwrap().unwrap(),
             "sk-abc",
             "重启后必须还能解出已存的密钥"
         );
@@ -199,26 +199,26 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = test_cfg(&dir);
 
-        let legs = [
-            tokengo_shared::LegId(1),
-            tokengo_shared::LegId(2),
-            tokengo_shared::LegId(3),
+        let channels = [
+            tokengo_shared::ChannelId(1),
+            tokengo_shared::ChannelId(2),
+            tokengo_shared::ChannelId(3),
         ];
         let t0 = 1_800_000_000_000i64;
 
         let a = AppState::init(cfg.clone()).unwrap();
         {
             let mut r = a.routing();
-            r.attempt_order("auto", &legs, t0);
-            r.on_leg_exhausted("auto", legs[0], &legs, t0);
+            r.attempt_order("auto", &channels, t0);
+            r.on_channel_exhausted("auto", channels[0], &channels, t0);
         }
         a.persist_state("auto").unwrap();
 
         let b = AppState::init(cfg).unwrap();
         assert_eq!(
             b.routing().state("auto").unwrap().active,
-            Some(legs[1]),
-            "重启后当前腿必须接上"
+            Some(channels[1]),
+            "重启后当前渠道必须接上"
         );
 
         std::fs::remove_dir_all(&dir).ok();
@@ -266,7 +266,7 @@ mod tests {
             let mut r = st.routing();
             r.attempt_order(
                 "auto",
-                &[tokengo_shared::LegId(1), tokengo_shared::LegId(2)],
+                &[tokengo_shared::ChannelId(1), tokengo_shared::ChannelId(2)],
                 1_800_000_000_000,
             );
         }
@@ -304,11 +304,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let st = AppState::init(test_cfg(&dir)).unwrap();
 
-        let legs = [tokengo_shared::LegId(1), tokengo_shared::LegId(2)];
+        let channels = [tokengo_shared::ChannelId(1), tokengo_shared::ChannelId(2)];
         {
             let mut r = st.routing();
-            r.attempt_order("auto", &legs, 1_800_000_000_000);
-            r.on_leg_exhausted("auto", legs[0], &legs, 1_800_000_000_000);
+            r.attempt_order("auto", &channels, 1_800_000_000_000);
+            r.on_channel_exhausted("auto", channels[0], &channels, 1_800_000_000_000);
         }
         st.persist_state("auto").unwrap();
         assert_eq!(
@@ -316,7 +316,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .active,
-            Some(legs[1])
+            Some(channels[1])
         );
 
         // 未知组不算错，静默跳过

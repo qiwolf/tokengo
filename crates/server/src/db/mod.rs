@@ -4,7 +4,7 @@
 //! 将来搬数据和对拍都方便。
 
 pub mod groups;
-pub mod legs;
+pub mod channels;
 pub mod requests;
 pub mod routing;
 pub mod schema;
@@ -88,8 +88,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
 /// 把一段操作放进一个事务。中途失败整体回滚。
 ///
-/// 为什么必须有这个：一条腿的保存是四步（主行 + 密钥 + 请求头 + 模型名）。
-/// 不做事务的话，第 3 步失败会留下一条"名字在、请求头丢了"的半截腿，
+/// 为什么必须有这个：一条渠道的保存是四步（主行 + 密钥 + 请求头 + 模型名）。
+/// 不做事务的话，第 3 步失败会留下一条"名字在、请求头丢了"的半截渠道，
 /// 用户看到的是保存失败，磁盘上却已经改了东西。
 pub fn in_tx<T>(conn: &Connection, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let tx = conn.unchecked_transaction()?;
@@ -132,11 +132,11 @@ mod tests {
         let got = table_names(&conn);
         for want in [
             "attempts",
-            "leg_headers",
-            "leg_models",
-            "leg_secrets",
-            "legs",
-            "model_group_legs",
+            "channel_headers",
+            "channel_models",
+            "channel_secrets",
+            "channels",
+            "model_group_channels",
             "model_groups",
             "panel_sessions",
             "requests",
@@ -192,22 +192,67 @@ mod tests {
     fn foreign_keys_are_enforced() {
         let conn = open_in_memory().unwrap();
         let r = conn.execute(
-            "INSERT INTO leg_headers (leg_id, name, value) VALUES (999, 'X', 'y')",
+            "INSERT INTO channel_headers (channel_id, name, value) VALUES (999, 'X', 'y')",
             [],
         );
-        assert!(r.is_err(), "外键没生效，插了个不存在的腿也不报错");
+        assert!(r.is_err(), "外键没生效，插了个不存在的渠道也不报错");
     }
 
     #[test]
     fn cascade_delete_cleans_children() {
         let conn = open_in_memory().unwrap();
         conn.execute(
-            "INSERT INTO legs (id, name, base_url) VALUES (1, '硅基流动', 'https://api.siliconflow.cn/v1')",
+            "INSERT INTO channels (id, name, base_url) VALUES (1, '硅基流动', 'https://api.siliconflow.cn/v1')",
             [],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO leg_headers (leg_id, name, value) VALUES (1, 'X-Test', '{{uuid}}')",
+            "INSERT INTO channel_headers (channel_id, name, value) VALUES (1, 'X-Test', '{{uuid}}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO channel_models (channel_id, model_name, upstream_model) VALUES (1, 'auto', 'BAAI/bge-m3')",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM channels WHERE id = 1", []).unwrap();
+        for t in ["channel_headers", "channel_models"] {
+            let n: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 0, "{t} 里的子行没跟着删");
+        }
+    }
+
+    /// 旧库升级：CT112 上的库是「腿」时代建的，改名迁移必须在真库上也能过。
+    ///
+    /// 这段**故意写旧名字**（legs / leg_id / active_leg_id）—— 别用
+    /// `scratch/rename_leg_to_channel.py` 批量改这一段，改了这条测试就没意义了。
+    #[test]
+    fn upgrading_a_leg_era_database_renames_things_and_keeps_the_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (
+                 version    INTEGER PRIMARY KEY,
+                 applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );",
+        )
+        .unwrap();
+        // 只应用改名之前的两个版本，装成一个老库
+        for (version, sql) in schema::MIGRATIONS.iter().take(2) {
+            conn.execute_batch(sql).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?1)",
+                [version],
+            )
+            .unwrap();
+        }
+
+        // 按旧名字塞进数据：一条腿 + 一个组 + 一条请求 + 一次尝试 + 一条路由状态
+        conn.execute(
+            "INSERT INTO legs (id, name, base_url) VALUES (1, '硅基流动', 'https://api.siliconflow.cn/v1')",
             [],
         )
         .unwrap();
@@ -216,12 +261,75 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute("DELETE FROM legs WHERE id = 1", []).unwrap();
-        for t in ["leg_headers", "leg_models"] {
-            let n: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
-                .unwrap();
-            assert_eq!(n, 0, "{t} 里的子行没跟着删");
+        conn.execute("INSERT INTO model_groups (name) VALUES ('auto')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO model_group_legs (group_name, leg_id, ordinal) VALUES ('auto', 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO requests (id, ts_ms, endpoint, model, status, leg_id)
+             VALUES (1, 1, '/v1/chat/completions', 'auto', 'ok', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attempts (request_id, ordinal, leg_id, outcome) VALUES (1, 0, 1, 'ok')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO routing_state (group_name, active_leg_id) VALUES ('auto', 1)",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        // 表名换成渠道，旧名一个都不许留
+        let got = table_names(&conn);
+        for want in [
+            "channels",
+            "channel_secrets",
+            "channel_headers",
+            "channel_models",
+            "model_group_channels",
+        ] {
+            assert!(got.contains(&want.to_string()), "升级后缺表 {want}：{got:?}");
         }
+        for gone in [
+            "legs",
+            "leg_secrets",
+            "leg_headers",
+            "leg_models",
+            "model_group_legs",
+        ] {
+            assert!(!got.contains(&gone.to_string()), "旧表 {gone} 还在：{got:?}");
+        }
+
+        // 数据一条不少，列名也换了
+        let one = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(one("SELECT COUNT(*) FROM channels"), 1);
+        assert_eq!(one("SELECT COUNT(*) FROM channel_models"), 1);
+        assert_eq!(one("SELECT COUNT(*) FROM model_group_channels"), 1);
+        assert_eq!(one("SELECT channel_id FROM requests WHERE id = 1"), 1);
+        assert_eq!(one("SELECT channel_id FROM attempts"), 1);
+        assert_eq!(one("SELECT active_channel_id FROM routing_state"), 1);
+
+        // 外键指向的是新表名：插个不存在的渠道必须报错
+        let r = conn.execute(
+            "INSERT INTO channel_headers (channel_id, name, value) VALUES (999, 'X', 'y')",
+            [],
+        );
+        assert!(r.is_err(), "改名后外键没跟过来");
+
+        // 级联删除也还认新表名
+        conn.execute("DELETE FROM channels WHERE id = 1", []).unwrap();
+        assert_eq!(
+            one("SELECT COUNT(*) FROM model_group_channels"),
+            0,
+            "改名后级联删除失效了"
+        );
     }
 }

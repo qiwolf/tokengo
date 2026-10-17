@@ -1,7 +1,7 @@
 //! 记账：请求级 + 尝试级。
 //!
-//! 为什么记到"尝试"这一层：现网 FreeLLMAPI 只看得到"这条腿用了多少次"，
-//! 看不到"这条腿被叫了几次、几次是它自己坏的"。要判断某条腿是不是真在干活、
+//! 为什么记到"尝试"这一层：现网 FreeLLMAPI 只看得到"这条渠道用了多少次"，
+//! 看不到"这条渠道被叫了几次、几次是它自己坏的"。要判断某条渠道是不是真在干活、
 //! 值不值得留在列表里，必须把失败也算进分母。
 
 use rusqlite::{params, Connection};
@@ -15,11 +15,11 @@ use super::{now_ms, Result};
 pub enum Status {
     /// 打通了
     Ok,
-    /// 所有腿都试完了还是失败
+    /// 所有渠道都试完了还是失败
     Failed,
-    /// 客户端自己中途断开（不算腿的账）
+    /// 客户端自己中途断开（不算渠道的账）
     Canceled,
-    /// 客户端自己的错（400/404/422，腿没毛病，原样返回了）
+    /// 客户端自己的错（400/404/422，渠道没毛病，原样返回了）
     ClientError,
 }
 
@@ -51,7 +51,7 @@ pub fn finish(
     request_id: i64,
     status: Status,
     http_status: Option<u16>,
-    leg_id: Option<i64>,
+    channel_id: Option<i64>,
     latency_ms: i64,
     first_byte_ms: Option<i64>,
     input_tokens: i64,
@@ -60,7 +60,7 @@ pub fn finish(
     error: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "UPDATE requests SET status = ?2, http_status = ?3, leg_id = ?4, latency_ms = ?5,
+        "UPDATE requests SET status = ?2, http_status = ?3, channel_id = ?4, latency_ms = ?5,
                 first_byte_ms = ?6, input_tokens = ?7, output_tokens = ?8,
                 streamed = ?9, error = ?10
           WHERE id = ?1",
@@ -68,7 +68,7 @@ pub fn finish(
             request_id,
             status.as_str(),
             http_status.map(|s| s as i64),
-            leg_id,
+            channel_id,
             latency_ms,
             first_byte_ms,
             input_tokens,
@@ -85,19 +85,19 @@ pub fn add_attempt(
     conn: &Connection,
     request_id: i64,
     ordinal: u32,
-    leg_id: i64,
+    channel_id: i64,
     outcome: &str,
     http_status: Option<u16>,
     duration_ms: i64,
     error: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO attempts (request_id, ordinal, leg_id, outcome, http_status, duration_ms, error)
+        "INSERT INTO attempts (request_id, ordinal, channel_id, outcome, http_status, duration_ms, error)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             request_id,
             ordinal as i64,
-            leg_id,
+            channel_id,
             outcome,
             http_status.map(|s| s as i64),
             duration_ms,
@@ -115,7 +115,7 @@ pub struct RequestRow {
     pub model: String,
     pub status: String,
     pub http_status: Option<i64>,
-    pub leg_id: Option<i64>,
+    pub channel_id: Option<i64>,
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -124,7 +124,7 @@ pub struct RequestRow {
 
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, ts_ms, endpoint, model, status, http_status, leg_id, latency_ms,
+        "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
                 input_tokens, output_tokens, error
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
@@ -137,7 +137,7 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
                 model: r.get(3)?,
                 status: r.get(4)?,
                 http_status: r.get(5)?,
-                leg_id: r.get(6)?,
+                channel_id: r.get(6)?,
                 latency_ms: r.get(7)?,
                 input_tokens: r.get(8)?,
                 output_tokens: r.get(9)?,
@@ -148,14 +148,14 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     Ok(rows)
 }
 
-/// 按腿的账。**分母是"被叫了几次"，不是"成功了几次"** —— 这是判断一条腿
+/// 按渠道的账。**分母是"被叫了几次"，不是"成功了几次"** —— 这是判断一条渠道
 /// 值不值得留的关键。
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct LegStat {
-    pub leg_id: i64,
+pub struct ChannelStat {
+    pub channel_id: i64,
     pub attempts: i64,
     pub successes: i64,
-    pub leg_faults: i64,
+    pub channel_faults: i64,
     pub avg_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -168,11 +168,11 @@ pub struct Stats {
     pub ok: i64,
     pub failed: i64,
     pub canceled: i64,
-    /// 客户端自己写错的请求（模型名写错之类）。**不算腿的锅**，单独一列看。
+    /// 客户端自己写错的请求（模型名写错之类）。**不算渠道的锅**，单独一列看。
     pub client_errors: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
-    pub by_leg: Vec<LegStat>,
+    pub by_channel: Vec<ChannelStat>,
 }
 
 /// 汇总自 `since_ms` 起的账。
@@ -202,22 +202,22 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     )?;
 
     let mut stmt = conn.prepare(
-        "SELECT a.leg_id,
+        "SELECT a.channel_id,
                 COUNT(*),
                 COALESCE(SUM(a.outcome = 'success'), 0),
-                COALESCE(SUM(a.outcome = 'leg_fault'), 0),
+                COALESCE(SUM(a.outcome = 'channel_fault'), 0),
                 COALESCE(CAST(AVG(a.duration_ms) AS INTEGER), 0)
            FROM attempts a JOIN requests rq ON rq.id = a.request_id
           WHERE rq.ts_ms >= ?1
-          GROUP BY a.leg_id ORDER BY COUNT(*) DESC",
+          GROUP BY a.channel_id ORDER BY COUNT(*) DESC",
     )?;
-    let mut by_leg: Vec<LegStat> = stmt
+    let mut by_channel: Vec<ChannelStat> = stmt
         .query_map([since_ms], |r| {
-            Ok(LegStat {
-                leg_id: r.get(0)?,
+            Ok(ChannelStat {
+                channel_id: r.get(0)?,
                 attempts: r.get(1)?,
                 successes: r.get(2)?,
-                leg_faults: r.get(3)?,
+                channel_faults: r.get(3)?,
                 avg_ms: r.get(4)?,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -225,12 +225,12 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         })?
         .collect::<rusqlite::Result<_>>()?;
 
-    // token 账在请求级记的，按"最终成功的腿"归给对应腿
-    for s in &mut by_leg {
+    // token 账在请求级记的，按"最终成功的渠道"归给对应渠道
+    for s in &mut by_channel {
         let (i, o): (i64, i64) = conn.query_row(
             "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
-               FROM requests WHERE ts_ms >= ?1 AND leg_id = ?2 AND status = 'ok'",
-            params![since_ms, s.leg_id],
+               FROM requests WHERE ts_ms >= ?1 AND channel_id = ?2 AND status = 'ok'",
+            params![since_ms, s.channel_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         s.input_tokens = i;
@@ -246,7 +246,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         client_errors,
         input_tokens: inp,
         output_tokens: out,
-        by_leg,
+        by_channel,
     })
 }
 
@@ -260,18 +260,18 @@ mod tests {
     use super::*;
     use crate::db::open_in_memory;
 
-    fn record(conn: &Connection, legs: &[(i64, &str)], status: Status) -> i64 {
+    fn record(conn: &Connection, channels: &[(i64, &str)], status: Status) -> i64 {
         let id = start(conn, "/v1/chat/completions", "auto", Some("192.0.2.9")).unwrap();
-        for (ord, (leg, outcome)) in legs.iter().enumerate() {
-            add_attempt(conn, id, ord as u32, *leg, outcome, None, 10, None).unwrap();
+        for (ord, (channel, outcome)) in channels.iter().enumerate() {
+            add_attempt(conn, id, ord as u32, *channel, outcome, None, 10, None).unwrap();
         }
-        let final_leg = legs.last().map(|(l, _)| *l);
+        let final_channel = channels.last().map(|(l, _)| *l);
         finish(
             conn,
             id,
             status,
             Some(200),
-            final_leg,
+            final_channel,
             30,
             Some(5),
             100,
@@ -304,7 +304,7 @@ mod tests {
         let rows = recent(&conn, 10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, "ok");
-        assert_eq!(rows[0].leg_id, Some(44));
+        assert_eq!(rows[0].channel_id, Some(44));
         assert_eq!(rows[0].latency_ms, 1234);
         assert_eq!(rows[0].input_tokens, 12);
     }
@@ -324,7 +324,7 @@ mod tests {
         let conn = open_in_memory().unwrap();
         let id = record(
             &conn,
-            &[(44, "leg_fault"), (47, "leg_fault"), (51, "success")],
+            &[(44, "channel_fault"), (47, "channel_fault"), (51, "success")],
             Status::Ok,
         );
         let rows = recent(&conn, 1).unwrap();
@@ -340,24 +340,24 @@ mod tests {
     #[test]
     fn stats_count_attempts_as_the_denominator() {
         let conn = open_in_memory().unwrap();
-        // 腿 44 被叫 2 次、坏 2 次；腿 51 被叫 1 次、好 1 次
-        record(&conn, &[(44, "leg_fault"), (51, "success")], Status::Ok);
-        record(&conn, &[(44, "leg_fault")], Status::Failed);
+        // 渠道 44 被叫 2 次、坏 2 次；渠道 51 被叫 1 次、好 1 次
+        record(&conn, &[(44, "channel_fault"), (51, "success")], Status::Ok);
+        record(&conn, &[(44, "channel_fault")], Status::Failed);
 
         let s = stats_since(&conn, 0).unwrap();
         assert_eq!(s.total, 2);
         assert_eq!(s.ok, 1);
         assert_eq!(s.failed, 1);
 
-        let sf = s.by_leg.iter().find(|l| l.leg_id == 44).unwrap();
+        let sf = s.by_channel.iter().find(|l| l.channel_id == 44).unwrap();
         assert_eq!(sf.attempts, 2);
         assert_eq!(sf.successes, 0);
-        assert_eq!(sf.leg_faults, 2, "这条腿一次都没成过");
+        assert_eq!(sf.channel_faults, 2, "这条渠道一次都没成过");
 
-        let cg = s.by_leg.iter().find(|l| l.leg_id == 51).unwrap();
+        let cg = s.by_channel.iter().find(|l| l.channel_id == 51).unwrap();
         assert_eq!(cg.attempts, 1);
         assert_eq!(cg.successes, 1);
-        assert_eq!(cg.output_tokens, 50, "token 归给最终接住请求的腿");
+        assert_eq!(cg.output_tokens, 50, "token 归给最终接住请求的渠道");
     }
 
     #[test]
