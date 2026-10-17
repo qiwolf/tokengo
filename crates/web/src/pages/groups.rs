@@ -1,4 +1,4 @@
-//! 模型组：一个对外可见的模型名 = 一张**有序**的腿列表（顺序即优先级，第一个是首选）。
+//! 模型组：一个对外可见的模型名 = 一张**有序**的渠道列表（顺序即优先级，第一个是首选）。
 //!
 //! 界面刻意把"顺序"做成能上下挪的列表：路由策略是"按优先级试"，顺序错了就等于
 //! 策略错了，这里必须一眼看得见、一眼改得动。
@@ -6,7 +6,7 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::model::{Group, Leg, Servable};
+use crate::model::{Group, Channel, Servable};
 use crate::Ctx;
 
 /// 顶部那一排「客户端能打的模型名」要显示什么：勾了「只看含视觉的」就只留能收图的。
@@ -26,13 +26,13 @@ struct Draft {
     original: Option<String>,
     name: String,
     enabled: bool,
-    legs: Vec<i64>,
+    channels: Vec<i64>,
 }
 
 #[component]
 pub fn Groups(ctx: Ctx) -> impl IntoView {
     let groups = RwSignal::new(Vec::<Group>::new());
-    let legs = RwSignal::new(Vec::<Leg>::new());
+    let channels = RwSignal::new(Vec::<Channel>::new());
     let servable = RwSignal::new(Vec::<Servable>::new());
     // 「只看含视觉的」：模型多了以后，一眼找出哪个模型名能收图
     let only_vision = RwSignal::new(false);
@@ -54,8 +54,8 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                     err.set(Some(e.message));
                 }
             }
-            match api::legs().await {
-                Ok(v) => legs.set(v),
+            match api::channels().await {
+                Ok(v) => channels.set(v),
                 Err(e) => ctx.note_err(&e),
             }
             busy.set(false);
@@ -63,12 +63,12 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
     };
     reload();
 
-    let leg_name = move |id: i64| {
-        legs.get()
+    let channel_name = move |id: i64| {
+        channels.get()
             .iter()
             .find(|l| l.id == id)
             .map(|l| l.name.clone())
-            .unwrap_or_else(|| format!("已删除的腿 #{id}"))
+            .unwrap_or_else(|| format!("已删除的渠道 #{id}"))
     };
 
     let open_new = move |_| {
@@ -76,7 +76,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
             original: None,
             name: String::new(),
             enabled: true,
-            legs: Vec::new(),
+            channels: Vec::new(),
         }));
     };
 
@@ -85,7 +85,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
             original: Some(g.name.clone()),
             name: g.name.clone(),
             enabled: g.enabled,
-            legs: g.legs.clone(),
+            channels: g.channels.clone(),
         }));
     };
 
@@ -96,7 +96,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
             return;
         }
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_group(d.name.trim(), d.enabled, &d.legs).await {
+            match api::save_group(d.name.trim(), d.enabled, &d.channels).await {
                 Ok(()) => {
                     draft.set(None);
                     ctx.say("模型组已保存");
@@ -137,13 +137,13 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    // 草稿里挪动/增删腿：都只改浏览器里的草稿，点保存才落库
-    let move_leg = move |i: usize, up: bool| {
+    // 草稿里挪动/增删渠道：都只改浏览器里的草稿，点保存才落库
+    let move_channel = move |i: usize, up: bool| {
         draft.update(|d| {
             if let Some(d) = d {
                 let j = if up { i.wrapping_sub(1) } else { i + 1 };
-                if i < d.legs.len() && j < d.legs.len() {
-                    d.legs.swap(i, j);
+                if i < d.channels.len() && j < d.channels.len() {
+                    d.channels.swap(i, j);
                 }
             }
         });
@@ -175,7 +175,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                         .collect_view()
                         .into_any()
                 }}
-                <label class="pick" title="只看后面有「能看图」的腿的模型名">
+                <label class="pick" title="只看后面有「能看图」的渠道的模型名">
                     <input type="checkbox" prop:checked=move || only_vision.get()
                         on:change=move |ev| only_vision.set(event_target_checked(&ev)) />
                     "只看含视觉的"
@@ -192,7 +192,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                             <tr>
                                 <th>"名字"</th>
                                 <th>"状态"</th>
-                                <th class="num">"腿数"</th>
+                                <th class="num">"渠道数"</th>
                                 <th>"操作"</th>
                             </tr>
                         </thead>
@@ -214,10 +214,10 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                         let g3 = g.clone();
                                         let name = g.name.clone();
                                         let can_see = g.can_see;
-                                        let legs_txt = g
-                                            .legs
+                                        let channels_txt = g
+                                            .channels
                                             .iter()
-                                            .map(|id| leg_name(*id))
+                                            .map(|id| channel_name(*id))
                                             .collect::<Vec<_>>()
                                             .join(" → ");
                                         view! {
@@ -225,16 +225,16 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                                 <td>
                                                     <b>{name.clone()}</b>
                                                     {can_see.then(|| view! {
-                                                        <span class="tag vision" title="这一组里有「能看图」的腿，带图的请求走得通">
+                                                        <span class="tag vision" title="这一组里有「能看图」的渠道，带图的请求走得通">
                                                             "视觉"
                                                         </span>
                                                     })}
                                                     {(!can_see).then(|| view! {
-                                                        <span class="tag muted" title="这一组里没有能看图的腿：带图的请求会被回 422（说清楚，不悄悄丢图）">
+                                                        <span class="tag muted" title="这一组里没有能看图的渠道：带图的请求会被回 422（说清楚，不悄悄丢图）">
                                                             "不收图"
                                                         </span>
                                                     })}
-                                                    <div class="muted small">{legs_txt}</div>
+                                                    <div class="muted small">{channels_txt}</div>
                                                 </td>
                                                 <td>
                                                     {if g.enabled {
@@ -243,7 +243,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                                         view! { <span class="tag muted">"停用"</span> }.into_any()
                                                     }}
                                                 </td>
-                                                <td class="num">{g.legs.len()}</td>
+                                                <td class="num">{g.channels.len()}</td>
                                                 <td class="actions">
                                                     <button class="ghost" on:click=move |_| open_edit(g2.clone())>
                                                         "编排"
@@ -323,20 +323,20 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                                 let Some(d) = draft.get() else {
                                                     return ().into_any();
                                                 };
-                                                if d.legs.is_empty() {
+                                                if d.channels.is_empty() {
                                                     return view! {
                                                         <tr>
-                                                            <td class="muted">"还没选腿 —— 下面挑一条加进来"</td>
+                                                            <td class="muted">"还没选渠道 —— 下面挑一条加进来"</td>
                                                         </tr>
                                                     }.into_any();
                                                 }
-                                                d.legs
+                                                d.channels
                                                     .iter()
                                                     .enumerate()
                                                     .map(|(i, id)| {
                                                         let id = *id;
-                                                        let n = leg_name(id);
-                                                        let last = i + 1 == d.legs.len();
+                                                        let n = channel_name(id);
+                                                        let last = i + 1 == d.channels.len();
                                                         view! {
                                                             <tr>
                                                                 <td class="num muted">{i + 1}</td>
@@ -346,13 +346,13 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                                                 </td>
                                                                 <td class="actions">
                                                                     <button class="ghost" disabled=i == 0
-                                                                        on:click=move |_| move_leg(i, true)>"↑"</button>
+                                                                        on:click=move |_| move_channel(i, true)>"↑"</button>
                                                                     <button class="ghost" disabled=last
-                                                                        on:click=move |_| move_leg(i, false)>"↓"</button>
+                                                                        on:click=move |_| move_channel(i, false)>"↓"</button>
                                                                     <button class="ghost danger" on:click=move |_| {
                                                                         draft.update(|d| {
                                                                             if let Some(d) = d {
-                                                                                d.legs.remove(i);
+                                                                                d.channels.remove(i);
                                                                             }
                                                                         });
                                                                     }>"移除"</button>
@@ -366,20 +366,20 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                         </tbody>
                                     </table>
 
-                                    <h3>"加一条腿"</h3>
+                                    <h3>"加一条渠道"</h3>
                                     <select on:change=move |ev| {
                                         if let Ok(id) = event_target_value(&ev).parse::<i64>() {
                                             draft.update(|d| {
                                                 if let Some(d) = d {
-                                                    if !d.legs.contains(&id) {
-                                                        d.legs.push(id);
+                                                    if !d.channels.contains(&id) {
+                                                        d.channels.push(id);
                                                     }
                                                 }
                                             });
                                         }
                                     }>
-                                        <option value="">"挑一条腿…"</option>
-                                        {move || legs.get().into_iter().map(|l| {
+                                        <option value="">"挑一条渠道…"</option>
+                                        {move || channels.get().into_iter().map(|l| {
                                             view! {
                                                 <option value=l.id.to_string()>
                                                     {format!("{} (#{}, {})", l.name, l.id, if l.enabled { "启用" } else { "停用" })}
@@ -393,7 +393,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                         <button class="ghost" on:click=move |_| draft.set(None)>"取消"</button>
                                         <span class="spacer"></span>
                                         <span class="muted small">
-                                            {format!("{} 条腿", d2.legs.len())}
+                                            {format!("{} 条渠道", d2.channels.len())}
                                             {d3.original.map(|o| format!("（原组名 {o}）")).unwrap_or_default()}
                                         </span>
                                     </div>

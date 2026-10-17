@@ -1,13 +1,13 @@
-//! 腿的仓储。腿 = 一条上游通道，全部由用户自定义添加（不做内置 provider 适配器）。
+//! 渠道的仓储。渠道 = 一条上游通道，全部由用户自定义添加（不做内置 provider 适配器）。
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use tokengo_shared::LegId;
+use tokengo_shared::ChannelId;
 
 use super::{DbError, Result};
 use crate::crypto::SecretBox;
 
-/// 一条腿的「按腿模型名」映射：对外名 → 上游名 + 能不能看图。
+/// 一条渠道的「按渠道模型名」映射：对外名 → 上游名 + 能不能看图。
 ///
 /// 用结构体而不是三元组：这三个字段一起读写，元组顺序错了不会报错、只会静默错位。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub struct ModelMapping {
     pub model: String,
     /// 发给上游的名字。None = 原样透传。
     pub upstream: Option<String>,
-    /// 这条腿上的这个模型能不能吃图片输入（面板上勾「能看图」）。
+    /// 这条渠道上的这个模型能不能吃图片输入（面板上勾「能看图」）。
     pub vision: bool,
 }
 
@@ -30,35 +30,35 @@ impl ModelMapping {
     }
 }
 
-/// 库里的一条腿（不含明文密钥，只带"有没有配密钥"）。
+/// 库里的一条渠道（不含明文密钥，只带"有没有配密钥"）。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LegRow {
-    pub id: LegId,
+pub struct ChannelRow {
+    pub id: ChannelId,
     pub name: String,
     pub base_url: String,
     pub enabled: bool,
     pub has_secret: bool,
     /// 自定义请求头（上游没有的能力，本项目增项）
     pub headers: Vec<(String, String)>,
-    /// 该腿认的模型名（含"能不能看图"）
+    /// 该渠道认的模型名（含"能不能看图"）
     pub models: Vec<ModelMapping>,
 }
 
-/// 新建腿要给的字段。
+/// 新建渠道要给的字段。
 #[derive(Debug, Clone)]
-pub struct NewLeg {
+pub struct NewChannel {
     pub name: String,
     pub base_url: String,
     pub enabled: bool,
 }
 
-const SELECT_LEG: &str = "SELECT l.id, l.name, l.base_url, l.enabled,
-       EXISTS(SELECT 1 FROM leg_secrets s WHERE s.leg_id = l.id) AS has_secret
-  FROM legs l";
+const SELECT_CHANNEL: &str = "SELECT l.id, l.name, l.base_url, l.enabled,
+       EXISTS(SELECT 1 FROM channel_secrets s WHERE s.channel_id = l.id) AS has_secret
+  FROM channels l";
 
-fn row_to_leg(r: &Row<'_>) -> rusqlite::Result<LegRow> {
-    Ok(LegRow {
-        id: LegId(r.get(0)?),
+fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
+    Ok(ChannelRow {
+        id: ChannelId(r.get(0)?),
         name: r.get(1)?,
         base_url: r.get(2)?,
         enabled: r.get::<_, i64>(3)? != 0,
@@ -68,19 +68,19 @@ fn row_to_leg(r: &Row<'_>) -> rusqlite::Result<LegRow> {
     })
 }
 
-fn load_children(conn: &Connection, leg: &mut LegRow) -> Result<()> {
+fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT name, value FROM leg_headers WHERE leg_id = ?1 ORDER BY ordinal, id",
+        "SELECT name, value FROM channel_headers WHERE channel_id = ?1 ORDER BY ordinal, id",
     )?;
-    leg.headers = stmt
-        .query_map([leg.id.0], |r| Ok((r.get(0)?, r.get(1)?)))?
+    channel.headers = stmt
+        .query_map([channel.id.0], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
 
     let mut stmt = conn.prepare(
-        "SELECT model_name, upstream_model, vision FROM leg_models WHERE leg_id = ?1 ORDER BY model_name",
+        "SELECT model_name, upstream_model, vision FROM channel_models WHERE channel_id = ?1 ORDER BY model_name",
     )?;
-    leg.models = stmt
-        .query_map([leg.id.0], |r| {
+    channel.models = stmt
+        .query_map([channel.id.0], |r| {
             Ok(ModelMapping {
                 model: r.get(0)?,
                 upstream: r.get(1)?,
@@ -91,83 +91,83 @@ fn load_children(conn: &Connection, leg: &mut LegRow) -> Result<()> {
     Ok(())
 }
 
-pub fn list(conn: &Connection) -> Result<Vec<LegRow>> {
-    let mut stmt = conn.prepare(&format!("{SELECT_LEG} ORDER BY l.id"))?;
-    let mut rows: Vec<LegRow> = stmt.query_map([], row_to_leg)?.collect::<rusqlite::Result<_>>()?;
+pub fn list(conn: &Connection) -> Result<Vec<ChannelRow>> {
+    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} ORDER BY l.id"))?;
+    let mut rows: Vec<ChannelRow> = stmt.query_map([], row_to_channel)?.collect::<rusqlite::Result<_>>()?;
     for l in &mut rows {
         load_children(conn, l)?;
     }
     Ok(rows)
 }
 
-pub fn get(conn: &Connection, id: LegId) -> Result<Option<LegRow>> {
-    let mut stmt = conn.prepare(&format!("{SELECT_LEG} WHERE l.id = ?1"))?;
-    let mut leg: Option<LegRow> = stmt.query_row([id.0], row_to_leg).optional()?;
-    if let Some(l) = &mut leg {
+pub fn get(conn: &Connection, id: ChannelId) -> Result<Option<ChannelRow>> {
+    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} WHERE l.id = ?1"))?;
+    let mut channel: Option<ChannelRow> = stmt.query_row([id.0], row_to_channel).optional()?;
+    if let Some(l) = &mut channel {
         load_children(conn, l)?;
     }
-    Ok(leg)
+    Ok(channel)
 }
 
-pub fn create(conn: &Connection, new: &NewLeg) -> Result<LegId> {
+pub fn create(conn: &Connection, new: &NewChannel) -> Result<ChannelId> {
     if new.name.trim().is_empty() {
-        return Err(DbError::Other("腿名不能为空".into()));
+        return Err(DbError::Other("渠道名不能为空".into()));
     }
     if new.base_url.trim().is_empty() {
         return Err(DbError::Other("base_url 不能为空".into()));
     }
     conn.execute(
-        "INSERT INTO legs (name, base_url, enabled) VALUES (?1, ?2, ?3)",
+        "INSERT INTO channels (name, base_url, enabled) VALUES (?1, ?2, ?3)",
         params![new.name.trim(), new.base_url.trim(), new.enabled as i64],
     )?;
-    Ok(LegId(conn.last_insert_rowid()))
+    Ok(ChannelId(conn.last_insert_rowid()))
 }
 
 pub fn update(
     conn: &Connection,
-    id: LegId,
+    id: ChannelId,
     name: &str,
     base_url: &str,
     enabled: bool,
 ) -> Result<()> {
     let n = conn.execute(
-        "UPDATE legs SET name = ?2, base_url = ?3, enabled = ?4, updated_at = datetime('now')
+        "UPDATE channels SET name = ?2, base_url = ?3, enabled = ?4, updated_at = datetime('now')
           WHERE id = ?1",
         params![id.0, name.trim(), base_url.trim(), enabled as i64],
     )?;
     if n == 0 {
-        return Err(DbError::Other(format!("腿 {id} 不存在")));
+        return Err(DbError::Other(format!("渠道 {id} 不存在")));
     }
     Ok(())
 }
 
-pub fn delete(conn: &Connection, id: LegId) -> Result<()> {
+pub fn delete(conn: &Connection, id: ChannelId) -> Result<()> {
     // 子行（请求头/模型/密钥/模型组引用）靠外键 ON DELETE CASCADE 一起清掉
-    let n = conn.execute("DELETE FROM legs WHERE id = ?1", [id.0])?;
+    let n = conn.execute("DELETE FROM channels WHERE id = ?1", [id.0])?;
     if n == 0 {
-        return Err(DbError::Other(format!("腿 {id} 不存在")));
+        return Err(DbError::Other(format!("渠道 {id} 不存在")));
     }
     Ok(())
 }
 
 /// 存密钥（加密）。明文只在内存里过一下，绝不落库、绝不回显。
-pub fn set_secret(conn: &Connection, sb: &SecretBox, id: LegId, plaintext: &str) -> Result<()> {
+pub fn set_secret(conn: &Connection, sb: &SecretBox, id: ChannelId, plaintext: &str) -> Result<()> {
     let (nonce, cipher) = sb
         .seal(plaintext)
         .map_err(|e| DbError::Other(e.to_string()))?;
     conn.execute(
-        "INSERT INTO leg_secrets (leg_id, nonce, cipher) VALUES (?1, ?2, ?3)
-         ON CONFLICT(leg_id) DO UPDATE SET nonce = excluded.nonce, cipher = excluded.cipher",
+        "INSERT INTO channel_secrets (channel_id, nonce, cipher) VALUES (?1, ?2, ?3)
+         ON CONFLICT(channel_id) DO UPDATE SET nonce = excluded.nonce, cipher = excluded.cipher",
         params![id.0, nonce, cipher],
     )?;
     Ok(())
 }
 
 /// 取密钥明文。**只给代理转发用**，任何对外接口都不许调它。
-pub fn secret(conn: &Connection, sb: &SecretBox, id: LegId) -> Result<Option<String>> {
+pub fn secret(conn: &Connection, sb: &SecretBox, id: ChannelId) -> Result<Option<String>> {
     let row: Option<(Vec<u8>, Vec<u8>)> = conn
         .query_row(
-            "SELECT nonce, cipher FROM leg_secrets WHERE leg_id = ?1",
+            "SELECT nonce, cipher FROM channel_secrets WHERE channel_id = ?1",
             [id.0],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -181,52 +181,52 @@ pub fn secret(conn: &Connection, sb: &SecretBox, id: LegId) -> Result<Option<Str
     }
 }
 
-pub fn clear_secret(conn: &Connection, id: LegId) -> Result<()> {
-    conn.execute("DELETE FROM leg_secrets WHERE leg_id = ?1", [id.0])?;
+pub fn clear_secret(conn: &Connection, id: ChannelId) -> Result<()> {
+    conn.execute("DELETE FROM channel_secrets WHERE channel_id = ?1", [id.0])?;
     Ok(())
 }
 
-/// 整体替换一条腿的请求头（面板保存时用）。
-pub fn set_headers(conn: &Connection, id: LegId, headers: &[(String, String)]) -> Result<()> {
-    conn.execute("DELETE FROM leg_headers WHERE leg_id = ?1", [id.0])?;
+/// 整体替换一条渠道的请求头（面板保存时用）。
+pub fn set_headers(conn: &Connection, id: ChannelId, headers: &[(String, String)]) -> Result<()> {
+    conn.execute("DELETE FROM channel_headers WHERE channel_id = ?1", [id.0])?;
     for (ord, (name, value)) in headers.iter().enumerate() {
         conn.execute(
-            "INSERT INTO leg_headers (leg_id, name, value, ordinal) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO channel_headers (channel_id, name, value, ordinal) VALUES (?1, ?2, ?3, ?4)",
             params![id.0, name.trim(), value, ord as i64],
         )?;
     }
     Ok(())
 }
 
-/// 整体替换一条腿的模型名映射。
-pub fn set_models(conn: &Connection, id: LegId, models: &[ModelMapping]) -> Result<()> {
-    conn.execute("DELETE FROM leg_models WHERE leg_id = ?1", [id.0])?;
+/// 整体替换一条渠道的模型名映射。
+pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> Result<()> {
+    conn.execute("DELETE FROM channel_models WHERE channel_id = ?1", [id.0])?;
     for m in models {
         conn.execute(
-            "INSERT INTO leg_models (leg_id, model_name, upstream_model, vision) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO channel_models (channel_id, model_name, upstream_model, vision) VALUES (?1, ?2, ?3, ?4)",
             params![id.0, m.model.trim(), m.upstream, m.vision as i64],
         )?;
     }
     Ok(())
 }
 
-/// 只改「这个模型名在这条腿上能不能看图」。
+/// 只改「这个模型名在这条渠道上能不能看图」。
 ///
-/// 面板上的「测视觉」实测通过后直接落到这一行（不必整条腿重存一遍，
+/// 面板上的「测视觉」实测通过后直接落到这一行（不必整条渠道重存一遍，
 /// 免得把用户正在编辑、还没保存的其它字段一起写坏）。
 pub fn set_model_vision(
     conn: &Connection,
-    id: LegId,
+    id: ChannelId,
     model_name: &str,
     vision: bool,
 ) -> Result<usize> {
     let n = conn.execute(
-        "UPDATE leg_models SET vision = ?3 WHERE leg_id = ?1 AND model_name = ?2",
+        "UPDATE channel_models SET vision = ?3 WHERE channel_id = ?1 AND model_name = ?2",
         params![id.0, model_name.trim(), vision as i64],
     )?;
     if n == 0 {
         return Err(DbError::Other(format!(
-            "腿 {id} 上没有「{}」这个模型名，没法标视觉能力",
+            "渠道 {id} 上没有「{}」这个模型名，没法标视觉能力",
             model_name.trim()
         )));
     }
@@ -241,8 +241,8 @@ mod tests {
 
     const KEY: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 
-    fn new_leg() -> NewLeg {
-        NewLeg {
+    fn new_channel() -> NewChannel {
+        NewChannel {
             name: "硅基流动".into(),
             base_url: "https://api.siliconflow.cn/v1".into(),
             enabled: true,
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn create_read_update_delete() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         let got = get(&conn, id).unwrap().unwrap();
         assert_eq!(got.name, "硅基流动");
         assert!(!got.has_secret);
@@ -269,10 +269,10 @@ mod tests {
     #[test]
     fn rejects_empty_fields() {
         let conn = open_in_memory().unwrap();
-        let mut bad = new_leg();
+        let mut bad = new_channel();
         bad.name = "  ".into();
         assert!(create(&conn, &bad).is_err());
-        let mut bad = new_leg();
+        let mut bad = new_channel();
         bad.base_url = "".into();
         assert!(create(&conn, &bad).is_err());
     }
@@ -281,7 +281,7 @@ mod tests {
     fn secret_round_trips_and_is_never_plain_in_the_db() {
         let conn = open_in_memory().unwrap();
         let sb = SecretBox::from_hex(KEY).unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         set_secret(&conn, &sb, id, "sk-abcdef123456").unwrap();
 
         assert!(get(&conn, id).unwrap().unwrap().has_secret);
@@ -290,7 +290,7 @@ mod tests {
         // 反证：库里任何一个字节都不该出现明文
         let blob: Vec<u8> = conn
             .query_row(
-                "SELECT cipher FROM leg_secrets WHERE leg_id = ?1",
+                "SELECT cipher FROM channel_secrets WHERE channel_id = ?1",
                 [id.0],
                 |r| r.get(0),
             )
@@ -302,22 +302,22 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_leg_wipes_its_secret_too() {
+    fn deleting_a_channel_wipes_its_secret_too() {
         let conn = open_in_memory().unwrap();
         let sb = SecretBox::from_hex(KEY).unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         set_secret(&conn, &sb, id, "sk-x").unwrap();
         delete(&conn, id).unwrap();
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM leg_secrets", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM channel_secrets", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 0, "腿删了密钥还留着");
+        assert_eq!(n, 0, "渠道删了密钥还留着");
     }
 
     #[test]
     fn headers_are_replaced_wholesale_and_keep_order() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         set_headers(
             &conn,
             id,
@@ -338,9 +338,9 @@ mod tests {
     }
 
     #[test]
-    fn per_leg_model_names_are_stored() {
+    fn per_channel_model_names_are_stored() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         set_models(
             &conn,
             id,
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn vision_flag_round_trips_per_model_name() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         set_models(
             &conn,
             id,
@@ -384,9 +384,9 @@ mod tests {
     #[test]
     fn rows_written_without_the_column_default_to_not_vision() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         conn.execute(
-            "INSERT INTO leg_models (leg_id, model_name, upstream_model) VALUES (?1, 'auto', 'deepseek-v4.1-flash')",
+            "INSERT INTO channel_models (channel_id, model_name, upstream_model) VALUES (?1, 'auto', 'deepseek-v4.1-flash')",
             [id.0],
         )
         .unwrap();
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn set_model_vision_only_touches_that_one_row() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         set_models(
             &conn,
             id,
@@ -424,8 +424,8 @@ mod tests {
     #[test]
     fn list_returns_everything_with_children() {
         let conn = open_in_memory().unwrap();
-        let a = create(&conn, &new_leg()).unwrap();
-        let mut b = new_leg();
+        let a = create(&conn, &new_channel()).unwrap();
+        let mut b = new_channel();
         b.name = "opencode-go".into();
         let b = create(&conn, &b).unwrap();
         set_headers(&conn, a, &[("X".into(), "1".into())]).unwrap();
@@ -437,16 +437,16 @@ mod tests {
         assert!(all[1].headers.is_empty());
     }
 
-    /// 反证（真踩过）：建腿是四步写入，中途失败必须整体回滚 ——
-    /// 不能留下"名字在、请求头/模型名丢了"的半截腿。
+    /// 反证（真踩过）：建渠道是四步写入，中途失败必须整体回滚 ——
+    /// 不能留下"名字在、请求头/模型名丢了"的半截渠道。
     #[test]
-    fn a_failed_leg_create_rolls_back_completely() {
+    fn a_failed_channel_create_rolls_back_completely() {
         let conn = open_in_memory().unwrap();
         let sb = SecretBox::from_hex(KEY).unwrap();
 
-        // 故意给两个同名模型，第二条会撞 UNIQUE(leg_id, model_name)
+        // 故意给两个同名模型，第二条会撞 UNIQUE(channel_id, model_name)
         let r = crate::db::in_tx(&conn, |c| {
-            let id = create(c, &new_leg())?;
+            let id = create(c, &new_channel())?;
             set_headers(c, id, &[("X-Test".into(), "1".into())])?;
             set_secret(c, &sb, id, "sk-x")?;
             set_models(
@@ -460,13 +460,13 @@ mod tests {
             Ok(id)
         });
         assert!(r.is_err(), "同名模型必须报错");
-        assert!(list(&conn).unwrap().is_empty(), "半截腿留在库里了");
+        assert!(list(&conn).unwrap().is_empty(), "半截渠道留在库里了");
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM leg_headers", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM channel_headers", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0, "请求头没跟着回滚");
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM leg_secrets", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM channel_secrets", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0, "密钥没跟着回滚");
     }
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn duplicate_model_names_are_rejected() {
         let conn = open_in_memory().unwrap();
-        let id = create(&conn, &new_leg()).unwrap();
+        let id = create(&conn, &new_channel()).unwrap();
         let r = set_models(
             &conn,
             id,

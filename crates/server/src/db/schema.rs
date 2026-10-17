@@ -4,7 +4,11 @@
 //! - 现网 FreeLLMAPI 33 张表，本机真在用的只有几张；这里按实际需要重建，共 11 张。
 //! - **免费模型目录相关的表一张都没有**（models / embedding_models / quirks /
 //!   catalog_* / media_models …）——用户明确不要，且那正是内存与库体积持续增长的来源。
-//! - `leg_headers` 是上游没有的增项：按腿配自定义请求头。
+//! - `channel_headers` 是上游没有的增项：按渠道配自定义请求头。
+//!
+//! **术语**：2026-10-17 起「腿」改叫「渠道」（channel）。v1/v2 里的 SQL 与注释是当时的
+//! 原文，按「迁移只追加」的规矩**原样保留**（里面出现的 legs / leg_id 是历史名字，别改，
+//! 也别用 `scratch/rename_leg_to_channel.py` 刷这一段）；v3 负责把新库和老库都改到新名字。
 
 /// 迁移列表。**只追加，不改已发布的条目**——改历史条目会让已部署的库对不上。
 pub const MIGRATIONS: &[(u32, &str)] = &[
@@ -131,6 +135,37 @@ CREATE INDEX idx_panel_sessions_expiry ON panel_sessions (expires_at_ms);
 --
 -- 默认 0：**没标 = 不敢保证**。宁可先说"这组里没有能看图的腿"，也不猜。
 ALTER TABLE leg_models ADD COLUMN vision INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
+    (
+        3,
+        r#"
+-- 术语改名：腿（leg）→ 渠道（channel）。
+--
+-- 为什么要有这条迁移：v1 的条目按规范不许改（改历史条目会让已部署的库对不上），
+-- 于是改成「先建旧名、再改名」—— 新库与旧库走的是同一条路径，最终 schema 一致。
+-- 代码里也是同口径：Leg→Channel、leg_id→channel_id、表 legs→channels。
+--
+-- SQLite 3.25+ 的 RENAME TABLE 会跟着更新外键引用（这里 foreign_keys=ON，
+-- model_group_channels 等子表指向 channels 的引用会自动跟上）。
+ALTER TABLE legs             RENAME TO channels;
+ALTER TABLE leg_secrets      RENAME TO channel_secrets;
+ALTER TABLE leg_headers      RENAME TO channel_headers;
+ALTER TABLE leg_models       RENAME TO channel_models;
+ALTER TABLE model_group_legs RENAME TO model_group_channels;
+
+ALTER TABLE requests      RENAME COLUMN leg_id         TO channel_id;
+ALTER TABLE attempts      RENAME COLUMN leg_id         TO channel_id;
+ALTER TABLE routing_state RENAME COLUMN active_leg_id  TO active_channel_id;
+-- 子表的列名也要换：v1 里建的是 leg_id
+ALTER TABLE channel_secrets      RENAME COLUMN leg_id TO channel_id;
+ALTER TABLE channel_headers      RENAME COLUMN leg_id TO channel_id;
+ALTER TABLE channel_models       RENAME COLUMN leg_id TO channel_id;
+ALTER TABLE model_group_channels RENAME COLUMN leg_id TO channel_id;
+
+-- 索引名也换：列改名后索引定义会跟着变，但索引自己的名字不会。
+DROP INDEX IF EXISTS idx_requests_leg;
+CREATE INDEX idx_requests_channel ON requests (channel_id, ts_ms DESC);
 "#,
     ),
 ];

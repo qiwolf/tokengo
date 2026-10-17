@@ -1,7 +1,7 @@
 //! 页面清单与页面之间的公共约定。
 
 pub mod groups;
-pub mod legs;
+pub mod channels;
 pub mod overview;
 pub mod requests;
 pub mod routing;
@@ -11,7 +11,7 @@ pub mod settings;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Overview,
-    Legs,
+    Channels,
     Groups,
     Routing,
     Requests,
@@ -21,7 +21,7 @@ pub enum Page {
 impl Page {
     pub const ALL: &'static [Page] = &[
         Page::Overview,
-        Page::Legs,
+        Page::Channels,
         Page::Groups,
         Page::Routing,
         Page::Requests,
@@ -32,7 +32,7 @@ impl Page {
     pub fn slug(self) -> &'static str {
         match self {
             Page::Overview => "overview",
-            Page::Legs => "legs",
+            Page::Channels => "channels",
             Page::Groups => "groups",
             Page::Routing => "routing",
             Page::Requests => "requests",
@@ -43,7 +43,7 @@ impl Page {
     pub fn title(self) -> &'static str {
         match self {
             Page::Overview => "总览",
-            Page::Legs => "腿管理",
+            Page::Channels => "渠道管理",
             Page::Groups => "模型组",
             Page::Routing => "路由状态",
             Page::Requests => "请求流水",
@@ -55,7 +55,7 @@ impl Page {
     pub fn icon(self) -> &'static str {
         match self {
             Page::Overview => "▤",
-            Page::Legs => "⇄",
+            Page::Channels => "⇄",
             Page::Groups => "≡",
             Page::Routing => "◈",
             Page::Requests => "☰",
@@ -63,7 +63,7 @@ impl Page {
         }
     }
 
-    /// 从 URL hash 猜当前页（`#legs` → 腿管理）。认不出就回总览。
+    /// 从 URL hash 猜当前页（`#channels` → 渠道管理）。认不出就回总览。
     pub fn from_hash() -> Page {
         let raw = web_sys::window()
             .and_then(|w| w.location().hash().ok())

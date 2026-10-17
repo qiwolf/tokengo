@@ -155,16 +155,16 @@ pub async fn change_password(old: &str, new: &str) -> Result<SetupResp, ApiErr> 
     .await
 }
 
-pub async fn legs() -> Result<Vec<Leg>, ApiErr> {
-    let r: LegsResp = typed("GET", "/api/legs", None).await?;
-    Ok(r.legs)
+pub async fn channels() -> Result<Vec<Channel>, ApiErr> {
+    let r: ChannelsResp = typed("GET", "/api/channels", None).await?;
+    Ok(r.channels)
 }
 
-/// 建腿/改腿。`key` 为 `None` = 不改密钥；`Some("")` = 明确清掉。
+/// 建渠道/改渠道。`key` 为 `None` = 不改密钥；`Some("")` = 明确清掉。
 ///
-/// 返回新建腿的 id（改腿时返回 `None`）—— 面板新建完要马上能用这条腿自己的
+/// 返回新建渠道的 id（改渠道时返回 `None`）—— 面板新建完要马上能用这条渠道自己的
 /// 凭据去拉上游模型清单，所以得知道它的 id。
-pub async fn save_leg(
+pub async fn save_channel(
     id: Option<i64>,
     name: &str,
     base_url: &str,
@@ -182,36 +182,36 @@ pub async fn save_leg(
         "models": models,
     });
     match id {
-        Some(i) => call("PUT", &format!("/api/legs/{i}"), Some(body)).await.map(|_| None),
+        Some(i) => call("PUT", &format!("/api/channels/{i}"), Some(body)).await.map(|_| None),
         None => {
-            let v = call("POST", "/api/legs", Some(body)).await?;
+            let v = call("POST", "/api/channels", Some(body)).await?;
             Ok(v.get("id").and_then(|x| x.as_i64()))
         }
     }
 }
 
-pub async fn delete_leg(id: i64) -> Result<(), ApiErr> {
-    call("DELETE", &format!("/api/legs/{id}"), None).await.map(|_| ())
+pub async fn delete_channel(id: i64) -> Result<(), ApiErr> {
+    call("DELETE", &format!("/api/channels/{id}"), None).await.map(|_| ())
 }
 
 /// 测一下连通性。`kind` 是 `chat` 或 `embeddings`。
-pub async fn probe_leg(id: i64, kind: &str) -> Result<ProbeResp, ApiErr> {
-    typed("POST", &format!("/api/legs/{id}/probe?kind={kind}"), None).await
+pub async fn probe_channel(id: i64, kind: &str) -> Result<ProbeResp, ApiErr> {
+    typed("POST", &format!("/api/channels/{id}/probe?kind={kind}"), None).await
 }
 
-/// 拉这条腿的上游模型清单（真打它的 `GET /v1/models`）。
-pub async fn pull_leg_models(id: i64) -> Result<ModelPull, ApiErr> {
-    typed("POST", &format!("/api/legs/{id}/models"), None).await
+/// 拉这条渠道的上游模型清单（真打它的 `GET /v1/models`）。
+pub async fn pull_channel_models(id: i64) -> Result<ModelPull, ApiErr> {
+    typed("POST", &format!("/api/channels/{id}/models"), None).await
 }
 
-/// 「测视觉」：给这条腿真发一张带图的小请求，看它认不认得出来。
+/// 「测视觉」：给这条渠道真发一张带图的小请求，看它认不认得出来。
 ///
 /// `model` 是这一行的对外模型名（要测哪一行），`upstream` 是发给上游的名字
 /// （留空 = 跟保存的语义一样，原样透传）。
 pub async fn vision_test(id: i64, model: &str, upstream: Option<&str>) -> Result<VisionTest, ApiErr> {
     typed(
         "POST",
-        &format!("/api/legs/{id}/vision-test"),
+        &format!("/api/channels/{id}/vision-test"),
         Some(json!({ "model": model, "upstream": upstream, "apply": true })),
     )
     .await
@@ -221,11 +221,11 @@ pub async fn groups() -> Result<GroupsResp, ApiErr> {
     typed("GET", "/api/groups", None).await
 }
 
-pub async fn save_group(name: &str, enabled: bool, legs: &[i64]) -> Result<(), ApiErr> {
+pub async fn save_group(name: &str, enabled: bool, channels: &[i64]) -> Result<(), ApiErr> {
     call(
         "POST",
         "/api/groups",
-        Some(json!({ "name": name, "enabled": enabled, "legs": legs })),
+        Some(json!({ "name": name, "enabled": enabled, "channels": channels })),
     )
     .await
     .map(|_| ())

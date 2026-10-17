@@ -3,11 +3,11 @@
 //! 一段请求的一生（严格按 `docs/03-路由策略.md`）：
 //!
 //! ```text
-//!   取模型组 → 过滤出可用腿 →（带图的请求：再筛出标了「能看图」的腿）
+//!   取模型组 → 过滤出可用渠道 →（带图的请求：再筛出标了「能看图」的渠道）
 //!   → 问路由状态机「这次按什么顺序试」
 //!   → 开一条记账（请求级）
-//!   → 逐条腿、每条腿最多 1+retry_times 次尝试
-//!        腿的毛病（网络/5xx/429/401/403）→ 重试；重试耗尽 → 切换下一条腿
+//!   → 逐条渠道、每条渠道最多 1+retry_times 次尝试
+//!        渠道的毛病（网络/5xx/429/401/403）→ 重试；重试耗尽 → 切换下一条渠道
 //!        客户端自己的错（400/404/422）→ 原样返回，不重试不切换
 //!        成功 → 更新路由状态（该回切就回切）→ 原样回给客户端
 //!   → 每次尝试都记一条（尝试级），分母是"被叫了几次"，不是"成功了几次"
@@ -31,12 +31,12 @@ use axum::Json;
 use bytes::Bytes;
 use futures_util::stream::unfold;
 use serde_json::Value;
-use tokengo_shared::leg::Leg;
+use tokengo_shared::channel::Channel;
 use tokengo_shared::routing::{classify_status, retry_delay_ms, AttemptOutcome};
-use tokengo_shared::LegId;
+use tokengo_shared::ChannelId;
 
 use crate::db::requests::Status;
-use crate::db::{groups, legs, requests, now_ms};
+use crate::db::{groups, channels, requests, now_ms};
 use crate::routes::ApiError;
 use crate::SharedState;
 
@@ -74,23 +74,23 @@ pub struct ForwardRequest {
     pub client_ip: Option<String>,
 }
 
-/// 本次请求要用的腿（已按组内优先级排好，且都是可用腿）+ 各自的密钥。
+/// 本次请求要用的渠道（已按组内优先级排好，且都是可用渠道）+ 各自的密钥。
 struct Plan {
     group: String,
-    legs: Vec<Leg>,
+    channels: Vec<Channel>,
     secrets: HashMap<i64, String>,
 }
 
 impl Plan {
-    fn ids(&self) -> Vec<LegId> {
-        self.legs.iter().map(|l| l.id).collect()
+    fn ids(&self) -> Vec<ChannelId> {
+        self.channels.iter().map(|l| l.id).collect()
     }
 
-    fn leg(&self, id: LegId) -> Option<&Leg> {
-        self.legs.iter().find(|l| l.id == id)
+    fn channel(&self, id: ChannelId) -> Option<&Channel> {
+        self.channels.iter().find(|l| l.id == id)
     }
 
-    fn secret(&self, id: LegId) -> Option<&str> {
+    fn secret(&self, id: ChannelId) -> Option<&str> {
         self.secrets.get(&id.0).map(String::as_str)
     }
 }
@@ -99,31 +99,31 @@ impl Plan {
 fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
     let conn = state.conn();
     let group_name = model;
-    let legs_all = groups::resolve_legs(&conn, group_name)?;
-    if legs_all.is_empty() && groups::get(&conn, group_name)?.is_none() {
+    let channels_all = groups::resolve_channels(&conn, group_name)?;
+    if channels_all.is_empty() && groups::get(&conn, group_name)?.is_none() {
         return Err(ApiError::not_found(format!(
             "模型 {model} 没有配置：面板里给它建一个模型组，或者打 auto"
         )));
     }
     let mut routable = Vec::new();
     let mut secrets = HashMap::new();
-    for leg in legs_all {
-        if !leg.routable() {
+    for channel in channels_all {
+        if !channel.routable() {
             continue;
         }
-        if let Some(s) = legs::secret(&conn, &state.secrets, leg.id)? {
-            secrets.insert(leg.id.0, s);
+        if let Some(s) = channels::secret(&conn, &state.secrets, channel.id)? {
+            secrets.insert(channel.id.0, s);
         }
-        routable.push(leg);
+        routable.push(channel);
     }
     if routable.is_empty() {
         return Err(ApiError::not_found(format!(
-            "模型 {model} 现在没有可用的腿（组里的腿要么停用了，要么没填 base_url）"
+            "模型 {model} 现在没有可用的渠道（组里的渠道要么停用了，要么没填 base_url）"
         )));
     }
     Ok(Plan {
         group: group_name.to_string(),
-        legs: routable,
+        channels: routable,
         secrets,
     })
 }
@@ -132,39 +132,39 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
 pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
     let plan_all = load_plan(&state, &req.model)?;
-    // 这一组的全量可用腿（状态机一律看这一份，不看带图筛过的那一份）
+    // 这一组的全量可用渠道（状态机一律看这一份，不看带图筛过的那一份）
     let all_ids = plan_all.ids();
 
     // 这条请求是不是在让模型看图？（只有对话端点会有图）
     let wants_vision = req.endpoint == EndpointKind::Chat
         && tokengo_shared::request_has_image(&req.body);
 
-    // 带图就只走「标了能看图」的腿。**没标 = 不敢保证**：把图发给一条纯文本
+    // 带图就只走「标了能看图」的渠道。**没标 = 不敢保证**：把图发给一条纯文本
     // 上游，它要么回一个含糊的 400、要么干脆把图忽略掉装没事，两种都让用户
     // 看不出来发生了什么（上游 FreeLLMAPI 也是这个规矩，它连"一个能看图的
     // 模型都没启用"都要单独回一个 422，而不是等上游报错）。
     let plan = if wants_vision {
-        let legs: Vec<Leg> = plan_all
-            .legs
+        let channels: Vec<Channel> = plan_all
+            .channels
             .iter()
             .filter(|l| l.vision)
             .cloned()
             .collect();
         Plan {
             group: plan_all.group.clone(),
-            legs,
+            channels,
             secrets: plan_all.secrets.clone(),
         }
     } else {
         plan_all
     };
 
-    if wants_vision && plan.legs.is_empty() {
+    if wants_vision && plan.channels.is_empty() {
         // 记一条账：面板的「请求流水」里要能看见这次被拦下的带图请求
-        // （这不是腿的毛病，是配置里没有能看图的腿 → client_error）。
+        // （这不是渠道的毛病，是配置里没有能看图的渠道 → client_error）。
         let msg = format!(
-            "这条请求带了图片，但模型「{}」后面没有一条腿标了「能看图」。\
-             去面板『腿管理』给这条腿的模型名勾上「能看图」（拿不准就先点它旁边的『测视觉』实测一下），\
+            "这条请求带了图片，但模型「{}」后面没有一条渠道标了「能看图」。\
+             去面板『渠道管理』给这条渠道的模型名勾上「能看图」（拿不准就先点它旁边的『测视觉』实测一下），\
              或者把图片请求改成打一个确实能看图的模型名。",
             req.model
         );
@@ -191,24 +191,24 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 这一组平时走哪个端点，后台探活要知道（否则给向量组发对话探活必然 400）
     state.note_group_endpoint(&plan.group, req.endpoint);
 
-    // 状态机看的一律是**这一组的全量可用腿**（跟带不带图无关）。带图请求只是在
-    // 它给出的顺序里挑出能看图的腿 —— 一份被筛过的名单喂进去，宁可回不到首选，
-    // 也绝不能反过来把整组的「当前腿」改成那条能看图的腿。
+    // 状态机看的一律是**这一组的全量可用渠道**（跟带不带图无关）。带图请求只是在
+    // 它给出的顺序里挑出能看图的渠道 —— 一份被筛过的名单喂进去，宁可回不到首选，
+    // 也绝不能反过来把整组的「当前渠道」改成那条能看图的渠道。
     let ids = all_ids;
     let order_all = {
         // 微秒级的一段锁，里面没有 await
         state.routing().attempt_order(&plan.group, &ids, started_ms)
     };
     let order_all = if order_all.is_empty() { ids.clone() } else { order_all };
-    // plan 带图时已经是筛过的：`plan.leg(id)` 有值就说明这条腿标了「能看图」
-    let order: Vec<LegId> = if wants_vision {
-        order_all.iter().copied().filter(|id| plan.leg(*id).is_some()).collect()
+    // plan 带图时已经是筛过的：`plan.channel(id)` 有值就说明这条渠道标了「能看图」
+    let order: Vec<ChannelId> = if wants_vision {
+        order_all.iter().copied().filter(|id| plan.channel(*id).is_some()).collect()
     } else {
         order_all
     };
-    // 带图请求**只读状态机、不写**：它本来就只在「能看图」这个小圈子里挑腿，
+    // 带图请求**只读状态机、不写**：它本来就只在「能看图」这个小圈子里挑渠道，
     // 让它的结果去改整组的口味，等于一条带图请求把后面十分钟的纯文字请求一起改道。
-    // 腿自身的健康照旧由每分钟探活和纯文字请求看着。
+    // 渠道自身的健康照旧由每分钟探活和纯文字请求看着。
     let touch_state = !wants_vision;
 
     let request_id = {
@@ -223,12 +223,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
     let mut last_http: Option<UpstreamError> = None;
-    let mut last_leg = LegId(0);
+    let mut last_channel = ChannelId(0);
 
-    for leg_id in order.iter().copied() {
-        let Some(leg) = plan.leg(leg_id) else { continue };
-        last_leg = leg.id;
-        let sent_model = leg.upstream_model(&req.model).to_string();
+    for channel_id in order.iter().copied() {
+        let Some(channel) = plan.channel(channel_id) else { continue };
+        last_channel = channel.id;
+        let sent_model = channel.upstream_model(&req.model).to_string();
         let body = rewrite_model(&req.body, &sent_model);
         let body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
 
@@ -245,7 +245,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     &state,
                     Status::Failed,
                     None,
-                    Some(last_leg.0),
+                    Some(last_channel.0),
                     started_ms,
                     None,
                     0,
@@ -261,8 +261,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let outcome = state
                 .upstream
                 .call(
-                    leg,
-                    plan.secret(leg.id),
+                    channel,
+                    plan.secret(channel.id),
                     req.endpoint.path(),
                     body_bytes.clone(),
                     req.stream,
@@ -275,9 +275,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let resp = match outcome {
                 Err(fault) => {
                     let dur = now_ms() - t0;
-                    record_attempt(&state, request_id, ordinal, leg, "leg_fault", None, dur, Some(&fault.message));
+                    record_attempt(&state, request_id, ordinal, channel, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
-                    last_fault = Some(format!("{}：{}", leg.name, fault.message));
+                    last_fault = Some(format!("{}：{}", channel.name, fault.message));
                     continue;
                 }
                 Ok(r) => r,
@@ -287,11 +287,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let dur = now_ms() - t0;
             match classify_status(status) {
                 AttemptOutcome::Success => {
-                    record_attempt(&state, request_id, ordinal, leg, "success", Some(status), dur, None);
-                    // 命中的是首选就视为已回切；不是就记下当前腿、重设检查点
+                    record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
+                    // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
                         let mut r = state.routing();
-                        r.on_success(&plan.group, leg.id, &ids, now_ms());
+                        r.on_success(&plan.group, channel.id, &ids, now_ms());
                         drop(r);
                         state.persist_state(&plan.group)?;
                     }
@@ -303,7 +303,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             guard,
                             request_id,
                             started_ms,
-                            leg.id.0,
+                            channel.id.0,
                         )
                     } else {
                         let (resp, input, output) = buffer_passthrough(resp, http).await;
@@ -311,7 +311,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             &state,
                             Status::Ok,
                             Some(status),
-                            Some(leg.id.0),
+                            Some(channel.id.0),
                             started_ms,
                             Some(dur),
                             input,
@@ -323,20 +323,20 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     });
                 }
                 AttemptOutcome::ClientFault => {
-                    // 客户端自己的错：原样返回，**不重试不换腿**（换个说法：一次写错的请求
+                    // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
                     // 不许把整条链路打断）
-                    record_attempt(&state, request_id, ordinal, leg, "client_fault", Some(status), dur, None);
+                    record_attempt(&state, request_id, ordinal, channel, "client_fault", Some(status), dur, None);
                     let err = read_error(resp).await;
                     let note = format!(
-                        "客户端错误 {status}（腿 {} 未重试、未切换）：{}",
-                        leg.name,
+                        "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
+                        channel.name,
                         err.text.chars().take(200).collect::<String>()
                     );
                     guard.finish(
                         &state,
                         Status::ClientError,
                         Some(status),
-                        Some(leg.id.0),
+                        Some(channel.id.0),
                         started_ms,
                         Some(dur),
                         0,
@@ -346,30 +346,30 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     );
                     return Ok(err.into_response());
                 }
-                AttemptOutcome::LegFault => {
+                AttemptOutcome::ChannelFault => {
                     let err = read_error(resp).await;
                     record_attempt(
                         &state,
                         request_id,
                         ordinal,
-                        leg,
-                        "leg_fault",
+                        channel,
+                        "channel_fault",
                         Some(status),
                         dur,
                         Some(&err.text),
                     );
                     ordinal += 1;
-                    last_fault = Some(format!("{}：HTTP {status} {}", leg.name, err.text));
+                    last_fault = Some(format!("{}：HTTP {status} {}", channel.name, err.text));
                     last_http = Some(err);
                     continue;
                 }
                 AttemptOutcome::ClientGone => {
-                    record_attempt(&state, request_id, ordinal, leg, "client_gone", Some(status), dur, None);
+                    record_attempt(&state, request_id, ordinal, channel, "client_gone", Some(status), dur, None);
                     guard.finish(
                         &state,
                         Status::Canceled,
                         Some(status),
-                        Some(leg.id.0),
+                        Some(channel.id.0),
                         started_ms,
                         Some(dur),
                         0,
@@ -382,31 +382,31 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             }
         }
 
-        // 这条腿把重试次数用完了还是不行 → 切换
+        // 这条渠道把重试次数用完了还是不行 → 切换
         if touch_state {
             let mut r = state.routing();
-            r.on_leg_exhausted(&plan.group, leg.id, &ids, now_ms());
+            r.on_channel_exhausted(&plan.group, channel.id, &ids, now_ms());
             drop(r);
             state.persist_state(&plan.group)?;
-            tracing::warn!("腿 {} 连续 {} 次失败，切换", leg.name, cfg.max_attempts());
+            tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, cfg.max_attempts());
         } else {
             tracing::warn!(
-                "（带图请求，不动路由状态）腿 {} 连续 {} 次失败",
-                leg.name,
+                "（带图请求，不动路由状态）渠道 {} 连续 {} 次失败",
+                channel.name,
                 cfg.max_attempts()
             );
         }
     }
 
-    // 所有腿都试完了
+    // 所有渠道都试完了
     let note = last_fault
         .clone()
-        .unwrap_or_else(|| "所有腿都没能提供响应".to_string());
+        .unwrap_or_else(|| "所有渠道都没能提供响应".to_string());
     guard.finish(
         &state,
         Status::Failed,
         last_http.as_ref().map(|e| e.status.as_u16()),
-        Some(last_leg.0),
+        Some(last_channel.0),
         started_ms,
         None,
         0,
@@ -414,13 +414,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         false,
         Some(&note),
     );
-    tracing::error!("请求 {request_id} 全部腿失败：{note}");
+    tracing::error!("请求 {request_id} 全部渠道失败：{note}");
     Ok(match last_http {
         Some(err) => err.into_response(),
         None => ApiError::new(
             StatusCode::BAD_GATEWAY,
             "upstream_unavailable",
-            format!("所有腿都失败了：{note}"),
+            format!("所有渠道都失败了：{note}"),
         )
         .into_response(),
     })
@@ -438,7 +438,7 @@ fn gateway_timeout(plan: &Plan, model: &str) -> Response {
     .into_response()
 }
 
-/// 带图的请求撞上「一组里没有能看图的腿」时的响应。
+/// 带图的请求撞上「一组里没有能看图的渠道」时的响应。
 ///
 /// 形状跟上游 FreeLLMAPI 对齐（`code: no_vision_model`）：客户端的处理逻辑可以照抄。
 /// 为什么不是把图丢掉照常转发：那样用户会拿到一个"没看图却答了话"的结果，
@@ -462,7 +462,7 @@ fn record_attempt(
     state: &SharedState,
     request_id: i64,
     ordinal: u32,
-    leg: &Leg,
+    channel: &Channel,
     outcome: &str,
     status: Option<u16>,
     duration_ms: i64,
@@ -473,7 +473,7 @@ fn record_attempt(
         &conn,
         request_id,
         ordinal,
-        leg.id.0,
+        channel.id.0,
         outcome,
         status,
         duration_ms,
@@ -483,7 +483,7 @@ fn record_attempt(
     }
 }
 
-/// 把请求体里的 model 换成这条腿认的名字，**别的字段一个都不动**。
+/// 把请求体里的 model 换成这条渠道认的名字，**别的字段一个都不动**。
 pub fn rewrite_model(body: &Value, model: &str) -> Value {
     let mut v = body.clone();
     if let Some(obj) = v.as_object_mut() {
@@ -533,8 +533,8 @@ async fn buffer_passthrough(
 
 /// 流式：边收边转发，同时从 SSE 里把最后的 usage 抠出来记账。
 ///
-/// **第一个字节发出去之后就不能再换腿了**（客户端已经看到内容了），所以流式请求的
-/// 重试只发生在"还没拿到响应头"的阶段。这一条也是"客户端断开不计腿的账"的落点：
+/// **第一个字节发出去之后就不能再换渠道了**（客户端已经看到内容了），所以流式请求的
+/// 重试只发生在"还没拿到响应头"的阶段。这一条也是"客户端断开不计渠道的账"的落点：
 /// 流被丢掉时 `RequestGuard` 记 canceled。
 fn stream_passthrough(
     state: SharedState,
@@ -542,7 +542,7 @@ fn stream_passthrough(
     guard: RequestGuard,
     _request_id: i64,
     started_ms: i64,
-    leg_id: i64,
+    channel_id: i64,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
@@ -551,7 +551,7 @@ fn stream_passthrough(
         scanner: SseScanner::default(),
         guard: Some(guard),
         started_ms,
-        leg_id,
+        channel_id,
         state,
         delivered: 0,
     };
@@ -589,7 +589,7 @@ struct StreamState {
     scanner: SseScanner,
     guard: Option<RequestGuard>,
     started_ms: i64,
-    leg_id: i64,
+    channel_id: i64,
     state: SharedState,
     delivered: usize,
 }
@@ -610,7 +610,7 @@ impl StreamState {
             &self.state,
             if complete { Status::Ok } else { Status::Failed },
             None,
-            Some(self.leg_id),
+            Some(self.channel_id),
             self.started_ms,
             None,
             input,
@@ -647,7 +647,7 @@ async fn read_error(resp: reqwest::Response) -> UpstreamError {
     }
 }
 
-/// 上游的一次错误响应。保留正文与 Content-Type，最后一条腿失败时原样透给客户端
+/// 上游的一次错误响应。保留正文与 Content-Type，最后一条渠道失败时原样透给客户端
 /// —— 客户端看到的是真实的上游错误（比如 429 的提示），不是网关编的。
 pub struct UpstreamError {
     pub status: StatusCode,
@@ -725,7 +725,7 @@ impl SseScanner {
 ///
 /// 正常路径显式调 `finish`；如果这个结构是被 **Drop** 掉的（客户端中途断开时，
 /// axum/hyper 会把整个处理函数连同它一起丢掉），就记成 `canceled` ——
-/// 客户端自己断开不算腿的毛病，不该进腿的账。
+/// 客户端自己断开不算渠道的毛病，不该进渠道的账。
 pub struct RequestGuard {
     state: SharedState,
     request_id: i64,
@@ -750,7 +750,7 @@ impl RequestGuard {
         state: &SharedState,
         status: Status,
         http_status: Option<u16>,
-        leg_id: Option<i64>,
+        channel_id: Option<i64>,
         started_ms: i64,
         first_byte_ms: Option<i64>,
         input_tokens: i64,
@@ -768,7 +768,7 @@ impl RequestGuard {
             self.request_id,
             status,
             http_status,
-            leg_id,
+            channel_id,
             now_ms() - started_ms,
             first_byte_ms,
             input_tokens,
