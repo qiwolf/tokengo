@@ -155,6 +155,26 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
         });
     };
 
+    // 一键启用/停用：状态列那个开关点的就是它。启停只改这一列，不动顺序与类型。
+    let toggle_group = move |name: String, enabled: bool| {
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::set_group_enabled(&name, enabled).await {
+                Ok(()) => {
+                    ctx.say(if enabled {
+                        format!("{name} 已启用 —— 客户端现在能打这个名字了")
+                    } else {
+                        format!("{name} 已停用 —— 客户端再打这个名字会拿到 404")
+                    });
+                    reload();
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    ctx.say(format!("{}没成功：{}", if enabled { "启用" } else { "停用" }, e.message));
+                }
+            }
+        });
+    };
+
     let open_new = move |_| {
         draft.set(Some(Draft {
             original: None,
@@ -447,11 +467,30 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                 <span class="muted small">{kind_hint}</span>
                                             </td>
                                             <td data-label="状态">
-                                                {if g.enabled {
-                                                    view! { <span class="tag ok">"启用"</span> }.into_any()
-                                                } else {
-                                                    view! { <span class="tag muted">"停用"</span> }.into_any()
-                                                }}
+                                                // 这里是**能点的开关**，不是标签：点一下当场启用/停用，
+                                                // 只改这一列（顺序与类型都不动）。
+                                                {
+                                                    let (nm, cur) = (g.name.clone(), g.enabled);
+                                                    let cls = if g.enabled { "switch on" } else { "switch" };
+                                                    let tip = if g.enabled {
+                                                        "点一下停用：客户端再打这个名字会拿到 404"
+                                                    } else {
+                                                        "点一下启用：客户端就能打这个名字了"
+                                                    };
+                                                    let toggle = toggle_group.clone();
+                                                    view! {
+                                                        <button
+                                                            class=cls
+                                                            title=tip
+                                                            on:click=move |_| toggle(nm.clone(), !cur)
+                                                        >
+                                                            <span class="knob"></span>
+                                                            <span class="switch-text">
+                                                                {if cur { "启用" } else { "停用" }}
+                                                            </span>
+                                                        </button>
+                                                    }
+                                                }
                                             </td>
                                             <td data-label="渠道顺序（先试 → 后试）">{channels_txt}</td>
                                             <td data-label="现在走的">

@@ -264,6 +264,28 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         });
     };
 
+    // 一键启用/停用：卡片右上角那个开关点的就是它。只改这一列，密钥/请求头/模型名都不碰。
+    let toggle_enabled = move |l: Channel| {
+        let want = !l.enabled;
+        let (id, name) = (l.id, l.name.clone());
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::set_channel_enabled(id, want).await {
+                Ok(()) => {
+                    ctx.say(if want {
+                        format!("渠道「{name}」已启用")
+                    } else {
+                        format!("渠道「{name}」已停用 —— 不会再往这家上游发请求")
+                    });
+                    reload();
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    ctx.say(format!("{}没成功：{}", if want { "启用" } else { "停用" }, e.message));
+                }
+            }
+        });
+    };
+
     let probe = move |l: Channel| {
         let kind = probe_kind.get_untracked();
         probe_msg.set(Some((l.id, "正在真发一个请求…".into(), true)));
@@ -516,11 +538,23 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         <span class="chan-id">"#" {l.id}</span>
                                         <b class="chan-name">{l.name.clone()}</b>
                                         <span class="spacer"></span>
-                                        {if l.enabled {
-                                            view! { <span class="tag ok">"启用"</span> }.into_any()
-                                        } else {
-                                            view! { <span class="tag muted">"停用"</span> }.into_any()
-                                        }}
+                                        {
+                                            let (cls, tip) = if l.enabled {
+                                                ("switch on", "点一下停用：不会再往这家上游发请求")
+                                            } else {
+                                                ("switch", "点一下启用")
+                                            };
+                                            let tg = toggle_enabled.clone();
+                                            let l2 = l.clone();
+                                            view! {
+                                                <button class=cls title=tip on:click=move |_| tg(l2.clone())>
+                                                    <span class="knob"></span>
+                                                    <span class="switch-text">
+                                                        {if l.enabled { "启用" } else { "停用" }}
+                                                    </span>
+                                                </button>
+                                            }
+                                        }
                                     </div>
                                     <div class="chan-url">
                                         <code class="small">{l.base_url.clone()}</code>

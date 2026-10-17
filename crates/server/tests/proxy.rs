@@ -2037,3 +2037,177 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
     assert_ne!(s, StatusCode::OK);
     assert_eq!(f2.attempts().len(), 4, "等 0 秒的 429 该照旧重试满：{:?}", f2.attempts());
 }
+
+// ───────── 面板上那个「一键启用/停用」开关 ─────────
+
+/// 点一下开关就能停用一组：客户端立刻打不通（404），`/v1/models` 里也没了；
+/// 再点一下又能用。**只改这一列** —— 渠道顺序与类型都不许被顺手改掉。
+#[tokio::test]
+async fn the_panel_switch_disables_and_enables_a_group_in_one_call() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let a = f.add_channel(
+        "开关渠道",
+        &m.base,
+        ChannelSpec { models: vec![("auto".into(), None)], ..Default::default() },
+    );
+    f.set_group("auto", &[a]);
+    // 顺手手动定个类型：开关不该把这列改掉
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+    let (s, _) = put_with_token(&f, "/api/groups/auto/kind", &token, json!({"kind": "chat"})).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // 启用着：能打，清单里有
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert!(v["data"].as_array().unwrap().iter().any(|m| m["id"] == "auto"), "{v}");
+
+    // 点开关 → 停用
+    let before = m.count();
+    let (s, v) = put_with_token(&f, "/api/groups/auto/enabled", &token, json!({"enabled": false})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["enabled"], false);
+
+    // 停用后：客户端拿到 404（不是 500，也不是假装成功），清单里也没了
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "停用的名字要像不存在一样：{body:?}");
+    let (_, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert!(
+        !v["data"].as_array().unwrap().iter().any(|m| m["id"] == "auto"),
+        "停用的组不该出现在客户端清单里：{v}"
+    );
+
+    // 停用期间上游一次都没被打（不是「还发请求只是不回话」）
+    assert_eq!(m.count(), before, "停用后不许再往这家上游发请求");
+
+    // 再点一下 → 启用，立刻恢复
+    let (s, v) = put_with_token(&f, "/api/groups/auto/enabled", &token, json!({"enabled": true})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, _, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "回来了吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "启用后要立刻能打");
+
+    // 只动了 enabled 这一列：类型还是刚才手动定的
+    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
+    let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "auto").unwrap();
+    assert_eq!(g["enabled"], true);
+    assert_eq!(g["kind"], "chat", "开关不许把类型改掉：{g}");
+    assert_eq!(g["kind_source"], "manual");
+
+    // 不存在的组 → 404（不许假装成功）
+    let (s, _) = put_with_token(&f, "/api/groups/没有这个组/enabled", &token, json!({"enabled": false})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// 渠道卡片上那个开关：停用一条渠道之后，流量只走还启用的那条；
+/// 两条都停 → 客户端拿不到 200（而不是悄悄放行）。
+#[tokio::test]
+async fn the_panel_switch_disables_a_channel_and_traffic_moves_off_it() {
+    let f = fixture();
+    f.with_key();
+    let first = start_mock(Reply::Ok).await;
+    let second = start_mock(Reply::Ok).await;
+    let a = f.add_channel(
+        "一号",
+        &first.base,
+        ChannelSpec { models: vec![("auto".into(), None)], ..Default::default() },
+    );
+    let b = f.add_channel(
+        "二号",
+        &second.base,
+        ChannelSpec { models: vec![("auto".into(), None)], ..Default::default() },
+    );
+    f.set_group("auto", &[a, b]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+
+    // 停用一号 → 只剩二号，账上看得见
+    let (s, v) = put_with_token(
+        &f,
+        &format!("/api/channels/{}/enabled", a.0),
+        &token,
+        json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["enabled"], false);
+    let (_, v) = get_with_token(&f, "/api/channels", &token).await;
+    let c = |id: i64| {
+        v["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(c(a.0)["enabled"], false);
+    assert_eq!(c(b.0)["enabled"], true);
+    assert_eq!(c(a.0)["base_url"], first.base, "开关不许把别的字段改掉");
+
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "走哪条"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body:?}");
+    assert_eq!(first.count(), 0, "停用的渠道不该再被叫");
+    assert_eq!(second.count(), 1, "活的渠道该顶上");
+
+    // 两条都停 → 不许假装成功
+    let (s, _) = put_with_token(
+        &f,
+        &format!("/api/channels/{}/enabled", b.0),
+        &token,
+        json!({"enabled": true}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = put_with_token(
+        &f,
+        &format!("/api/channels/{}/enabled", b.0),
+        &token,
+        json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "都没了"}]}),
+    )
+    .await;
+    assert_ne!(s, StatusCode::OK, "两条渠道都停用，不许回 200：{body:?}");
+    assert_eq!(first.count() + second.count(), 1, "都停用后上游一次都不该再被打");
+
+    // 不存在的渠道 → 404
+    let (s, _) = put_with_token(&f, "/api/channels/9999/enabled", &token, json!({"enabled": false})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

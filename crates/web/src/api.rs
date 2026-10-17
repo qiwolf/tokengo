@@ -220,6 +220,25 @@ pub async fn vision_test(id: i64, model: &str, upstream: Option<&str>) -> Result
     .await
 }
 
+/// 一键启用/停用一组（面板状态开关）。
+pub async fn set_group_enabled(name: &str, enabled: bool) -> Result<(), ApiErr> {
+    let path = format!("/api/groups/{}/enabled", urlencode(name));
+    call("PUT", &path, Some(json!({ "enabled": enabled })))
+        .await
+        .map(|_| ())
+}
+
+/// 一键启用/停用一条渠道（面板状态开关）。
+pub async fn set_channel_enabled(id: i64, enabled: bool) -> Result<(), ApiErr> {
+    call(
+        "PUT",
+        &format!("/api/channels/{id}/enabled"),
+        Some(json!({ "enabled": enabled })),
+    )
+    .await
+    .map(|_| ())
+}
+
 /// 给人手动定一组的类型（`auto` = 交还给实测）。
 pub async fn set_group_kind(name: &str, kind: &str) -> Result<(), ApiErr> {
     let body = json!({ "kind": kind });

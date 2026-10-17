@@ -26,12 +26,14 @@ pub fn router() -> Router<SharedState> {
         .route("/auth/password", put(auth_change_password))
         .route("/channels", get(channels_list).post(channels_create))
         .route("/channels/{id}", put(channels_update).delete(channels_delete))
+        .route("/channels/{id}/enabled", put(channels_set_enabled))
         .route("/channels/{id}/probe", post(channels_probe))
         .route("/channels/{id}/models", post(channels_models))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         .route("/groups", get(groups_list).post(groups_upsert))
         .route("/groups/{name}", delete(groups_delete))
         .route("/groups/{name}/kind", put(groups_set_kind))
+        .route("/groups/{name}/enabled", put(groups_set_enabled))
         .route("/routing", get(routing_state))
         .route("/routing/config", put(routing_set_config))
         .route("/routing/{group}/reprobe", post(routing_reprobe))
@@ -867,10 +869,55 @@ async fn groups_set_kind(
     })))
 }
 
+/// 一键启用/停用一条渠道（面板状态开关）。**只改这一列**，密钥/请求头/模型名一个都不碰。
+async fn channels_set_enabled(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    Json(body): Json<EnabledBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    let cid = tokengo_shared::ChannelId(id);
+    if channels::get(&conn, cid)?.is_none() {
+        return Err(ApiError::not_found(format!("渠道 {cid} 不存在")));
+    }
+    channels::set_enabled(&conn, cid, body.enabled)?;
+    let l = channels::get(&conn, cid)?
+        .ok_or_else(|| ApiError::internal("刚改完的渠道读不回来"))?;
+    tracing::info!("渠道 {cid} 被{}", if body.enabled { "启用" } else { "停用" });
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": l.id.0,
+        "enabled": l.enabled,
+    })))
+}
+
+/// 一键启用/停用一组（面板状态开关）。**只改这一列**，渠道顺序/类型/名字一个都不碰。
+async fn groups_set_enabled(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<EnabledBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    if groups::get(&conn, &name)?.is_none() {
+        return Err(ApiError::not_found(format!("模型组 {name} 不存在")));
+    }
+    groups::set_enabled(&conn, &name, body.enabled)?;
+    tracing::info!("模型组 {} 被{}", name, if body.enabled { "启用" } else { "停用" });
+    Ok(Json(serde_json::json!({ "ok": true, "name": name, "enabled": body.enabled })))
+}
+
 #[derive(Deserialize)]
 struct GroupKindBody {
     /// `auto`（交还给实测）/ `chat` / `embeddings` / `rerank`。
     kind: String,
+}
+
+/// 「一键启用/停用」的请求体（渠道与模型组共用）。
+#[derive(Deserialize)]
+struct EnabledBody {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]

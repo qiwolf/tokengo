@@ -61,6 +61,21 @@ pub fn get(conn: &Connection, name: &str) -> Result<Option<GroupRow>> {
     Ok(g)
 }
 
+/// 一键启用/停用这组（面板状态列那个开关点的就是它）。
+///
+/// **只改一列**，不像 `upsert` 那样整组重写 —— 面板上点一下开关不该顺带把渠道顺序
+/// 或类型改掉（那两个各有各的入口）。
+pub fn set_enabled(conn: &Connection, name: &str, enabled: bool) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE model_groups SET enabled = ?2 WHERE name = ?1",
+        params![name.trim(), enabled as i64],
+    )?;
+    if n == 0 {
+        return Err(DbError::Other(format!("模型组 {} 不存在", name.trim())));
+    }
+    Ok(())
+}
+
 /// 人在面板上定这组的类型。`kind = None`（或 Unknown）= 交还给实测（下次真收到请求再学）。
 ///
 /// **手动定过之后实测不许再覆盖** —— 用户拍过的板不被流量改掉。

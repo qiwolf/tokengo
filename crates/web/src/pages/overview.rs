@@ -184,11 +184,11 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     let channel = channel_name(r.channel_id);
                                     view! {
                                         <tr>
-                                            <td class="nowrap small">{fmt::ts_short(r.ts_ms)}</td>
-                                            <td><code class="small">{r.model.clone()}</code></td>
-                                            <td>{channel}</td>
-                                            <td><span class=format!("tag {class}")>{label}</span></td>
-                                            <td class="num">{fmt::dur(r.latency_ms)}</td>
+                                            <td data-label="时间" class="nowrap small">{fmt::ts_short(r.ts_ms)}</td>
+                                            <td data-label="模型"><code class="small">{r.model.clone()}</code></td>
+                                            <td data-label="走的渠道">{channel}</td>
+                                            <td data-label="结果"><span class=format!("tag {class}")>{label}</span></td>
+                                            <td data-label="耗时" class="num">{fmt::dur(r.latency_ms)}</td>
                                         </tr>
                                     }
                                 })
@@ -237,28 +237,28 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     let rate = k.success_rate();
                                     view! {
                                         <tr>
-                                            <td>{k.label.clone()}</td>
-                                            <td class="num">{fmt::num(k.requests)}</td>
-                                            <td class="num">
+                                            <td data-label="类型">{k.label.clone()}</td>
+                                            <td data-label="请求数" class="num">{fmt::num(k.requests)}</td>
+                                            <td data-label="成功率" class="num">
                                                 {if k.requests > 0 {
                                                     format!("{rate:.1}%")
                                                 } else {
                                                     "—".to_string()
                                                 }}
                                             </td>
-                                            <td class="num">{fmt::num(k.ok)}</td>
-                                            <td class="num">
+                                            <td data-label="成功" class="num">{fmt::num(k.ok)}</td>
+                                            <td data-label="失败" class="num">
                                                 {if k.failed > 0 {
                                                     view! { <span class="bad-text">{fmt::num(k.failed)}</span> }.into_any()
                                                 } else {
                                                     view! { <span class="muted">"0"</span> }.into_any()
                                                 }}
                                             </td>
-                                            <td class="num">{fmt::num(k.client_errors)}</td>
-                                            <td class="num">
+                                            <td data-label="客户端错" class="num">{fmt::num(k.client_errors)}</td>
+                                            <td data-label="平均耗时" class="num">
                                                 {if k.ok > 0 { fmt::dur(k.avg_ms) } else { "—".to_string() }}
                                             </td>
-                                            <td class="num">{fmt::num(k.input_tokens + k.output_tokens)}</td>
+                                            <td data-label="Token" class="num">{fmt::num(k.input_tokens + k.output_tokens)}</td>
                                         </tr>
                                     }
                                 })
@@ -304,21 +304,21 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     let name = l.channel_name.clone().unwrap_or_else(|| format!("#{}", l.channel_id));
                                     view! {
                                         <tr>
-                                            <td>{name}</td>
-                                            <td class="num">{fmt::num(l.attempts)}</td>
-                                            <td class="num">{fmt::num(l.successes)}</td>
-                                            <td class="num">
+                                            <td data-label="渠道">{name}</td>
+                                            <td data-label="被叫" class="num">{fmt::num(l.attempts)}</td>
+                                            <td data-label="成功" class="num">{fmt::num(l.successes)}</td>
+                                            <td data-label="成功率" class="num">
                                                 {l.success_rate.map(|r| format!("{r:.1}%")).unwrap_or_else(|| "—".into())}
                                             </td>
-                                            <td class="num">
+                                            <td data-label="渠道故障" class="num">
                                                 {if l.channel_faults > 0 {
                                                     view! { <span class="bad-text">{fmt::num(l.channel_faults)}</span> }.into_any()
                                                 } else {
                                                     view! { <span class="muted">"0"</span> }.into_any()
                                                 }}
                                             </td>
-                                            <td class="num">{fmt::dur(l.avg_ms)}</td>
-                                            <td class="num">{fmt::num(l.input_tokens + l.output_tokens)}</td>
+                                            <td data-label="平均耗时" class="num">{fmt::dur(l.avg_ms)}</td>
+                                            <td data-label="Token" class="num">{fmt::num(l.input_tokens + l.output_tokens)}</td>
                                         </tr>
                                     }
                                 })
@@ -360,18 +360,18 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                 .map(|m| {
                                     view! {
                                         <tr>
-                                            <td><code>{m.model}</code></td>
-                                            <td class="num">{fmt::num(m.requests)}</td>
-                                            <td class="num">{fmt::num(m.ok)}</td>
-                                            <td class="num">
+                                            <td data-label="模型名"><code>{m.model}</code></td>
+                                            <td data-label="请求" class="num">{fmt::num(m.requests)}</td>
+                                            <td data-label="成功" class="num">{fmt::num(m.ok)}</td>
+                                            <td data-label="失败" class="num">
                                                 {if m.failed > 0 {
                                                     view! { <span class="bad-text">{fmt::num(m.failed)}</span> }.into_any()
                                                 } else {
                                                     view! { <span class="muted">"0"</span> }.into_any()
                                                 }}
                                             </td>
-                                            <td class="num">{fmt::num(m.client_errors)}</td>
-                                            <td class="num">{fmt::num(m.input_tokens + m.output_tokens)}</td>
+                                            <td data-label="客户端错" class="num">{fmt::num(m.client_errors)}</td>
+                                            <td data-label="Token" class="num">{fmt::num(m.input_tokens + m.output_tokens)}</td>
                                         </tr>
                                     }
                                 })
@@ -413,20 +413,20 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                 .map(|c| {
                                     view! {
                                         <tr>
-                                            <td>
+                                            <td data-label="来源">
                                                 <code>{c.client_ip.unwrap_or_else(|| "未知".into())}</code>
                                             </td>
-                                            <td class="num">{fmt::num(c.requests)}</td>
-                                            <td class="num">{fmt::num(c.ok)}</td>
-                                            <td class="num">
+                                            <td data-label="请求" class="num">{fmt::num(c.requests)}</td>
+                                            <td data-label="成功" class="num">{fmt::num(c.ok)}</td>
+                                            <td data-label="失败" class="num">
                                                 {if c.failed > 0 {
                                                     view! { <span class="bad-text">{fmt::num(c.failed)}</span> }.into_any()
                                                 } else {
                                                     view! { <span class="muted">"0"</span> }.into_any()
                                                 }}
                                             </td>
-                                            <td class="num">{fmt::num(c.client_errors)}</td>
-                                            <td class="num">{fmt::num(c.input_tokens + c.output_tokens)}</td>
+                                            <td data-label="客户端错" class="num">{fmt::num(c.client_errors)}</td>
+                                            <td data-label="Token" class="num">{fmt::num(c.input_tokens + c.output_tokens)}</td>
                                         </tr>
                                     }
                                 })
@@ -464,8 +464,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                 .map(|e| {
                                     view! {
                                         <tr>
-                                            <td class="small">{e.error}</td>
-                                            <td class="num">{fmt::num(e.count)}</td>
+                                            <td data-label="原因" class="small">{e.error}</td>
+                                            <td data-label="次数" class="num">{fmt::num(e.count)}</td>
                                         </tr>
                                     }
                                 })

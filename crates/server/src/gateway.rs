@@ -118,12 +118,19 @@ impl Plan {
 fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
     let conn = state.conn();
     let group_name = model;
-    let channels_all = groups::resolve_channels(&conn, group_name)?;
-    if channels_all.is_empty() && groups::get(&conn, group_name)?.is_none() {
+    // 名字是否存在、有没有被停用，**先看组这一行**：停用的组对外要像不存在一样。
+    // （面板上那个开关点完，客户端立刻打不通 —— 靠的就是这里。）
+    let Some(g) = groups::get(&conn, group_name)? else {
         return Err(ApiError::not_found(format!(
             "模型 {model} 没有配置：面板里给它建一个模型组，或者打 auto"
         )));
+    };
+    if !g.enabled {
+        return Err(ApiError::not_found(format!(
+            "模型 {model} 已经在面板里停用了：要用就把它打开"
+        )));
     }
+    let channels_all = groups::resolve_channels(&conn, group_name)?;
     let mut routable = Vec::new();
     let mut secrets = HashMap::new();
     for channel in channels_all {
