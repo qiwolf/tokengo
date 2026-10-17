@@ -134,8 +134,8 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
                         let v = rows.get();
                         if v.is_empty() {
                             return view! {
-                                <tr>
-                                    <td colspan="8" class="muted">"还没有模型组"</td>
+                                <tr class="empty-row">
+                                    <td colspan="8" class="muted empty-cell">"还没有模型组"</td>
                                 </tr>
                             }.into_any();
                         }
@@ -150,25 +150,25 @@ pub fn Routing(ctx: Ctx) -> impl IntoView {
                                 let last = g.last_switch_at_ms.map(|t| fmt::ago(g.now_ms, t));
                                 view! {
                                     <tr>
-                                        <td>
+                                        <td data-label="模型组">
                                             <b>{name.clone()}</b>
                                             {(!g.enabled).then(|| view! { <span class="tag muted">"停用"</span> })}
                                         </td>
-                                        <td>{primary}</td>
-                                        <td>
+                                        <td data-label="首选渠道">{primary}</td>
+                                        <td data-label="当前在用">
                                             {active}
                                             {switched.then(|| view! { <span class="tag warn">"已切换"</span> })}
                                         </td>
-                                        <td>
+                                        <td data-label="状态">
                                             {if switched {
                                                 view! { <span class="tag warn">"没走首选"</span> }.into_any()
                                             } else {
                                                 view! { <span class="tag ok">"走首选"</span> }.into_any()
                                             }}
                                         </td>
-                                        <td class="num">{g.switch_count}</td>
-                                        <td>{last.unwrap_or_else(|| "—".into())}</td>
-                                        <td>{next.unwrap_or_else(|| "—".into())}</td>
+                                        <td class="num" data-label="切换次数">{g.switch_count}</td>
+                                        <td data-label="上次切换">{last.unwrap_or_else(|| "—".into())}</td>
+                                        <td data-label="下次回切">{next.unwrap_or_else(|| "—".into())}</td>
                                         <td class="actions">
                                             <button class="ghost" on:click=move |_| do_reprobe(g2.group.clone())>
                                                 "现在试回切"

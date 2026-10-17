@@ -128,8 +128,8 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                         let v = rows.get();
                         if v.is_empty() {
                             return view! {
-                                <tr>
-                                    <td colspan="9" class="muted">
+                                <tr class="empty-row">
+                                    <td colspan="9" class="muted empty-cell">
                                         "还没有请求进来。客户端打 /v1/chat/completions 或 /v1/embeddings 就会出现在这里。"
                                     </td>
                                 </tr>
@@ -141,24 +141,25 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                                 let channel = channel_name(r.channel_id);
                                 let endpoint = crate::model::endpoint_label(&r.endpoint).to_string();
                                 view! {
+                                    // data-label 是手机上用的：那一档表格变成卡片，标签从这里取
                                     <tr>
-                                        <td class="nowrap small">{fmt::ts_short(r.ts_ms)}</td>
-                                        <td>{endpoint}</td>
-                                        <td>
+                                        <td class="nowrap small" data-label="时间">{fmt::ts_short(r.ts_ms)}</td>
+                                        <td data-label="端点">{endpoint}</td>
+                                        <td data-label="模型">
                                             <code class="small">{r.model.clone()}</code>
                                         </td>
-                                        <td>{channel}</td>
-                                        <td>
+                                        <td data-label="走的渠道">{channel}</td>
+                                        <td data-label="结果">
                                             <span class=format!("tag {class}")>{label}</span>
                                         </td>
-                                        <td class="num">
+                                        <td class="num" data-label="HTTP">
                                             {r.http_status.map(|c| c.to_string()).unwrap_or_else(|| "—".into())}
                                         </td>
-                                        <td class="num">{fmt::dur(r.latency_ms)}</td>
-                                        <td class="num">
+                                        <td class="num" data-label="耗时">{fmt::dur(r.latency_ms)}</td>
+                                        <td class="num" data-label="入/出 token">
                                             {format!("{} / {}", fmt::num(r.input_tokens), fmt::num(r.output_tokens))}
                                         </td>
-                                        <td class="err-cell small">
+                                        <td class="err-cell small" data-label="错误">
                                             {r.error.clone().unwrap_or_default()}
                                         </td>
                                     </tr>

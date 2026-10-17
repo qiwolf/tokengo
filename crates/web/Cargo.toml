@@ -37,4 +37,5 @@ web-sys = { version = "0.3", features = [
     "HtmlSelectElement",
     "Storage",
     "Location",
+    "MediaQueryList",  # 首次访问时读系统的深色/浅色偏好
 ] }

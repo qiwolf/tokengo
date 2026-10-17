@@ -26,7 +26,78 @@ use wasm_bindgen::JsCast;
 /// 面板启动入口（`main.rs` 调）。
 pub fn start() {
     console_error_panic_hook::set_once();
+    // 主题先在 WASM 之前定好（index.html 里那段内联脚本也做同一件事，负责「不闪」），
+    // 这里再把同一个结果读进 Rust 侧的状态。
+    apply_theme(init_theme());
     mount_to_body(App);
+}
+
+/// 面板主题。深色是默认，浅色挂在 `html[data-theme="light"]` 上（style.css 里两套变量）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Theme {
+    Dark,
+    Light,
+}
+
+impl Theme {
+    pub fn attr(self) -> &'static str {
+        match self {
+            Theme::Dark => "dark",
+            Theme::Light => "light",
+        }
+    }
+
+    pub fn is_light(self) -> bool {
+        matches!(self, Theme::Light)
+    }
+}
+
+/// localStorage 里存主题的键。
+/// **`index.html` 里那段内联脚本读的是同一个键** —— 改这里就得两边一起改。
+pub const THEME_KEY: &str = "tokengo.theme";
+
+/// 启动时定主题：浏览器里记着就用记着的，没记过就跟随系统设置。
+fn init_theme() -> Theme {
+    let saved = web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+        .and_then(|s| s.get_item(THEME_KEY).ok())
+        .flatten();
+    match saved.as_deref() {
+        Some("light") => Theme::Light,
+        Some("dark") => Theme::Dark,
+        // 跟随系统：读一次浏览器的颜色偏好，不做实时监听（用户手动切过就以手动为准）
+        _ => {
+            let light = web_sys::window()
+                .and_then(|w| w.match_media("(prefers-color-scheme: light)").ok())
+                .flatten()
+                .map(|m| m.matches())
+                .unwrap_or(false);
+            if light {
+                Theme::Light
+            } else {
+                Theme::Dark
+            }
+        }
+    }
+}
+
+fn apply_theme(t: Theme) {
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+    {
+        let _ = el.set_attribute("data-theme", t.attr());
+    }
+}
+
+fn remember_theme(t: Theme) {
+    if let Some(s) = web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+    {
+        let _ = s.set_item(THEME_KEY, t.attr());
+    }
 }
 
 /// 当前毫秒时间。面板只拿它算"几分钟前"，不做业务判断（业务判断全在服务端）。
@@ -76,6 +147,10 @@ pub struct Ctx {
     pub page: RwSignal<Page>,
     /// 一句话提示，显示在顶栏
     pub toast: RwSignal<Option<String>>,
+    /// 手机上的抽屉导航开没开（桌面端 CSS 里侧栏是常驻的，忽略这个值）
+    pub nav_open: RwSignal<bool>,
+    /// 当前主题（日间 / 夜间）
+    pub theme: RwSignal<Theme>,
 }
 
 impl Ctx {
@@ -96,9 +171,23 @@ impl Ctx {
     pub fn go(&self, p: Page) {
         self.page.set(p);
         self.toast.set(None);
+        // 手机上点完导航就把抽屉收起来（桌面端侧栏常驻，这个值没人看）
+        self.nav_open.set(false);
         if let Some(w) = web_sys::window() {
             let _ = w.location().set_hash(p.slug());
         }
+    }
+
+    /// 日间 / 夜间切换：改 `html[data-theme]`，并记住这次选择。
+    pub fn toggle_theme(&self) {
+        let next = if self.theme.get_untracked().is_light() {
+            Theme::Dark
+        } else {
+            Theme::Light
+        };
+        self.theme.set(next);
+        apply_theme(next);
+        remember_theme(next);
     }
 
     /// 把错误显示出来（401 顺便退回登录）。
@@ -113,7 +202,16 @@ pub fn App() -> impl IntoView {
     let phase = RwSignal::new(Phase::Loading);
     let page = RwSignal::new(Page::from_hash());
     let toast = RwSignal::new(None::<String>);
-    let ctx = Ctx { phase, page, toast };
+    let nav_open = RwSignal::new(false);
+    // init_theme() 在 start() 里已经算过一次并落到 DOM 上了，这里只是把同一份状态拿进信号
+    let theme = RwSignal::new(init_theme());
+    let ctx = Ctx {
+        phase,
+        page,
+        toast,
+        nav_open,
+        theme,
+    };
 
     // 启动：问服务端要初始化状态；顺手用现有 token 试一下，能用就直接进
     wasm_bindgen_futures::spawn_local(async move {
@@ -302,7 +400,14 @@ fn Shell(ctx: Ctx) -> impl IntoView {
     };
 
     view! {
-        <div class="shell">
+        // 手机上侧栏是抽屉：加了 nav-open 就滑出来，点遮罩或点任意导航项收起。
+        // 桌面端 CSS 里侧栏常驻，这个 class 不起作用。
+        <div class=move || if ctx.nav_open.get() { "shell nav-open" } else { "shell" }>
+            <button
+                class="nav-scrim"
+                title="收起菜单"
+                on:click=move |_| ctx.nav_open.set(false)
+            ></button>
             <aside class="sidebar">
                 <div class="brand">
                     <span class="brand-name">{tokengo_shared::BRAND}</span>
@@ -332,11 +437,28 @@ fn Shell(ctx: Ctx) -> impl IntoView {
             </aside>
             <main class="main">
                 <header class="topbar">
+                    <button
+                        class="ghost nav-toggle"
+                        title="菜单"
+                        on:click=move |_| ctx.nav_open.update(|v| *v = !*v)
+                    >
+                        "☰"
+                    </button>
                     <h1>{move || ctx.page.get().title()}</h1>
                     <div class="topbar-right">
                         {move || ctx.toast.get().map(|t| view! { <span class="toast">{t}</span> })}
                         <button
+                            class="ghost theme-toggle"
+                            title=move || {
+                                if ctx.theme.get().is_light() { "切到夜间" } else { "切到日间" }
+                            }
+                            on:click=move |_| ctx.toggle_theme()
+                        >
+                            {move || if ctx.theme.get().is_light() { "☾" } else { "☀" }}
+                        </button>
+                        <button
                             class="ghost"
+                            title="重新载入面板"
                             on:click=move |_| {
                                 if let Some(w) = web_sys::window() {
                                     let _ = w.location().reload();

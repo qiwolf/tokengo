@@ -145,8 +145,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         let rows = stats.get().stats.by_channel;
                         if rows.is_empty() {
                             return view! {
-                                <tr>
-                                    <td colspan="7" class="muted">"这个窗口里还没有账（没流量）"</td>
+                                <tr class="empty-row">
+                                    <td colspan="7" class="muted empty-cell">"这个窗口里还没有账（没流量）"</td>
                                 </tr>
                             }.into_any();
                         }
@@ -157,25 +157,26 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     .clone()
                                     .unwrap_or_else(|| format!("#{}", l.channel_id));
                                 view! {
+                                    // data-label：手机上表格变卡片时当左侧小标签用
                                     <tr>
-                                        <td>{name}</td>
-                                        <td class="num">{fmt::num(l.attempts)}</td>
-                                        <td class="num">{fmt::num(l.successes)}</td>
-                                        <td class="num">
+                                        <td data-label="渠道">{name}</td>
+                                        <td class="num" data-label="被叫">{fmt::num(l.attempts)}</td>
+                                        <td class="num" data-label="成功">{fmt::num(l.successes)}</td>
+                                        <td class="num" data-label="成功率">
                                             {l
                                                 .success_rate
                                                 .map(|r| format!("{r:.1}%"))
                                                 .unwrap_or_else(|| "—".into())}
                                         </td>
-                                        <td class="num">
+                                        <td class="num" data-label="渠道故障">
                                             {if l.channel_faults > 0 {
                                                 view! { <span class="bad-text">{fmt::num(l.channel_faults)}</span> }.into_any()
                                             } else {
                                                 view! { <span class="muted">"0"</span> }.into_any()
                                             }}
                                         </td>
-                                        <td class="num">{fmt::dur(l.avg_ms)}</td>
-                                        <td class="num">
+                                        <td class="num" data-label="平均耗时">{fmt::dur(l.avg_ms)}</td>
+                                        <td class="num" data-label="Token">
                                             {fmt::num(l.input_tokens + l.output_tokens)}
                                         </td>
                                     </tr>
