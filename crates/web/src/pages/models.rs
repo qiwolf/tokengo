@@ -441,6 +441,15 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                 .into_any()
             }}
 
+            <section class="card">
+                <header class="card-head">
+                    <h2>"模型名 → 渠道顺序"</h2>
+                    <p class="muted small">
+                        "客户端填的名字都列在这里。收到请求就按「渠道顺序」从第一条往下试，第一条不通换下一条；"
+                        "全都不通就等「下次回头试首选」到点再试一次首选。"
+                    </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
@@ -602,18 +611,24 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
             // 编排面板（草稿状态，保存前只存在浏览器里）
                     {move || match draft.get() {
                         None => view! {
-                            <p class="muted">"左边点「编排」改一个组的优先级，或点「新建模型组」。"</p>
+                            <p class="muted small">
+                                "点表格里的「编排」改一个模型名的渠道顺序，或点右上角「新建模型」加一个 —— "
+                                "客户端打的名字必须先在这里有，否则回 404。"
+                            </p>
                         }.into_any(),
                         Some(d) => {
                             let is_new = d.original.is_none();
                             let d2 = d.clone();
                             let d3 = d.clone();
                             view! {
-                                <div class="panel">
+                                // .card 是为了给它一张卡的外壳（20px 圆角 + 发丝边）
+                                <div class="panel card">
                                     <div class="form-grid">
                                         <label>"组名"</label>
                                         <div>

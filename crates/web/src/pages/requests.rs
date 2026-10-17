@@ -79,29 +79,33 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                     {move || if busy.get() { "刷新中…" } else { "刷新" }}
                 </button>
                 <span class="spacer"></span>
-                <span class="muted small">"显示最近"</span>
-                {[50u32, 100, 500]
-                    .into_iter()
-                    .map(|n| view! {
-                        <button
-                            class="chip"
-                            class:active=move || limit.get() == n
-                            on:click=move |_| {
-                                limit.set(n);
-                                reload();
-                            }
-                        >
-                            {format!("{n} 条")}
-                        </button>
-                    })
-                    .collect_view()}
-                <button
-                    class="chip"
-                    class:active=move || auto.get()
-                    on:click=move |_| toggle_auto(!auto.get_untracked())
-                >
-                    {move || if auto.get() { "自动刷新：开（5 秒）" } else { "自动刷新：关" }}
-                </button>
+                <span class="seg">
+                    <span class="seg-label">"显示最近"</span>
+                    {[50u32, 100, 500]
+                        .into_iter()
+                        .map(|n| view! {
+                            <button
+                                class="chip"
+                                class:active=move || limit.get() == n
+                                on:click=move |_| {
+                                    limit.set(n);
+                                    reload();
+                                }
+                            >
+                                {format!("{n} 条")}
+                            </button>
+                        })
+                        .collect_view()}
+                </span>
+                <span class="seg">
+                    <button
+                        class="chip"
+                        class:active=move || auto.get()
+                        on:click=move |_| toggle_auto(!auto.get_untracked())
+                    >
+                        {move || if auto.get() { "自动刷新：开（5 秒）" } else { "自动刷新：关" }}
+                    </button>
+                </span>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
@@ -114,6 +118,14 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                 }}
             </p>
 
+            <section class="card">
+                <header class="card-head">
+                    <h2>"最近请求"</h2>
+                    <p class="muted small">
+                        "最新的在前。点「100 条」可以多看几条；开「自动刷新」每 5 秒拉一次（页面关掉就停）。"
+                    </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
             <table class="grid">
                 <thead>
@@ -182,6 +194,8 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                 </tbody>
             </table>
             </div>
+                </div>
+            </section>
         </div>
     }
 }

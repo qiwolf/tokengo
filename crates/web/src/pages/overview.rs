@@ -81,8 +81,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             </PageHead>
 
             <div class="toolbar">
-                <span class="muted small">"时间窗口"</span>
-                {[1i64, 24, 72, 168]
+                <span class="seg">
+                    <span class="seg-label">"时间窗口"</span>
+                    {[1i64, 24, 72, 168]
                     .into_iter()
                     .map(|h| {
                         let label = match h {
@@ -102,8 +103,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         }
                     })
                     .collect_view()}
+                </span>
                 <span class="spacer"></span>
-                <span class="chip">"在线会话 " <b>{move || sessions.get()}</b></span>
+                <span class="muted small">"在线会话 " <b>{move || sessions.get()}</b></span>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
@@ -152,8 +154,12 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </div>
             </div>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"最近调用"</h2>
             <p class="muted small">"最新进来的请求 —— 哪个模型、走了哪条渠道、成没成、花了多久。"</p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
@@ -198,13 +204,19 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"按类型"</h2>
             <p class="muted small">
                 "对话 / 向量 / 重排分开看 —— 三条路各有各的用法，混在一起看不出哪条不稳。"
                 "归类看的是这条请求当时实际打的端点，不是模型组现在的类型（组类型随时能改，"
                 "改了不该让历史账跟着变）。耗时只算成功的那些。"
             </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
@@ -268,11 +280,17 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"各条渠道的账"</h2>
             <p class="muted small">
                 "分母是「被叫了几次」，不是「成功了几次」—— 判断一条渠道值不值得留就看这个。"
             </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
@@ -328,17 +346,23 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"按模型名"</h2>
             <p class="muted small">
                 "看的是别人请求了哪个名字 —— 哪个名字最常被用、哪个在报错，一眼能看出来。"
             </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
                         <tr>
                             <th>"模型名"</th>
-                            <th class="num">"请求"</th>
+                            <th class="num">"请求数"</th>
                             <th class="num">"成功"</th>
                             <th class="num">"失败"</th>
                             <th class="num">"客户端错"</th>
@@ -381,17 +405,23 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"按客户端"</h2>
             <p class="muted small">
                 "谁在调这个网关、各自多少请求。没取到来源地址的单独占一行（显示「未知」），不藏起来。"
             </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
                         <tr>
                             <th>"来源"</th>
-                            <th class="num">"请求"</th>
+                            <th class="num">"请求数"</th>
                             <th class="num">"成功"</th>
                             <th class="num">"失败"</th>
                             <th class="num">"客户端错"</th>
@@ -436,11 +466,17 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"错误分布"</h2>
             <p class="muted small">
                 "失败和客户端错各自是什么原因、各多少次。没记原因的也占一行，免得「一堆失败却看不到原因」。"
             </p>
+                </header>
+                <div class="card-body flush">
             <div class="table-wrap">
                 <table class="grid">
                     <thead>
@@ -475,7 +511,11 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </tbody>
                 </table>
             </div>
+                </div>
+            </section>
 
+            <section class="card">
+                <header class="card-head">
             <h2>"能被调用的模型名"</h2>
             <p class="muted small">
                 "客户端填这些名字才打得通（和 "
@@ -486,6 +526,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 "的名字后面有能看图的渠道 —— 带图请求要打这类名字，"
                 "打到没标的会回 422（说清楚，不悄悄丢图）。"
             </p>
+                </header>
+                <div class="card-body">
             <div class="chips">
                 {move || {
                     let v = servable.get();
@@ -512,6 +554,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         .into_any()
                 }}
             </div>
+                </div>
+            </section>
         </div>
     }
 }
