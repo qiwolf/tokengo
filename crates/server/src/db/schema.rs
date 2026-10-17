@@ -189,4 +189,20 @@ ALTER TABLE channel_models ADD COLUMN drop_fields TEXT NOT NULL DEFAULT '';
 ALTER TABLE channels ADD COLUMN unwrap_envelope INTEGER NOT NULL DEFAULT 0;
 "#,
     ),
+    (
+        5,
+        r#"
+-- 模型组的「类型」：对话 / 向量 / 重排（2026-10-17，v0.3.3）。
+--
+-- 为什么要有它：同一个网关后面挂着三种用途完全不同的模型 —— 向量（现网 86% 的量）、
+-- 对话、重排。面板上不分类型就得靠人记名字；探活也必须知道该打哪个端点
+-- （拿对话请求去探向量组必然 400）。所以类型是**模型组自己的属性**，写进库。
+--
+-- 怎么定下来的：默认空 = 「还没定」，第一次真收到请求时按走的端点自动记上
+-- （kind_source = 'auto'）；人在面板上选过一次之后 kind_source = 'manual'，
+-- **再也不被实测覆盖** —— 用户拍过的板不许被流量改掉。
+ALTER TABLE model_groups ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE model_groups ADD COLUMN kind_source TEXT NOT NULL DEFAULT '';
+"#,
+    ),
 ];

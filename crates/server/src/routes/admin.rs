@@ -31,6 +31,7 @@ pub fn router() -> Router<SharedState> {
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         .route("/groups", get(groups_list).post(groups_upsert))
         .route("/groups/{name}", delete(groups_delete))
+        .route("/groups/{name}/kind", put(groups_set_kind))
         .route("/routing", get(routing_state))
         .route("/routing/config", put(routing_set_config))
         .route("/routing/{group}/reprobe", post(routing_reprobe))
@@ -805,13 +806,71 @@ async fn groups_list(
             // 这一组现在有没有「能看图」的可用渠道 —— 组层面有个明确说法，
             // 不用让面板自己去把每条渠道的模型名对着组名翻一遍。
             "can_see": groups::group_can_see(&conn, &g.name).unwrap_or(false),
+            // 哪种模型（对话/向量/重排）+ 谁定的（还没定 auto manual）——
+            // 面板按它分区显示，也让人能一眼看出「这条是实测认出来的还是我自己选的」。
+            "kind": g.kind.as_str(),
+            "kind_label": g.kind.label(),
+            "kind_source": g.kind_source.as_str(),
         })).collect::<Vec<_>>(),
         // 只列真实能用的模型名，给 /v1/models 和面板用同一份判断
         "servable": groups::list_servable(&conn)?
             .into_iter()
-            .map(|s| serde_json::json!({"name": s.name, "vision": s.vision}))
+            .map(|s| serde_json::json!({
+                "name": s.name,
+                "vision": s.vision,
+                "kind": s.kind.as_str(),
+                "kind_label": s.kind.label(),
+                "kind_source": s.kind_source.as_str(),
+            }))
             .collect::<Vec<_>>(),
     })))
+}
+
+/// 给人手动定这组的类型（对话 / 向量 / 重排），或交还给实测（`kind: "auto"`）。
+///
+/// 手动定过之后**实测不许再覆盖** —— 用户拍过的板不被流量改掉。
+async fn groups_set_kind(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(body): Json<GroupKindBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let kind = match body.kind.trim().to_ascii_lowercase().as_str() {
+        // 「自动」= 清空，下次真收到请求再学
+        "auto" | "" => tokengo_shared::ModelKind::Unknown,
+        other => {
+            let k = tokengo_shared::ModelKind::parse(other);
+            if !k.is_set() {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "invalid_kind",
+                    format!("不认识这个类型：{other}（只能是 auto / chat / embeddings / rerank）"),
+                ));
+            }
+            k
+        }
+    };
+    let conn = state.conn();
+    // 先确认这组真在（set_kind 只改一行，不区分"改了几行"和"组不存在"）
+    if groups::get(&conn, &name)?.is_none() {
+        return Err(ApiError::not_found(format!("模型组 {name} 不存在")));
+    }
+    groups::set_kind(&conn, &name, kind)?;
+    let g = groups::get(&conn, &name)?
+        .ok_or_else(|| ApiError::not_found(format!("模型组 {name} 不存在")))?;
+    tracing::info!("模型组 {} 的类型被改成 {}", name, g.kind.label());
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "kind": g.kind.as_str(),
+        "kind_label": g.kind.label(),
+        "kind_source": g.kind_source.as_str(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct GroupKindBody {
+    /// `auto`（交还给实测）/ `chat` / `embeddings` / `rerank`。
+    kind: String,
 }
 
 #[derive(Deserialize)]

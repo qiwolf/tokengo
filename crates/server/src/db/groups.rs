@@ -2,7 +2,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use tokengo_shared::{Channel, ChannelId, ModelGroup};
+use tokengo_shared::{Channel, ChannelId, KindSource, ModelGroup, ModelKind};
 
 use super::{DbError, Result};
 
@@ -13,6 +13,10 @@ pub struct GroupRow {
     pub enabled: bool,
     /// 已按 ordinal 排好序
     pub channels: Vec<ChannelId>,
+    /// 这组是哪种模型（对话 / 向量 / 重排 / 还没定）。
+    pub kind: ModelKind,
+    /// 类型是谁定的：实测学的还是人手动选的。
+    pub kind_source: KindSource,
 }
 
 fn row_to_group(r: &Row<'_>) -> rusqlite::Result<GroupRow> {
@@ -20,6 +24,8 @@ fn row_to_group(r: &Row<'_>) -> rusqlite::Result<GroupRow> {
         name: r.get(0)?,
         enabled: r.get::<_, i64>(1)? != 0,
         channels: Vec::new(),
+        kind: ModelKind::parse(&r.get::<_, String>(2)?),
+        kind_source: KindSource::parse(&r.get::<_, String>(3)?),
     })
 }
 
@@ -34,8 +40,9 @@ fn load_channels(conn: &Connection, g: &mut GroupRow) -> Result<()> {
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<GroupRow>> {
-    let mut stmt =
-        conn.prepare("SELECT name, enabled FROM model_groups ORDER BY name")?;
+    let mut stmt = conn.prepare(
+        "SELECT name, enabled, kind, kind_source FROM model_groups ORDER BY name",
+    )?;
     let mut rows: Vec<GroupRow> = stmt.query_map([], row_to_group)?.collect::<rusqlite::Result<_>>()?;
     for g in &mut rows {
         load_channels(conn, g)?;
@@ -44,12 +51,48 @@ pub fn list(conn: &Connection) -> Result<Vec<GroupRow>> {
 }
 
 pub fn get(conn: &Connection, name: &str) -> Result<Option<GroupRow>> {
-    let mut stmt = conn.prepare("SELECT name, enabled FROM model_groups WHERE name = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT name, enabled, kind, kind_source FROM model_groups WHERE name = ?1",
+    )?;
     let mut g: Option<GroupRow> = stmt.query_row([name], row_to_group).optional()?;
     if let Some(g) = &mut g {
         load_channels(conn, g)?;
     }
     Ok(g)
+}
+
+/// 人在面板上定这组的类型。`kind = None`（或 Unknown）= 交还给实测（下次真收到请求再学）。
+///
+/// **手动定过之后实测不许再覆盖** —— 用户拍过的板不被流量改掉。
+pub fn set_kind(conn: &Connection, name: &str, kind: ModelKind) -> Result<()> {
+    let (k, src) = if kind.is_set() {
+        (kind.as_str(), KindSource::Manual.as_str())
+    } else {
+        ("", KindSource::Unknown.as_str())
+    };
+    let n = conn.execute(
+        "UPDATE model_groups SET kind = ?2, kind_source = ?3 WHERE name = ?1",
+        params![name.trim(), k, src],
+    )?;
+    if n == 0 {
+        return Err(DbError::Other(format!("模型组 {} 不存在", name.trim())));
+    }
+    Ok(())
+}
+
+/// 实测学到的类型：**只在「还没定」时写**，已经有结论（不管谁定的）就一个字都不动。
+///
+/// 返回 true 表示这次真写进去了（调用方据此决定要不要刷内存里的那份）。
+pub fn learn_kind(conn: &Connection, name: &str, kind: ModelKind) -> Result<bool> {
+    if !kind.is_set() {
+        return Ok(false);
+    }
+    let n = conn.execute(
+        "UPDATE model_groups SET kind = ?2, kind_source = ?3
+          WHERE name = ?1 AND kind = ''",
+        params![name.trim(), kind.as_str(), KindSource::Auto.as_str()],
+    )?;
+    Ok(n > 0)
 }
 
 /// 新建或覆盖一组。`channels` 的顺序就是优先级顺序。
@@ -161,6 +204,10 @@ pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Chann
 pub struct Servable {
     pub name: String,
     pub vision: bool,
+    /// 这组是哪种模型 —— `/v1/models` 与面板都靠它区分「这是向量模型还是对话模型」。
+    pub kind: ModelKind,
+    /// 类型是谁定的（还没定 / 实测学的 / 人选的）。
+    pub kind_source: KindSource,
 }
 
 /// 对外可见的模型名清单（供 `/v1/models`）。只列真实配好的组，且组里至少有一条可用渠道。
@@ -173,8 +220,14 @@ pub fn list_servable(conn: &Connection) -> Result<Vec<Servable>> {
         let channels = resolve_channels(conn, &g.name)?;
         if channels.iter().any(|l| l.routable()) {
             out.push(Servable {
+                // 只有对话模型才谈「能不能看图」：向量/重排模型压根不收图，
+                // 给它们挂个「不收图」的标签只会让人以为配错了。
+                vision: g.kind != ModelKind::Embeddings
+                    && g.kind != ModelKind::Rerank
+                    && group_can_see(conn, &g.name)?,
                 name: g.name.clone(),
-                vision: group_can_see(conn, &g.name)?,
+                kind: g.kind,
+                kind_source: g.kind_source,
             });
         }
     }
@@ -395,7 +448,9 @@ mod tests {
             list_servable(&conn).unwrap(),
             vec![Servable {
                 name: "auto".into(),
-                vision: false
+                vision: false,
+                kind: ModelKind::Unknown,
+                kind_source: KindSource::Unknown,
             }]
         );
 
@@ -446,5 +501,81 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM model_groups", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 2);
+    }
+
+    /// 类型：先空着 → 实测学到一次 → **之后再也不被覆盖**（不管来的是实测还是别人）。
+    #[test]
+    fn the_kind_is_learned_once_and_then_never_overwritten_by_traffic() {
+        let conn = open_in_memory().unwrap();
+        let a = channel(&conn, "a");
+        upsert(&conn, "BAAI/bge-m3", true, &[a]).unwrap();
+
+        let g = get(&conn, "BAAI/bge-m3").unwrap().unwrap();
+        assert_eq!(g.kind, ModelKind::Unknown, "新建的组一律「还没定」，不许按名字猜");
+        assert_eq!(g.kind_source, KindSource::Unknown);
+
+        // 第一次真有向量请求进来 → 学上了
+        assert!(learn_kind(&conn, "BAAI/bge-m3", ModelKind::Embeddings).unwrap());
+        let g = get(&conn, "BAAI/bge-m3").unwrap().unwrap();
+        assert_eq!(g.kind, ModelKind::Embeddings);
+        assert_eq!(g.kind_source, KindSource::Auto);
+
+        // 再来一次实测（这次说是对话）→ **一个字都不许改**，也不该报告「改了」
+        assert!(!learn_kind(&conn, "BAAI/bge-m3", ModelKind::Chat).unwrap());
+        let g = get(&conn, "BAAI/bge-m3").unwrap().unwrap();
+        assert_eq!(g.kind, ModelKind::Embeddings, "已经定下来的类型不许被流量改掉");
+        assert_eq!(g.kind_source, KindSource::Auto, "来源也不许被改");
+
+        // 人手动定 → 来源变 manual，而且实测更动不了它
+        set_kind(&conn, "BAAI/bge-m3", ModelKind::Chat).unwrap();
+        let g = get(&conn, "BAAI/bge-m3").unwrap().unwrap();
+        assert_eq!(g.kind, ModelKind::Chat);
+        assert_eq!(g.kind_source, KindSource::Manual);
+        assert!(!learn_kind(&conn, "BAAI/bge-m3", ModelKind::Embeddings).unwrap());
+        assert_eq!(get(&conn, "BAAI/bge-m3").unwrap().unwrap().kind, ModelKind::Chat);
+
+        // 交还给实测（auto）→ 清空，下次流量再学
+        set_kind(&conn, "BAAI/bge-m3", ModelKind::Unknown).unwrap();
+        let g = get(&conn, "BAAI/bge-m3").unwrap().unwrap();
+        assert_eq!(g.kind, ModelKind::Unknown);
+        assert!(learn_kind(&conn, "BAAI/bge-m3", ModelKind::Embeddings).unwrap());
+    }
+
+    /// 反证：向量组 / 重排组**不该**被贴上「能看图」的标签（它们压根不收图）。
+    #[test]
+    fn vector_and_rerank_groups_are_never_marked_as_seeing_images() {
+        let conn = open_in_memory().unwrap();
+        let a = channel(&conn, "既标了能看图又能发向量");
+        channels::set_models(
+            &conn,
+            a,
+            &[
+                ModelMapping::new("BAAI/bge-m3", None, true),
+                ModelMapping::new("auto", None, true),
+            ],
+        )
+        .unwrap();
+        upsert(&conn, "BAAI/bge-m3", true, &[a]).unwrap();
+        upsert(&conn, "auto", true, &[a]).unwrap();
+        set_kind(&conn, "BAAI/bge-m3", ModelKind::Embeddings).unwrap();
+
+        let m = list_servable(&conn).unwrap();
+        let vec = m.iter().find(|s| s.name == "BAAI/bge-m3").unwrap();
+        let chat = m.iter().find(|s| s.name == "auto").unwrap();
+        assert!(!vec.vision, "向量模型不看图，不许挂「能看图」");
+        assert_eq!(vec.kind, ModelKind::Embeddings);
+        assert!(chat.vision, "对话组照旧按渠道上的标记说能不能看图");
+
+        // 还没定的组按「可能能看图」处理（保持老行为，不因为没类型就丢掉能力）
+        channels::set_models(
+            &conn,
+            a,
+            &[ModelMapping::new("新的", None, true)],
+        )
+        .unwrap();
+        upsert(&conn, "新的", true, &[a]).unwrap();
+        let new = list_servable(&conn).unwrap().into_iter().find(|s| s.name == "新的").unwrap();
+        assert_eq!(new.kind, ModelKind::Unknown);
+        assert!(new.vision, "还没定的组不该被当成向量组、把能看图的能力丢掉");
     }
 }

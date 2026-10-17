@@ -84,15 +84,31 @@ pub struct Group {
     /// 这一组现在有没有「能看图」的可用渠道。带图的请求能不能走这条组就看它。
     #[serde(default)]
     pub can_see: bool,
+    /// 哪种模型：`""`（还没定）/ `chat` / `embeddings` / `rerank`。
+    #[serde(default)]
+    pub kind: String,
+    /// 给人看的中文名（服务端给的，面板不用自己再维护一份对照表）。
+    #[serde(default)]
+    pub kind_label: String,
+    /// 谁定的：`""` / `auto`（实测学的）/ `manual`（人选的）。
+    #[serde(default)]
+    pub kind_source: String,
 }
 
-/// 一个真能被调用的模型名 + 它能不能吃图。
+/// 一个真能被调用的模型名 + 它能不能吃图 + 它是哪种模型。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Servable {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub vision: bool,
+    /// `""` / `chat` / `embeddings` / `rerank`。
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub kind_label: String,
+    #[serde(default)]
+    pub kind_source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]

@@ -393,9 +393,16 @@ async fn create_a_channel_and_a_group_end_to_end() {
     assert_eq!(g["channels"], json!([sf_id, cg_id]));
     assert_eq!(
         v["servable"],
-        json!([{"name": "auto", "vision": false}]),
-        "只列真实能用的模型名，并如实说能不能看图"
+        json!([{
+            "name": "auto",
+            "vision": false,
+            "kind": "",
+            "kind_label": "还没定",
+            "kind_source": ""
+        }]),
+        "只列真实能用的模型名，并如实说能不能看图、是哪种模型"
     );
+    assert_eq!(g["kind"], json!(""), "刚建的组还没人来打过，类型是「还没定」");
     assert_eq!(g["can_see"], json!(false), "这条组里没有标能看图的渠道");
 
     // 路由状态：首选是第一条，还没切过

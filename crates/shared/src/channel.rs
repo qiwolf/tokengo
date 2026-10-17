@@ -9,6 +9,95 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// 一个模型名（模型组）是哪种模型。
+///
+/// 为什么要它有：同一个网关后面挂着向量模型（bge-m3，占现网 86% 的量）、对话模型和重排
+/// 模型，它们的**用法完全不同** —— 向量模型不看图、不发 SSE、不吃 `tools`；重排要的是
+/// `query`+`documents`。面板上不分类型就得靠人记名字；探活也必须知道该打哪个端点
+/// （拿对话请求去探向量组必然 400）。所以类型是**模型组自己的属性**，写进库。
+///
+/// **只认实测，不许按名字猜**：名字里带 `embed` 不代表它就是向量端点（现网那批自定义
+/// 模型名一个特征都没有）。所以默认是「还没定」，第一次真收到请求时按走的端点自动记上；
+/// 记错了人在面板上改一次，之后就不再用实测覆盖（见 [`ModelKind::is_set`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelKind {
+    /// 还没定：还没人来打过，或者配置里选了「跟着实测走」。
+    #[default]
+    Unknown,
+    Chat,
+    Embeddings,
+    Rerank,
+}
+
+impl ModelKind {
+    /// 库里/接口里用的字面值（`""` / `chat` / `embeddings` / `rerank`）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModelKind::Unknown => "",
+            ModelKind::Chat => "chat",
+            ModelKind::Embeddings => "embeddings",
+            ModelKind::Rerank => "rerank",
+        }
+    }
+
+    /// 认字面值。**认不出来一律当「还没定」**，绝不猜成对话（猜错会让向量组收不到探活）。
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "chat" | "completion" | "completions" => ModelKind::Chat,
+            "embedding" | "embeddings" | "vector" => ModelKind::Embeddings,
+            "rerank" | "reranker" => ModelKind::Rerank,
+            _ => ModelKind::Unknown,
+        }
+    }
+
+    /// 已经定下来了（不是「还没定」）。
+    pub fn is_set(self) -> bool {
+        self != ModelKind::Unknown
+    }
+
+    /// 面板上给人看的中文名。
+    pub fn label(self) -> &'static str {
+        match self {
+            ModelKind::Unknown => "还没定",
+            ModelKind::Chat => "对话",
+            ModelKind::Embeddings => "向量",
+            ModelKind::Rerank => "重排",
+        }
+    }
+}
+
+/// 类型是谁定的：实测学到的还是人手动选的。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KindSource {
+    /// 还没定（多半是因为还没有流量）。
+    #[default]
+    Unknown,
+    /// 第一次真收到请求时按端点自动记的。
+    Auto,
+    /// 人在面板上选的 —— 从此**不再被实测覆盖**。
+    Manual,
+}
+
+impl KindSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KindSource::Unknown => "",
+            KindSource::Auto => "auto",
+            KindSource::Manual => "manual",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => KindSource::Auto,
+            "manual" => KindSource::Manual,
+            _ => KindSource::Unknown,
+        }
+    }
+}
+
 /// 渠道的数据库主键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ChannelId(pub i64);
@@ -269,6 +358,75 @@ pub fn unwrap_envelope(body: &mut Value) -> bool {
     true
 }
 
+/// 上游回了 200，但**一句话都没说**：既没有正文，也没有工具调用，也没有推理内容。
+///
+/// 为什么要认出它：现网 4 天里有 9 次这种回复（cline 那条腿自己都说约 3% 的上游 500
+/// 是「empty response content」），客户端拿到的是一个空泡泡 —— 用户以为模型发呆，
+/// 其实换一条腿重发就好了。判据对齐现网老网关的说法（`stream produced no content and
+/// no tool calls`），另加 `reasoning_content`：有些推理模型把答案全放在推理字段里、
+/// content 是空的，那**不是**空回复（判错了会把好好的回答重发一遍）。
+///
+/// **只认「有 message/delta 但里头是空的」**：choices 缺失、choices 是空的、
+/// 连 message 都没有，都算「形状不认识」→ 返回 false，不猜（宁可漏判也不误判）。
+pub fn empty_chat_reply(v: &Value) -> bool {
+    let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
+        return false;
+    };
+    if choices.is_empty() {
+        return false;
+    }
+    let mut saw_a_message = false;
+    for c in choices {
+        let Some(m) = c.get("message").or_else(|| c.get("delta")) else {
+            continue;
+        };
+        saw_a_message = true;
+        let has_text = |k: &str| {
+            m.get(k)
+                .and_then(|x| x.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        };
+        let has_tools = m
+            .get("tool_calls")
+            .and_then(|t| t.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+            || m.get("function_call").map(|f| !f.is_null()).unwrap_or(false);
+        if has_text("content") || has_text("reasoning_content") || has_tools {
+            return false;
+        }
+    }
+    saw_a_message
+}
+
+/// 这一块流式数据里有没有**真内容**（正文 / 工具调用 / 推理内容）。
+///
+/// 流式不能像非流式那样"读完整段再判断空不空"（第一个字节早就发给客户端了），
+/// 所以边转发边记一笔：整条流从头到尾一块真内容都没有 → 记成失败并说明原因，
+/// 用户至少能在流水里看见「上游一个字都没说」，而不是对着空泡泡猜。
+pub fn chunk_has_payload(v: &Value) -> bool {
+    let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
+        return false;
+    };
+    choices.iter().any(|c| {
+        let m = c.get("delta").or_else(|| c.get("message"));
+        let Some(m) = m else { return false };
+        let text = |k: &str| {
+            m.get(k)
+                .and_then(|x| x.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        };
+        text("content")
+            || text("reasoning_content")
+            || m.get("tool_calls")
+                .and_then(|t| t.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +578,88 @@ mod tests {
         body["messages"][0]["content"] = serde_json::json!(format!("{long}{}", "尾".repeat(50_000)));
         assert_eq!(a, session_id_from_body(&body).unwrap());
         assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn stream_chunks_are_judged_for_real_payload() {
+        assert!(chunk_has_payload(&serde_json::json!({
+            "choices": [{"delta": {"content": "你"}}]
+        })));
+        assert!(chunk_has_payload(&serde_json::json!({
+            "choices": [{"delta": {"tool_calls": [{"index": 0}]}}]
+        })));
+        assert!(chunk_has_payload(&serde_json::json!({
+            "choices": [{"delta": {"reasoning_content": "想…"}}]
+        })));
+        // 只有角色、只有 usage、空 choices —— 都不算真内容
+        assert!(!chunk_has_payload(&serde_json::json!({"choices": [{"delta": {"role": "assistant"}}]})));
+        assert!(!chunk_has_payload(&serde_json::json!({"usage": {"prompt_tokens": 1}})));
+        assert!(!chunk_has_payload(&serde_json::json!({"choices": [{"delta": {"content": "  "}}]})));
+        assert!(!chunk_has_payload(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn an_empty_reply_is_recognised_without_misfiring_on_real_answers() {
+        // 真·空回复：message 在、里头什么都没有
+        assert!(empty_chat_reply(&serde_json::json!({
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}]
+        })));
+        assert!(empty_chat_reply(&serde_json::json!({
+            "choices": [{"delta": {"role": "assistant", "content": null}}]
+        })));
+        assert!(empty_chat_reply(&serde_json::json!({
+            "choices": [{"message": {"role": "assistant"}}]
+        })));
+
+        // 反证：有内容 / 有工具调用 / 有推理内容 / 只放了图 —— 都不算空
+        assert!(!empty_chat_reply(&serde_json::json!({
+            "choices": [{"message": {"content": "你好"}}]
+        })));
+        assert!(!empty_chat_reply(&serde_json::json!({
+            "choices": [{"message": {"content": "", "tool_calls": [{"id": "1"}]}}]
+        })));
+        assert!(!empty_chat_reply(&serde_json::json!({
+            "choices": [{"message": {"content": "", "reasoning_content": "想一下…"}}]
+        })), "推理内容也是话，不许当空回复重发");
+        assert!(!empty_chat_reply(&serde_json::json!({
+            "choices": [{"message": {"content": "", "function_call": {"name": "f"}}}]
+        })));
+        // 反证：形状不认识的一律不当空回复（宁可漏判）
+        assert!(!empty_chat_reply(&serde_json::json!({})));
+        assert!(!empty_chat_reply(&serde_json::json!({"choices": []})));
+        assert!(!empty_chat_reply(&serde_json::json!({"choices": [{"index": 0}]})));
+        assert!(!empty_chat_reply(&serde_json::json!({"data": {"embedding": [0.1]}})));
+    }
+
+    #[test]
+    fn model_kind_round_trips_and_never_guesses() {
+        for k in [
+            ModelKind::Unknown,
+            ModelKind::Chat,
+            ModelKind::Embeddings,
+            ModelKind::Rerank,
+        ] {
+            assert_eq!(ModelKind::parse(k.as_str()), k, "{k:?} 存下去读不回来");
+        }
+        // 认字面值要宽容：大小写、几个常见别名
+        assert_eq!(ModelKind::parse("Embeddings"), ModelKind::Embeddings);
+        assert_eq!(ModelKind::parse(" vector "), ModelKind::Embeddings);
+        assert_eq!(ModelKind::parse("reranker"), ModelKind::Rerank);
+        // **反证：认不出来一律「还没定」，绝不默认成对话**（猜错 = 向量组收不到探活）
+        assert_eq!(ModelKind::parse(""), ModelKind::Unknown);
+        assert_eq!(ModelKind::parse("bge-m3"), ModelKind::Unknown);
+        assert_eq!(ModelKind::parse("随便什么"), ModelKind::Unknown);
+        assert!(!ModelKind::Unknown.is_set());
+        assert!(ModelKind::Embeddings.is_set());
+        assert_eq!(ModelKind::Rerank.label(), "重排");
+    }
+
+    #[test]
+    fn kind_source_says_who_decided() {
+        assert_eq!(KindSource::parse(KindSource::Manual.as_str()), KindSource::Manual);
+        assert_eq!(KindSource::parse("AUTO"), KindSource::Auto);
+        assert_eq!(KindSource::parse("没这个值"), KindSource::Unknown);
+        assert_eq!(KindSource::Unknown.as_str(), "");
     }
 
     #[test]

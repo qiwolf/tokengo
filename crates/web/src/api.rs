@@ -220,6 +220,28 @@ pub async fn vision_test(id: i64, model: &str, upstream: Option<&str>) -> Result
     .await
 }
 
+/// 给人手动定一组的类型（`auto` = 交还给实测）。
+pub async fn set_group_kind(name: &str, kind: &str) -> Result<(), ApiErr> {
+    let body = json!({ "kind": kind });
+    let path = format!("/api/groups/{}/kind", urlencode(name));
+    call("PUT", &path, Some(body)).await.map(|_| ())
+}
+
+/// 组名可能带斜杠（如 `cline-pass/deepseek-v4.1-flash`），拼进路径前要转义。
+/// 按 UTF-8 字节转义（组名里有中文时整字符转义会拼出无效路径）。
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 pub async fn groups() -> Result<GroupsResp, ApiErr> {
     typed("GET", "/api/groups", None).await
 }

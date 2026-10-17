@@ -8,8 +8,9 @@ pub mod channel;
 pub mod routing;
 
 pub use channel::{
-    render_header_value, request_has_image, session_id_from_body, short_hash, strip_fields,
-    unwrap_envelope, Channel, ChannelId, ModelGroup,
+    chunk_has_payload, empty_chat_reply, render_header_value, request_has_image,
+    session_id_from_body, short_hash, strip_fields, unwrap_envelope, Channel, ChannelId,
+    KindSource, ModelGroup, ModelKind,
 };
 pub use routing::{classify_status, AttemptOutcome, GroupState, Router, RoutingConfig};
 
