@@ -324,6 +324,7 @@ details.fold[open] > summary { margin-bottom: .4rem; }
 
 /* ══════ 桌面：横排菜单全显、内容更宽 ══════ */
 @media (min-width: 901px) {
+  .mobile-actions { display: none; }
   .topbar-inner { padding: .6rem 1.25rem; }
   .content { padding: 1.5rem 1.5rem 3.5rem; }
   .split { grid-template-columns: 1fr 1fr; gap: 1.5rem; }
@@ -332,6 +333,8 @@ details.fold[open] > summary { margin-bottom: .4rem; }
 
 /* ══════ 手机：菜单收进右上角、可点区域够大（免得一聚焦就被 iOS 放大） ══════ */
 @media (max-width: 760px) {
+  .desktop-actions { display: none; }
+  .mobile-actions { display: table-row; }
   .topnav { display: none; }
   .nav-toggle { display: inline-flex; }
   .toast { max-width: 38vw; }
@@ -352,10 +355,38 @@ details.fold[open] > summary { margin-bottom: .4rem; }
   .modal-foot > button { flex: 1 1 auto; }
   .modal-foot > button.primary { flex: 1 1 100%; }
 
-  /* 手机上表格**还是表格**：一行就是一行，左右滑看全。
-     列宽按内容撑开（不挤成一列两字），只有点名要换行的列（长错误文本）才让它换行。 */
+  /* 手机上渠道表更紧凑：缩小内边距与字号，地址用小号 */
+  .table-wrap table.grid th,
+  .table-wrap table.grid td { padding: .28rem .4rem; font-size: .85rem; }
+  .table-wrap table.grid code { font-size: .78rem; }
+
+  /* 手机上表格**还是表格**：一行就是一行，左右滑看全。 */
   .table-wrap table.grid { width: auto; min-width: 100%; }
   .table-wrap table.grid td { white-space: nowrap; }
+  .table-wrap table.grid td.actions {
+    display: block; width: 100%; white-space: normal;
+    padding-top: .35rem; border-top: 1px solid var(--line);
+  }
+  .table-wrap table.grid td.actions .actions { flex-wrap: nowrap; }
+  /* 渠道表在手机上：每条渠道占多行（不是卡片，只是竖排），字段名在值前面 */
+  .table-wrap table.grid.wide { width: 100%; }
+  .table-wrap table.grid.wide thead { display: none; }
+  .table-wrap table.grid.wide tbody,
+  .table-wrap table.grid.wide tr { display: block; }
+  .table-wrap table.grid.wide tr {
+    border-bottom: 1px solid var(--line); padding: .4rem 0;
+  }
+  .table-wrap table.grid.wide td {
+    display: block; border: none; padding: .15rem 0;
+    white-space: normal; font-size: .88rem;
+  }
+  .table-wrap table.grid.wide td::before {
+    content: attr(data-label); color: var(--muted); font-size: .8rem;
+    margin-right: .5rem;
+  }
+  .table-wrap table.grid.wide td.num::before { content: attr(data-label); }
+  .table-wrap table.grid.wide td.actions { padding-top: .35rem; }
+  .table-wrap table.grid.wide td.actions .actions { flex-wrap: wrap; gap: .4rem; }
   .table-wrap table.grid td.wrap {
     white-space: normal; min-width: 11rem; max-width: 18rem;
   }

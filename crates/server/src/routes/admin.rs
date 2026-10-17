@@ -38,6 +38,7 @@ pub fn router() -> Router<SharedState> {
         .route("/logs", get(logs))
         .route("/timeline", get(|| async { unbuilt(5, "GET /api/timeline") }))
         .route("/settings", get(settings_get).put(settings_put))
+        .route("/settings/generate-gateway-key", post(generate_gateway_key))
 }
 
 // ───────────────────────── 鉴权 ─────────────────────────
@@ -1000,6 +1001,22 @@ async fn settings_put(
         tracing::info!("对外 key 已更换");
     }
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn generate_gateway_key(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let key = format!("tk-{}", &uuid::Uuid::new_v4().simple().to_string()[..24]);
+    let conn = state.conn();
+    sessions::set_gateway_key(&conn, &key)?;
+    state.forget_gateway_key();
+    tracing::info!("对外 key 已自动生成");
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "gateway_key": key,
+        "notice": "新 key 已生效；正在用旧 key 的客户端会马上 401，请同步更新。",
+    })))
 }
 
 #[cfg(test)]
