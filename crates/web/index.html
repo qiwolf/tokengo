@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tokengo 面板</title>
+    <!--
+      data-bin：这个仓库里有两个 wasm 产物（lib 的 cdylib 和 bin），不点名 trunk 会报
+      "found more than one target artifact"。
+      data-wasm-opt-params：rustc 1.98 发出来的 wasm 用了 bulk memory / nontrapping
+      浮点转换等特性，而 trunk 自带的 wasm-opt 是 2023 年的 v123，默认不认这些特性，
+      会直接验证失败。这些特性主流浏览器都支持，显式打开即可。
+    -->
+    <link
+      data-trunk
+      rel="rust"
+      data-bin="tokengo-web"
+      data-wasm-opt="z"
+      data-wasm-opt-params="--enable-bulk-memory --enable-bulk-memory-opt --enable-reference-types --enable-multivalue --enable-extended-const --enable-nontrapping-float-to-int --enable-sign-ext"
+    />
+    <link data-trunk rel="css" href="style.css" />
+  </head>
+  <body>
+    <noscript>面板需要 JavaScript（WASM 也得靠它加载）。</noscript>
+  </body>
+</html>

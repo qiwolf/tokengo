@@ -56,10 +56,10 @@ Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测�
 
     crates/
       shared/   腿与模型组的数据结构 + 路由状态机（纯逻辑，时间由外部传入，可完整测）
-      server/   网关服务端（axum）— 对外四个端点 + 面板管理面
-      web/      面板（Leptos → WASM）— 5 个页面，阶段 7
+      server/   网关服务端（axum）— 对外端点 + 面板管理面 + 面板静态服务
+      web/      面板（Rust → WASM，Leptos CSR）— 6 个页面，零 npm 依赖
       cli/      命令行
-    docs/       按需功能清单、路由策略、数据层、阶段 2 真转发
+    docs/       按需功能清单、路由策略、数据层、阶段 2 真转发、阶段 3 面板
     scratch/    真机验收脚本（起真进程、真发 HTTP、断言直接读库）
     scripts/    工具脚本
 
@@ -67,8 +67,14 @@ Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测�
 
 ```bash
 cargo build --release -p tokengo-server
-cargo test  --workspace                 # 150 条测试
+cargo test  --workspace                 # 166 条测试（服务端 + 面板纯逻辑）
 cargo run   -p tokengo-cli -- routing   # 把默认路由参数走一遍状态机
+```
+
+面板（可选，独立构建；服务端不构建也能跑）：
+
+```bash
+cd crates/web && trunk build --release   # 产物在 crates/web/dist，服务端从磁盘服务
 ```
 
 真机验收（**起真进程 + 真 HTTP + 真故障**，不是单测）：
@@ -92,7 +98,7 @@ cargo install trunk
 | 0 | 工程骨架 + 按需取舍 + 路由状态机 | 已完成 |
 | 1 | 数据层（腿 / 模型组 / 记账）+ 面板会话鉴权 | 已完成 |
 | 2 | 三个端点真转发（重试 / 切换 / 回切 / 流式 / 记账） | 已完成（真机 30 项验收全过） |
-| 3 | 面板 5 页 | 未开始（`/api/timeline` 仍回 501） |
+| 3 | 面板 6 页（Rust → WASM，零 npm） | 已完成（真浏览器 + DOM 断言 + 真点击验收） |
 | 4 | 部署到 LXC + 影子并行 + 切换 | 未开始 |
 
 ## 与现网 FreeLLMAPI 的差异
@@ -103,7 +109,7 @@ cargo install trunk
 | 腿失败 | 打进冷却，到期前不选 | 不冷却；失败即重试，全败才切 |
 | 什么时候回来 | 冷却到期，可能回到更差的腿 | 10 分钟后主动试首选，成功才回切 |
 | 客户端错（400） | 会计入冷却，能把好腿打坏 | 不计入 |
-| 内存 | node 进程 229.6 MB（其中 201 MB 是 V8 堆） | 实测 14.6 MB（空库、无流量） |
+| 内存 | node 进程 229.6 MB（其中 201 MB 是 V8 堆） | release 实测 6.8 MB（空载）/ 8.6 MB（打完请求） |
 
 ## 许可
 

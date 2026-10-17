@@ -5,21 +5,36 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "tokengo 面板（Rust/WASM，对应上游 client 的 18 个页面 + 83 个组件）"
+description = "tokengo 面板（Rust/WASM，Leptos CSR）"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "tokengo-web"
+path = "src/main.rs"
 
 [dependencies]
 tokengo-shared.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-# 面板框架（Leptos）在阶段 7 接入。接入时需要：
-#   rustup target add wasm32-unknown-unknown
-#   cargo install trunk
-# 以及下面的依赖，全部只在 wasm32 目标下生效，避免污染服务端的本机构建。
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-# leptos = { version = "0.8", features = ["csr"] }
-# wasm-bindgen = "0.2"
-# web-sys = { version = "0.3", features = ["Window", "Document", "Element"] }
+# 面板框架：Leptos CSR（Rust → WASM），界面不在 JS 里，也不依赖 npm。
+# 构建：`trunk build --release`（产物在 crates/web/dist，由服务端从磁盘服务）
+leptos = { version = "0.8", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "HtmlSelectElement",
+    "Storage",
+    "Location",
+] }

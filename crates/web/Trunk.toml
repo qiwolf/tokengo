@@ -1,0 +1,11 @@
+# trunk 构建配置。
+#
+# public_url 必须和服务端挂载面板的路径一致（这里是 /ui/）：
+# 不设的话 trunk 会把资源写成根路径 `/tokengo-web-xxx.js`，而页面在 /ui/，
+# 浏览器去根路径拿资源会 404 —— 现象是"页面一片空白、控制台里三个 404"。
+
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/ui/"
+filehash = true

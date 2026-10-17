@@ -156,6 +156,7 @@ mod tests {
             listen: "127.0.0.1:0".into(),
             db_path: dir.join("t.db"),
             master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
+            web_dir: None,
         }
     }
 

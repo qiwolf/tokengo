@@ -1,25 +1,363 @@
-//! tokengo 面板（对应本机需要的 5 个页面）。**阶段 7 实装，框架选 Leptos（编 WASM）。**
+//! tokengo 面板。**用 Rust 写界面（Leptos CSR → WASM），不引 npm 依赖。**
 //!
-//! 不做上游那 18 个页面 —— 那些是给免费模型目录、媒体、搜索、决策、多用户用的，
-//! 本机 3 天实测全部 0 次调用（`docs/02-按需功能清单.md`）。
+//! 只做本机真正用得上的 6 页（原计划 5 页；多出来的「设置」页放改口令 / 换对外 key /
+//! 登出 —— 这三件事没有别的合适位置，硬塞进别的页面更乱）：
 //!
-//! 本机面板要的 5 页：
-//!   1. 总览        请求量、成功率、延迟、当前在各条腿上的分布
-//!   2. 腿管理      增删改查 + 自定义请求头 + "测一下"连通性
-//!   3. 模型组      给每个模型组排优先级（`auto` 的成员就是这些）
-//!   4. 路由状态    active / primary / 下次回切时间 / 切换次数，带手动回切按钮
-//!   5. 请求流水    模型、腿、状态、延迟、token、错误原因、客户端 IP
+//!   1. 总览      请求量、成功率、各条腿的分布、能被调用的模型名
+//!   2. 腿管理    增删改查 + 自定义请求头 + 按腿改模型名 + 「测一下」连通性
+//!   3. 模型组    给每个模型组排优先级（`auto` 的成员就是这些）
+//!   4. 路由状态  active / 首选 / 下次回切时间 / 切换次数 + 手动回切 + 路由参数
+//!   5. 请求流水  模型、腿、状态、延迟、token、错误原因
+//!   6. 设置      对外 key、面板口令、在线会话、退出登录
 //!
-//! 风险提示：Leptos 在本机是**首次引入**，需要装 `wasm32-unknown-unknown` 与 `trunk`。
-//! 这个要早点证掉，不能等服务端写完才发现面板路走不通。
+//! 后端始终是唯一数据源：面板**不做本地缓存**，每次进页面重新拉 ——
+//! 免得界面上显示的是过期状态（"看着还在用首选、其实早切走了"最坏事）。
 
-/// 面板要覆盖的页面。
-pub const PAGES: &[&str] = &["总览", "腿管理", "模型组", "路由状态", "请求流水"];
+pub mod api;
+pub mod fmt;
+pub mod model;
+pub mod pages;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn page_count_matches_the_plan() {
-        assert_eq!(super::PAGES.len(), 5);
+pub use pages::Page;
+
+use leptos::prelude::*;
+use wasm_bindgen::JsCast;
+
+/// 面板启动入口（`main.rs` 调）。
+pub fn start() {
+    console_error_panic_hook::set_once();
+    mount_to_body(App);
+}
+
+/// 当前毫秒时间。面板只拿它算"几分钟前"，不做业务判断（业务判断全在服务端）。
+pub fn now_ms() -> i64 {
+    js_sys::Date::now() as i64
+}
+
+/// 每 `ms` 毫秒跑一次 `f`，返回句柄（用 `stop_timer` 停掉）。
+///
+/// 用浏览器的定时器而不是起个循环：页面一关定时器就没了，不会在后台空转。
+pub fn every(ms: i32, f: impl Fn() + 'static) -> i32 {
+    let cb = wasm_bindgen::closure::Closure::wrap(Box::new(f) as Box<dyn FnMut()>);
+    // into_js_value：把闭包交给 JS 堆管，定时器自己持有引用，不用在 Rust 侧存着
+    let func: js_sys::Function = cb.into_js_value().unchecked_into();
+    web_sys::window()
+        .and_then(|w| {
+            w.set_interval_with_callback_and_timeout_and_arguments_0(&func, ms)
+                .ok()
+        })
+        .unwrap_or(0)
+}
+
+pub fn stop_timer(handle: i32) {
+    if let Some(w) = web_sys::window() {
+        w.clear_interval_with_handle(handle);
+    }
+}
+
+/// 启动阶段：先问服务端"要不要初始化"，再决定给用户看哪个界面。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// 还在问服务端
+    Loading,
+    /// 从没设过口令 → 首次初始化
+    Setup,
+    /// 要登录
+    Login,
+    /// 已登录，进面板
+    Ready,
+}
+
+/// 全局面板上下文。`Copy` 是为了能塞进各个页面的 props。
+#[derive(Clone, Copy)]
+pub struct Ctx {
+    pub phase: RwSignal<Phase>,
+    /// 当前页（同时写进 URL 的 hash，刷新与前进后退都还在这一页）
+    pub page: RwSignal<Page>,
+    /// 一句话提示，显示在顶栏
+    pub toast: RwSignal<Option<String>>,
+}
+
+impl Ctx {
+    /// 任何接口返回 401 都走这里：清掉本地 token、退回登录页。
+    /// **统一处理**才不会出现"某个页面还在傻傻重试"的情况。
+    pub fn note_err(&self, e: &api::ApiErr) {
+        if e.is_unauthorized() {
+            api::clear_token();
+            self.phase.set(Phase::Login);
+        }
+    }
+
+    pub fn say(&self, msg: impl Into<String>) {
+        self.toast.set(Some(msg.into()));
+    }
+
+    /// 切页并把当前页写进 URL 的 hash —— 刷新、前进、后退都还在这一页。
+    pub fn go(&self, p: Page) {
+        self.page.set(p);
+        self.toast.set(None);
+        if let Some(w) = web_sys::window() {
+            let _ = w.location().set_hash(p.slug());
+        }
+    }
+
+    /// 把错误显示出来（401 顺便退回登录）。
+    pub fn fail(&self, e: api::ApiErr) {
+        self.note_err(&e);
+        self.say(e.message);
+    }
+}
+
+#[component]
+pub fn App() -> impl IntoView {
+    let phase = RwSignal::new(Phase::Loading);
+    let page = RwSignal::new(Page::from_hash());
+    let toast = RwSignal::new(None::<String>);
+    let ctx = Ctx { phase, page, toast };
+
+    // 启动：问服务端要初始化状态；顺手用现有 token 试一下，能用就直接进
+    wasm_bindgen_futures::spawn_local(async move {
+        match api::auth_status().await {
+            Ok(st) => {
+                if st.needs_setup {
+                    phase.set(Phase::Setup);
+                    return;
+                }
+                if api::token().is_none() {
+                    phase.set(Phase::Login);
+                    return;
+                }
+                match api::legs().await {
+                    Ok(_) => phase.set(Phase::Ready),
+                    Err(e) => {
+                        if e.is_unauthorized() {
+                            api::clear_token();
+                            ctx.say("会话过期了，请重新登录");
+                        } else {
+                            ctx.say(format!("读腿列表失败：{}", e.message));
+                        }
+                        phase.set(Phase::Login);
+                    }
+                }
+            }
+            Err(e) => {
+                phase.set(Phase::Login);
+                ctx.say(format!("问不到服务端状态：{}", e.message));
+            }
+        }
+    });
+
+    // URL 的 hash ↔ 当前页：刷新不丢页，浏览器前进后退也能用
+    {
+        let cb = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+            let p = Page::from_hash();
+            if p != page.get_untracked() {
+                page.set(p);
+            }
+        }) as Box<dyn FnMut()>);
+        if let Some(w) = web_sys::window() {
+            let _ = w.add_event_listener_with_callback("hashchange", cb.as_ref().unchecked_ref());
+        }
+        // 监听器要活到页面结束 —— 换成 forget 而不是让它出作用域被回收
+        cb.forget();
+    }
+
+    view! {
+        {move || match phase.get() {
+            Phase::Loading => view! { <div class="centered muted">"正在连网关…"</div> }.into_any(),
+            Phase::Setup => view! { <SetupScreen ctx=ctx /> }.into_any(),
+            Phase::Login => view! { <LoginScreen ctx=ctx /> }.into_any(),
+            Phase::Ready => view! { <Shell ctx=ctx /> }.into_any(),
+        }}
+    }
+}
+
+/// 首次初始化：设面板口令，顺便定对外 key。
+#[component]
+fn SetupScreen(ctx: Ctx) -> impl IntoView {
+    let (pw, set_pw) = signal(String::new());
+    let (key, set_key) = signal(String::new());
+    let (busy, set_busy) = signal(false);
+    let (once, set_once) = signal(None::<(String, bool)>);
+
+    let submit = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        set_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            let k = key.get_untracked();
+            let k = if k.trim().is_empty() { None } else { Some(k) };
+            match api::setup(&pw.get_untracked(), k.as_deref()).await {
+                Ok(r) => {
+                    api::set_token(&r.token);
+                    set_once.set(Some((r.gateway_key.unwrap_or_default(), r.gateway_key_generated)));
+                    set_busy.set(false);
+                }
+                Err(e) => {
+                    ctx.fail(e);
+                    set_busy.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        <div class="auth-wrap">
+            <div class="auth-card">
+                <h1>{tokengo_shared::BRAND}" 初始化"</h1>
+                <p class="muted">
+                    "第一次用，先定一个面板口令。对外 key 就是客户端填的那个 key ——
+                     留空则由这里生成一个。"
+                </p>
+                {move || match once.get() {
+                    Some((k, generated)) => view! {
+                        <div class="notice">
+                            <b>"对外 key（只显示这一次）"</b>
+                            <code class="keybox">{k}</code>
+                            <p class="muted">
+                                {move || if generated { "这是自动生成的。" } else { "" }}
+                                "库里只存哈希，之后拿不回明文，请现在记到客户端配置里。"
+                            </p>
+                            <button class="primary" on:click=move |_| ctx.phase.set(Phase::Ready)>
+                                "记好了，进面板"
+                            </button>
+                        </div>
+                    }.into_any(),
+                    None => view! {
+                        <div>
+                            <label>"面板口令"</label>
+                            <input type="password" prop:value=pw
+                                on:input=move |ev| set_pw.set(event_target_value(&ev)) />
+                            <label>"对外 key（可留空）"</label>
+                            <input type="text" prop:value=key placeholder="留空 = 自动生成"
+                                on:input=move |ev| set_key.set(event_target_value(&ev)) />
+                            <button class="primary" disabled=move || busy.get() on:click=submit>
+                                {move || if busy.get() { "正在设置…" } else { "设置并进入" }}
+                            </button>
+                        </div>
+                    }.into_any(),
+                }}
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn LoginScreen(ctx: Ctx) -> impl IntoView {
+    let (pw, set_pw) = signal(String::new());
+    let (busy, set_busy) = signal(false);
+
+    // 不带参数的闭包，才能同时给 click 和 keydown 两处用（事件类型不同，
+    // 带参数的闭包在两处会被推断成冲突的签名）
+    let submit = move || {
+        if busy.get_untracked() {
+            return;
+        }
+        set_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::login(&pw.get_untracked()).await {
+                Ok(r) => {
+                    api::set_token(&r.token);
+                    set_pw.set(String::new());
+                    ctx.toast.set(None);
+                    ctx.phase.set(Phase::Ready);
+                }
+                Err(e) => ctx.say(format!("登录失败：{}", e.message)),
+            }
+            set_busy.set(false);
+        });
+    };
+
+    view! {
+        <div class="auth-wrap">
+            <div class="auth-card">
+                <h1>{tokengo_shared::BRAND}" 面板"</h1>
+                <label>"口令"</label>
+                <input type="password" prop:value=pw
+                    on:input=move |ev| set_pw.set(event_target_value(&ev))
+                    on:keydown=move |ev| {
+                        if ev.key() == "Enter" {
+                            submit();
+                        }
+                    } />
+                <button class="primary" disabled=move || busy.get() on:click=move |_| submit()>
+                    {move || if busy.get() { "登录中…" } else { "登录" }}
+                </button>
+            </div>
+        </div>
+    }
+}
+
+/// 登录后的整体布局：左侧导航 + 顶栏 + 内容区。
+#[component]
+fn Shell(ctx: Ctx) -> impl IntoView {
+    let logout = move |_| {
+        wasm_bindgen_futures::spawn_local(async move {
+            // 撤销会话失败也照样退出本地登录：不能因为网络问题就退不出去
+            let _ = api::logout().await;
+            api::clear_token();
+            ctx.phase.set(Phase::Login);
+        });
+    };
+
+    view! {
+        <div class="shell">
+            <aside class="sidebar">
+                <div class="brand">
+                    <span class="brand-name">{tokengo_shared::BRAND}</span>
+                    <span class="muted small">"v" {tokengo_shared::VERSION}</span>
+                </div>
+                <nav>
+                    {Page::ALL
+                        .iter()
+                        .map(|p| {
+                            let p = *p;
+                            view! {
+                                <button
+                                    class="nav"
+                                    class:active=move || ctx.page.get() == p
+                                    on:click=move |_| ctx.go(p)
+                                >
+                                    <span class="nav-icon">{p.icon()}</span>
+                                    <span>{p.title()}</span>
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                </nav>
+                <div class="sidebar-foot">
+                    <button class="ghost" on:click=logout>"退出登录"</button>
+                </div>
+            </aside>
+            <main class="main">
+                <header class="topbar">
+                    <h1>{move || ctx.page.get().title()}</h1>
+                    <div class="topbar-right">
+                        {move || ctx.toast.get().map(|t| view! { <span class="toast">{t}</span> })}
+                        <button
+                            class="ghost"
+                            on:click=move |_| {
+                                if let Some(w) = web_sys::window() {
+                                    let _ = w.location().reload();
+                                }
+                            }
+                        >
+                            "重新载入"
+                        </button>
+                    </div>
+                </header>
+                <section class="content">
+                    {move || match ctx.page.get() {
+                        Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
+                        Page::Legs => view! { <pages::legs::Legs ctx=ctx /> }.into_any(),
+                        Page::Groups => view! { <pages::groups::Groups ctx=ctx /> }.into_any(),
+                        Page::Routing => view! { <pages::routing::Routing ctx=ctx /> }.into_any(),
+                        Page::Requests => view! { <pages::requests::Requests ctx=ctx /> }.into_any(),
+                        Page::Settings => view! { <pages::settings::Settings ctx=ctx /> }.into_any(),
+                    }}
+                </section>
+            </main>
+        </div>
     }
 }
