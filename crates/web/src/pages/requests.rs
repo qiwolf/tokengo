@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use crate::api;
 use crate::fmt;
 use crate::model::{LogRow, Channel};
+use crate::pages::PageHead;
 use crate::Ctx;
 
 #[component]
@@ -69,6 +70,10 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
 
     view! {
         <div class="page">
+            <PageHead
+                title="请求"
+                desc="每个请求走了哪条渠道、成没成、花了多久、错在哪。"
+            />
             <div class="toolbar">
                 <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
                     {move || if busy.get() { "刷新中…" } else { "刷新" }}
@@ -109,6 +114,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                 }}
             </p>
 
+            <div class="table-wrap">
             <table class="grid">
                 <thead>
                     <tr>
@@ -170,6 +176,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                     }}
                 </tbody>
             </table>
+            </div>
         </div>
     }
 }

@@ -6,6 +6,7 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::pages::PageHead;
 use crate::Ctx;
 
 #[component]
@@ -80,6 +81,10 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
 
     view! {
         <div class="page">
+            <PageHead
+                title="设置"
+                desc="对外 key、面板口令、登录着的设备。"
+            />
             <div class="toolbar">
                 <button class="ghost" on:click=move |_| reload()>"刷新"</button>
                 <span class="muted small">

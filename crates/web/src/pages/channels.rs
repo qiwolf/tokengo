@@ -20,6 +20,7 @@ use leptos::prelude::*;
 use crate::api;
 use crate::fmt;
 use crate::model::{HeaderPair, Channel, ModelPair};
+use crate::pages::PageHead;
 use crate::Ctx;
 
 /// 上游清单一次最多显示这么多行（真有上游报上千个模型，全塞进 DOM 会卡）。
@@ -442,12 +443,19 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
 
     view! {
         <div class="page">
+            <PageHead
+                title="渠道"
+                desc="各个上游的地址和密钥：加一条、改一条、测通不通。"
+            >
+                <>
+                    <button class="primary" on:click=open_new>"新建渠道"</button>
+                    <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
+                        {move || if busy.get() { "刷新中…" } else { "刷新" }}
+                    </button>
+                </>
+            </PageHead>
+
             <div class="toolbar">
-                <button class="primary" on:click=open_new>"新建渠道"</button>
-                <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
-                    {move || if busy.get() { "刷新中…" } else { "刷新" }}
-                </button>
-                <span class="spacer"></span>
                 <span class="muted small">"「测一下」发的是"</span>
                 <button
                     class="chip"
@@ -467,6 +475,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
+            <div class="table-wrap">
             <table class="grid">
                 <thead>
                     <tr>
@@ -572,6 +581,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     }}
                 </tbody>
             </table>
+            </div>
 
             {move || if form.get() == Form::Closed {
                 ().into_any()

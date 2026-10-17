@@ -1,14 +1,13 @@
 //! tokengo 面板。**用 Rust 写界面（Leptos CSR → WASM），不引 npm 依赖。**
 //!
-//! 只做本机真正用得上的 6 页（原计划 5 页；多出来的「设置」页放改口令 / 换对外 key /
-//! 登出 —— 这三件事没有别的合适位置，硬塞进别的页面更乱）：
+//! 只做本机真正用得上的 5 页，导航在顶栏（照 freellmapi 面板的排法：
+//! 顶上一条横菜单、每页一个大标题加一句话、内容就是普通表格）：
 //!
-//!   1. 总览      请求量、成功率、各条渠道的分布、能被调用的模型名
-//!   2. 渠道管理    增删改查 + 自定义请求头 + 按渠道改模型名 + 「测一下」连通性
-//!   3. 模型组    给每个模型组排优先级（`auto` 的成员就是这些）
-//!   4. 路由状态  active / 首选 / 下次回切时间 / 切换次数 + 手动回切 + 路由参数
-//!   5. 请求流水  模型、渠道、状态、延迟、token、错误原因
-//!   6. 设置      对外 key、面板口令、在线会话、退出登录
+//!   1. 总览  四个数 + 最近调用 + 各条渠道的账 + 能被调用的模型名
+//!   2. 渠道  增删改查 + 自定义请求头 + 按渠道改模型名 + 「测一下」连通性
+//!   3. 模型  模型名 → 渠道顺序（原「模型组」）+ 现在走哪条、何时回头试首选 + 路由参数
+//!   4. 请求  模型、渠道、状态、延迟、token、错误原因
+//!   5. 设置  对外 key、面板口令、在线会话、退出登录
 //!
 //! 后端始终是唯一数据源：面板**不做本地缓存**，每次进页面重新拉 ——
 //! 免得界面上显示的是过期状态（"看着还在用首选、其实早切走了"最坏事）。
@@ -147,7 +146,7 @@ pub struct Ctx {
     pub page: RwSignal<Page>,
     /// 一句话提示，显示在顶栏
     pub toast: RwSignal<Option<String>>,
-    /// 手机上的抽屉导航开没开（桌面端 CSS 里侧栏是常驻的，忽略这个值）
+    /// 顶栏右上角那个菜单开没开（手机上主要靠它跳页）
     pub nav_open: RwSignal<bool>,
     /// 当前主题（日间 / 夜间）
     pub theme: RwSignal<Theme>,
@@ -171,7 +170,7 @@ impl Ctx {
     pub fn go(&self, p: Page) {
         self.page.set(p);
         self.toast.set(None);
-        // 手机上点完导航就把抽屉收起来（桌面端侧栏常驻，这个值没人看）
+        // 手机上在菜单里点完就收起菜单
         self.nav_open.set(false);
         if let Some(w) = web_sys::window() {
             let _ = w.location().set_hash(p.slug());
@@ -387,7 +386,12 @@ fn LoginScreen(ctx: Ctx) -> impl IntoView {
     }
 }
 
-/// 登录后的整体布局：左侧导航 + 顶栏 + 内容区。
+/// 登录后的整体布局：**顶上一条横菜单** + 内容区。
+///
+/// 为什么不用左侧栏：手机上一竖列塞不下五个够大的按钮、还得做成抽屉；
+/// 顶栏横排 + 右上角一个菜单按钮更省地方，桌面端五个两字短名也排得下。
+/// 页面本身统一成「大标题 + 一句话 + 一条横线」（见 `pages::PageHead`），
+/// 于是到哪一页都知道标题在哪、按钮在哪 —— 这是照 freellmapi 面板的排法抄的。
 #[component]
 fn Shell(ctx: Ctx) -> impl IntoView {
     let logout = move |_| {
@@ -398,83 +402,108 @@ fn Shell(ctx: Ctx) -> impl IntoView {
             ctx.phase.set(Phase::Login);
         });
     };
+    let reload = move |_| {
+        if let Some(w) = web_sys::window() {
+            let _ = w.location().reload();
+        }
+    };
 
     view! {
-        // 手机上侧栏是抽屉：加了 nav-open 就滑出来，点遮罩或点任意导航项收起。
-        // 桌面端 CSS 里侧栏常驻，这个 class 不起作用。
-        <div class=move || if ctx.nav_open.get() { "shell nav-open" } else { "shell" }>
-            <button
-                class="nav-scrim"
-                title="收起菜单"
-                on:click=move |_| ctx.nav_open.set(false)
-            ></button>
-            <aside class="sidebar">
-                <div class="brand">
-                    <span class="brand-name">{tokengo_shared::BRAND}</span>
-                    <span class="muted small">"v" {tokengo_shared::VERSION}</span>
-                </div>
-                <nav>
-                    {Page::ALL
-                        .iter()
-                        .map(|p| {
-                            let p = *p;
-                            view! {
-                                <button
-                                    class="nav"
-                                    class:active=move || ctx.page.get() == p
-                                    on:click=move |_| ctx.go(p)
-                                >
-                                    <span class="nav-icon">{p.icon()}</span>
-                                    <span>{p.title()}</span>
-                                </button>
-                            }
-                        })
-                        .collect_view()}
-                </nav>
-                <div class="sidebar-foot">
-                    <button class="ghost" on:click=logout>"退出登录"</button>
-                </div>
-            </aside>
-            <main class="main">
-                <header class="topbar">
-                    <button
-                        class="ghost nav-toggle"
-                        title="菜单"
-                        on:click=move |_| ctx.nav_open.update(|v| *v = !*v)
-                    >
-                        "☰"
-                    </button>
-                    <h1>{move || ctx.page.get().title()}</h1>
-                    <div class="topbar-right">
-                        {move || ctx.toast.get().map(|t| view! { <span class="toast">{t}</span> })}
-                        <button
-                            class="ghost theme-toggle"
-                            title=move || {
-                                if ctx.theme.get().is_light() { "切到夜间" } else { "切到日间" }
-                            }
-                            on:click=move |_| ctx.toggle_theme()
-                        >
-                            {move || if ctx.theme.get().is_light() { "☾" } else { "☀" }}
-                        </button>
-                        <button
-                            class="ghost"
-                            title="重新载入面板"
-                            on:click=move |_| {
-                                if let Some(w) = web_sys::window() {
-                                    let _ = w.location().reload();
+        <div class="shell">
+            <header class="topbar">
+                <div class="topbar-inner">
+                    <span class="brand">
+                        {tokengo_shared::BRAND}
+                        <span class="muted small">"v" {tokengo_shared::VERSION}</span>
+                    </span>
+                    // 桌面端：五个页面横排（手机上这排会藏起来，走右上角菜单）
+                    <nav class="topnav">
+                        {Page::ALL
+                            .iter()
+                            .map(|p| {
+                                let p = *p;
+                                view! {
+                                    <button
+                                        class="nav"
+                                        class:active=move || ctx.page.get() == p
+                                        title=p.blurb()
+                                        on:click=move |_| ctx.go(p)
+                                    >
+                                        {p.title()}
+                                    </button>
                                 }
-                            }
+                            })
+                            .collect_view()}
+                    </nav>
+                    <span class="spacer"></span>
+                    {move || ctx.toast.get().map(|t| view! { <span class="toast">{t}</span> })}
+                    <button
+                        class="ghost icon-btn"
+                        title=move || {
+                            if ctx.theme.get().is_light() { "切到夜间" } else { "切到日间" }
+                        }
+                        on:click=move |_| ctx.toggle_theme()
+                    >
+                        {move || if ctx.theme.get().is_light() { "☾" } else { "☀" }}
+                    </button>
+                    <div class="menu-wrap">
+                        <button
+                            class="ghost icon-btn nav-toggle"
+                            title="菜单"
+                            on:click=move |_| ctx.nav_open.update(|v| *v = !*v)
                         >
-                            "重新载入"
+                            "☰"
                         </button>
+                        {move || {
+                            ctx.nav_open
+                                .get()
+                                .then(|| {
+                                    view! {
+                                        <>
+                                            // 点页面任何地方都收起菜单（遮罩是透明的，不挡看内容）
+                                            <button
+                                                class="nav-scrim"
+                                                title="收起菜单"
+                                                on:click=move |_| ctx.nav_open.set(false)
+                                            ></button>
+                                            <div class="menu-pop">
+                                                {Page::ALL
+                                                    .iter()
+                                                    .map(|p| {
+                                                        let p = *p;
+                                                        view! {
+                                                            <button
+                                                                class="menu-item"
+                                                                class:active=move || ctx.page.get() == p
+                                                                on:click=move |_| ctx.go(p)
+                                                            >
+                                                                {p.title()}
+                                                                <span class="muted small">{p.blurb()}</span>
+                                                            </button>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                                <div class="menu-sep"></div>
+                                                <button class="menu-item" on:click=reload>
+                                                    "重新载入面板"
+                                                </button>
+                                                <button class="menu-item danger" on:click=logout>
+                                                    "退出登录"
+                                                </button>
+                                            </div>
+                                        </>
+                                    }
+                                })
+                        }}
                     </div>
-                </header>
+                </div>
+            </header>
+            <main class="main">
                 <section class="content">
                     {move || match ctx.page.get() {
                         Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
                         Page::Channels => view! { <pages::channels::Channels ctx=ctx /> }.into_any(),
-                        Page::Groups => view! { <pages::groups::Groups ctx=ctx /> }.into_any(),
-                        Page::Routing => view! { <pages::routing::Routing ctx=ctx /> }.into_any(),
+                        Page::Models => view! { <pages::models::Models ctx=ctx /> }.into_any(),
                         Page::Requests => view! { <pages::requests::Requests ctx=ctx /> }.into_any(),
                         Page::Settings => view! { <pages::settings::Settings ctx=ctx /> }.into_any(),
                     }}
