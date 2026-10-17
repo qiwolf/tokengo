@@ -233,6 +233,12 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
             "model": model,
             "input": "x",
         }),
+        EndpointKind::Rerank => serde_json::json!({
+            "model": model,
+            "query": "ping",
+            "documents": ["x"],
+            "top_n": 1,
+        }),
     };
     bytes::Bytes::from(serde_json::to_vec(&v).unwrap_or_default())
 }

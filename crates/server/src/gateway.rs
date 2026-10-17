@@ -45,6 +45,7 @@ use crate::SharedState;
 pub enum EndpointKind {
     Chat,
     Embeddings,
+    Rerank,
 }
 
 impl EndpointKind {
@@ -53,6 +54,7 @@ impl EndpointKind {
         match self {
             EndpointKind::Chat => "chat/completions",
             EndpointKind::Embeddings => "embeddings",
+            EndpointKind::Rerank => "rerank",
         }
     }
 
@@ -60,6 +62,7 @@ impl EndpointKind {
         match self {
             EndpointKind::Chat => "/v1/chat/completions",
             EndpointKind::Embeddings => "/v1/embeddings",
+            EndpointKind::Rerank => "/v1/rerank",
         }
     }
 }
@@ -306,7 +309,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             channel.id.0,
                         )
                     } else {
-                        let (resp, input, output) = buffer_passthrough(resp, http).await;
+                        let (resp, input, output) = if req.endpoint == EndpointKind::Rerank {
+                            buffer_rerank_passthrough(resp, http, &req.body).await
+                        } else {
+                            buffer_passthrough(resp, http).await
+                        };
                         guard.finish(
                             &state,
                             Status::Ok,
@@ -525,6 +532,59 @@ async fn buffer_passthrough(
     }
     (
         b.body(Body::from(bytes))
+            .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()),
+        input,
+        output,
+    )
+}
+
+/// 重排：整段读下来再回给客户端；上游 `document` 为 null 时按 index 回填请求里的原文。
+async fn buffer_rerank_passthrough(
+    resp: reqwest::Response,
+    status: StatusCode,
+    req_body: &Value,
+) -> (Response, i64, i64) {
+    let ctype = content_type(&resp);
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let docs = req_body
+        .get("documents")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut parsed: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    if let Some(results) = parsed.get_mut("results").and_then(|r| r.as_array_mut()) {
+        for r in results.iter_mut() {
+            let idx = r.get("index").and_then(|x| x.as_u64()).map(|x| x as usize);
+            let doc = r.get("document");
+            let need_fill = match doc {
+                None => true,
+                Some(Value::Null) => true,
+                Some(Value::Object(o)) if o.is_empty() => true,
+                _ => false,
+            };
+            if need_fill {
+                if let Some(i) = idx {
+                    if let Some(text) = docs.get(i).and_then(|d| d.as_str()) {
+                        r.as_object_mut().map(|o| {
+                            o.insert("document".to_string(), serde_json::json!({"text": text}))
+                        });
+                    } else if let Some(obj) = docs.get(i) {
+                        r.as_object_mut().map(|o| {
+                            o.insert("document".to_string(), serde_json::json!({"text": obj.to_string()}))
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let out_bytes = serde_json::to_vec(&parsed).unwrap_or_else(|_| bytes.to_vec());
+let (input, output) = usage_from_value(&parsed);
+    let mut b = Response::builder().status(status);
+    if let Some(ct) = ctype {
+        b = b.header(header::CONTENT_TYPE, ct);
+    }
+    (
+        b.body(Body::from(out_bytes))
             .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()),
         input,
         output,
@@ -882,6 +942,8 @@ mod tests {
     fn endpoint_paths_match_the_openai_shape() {
         assert_eq!(EndpointKind::Chat.path(), "chat/completions");
         assert_eq!(EndpointKind::Embeddings.path(), "embeddings");
+        assert_eq!(EndpointKind::Rerank.path(), "rerank");
         assert_eq!(EndpointKind::Chat.as_str(), "/v1/chat/completions");
+        assert_eq!(EndpointKind::Rerank.as_str(), "/v1/rerank");
     }
 }
