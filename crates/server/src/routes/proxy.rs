@@ -111,6 +111,11 @@ async fn embeddings(
 
 /// 模型清单。**只列真的能用的**：组是开着的、组里至少有一条可用腿。
 /// 面板与客户端看同一份判断（`groups::list_servable`），不会出现"清单里有、打了 404"。
+///
+/// 每条多一个 `vision` 字段：这个模型名后面有没有"能看图"的腿。客户端（Hermes
+/// 之类）可以据此决定要不要把图发过来 —— 带图的请求打到一个没有视觉腿的模型名
+/// 上会被回 422（`code: no_vision_model`）。这是标准 OpenAI 字段之外的增项，
+/// 老客户端忽略它就行，行为不变。
 async fn models(
     _key: GatewayKey,
     State(state): State<SharedState>,
@@ -122,10 +127,11 @@ async fn models(
     Ok(Json(serde_json::json!({
         "object": "list",
         "data": servable.iter().map(|m| serde_json::json!({
-            "id": m,
+            "id": m.name,
             "object": "model",
             "created": 0,
             "owned_by": tokengo_shared::BRAND,
+            "vision": m.vision,
         })).collect::<Vec<_>>(),
     })))
 }

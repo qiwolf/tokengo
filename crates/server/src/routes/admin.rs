@@ -28,6 +28,7 @@ pub fn router() -> Router<SharedState> {
         .route("/legs/{id}", put(legs_update).delete(legs_delete))
         .route("/legs/{id}/probe", post(legs_probe))
         .route("/legs/{id}/models", post(legs_models))
+        .route("/legs/{id}/vision-test", post(legs_vision_test))
         .route("/groups", get(groups_list).post(groups_upsert))
         .route("/groups/{name}", delete(groups_delete))
         .route("/routing", get(routing_state))
@@ -221,7 +222,13 @@ fn leg_json(l: &legs::LegRow) -> serde_json::Value {
         "enabled": l.enabled,
         "has_secret": l.has_secret,
         "headers": l.headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect::<Vec<_>>(),
-        "models": l.models.iter().map(|(m, u)| serde_json::json!({"model": m, "upstream": u})).collect::<Vec<_>>(),
+        "models": l.models.iter().map(|m| serde_json::json!({
+            "model": m.model,
+            "upstream": m.upstream,
+            "vision": m.vision,
+        })).collect::<Vec<_>>(),
+        // 这条腿上「能看图」的模型名有几个 —— 腿列表里直接显示，不用展开也知道。
+        "vision_count": l.models.iter().filter(|m| m.vision).count(),
     })
 }
 
@@ -246,6 +253,9 @@ struct HeaderIn {
 struct ModelIn {
     model: String,
     upstream: Option<String>,
+    /// 这个模型名在这条腿上能不能吃图片输入（面板上的「能看图」勾选）。
+    #[serde(default)]
+    vision: bool,
 }
 
 #[derive(Deserialize)]
@@ -275,11 +285,17 @@ impl LegBody {
             .collect()
     }
 
-    fn models(&self) -> Vec<(String, Option<String>)> {
+    fn models(&self) -> Vec<legs::ModelMapping> {
         self.models
             .iter()
             .filter(|m| !m.model.trim().is_empty())
-            .map(|m| (m.model.clone(), m.upstream.clone()))
+            .map(|m| {
+                legs::ModelMapping::new(
+                    m.model.clone(),
+                    m.upstream.clone().filter(|u| !u.trim().is_empty()),
+                    m.vision,
+                )
+            })
             .collect()
     }
 }
@@ -365,7 +381,7 @@ struct ReadyLeg {
     leg: tokengo_shared::Leg,
     secret: Option<String>,
     has_secret: bool,
-    models: Vec<(String, Option<String>)>,
+    models: Vec<legs::ModelMapping>,
 }
 
 fn ready_leg(state: &SharedState, id: tokengo_shared::LegId) -> Result<Option<ReadyLeg>, ApiError> {
@@ -382,6 +398,7 @@ fn ready_leg(state: &SharedState, id: tokengo_shared::LegId) -> Result<Option<Re
             enabled: row.enabled,
             priority: 0,
             model_alias: None,
+            vision: false,
             headers: row.headers.clone(),
         },
         secret,
@@ -420,11 +437,11 @@ async fn legs_probe(
 
     let model = models
         .iter()
-        .find_map(|(_, upstream)| upstream.clone().filter(|u| !u.trim().is_empty()))
+        .find_map(|m| m.upstream.clone().filter(|u| !u.trim().is_empty()))
         .or_else(|| {
             models
                 .iter()
-                .map(|(name, _)| name.clone())
+                .map(|m| m.model.clone())
                 .find(|n| !n.trim().is_empty())
         });
 
@@ -579,14 +596,175 @@ async fn legs_models(
 
 /// 出错时给人看的一小段正文（不整段塞回来：上游可能吐几 MB）。
 fn snippet(body: &str) -> String {
-    let t = body.trim();
-    let cut = t.char_indices().nth(300).map(|(i, _)| i).unwrap_or(t.len());
-    let head = t[..cut].replace('\n', " ");
-    if cut < t.len() {
-        format!("{head}…")
-    } else {
-        head
+    crate::upstream::cap_chars(&body.replace('\n', " "), 300)
+}
+
+/// 「测视觉」的入参：测这条腿上的哪个模型名。
+///
+/// 面板上每一行模型名旁边都有这个按钮，所以要把行里的名字传进来 ——
+/// 不能拿"这条腿随便一个模型名"去测，不然会测出另一个模型的结论。
+#[derive(Deserialize)]
+struct VisionTestBody {
+    /// 对外模型名（通常就是组名，如 `auto`）。
+    model: String,
+    /// 发给上游的名字。留空 = 原样透传（跟保存的语义一致）。
+    #[serde(default)]
+    upstream: Option<String>,
+    /// 「测完通过就顺手勾上」——默认勾。关掉就只看结果不改配置。
+    #[serde(default = "default_true")]
+    apply: bool,
+}
+
+/// 面板上的「测视觉」：**真发一张图**问这条腿一个只有看图才能答对的问题。
+///
+/// 为什么不能靠猜：上游 FreeLLMAPI 有目录表告诉它哪个模型能看图，我们没有
+/// （本项目的上游全是用户自定义的），而"模型名里带 vl / vision"这种推断经常错
+/// —— deepseek 的 flash 就能读图，反倒有些名字里带 vision 的模型是纯装饰。
+/// 所以只有真打一发才算数。
+///
+/// 三条纪律跟探活/拉清单一致：
+/// - **不写记账**（不是用户请求，不能污染统计）；
+/// - **不动路由状态**（一次人工检查不该改变谁在用）；
+/// - 用**这条腿自己的** URL / key / 自定义头。
+async fn legs_vision_test(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    Json(body): Json<VisionTestBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = tokengo_shared::LegId(id);
+    let Some(ready) = ready_leg(&state, id)? else {
+        return Err(ApiError::not_found(format!("腿 {id} 不存在")));
+    };
+    let ReadyLeg { leg, secret, .. } = ready;
+
+    let model_name = body.model.trim().to_string();
+    if model_name.is_empty() {
+        return Err(ApiError::bad_request("要测哪个模型名？传 model"));
     }
+    // 这一行在库里存不存在：不存在就直接说清楚（免得发自测了却没法勾上）
+    let sent = body
+        .upstream
+        .clone()
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| model_name.clone());
+
+    let timeout = {
+        let cfg = state.routing().cfg.clone();
+        std::time::Duration::from_millis(cfg.attempt_timeout_ms.max(1))
+            .min(std::time::Duration::from_secs(30))
+    };
+    let t0 = now_ms();
+    let r = state
+        .upstream
+        .call_and_read(
+            &leg,
+            secret.as_deref(),
+            crate::gateway::EndpointKind::Chat.path(),
+            crate::prober::vision_test_body(&sent),
+            timeout,
+            &crate::upstream::new_uuid(),
+            now_ms(),
+        )
+        .await;
+    let latency = now_ms() - t0;
+
+    let (ok, status, reply, note) = match r {
+        Ok((code, text)) => {
+            let reply = extract_reply(&text);
+            if !(200..300).contains(&code) {
+                let note = match code {
+                    400 | 404 | 422 => format!(
+                        "上游不收这张图（HTTP {code}）：这个模型多半不支持图像输入。它的原话：{}",
+                        snippet(&text)
+                    ),
+                    401 | 403 => format!("凭据不对（HTTP {code}）—— 先点「测一下」看看这条腿本身通不通"),
+                    429 => format!("被上游限流了（HTTP {code}），过一会儿再测"),
+                    _ => format!("上游回了 HTTP {code}：{}", snippet(&text)),
+                };
+                (false, Some(code), reply, note)
+            } else if crate::prober::answer_says_red(&reply) {
+                (
+                    true,
+                    Some(code),
+                    reply,
+                    "真看见了：它认出了左上角是红色（纯文本模型答不出这个）".to_string(),
+                )
+            } else if reply.trim().is_empty() {
+                (
+                    false,
+                    Some(code),
+                    reply,
+                    "上游收了图但回了个空回复，看不出它到底看没看见 —— 别勾，先用一张真图在客户端里试一次".to_string(),
+                )
+            } else {
+                let note = format!(
+                    "上游收了图，但答的不是红色（它说：{}）—— 多半没真看图，或者这模型认不了这张图。别勾。",
+                    snippet(&reply)
+                );
+                (false, Some(code), reply, note)
+            }
+        }
+        Err(fault) => (false, None, String::new(), fault.message),
+    };
+
+    // 测通了、且用户没关掉 apply → 顺手把这行标上（省得再回表单勾一次）
+    let applied = if ok && body.apply {
+        let conn = state.conn();
+        match legs::set_model_vision(&conn, id, &model_name, true) {
+            Ok(_) => {
+                tracing::info!("腿 {id} 的「{model_name}」实测能看图，已标上");
+                true
+            }
+            Err(e) => {
+                // 这行不在库里（比如用户还没保存）—— 不影响结论，只是没法自动勾
+                tracing::warn!("实测通过了但标记没落库：{e}");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    Ok(Json(serde_json::json!({
+        "ok": ok,
+        "leg_id": leg.id.0,
+        "leg_name": leg.name,
+        "model": model_name,
+        "model_sent": sent,
+        "http_status": status,
+        "latency_ms": latency,
+        "reply": crate::upstream::cap_chars(&reply, 300),
+        "applied": applied,
+        "note": note,
+    })))
+}
+
+/// 从对话响应里抠出模型回的话（OpenAI 形状；认不出就回空串 —— 不编）。
+fn extract_reply(body: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return String::new();
+    };
+    let msg = v
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("message"));
+    if let Some(m) = msg {
+        if let Some(s) = m.get("content").and_then(|c| c.as_str()) {
+            if !s.trim().is_empty() {
+                return s.trim().to_string();
+            }
+        }
+        // 有的模型把答案放在 reasoning_content 里（拿它当证据总比空着强）
+        if let Some(s) = m.get("reasoning_content").and_then(|c| c.as_str()) {
+            return s.trim().to_string();
+        }
+    }
+    if let Some(s) = v.get("content").and_then(|c| c.as_str()) {
+        return s.trim().to_string();
+    }
+    String::new()
 }
 
 async fn groups_list(
@@ -600,9 +778,15 @@ async fn groups_list(
             "name": g.name,
             "enabled": g.enabled,
             "legs": g.legs.iter().map(|l| l.0).collect::<Vec<_>>(),
+            // 这一组现在有没有「能看图」的可用腿 —— 组层面有个明确说法，
+            // 不用让面板自己去把每条腿的模型名对着组名翻一遍。
+            "can_see": groups::group_can_see(&conn, &g.name).unwrap_or(false),
         })).collect::<Vec<_>>(),
         // 只列真实能用的模型名，给 /v1/models 和面板用同一份判断
-        "servable": groups::list_servable(&conn)?,
+        "servable": groups::list_servable(&conn)?
+            .into_iter()
+            .map(|s| serde_json::json!({"name": s.name, "vision": s.vision}))
+            .collect::<Vec<_>>(),
     })))
 }
 

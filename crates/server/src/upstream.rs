@@ -97,6 +97,29 @@ impl Upstream {
         Ok(r.status().as_u16())
     }
 
+    /// 「测视觉」用：要状态码 **和** 正文开头 —— 判断"它到底看没看见图"得看模型
+    /// 回的话（回了"红"才是真看见了；回 400 说明它压根不收图片）。
+    ///
+    /// 正文最多留 4 KB：上游可能吐一整个错误页，这里只要够看懂就行。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_and_read(
+        &self,
+        leg: &Leg,
+        secret: Option<&str>,
+        path: &str,
+        body: Bytes,
+        timeout: Duration,
+        uuid: &str,
+        now_ms: i64,
+    ) -> Result<(u16, String), LegFault> {
+        let r = self
+            .call(leg, secret, path, body, false, timeout, uuid, now_ms)
+            .await?;
+        let code = r.status().as_u16();
+        let text = r.text().await.unwrap_or_default();
+        Ok((code, cap_chars(&text, 4000)))
+    }
+
     /// 拉这条腿支持的模型清单：`GET {base_url}/models`，用这条腿自己的
     /// URL、key 和自定义请求头（头里的模板照旧逐请求求值）。
     ///
@@ -248,6 +271,15 @@ pub fn join_url(base_url: &str, path: &str) -> String {
     format!("{base}/{path}")
 }
 
+/// 只留正文开头这么多字符（按字符数不算字节数，中文不会被切半个字）。
+pub fn cap_chars(s: &str, max: usize) -> String {
+    let t = s.trim();
+    match t.char_indices().nth(max) {
+        Some((i, _)) => format!("{}…", &t[..i]),
+        None => t.to_string(),
+    }
+}
+
 /// 这条腿本次请求要带的头（自定义头在前，Authorization 最后 ——
 /// 免得用户自定义头里写了个 Authorization 又被覆盖，反过来更好查）。
 ///
@@ -290,6 +322,7 @@ mod tests {
             enabled: true,
             priority: 0,
             model_alias: Some("deepseek/deepseek-v4.1-flash".into()),
+            vision: false,
             headers: headers
                 .into_iter()
                 .map(|(a, b)| (a.to_string(), b.to_string()))

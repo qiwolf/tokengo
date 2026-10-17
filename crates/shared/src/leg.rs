@@ -34,6 +34,14 @@ pub struct Leg {
     /// `deepseek/deepseek-v4.1-flash` —— 只能按腿改名，全局别名表做不到。
     #[serde(default)]
     pub model_alias: Option<String>,
+    /// **这个模型名在这条腿上能不能吃图片输入**（面板上勾「能看图」）。
+    ///
+    /// 能力是「上游模型 + 这条腿」的属性，不是全局属性：同一个 `auto` 在 A 腿上
+    /// 落到能看图的模型、在 B 腿上落到纯文本模型，所以标记挂在按腿模型名那一行上。
+    /// 没标 = 不敢保证，带图的请求不会发给它（宁可 422 说清楚，也不把图悄悄丢掉
+    /// 或让上游回一个含糊的 400）。
+    #[serde(default)]
+    pub vision: bool,
     /// 自定义请求头。上游 FreeLLMAPI 没有这个能力，本项目主动加上。
     /// 值支持模板：`{{uuid}}`、`{{timestamp_ms}}`，逐请求求值。
     #[serde(default)]
@@ -81,6 +89,37 @@ pub fn render_header_value(tpl: &str, uuid: &str, now_ms: i64) -> String {
         .replace("{{timestamp_ms}}", &now_ms.to_string())
 }
 
+/// 这个请求体里有没有图片（客户端是不是在让模型看图）。
+///
+/// 上游 FreeLLMAPI 用的是同一套判据：`messages[].content` 是数组时，看有没有
+/// `type == "image_url"` 的元素（见其 `lib/inbound-chat.ts` 的 `hasImages`）。
+/// 这里把新老形状都认下来：
+///
+/// - `{"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}`（OpenAI 老形状）
+/// - `{"type":"image"}`（部分上游/客户端的写法）
+/// - `{"type":"input_image"}`（OpenAI Responses 形状，客户端有时直接复用）
+///
+/// **只认数组形状**：`content` 是字符串就是纯文本，不算带图。宁可漏判成"没图"
+/// （最坏情况是上游回 400，用户看得见），也不要误判成"有图"把普通请求拦下来。
+pub fn request_has_image(body: &serde_json::Value) -> bool {
+    let Some(msgs) = body.get("messages").and_then(|m| m.as_array()) else {
+        return false;
+    };
+    msgs.iter().any(|m| {
+        m.get("content")
+            .and_then(|c| c.as_array())
+            .map(|parts| {
+                parts.iter().any(|p| {
+                    matches!(
+                        p.get("type").and_then(|t| t.as_str()),
+                        Some("image_url") | Some("image") | Some("input_image")
+                    )
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +132,7 @@ mod tests {
             enabled: true,
             priority: id as i32,
             model_alias: alias.map(str::to_owned),
+            vision: false,
             headers: vec![],
         }
     }
@@ -136,5 +176,51 @@ mod tests {
         let b = render_header_value("sess-{{uuid}}", "BBB", 1);
         assert_ne!(a, b, "逐请求必须生成不同的值");
         assert_eq!(render_header_value("t={{timestamp_ms}}", "x", 1234), "t=1234");
+    }
+
+    #[test]
+    fn an_image_part_marks_the_request_as_vision() {
+        let body = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "这是什么"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+            ]}]
+        });
+        assert!(request_has_image(&body), "带图请求必须被认出来");
+    }
+
+    #[test]
+    fn plain_string_content_is_not_vision() {
+        let body = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "就是一句话"}]
+        });
+        assert!(!request_has_image(&body));
+    }
+
+    #[test]
+    fn newer_image_part_names_count_too() {
+        for t in ["image", "input_image"] {
+            let body = serde_json::json!({
+                "messages": [{"role": "user", "content": [{"type": t}]}]
+            });
+            assert!(request_has_image(&body), "{t} 也要认");
+        }
+    }
+
+    /// 反证：没有 messages、messages 是别的形状、文字+工具调用混排，都不算带图
+    /// —— 误判成"有图"会把普通请求拦下来（比漏判更糟）。
+    #[test]
+    fn non_vision_shapes_are_never_mistaken_for_images() {
+        assert!(!request_has_image(&serde_json::json!({})));
+        assert!(!request_has_image(&serde_json::json!({"messages": "nope"})));
+        assert!(!request_has_image(&serde_json::json!({"messages": []})));
+        assert!(!request_has_image(&serde_json::json!({
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "看图这件事我不会"},
+                {"type": "tool_result", "content": "{}"}
+            ]}]
+        })));
     }
 }

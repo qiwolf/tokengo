@@ -119,4 +119,18 @@ CREATE TABLE panel_sessions (
 CREATE INDEX idx_panel_sessions_expiry ON panel_sessions (expires_at_ms);
 "#,
     ),
+    (
+        2,
+        r#"
+-- 视觉能力标记（阶段 4.1）：这个模型名在这条腿上能不能吃图片输入。
+--
+-- 为什么要它：客户端（Hermes、面板的假上游测试）会把图发给 `auto`，而
+-- `auto` 后面那串腿里有的落在纯文本模型上 —— 上游只会回一个含糊的 400
+-- 或干脆把图忽略掉，用户看不出来发生了什么。有了这个标记，带图的请求
+-- 只走「标了能看图」的腿；一条都没有就 422 明说，而不是把图悄悄丢掉。
+--
+-- 默认 0：**没标 = 不敢保证**。宁可先说"这组里没有能看图的腿"，也不猜。
+ALTER TABLE leg_models ADD COLUMN vision INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
 ];

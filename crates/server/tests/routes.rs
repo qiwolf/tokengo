@@ -391,7 +391,12 @@ async fn create_a_leg_and_a_group_end_to_end() {
     let g = &v["groups"][0];
     assert_eq!(g["name"], "auto");
     assert_eq!(g["legs"], json!([sf_id, cg_id]));
-    assert_eq!(v["servable"], json!(["auto"]), "只列真实能用的模型名");
+    assert_eq!(
+        v["servable"],
+        json!([{"name": "auto", "vision": false}]),
+        "只列真实能用的模型名，并如实说能不能看图"
+    );
+    assert_eq!(g["can_see"], json!(false), "这条组里没有标能看图的腿");
 
     // 路由状态：首选是第一条，还没切过
     let (s, v) = send(test_app(&f), "GET", "/api/routing", Some(&token), None).await;

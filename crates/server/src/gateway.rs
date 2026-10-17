@@ -3,7 +3,8 @@
 //! 一段请求的一生（严格按 `docs/03-路由策略.md`）：
 //!
 //! ```text
-//!   取模型组 → 过滤出可用腿 → 问路由状态机「这次按什么顺序试」
+//!   取模型组 → 过滤出可用腿 →（带图的请求：再筛出标了「能看图」的腿）
+//!   → 问路由状态机「这次按什么顺序试」
 //!   → 开一条记账（请求级）
 //!   → 逐条腿、每条腿最多 1+retry_times 次尝试
 //!        腿的毛病（网络/5xx/429/401/403）→ 重试；重试耗尽 → 切换下一条腿
@@ -26,6 +27,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use bytes::Bytes;
 use futures_util::stream::unfold;
 use serde_json::Value;
@@ -129,17 +131,85 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
 pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
-    let plan = load_plan(&state, &req.model)?;
+    let plan_all = load_plan(&state, &req.model)?;
+    // 这一组的全量可用腿（状态机一律看这一份，不看带图筛过的那一份）
+    let all_ids = plan_all.ids();
+
+    // 这条请求是不是在让模型看图？（只有对话端点会有图）
+    let wants_vision = req.endpoint == EndpointKind::Chat
+        && tokengo_shared::request_has_image(&req.body);
+
+    // 带图就只走「标了能看图」的腿。**没标 = 不敢保证**：把图发给一条纯文本
+    // 上游，它要么回一个含糊的 400、要么干脆把图忽略掉装没事，两种都让用户
+    // 看不出来发生了什么（上游 FreeLLMAPI 也是这个规矩，它连"一个能看图的
+    // 模型都没启用"都要单独回一个 422，而不是等上游报错）。
+    let plan = if wants_vision {
+        let legs: Vec<Leg> = plan_all
+            .legs
+            .iter()
+            .filter(|l| l.vision)
+            .cloned()
+            .collect();
+        Plan {
+            group: plan_all.group.clone(),
+            legs,
+            secrets: plan_all.secrets.clone(),
+        }
+    } else {
+        plan_all
+    };
+
+    if wants_vision && plan.legs.is_empty() {
+        // 记一条账：面板的「请求流水」里要能看见这次被拦下的带图请求
+        // （这不是腿的毛病，是配置里没有能看图的腿 → client_error）。
+        let msg = format!(
+            "这条请求带了图片，但模型「{}」后面没有一条腿标了「能看图」。\
+             去面板『腿管理』给这条腿的模型名勾上「能看图」（拿不准就先点它旁边的『测视觉』实测一下），\
+             或者把图片请求改成打一个确实能看图的模型名。",
+            req.model
+        );
+        let request_id = {
+            let conn = state.conn();
+            requests::start(&conn, req.endpoint.as_str(), &req.model, req.client_ip.as_deref())?
+        };
+        let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+        guard.finish(
+            &state,
+            Status::ClientError,
+            Some(422),
+            None,
+            started_ms,
+            None,
+            0,
+            0,
+            false,
+            Some(&msg),
+        );
+        return Ok(no_vision_model_response(msg));
+    }
 
     // 这一组平时走哪个端点，后台探活要知道（否则给向量组发对话探活必然 400）
     state.note_group_endpoint(&plan.group, req.endpoint);
 
-    let ids = plan.ids();
-    let order = {
+    // 状态机看的一律是**这一组的全量可用腿**（跟带不带图无关）。带图请求只是在
+    // 它给出的顺序里挑出能看图的腿 —— 一份被筛过的名单喂进去，宁可回不到首选，
+    // 也绝不能反过来把整组的「当前腿」改成那条能看图的腿。
+    let ids = all_ids;
+    let order_all = {
         // 微秒级的一段锁，里面没有 await
         state.routing().attempt_order(&plan.group, &ids, started_ms)
     };
-    let order = if order.is_empty() { ids.clone() } else { order };
+    let order_all = if order_all.is_empty() { ids.clone() } else { order_all };
+    // plan 带图时已经是筛过的：`plan.leg(id)` 有值就说明这条腿标了「能看图」
+    let order: Vec<LegId> = if wants_vision {
+        order_all.iter().copied().filter(|id| plan.leg(*id).is_some()).collect()
+    } else {
+        order_all
+    };
+    // 带图请求**只读状态机、不写**：它本来就只在「能看图」这个小圈子里挑腿，
+    // 让它的结果去改整组的口味，等于一条带图请求把后面十分钟的纯文字请求一起改道。
+    // 腿自身的健康照旧由每分钟探活和纯文字请求看着。
+    let touch_state = !wants_vision;
 
     let request_id = {
         let conn = state.conn();
@@ -219,11 +289,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 AttemptOutcome::Success => {
                     record_attempt(&state, request_id, ordinal, leg, "success", Some(status), dur, None);
                     // 命中的是首选就视为已回切；不是就记下当前腿、重设检查点
-                    {
+                    if touch_state {
                         let mut r = state.routing();
                         r.on_success(&plan.group, leg.id, &ids, now_ms());
+                        drop(r);
+                        state.persist_state(&plan.group)?;
                     }
-                    state.persist_state(&plan.group)?;
                     let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
                     return Ok(if req.stream {
                         stream_passthrough(
@@ -312,12 +383,19 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         }
 
         // 这条腿把重试次数用完了还是不行 → 切换
-        {
+        if touch_state {
             let mut r = state.routing();
             r.on_leg_exhausted(&plan.group, leg.id, &ids, now_ms());
+            drop(r);
+            state.persist_state(&plan.group)?;
+            tracing::warn!("腿 {} 连续 {} 次失败，切换", leg.name, cfg.max_attempts());
+        } else {
+            tracing::warn!(
+                "（带图请求，不动路由状态）腿 {} 连续 {} 次失败",
+                leg.name,
+                cfg.max_attempts()
+            );
         }
-        state.persist_state(&plan.group)?;
-        tracing::warn!("腿 {} 连续 {} 次失败，切换", leg.name, cfg.max_attempts());
     }
 
     // 所有腿都试完了
@@ -358,6 +436,25 @@ fn gateway_timeout(plan: &Plan, model: &str) -> Response {
         ),
     )
     .into_response()
+}
+
+/// 带图的请求撞上「一组里没有能看图的腿」时的响应。
+///
+/// 形状跟上游 FreeLLMAPI 对齐（`code: no_vision_model`）：客户端的处理逻辑可以照抄。
+/// 为什么不是把图丢掉照常转发：那样用户会拿到一个"没看图却答了话"的结果，
+/// 而且**看不出来**哪里不对 —— 这比报错难查得多。
+fn no_vision_model_response(message: String) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(serde_json::json!({
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "code": "no_vision_model",
+            }
+        })),
+    )
+        .into_response()
 }
 
 /// 记一次尝试。记账失败不许把请求带崩 —— 日志里有痕迹就行。
