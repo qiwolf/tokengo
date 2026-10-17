@@ -55,6 +55,32 @@ struct Draft {
     channels: Vec<i64>,
 }
 
+/// 渠道里声明了、但**还没有同名模型组**的名字 —— 客户端打这些名字会 404
+/// （对外的名字是「模型组」，渠道上那一行只是说「这条渠道认这个名字」）。
+///
+/// 只认**启用着的**渠道；渠道按 id 从小到大排（id 顺序就是优先级顺序），名字按字典序，
+/// 这样一键补建出来的组顺序是稳的，不是随机的。
+pub(crate) fn groups_missing_for_channel_models(
+    channels: &[Channel],
+    groups: &[Group],
+) -> Vec<(String, Vec<i64>)> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let have: BTreeSet<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    let mut sorted: Vec<&Channel> = channels.iter().filter(|c| c.enabled).collect();
+    sorted.sort_by_key(|c| c.id);
+    let mut want: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    for c in sorted {
+        for m in &c.models {
+            let name = m.model.trim();
+            if name.is_empty() || have.contains(name) {
+                continue;
+            }
+            want.entry(name.to_string()).or_default().push(c.id);
+        }
+    }
+    want.into_iter().collect()
+}
+
 #[component]
 pub fn Models(ctx: Ctx) -> impl IntoView {
     let groups = RwSignal::new(Vec::<Group>::new());
@@ -152,6 +178,35 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                     ctx.say(format!("改类型没成功：{}", e.message));
                 }
             }
+        });
+    };
+
+    // 渠道里声明了、却还没有同名模型组的名字：客户端打这些名字会 404。
+    // 一键按名字补建模型组，把「声明了这个名字的渠道」按 id 顺序挂进去。
+    let fill_groups = move |_| {
+        let miss = groups_missing_for_channel_models(&channels.get_untracked(), &groups.get_untracked());
+        if miss.is_empty() {
+            ctx.say("没有要补的：渠道里声明的名字都已经有模型组了");
+            return;
+        }
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut done: Vec<String> = Vec::new();
+            let mut failed = 0;
+            for (name, ids) in miss {
+                match api::save_group(&name, true, &ids).await {
+                    Ok(()) => done.push(name),
+                    Err(e) => {
+                        failed += 1;
+                        ctx.note_err(&e);
+                    }
+                }
+            }
+            ctx.say(if failed == 0 {
+                format!("补建了 {} 个模型组：{}", done.len(), done.join("、"))
+            } else {
+                format!("补建了 {} 个，另有 {} 个没成（看红字）", done.len(), failed)
+            });
+            reload();
         });
     };
 
@@ -363,6 +418,28 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                     "只看含视觉的"
                 </label>
             </div>
+
+            // 渠道里声明了、却还没有同名模型组：客户端打这些名字会 404。给个一键补建。
+            {move || {
+                let miss = groups_missing_for_channel_models(&channels.get(), &groups.get());
+                if miss.is_empty() {
+                    return ().into_any();
+                }
+                let names = miss.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join("、");
+                let fill = fill_groups.clone();
+                view! {
+                    <div class="banner warn">
+                        <span>
+                            "渠道里声明了这些名字，但还没有同名模型组："
+                            <code>{names}</code>
+                            " —— 客户端现在打它们会 404。"
+                        </span>
+                        <span class="spacer"></span>
+                        <button class="primary" on:click=fill>"一键补建模型组"</button>
+                    </div>
+                }
+                .into_any()
+            }}
 
             <div class="table-wrap">
                 <table class="grid">
@@ -768,6 +845,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ModelPair;
 
     fn m(name: &str, vision: bool) -> Servable {
         Servable {
@@ -822,4 +900,65 @@ mod tests {
         let names: Vec<&str> = got.iter().map(|x| x.name.as_str()).collect();
         assert_eq!(names, vec!["auto", "glm-4v"], "顺序要保持原样");
     }
+
+    /// 回归：渠道里声明了 `deepseek-flash`、却没有同名模型组时要报出来等着补建 ——
+    /// 这正是「新增渠道 + 选模型，保存完客户端还是打不通」的那个坑。
+    #[test]
+    fn a_channel_model_without_a_same_named_group_is_reported() {
+        let chans = vec![chan(7, true, &["deepseek-flash"])];
+        assert_eq!(
+            groups_missing_for_channel_models(&chans, &[]),
+            vec![("deepseek-flash".to_string(), vec![7])],
+            "没有同名组就要报出来"
+        );
+        // 已经有同名组：不再报（别重复建）
+        let g = Group {
+            name: "deepseek-flash".into(),
+            enabled: true,
+            channels: vec![7],
+            ..Default::default()
+        };
+        assert!(groups_missing_for_channel_models(&chans, &[g]).is_empty());
+    }
+
+    /// 停用的渠道不算数：给它建组也打不通，只会多一个空组。
+    #[test]
+    fn disabled_channels_do_not_ask_for_groups() {
+        let chans = vec![chan(1, false, &["deepseek-flash"])];
+        assert!(groups_missing_for_channel_models(&chans, &[]).is_empty());
+    }
+
+    /// 两条渠道声明同一个名字 → 挂两条，按 id 升序（id 顺序 = 先试哪条）。
+    #[test]
+    fn the_same_name_from_two_channels_carries_both_ids_in_priority_order() {
+        let chans = vec![chan(9, true, &["auto2"]), chan(3, true, &["auto2"]), chan(5, true, &[" "])];
+        assert_eq!(
+            groups_missing_for_channel_models(&chans, &[]),
+            vec![("auto2".to_string(), vec![3, 9])],
+            "空名字要忽略，同名要合并且按 id 升序"
+        );
+    }
+
+    fn chan(id: i64, enabled: bool, models: &[&str]) -> Channel {
+        Channel {
+            id,
+            name: format!("渠道{id}"),
+            base_url: "http://x/v1".into(),
+            enabled,
+            has_secret: true,
+            unwrap_envelope: false,
+            headers: Vec::new(),
+            models: models
+                .iter()
+                .map(|m| ModelPair {
+                    model: m.to_string(),
+                    upstream: None,
+                    vision: false,
+                    drop_fields: String::new(),
+                })
+                .collect(),
+            vision_count: 0,
+        }
+    }
 }
+
