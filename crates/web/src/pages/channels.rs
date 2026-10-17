@@ -180,8 +180,15 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             _ => None,
         };
         let headers = f_headers.get_untracked();
-        let models = f_models
-            .get_untracked()
+        // 勾了上游清单里的模型、却没点「把勾选的加进下表」就直接保存 —— 保存时替他一起加进去。
+        // （不然勾了就白勾：弹窗一关，勾选不知道去哪了，看着就是「点了没反应」。用户报过这个。）
+        let mut merged = 0usize;
+        let mut models = f_models.get_untracked();
+        let sel = picked.get_untracked();
+        if !sel.is_empty() {
+            merged = add_picked_rows(&mut models, &sel);
+        }
+        let models = models
             .into_iter()
             .filter(|m| !m.model.trim().is_empty())
             .collect::<Vec<_>>();
@@ -195,6 +202,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                 .await
             {
                 Ok(new_id) => {
+                    picked.set(BTreeSet::new()); // 勾选已经落到模型表里了，清掉
                     match new_id {
                         // 新建：**表单不关**，直接切成"编辑这条新渠道" ——
                         // 这样能马上用它的 URL/密钥去拉上游模型清单，不用先关再点编辑
@@ -202,11 +210,19 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             form.set(Form::Edit(i));
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
-                            ctx.say("渠道已新建 —— 接着可以点「问一下它有哪些模型」");
+                            ctx.say(if merged > 0 {
+                                format!("渠道已新建，顺带把勾选的 {merged} 个模型加进来了 —— 接着可以点「问一下它有哪些模型」")
+                            } else {
+                                "渠道已新建 —— 接着可以点「问一下它有哪些模型」".to_string()
+                            });
                         }
                         None => {
                             form.set(Form::Closed);
-                            ctx.say("渠道已保存");
+                            ctx.say(if merged > 0 {
+                                format!("渠道已保存，顺带把勾选的 {merged} 个模型加进来了")
+                            } else {
+                                "渠道已保存".to_string()
+                            });
                         }
                     }
                     reload();
@@ -816,6 +832,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     "共 {total} 个，列出 {shown_n} 个，已勾选 {picked_n} 个",
                                                 )}
                                             </span>
+                                            // 勾了却没加进下表时，说清楚两条路都行 —— 免得「点了保存没反应」
+                                            {move || (picked.get().len() > 0).then(|| view! {
+                                                <span class="tag warn">
+                                                    "勾选的还没加进下表：点上面的按钮加，或者直接点「保存」也会一起加"
+                                                </span>
+                                            })}
                                         </div>
                                         <div class="pull-rows">{rows}</div>
                                         {(total > shown_n)
@@ -1067,3 +1089,24 @@ mod tests {
         assert_eq!(rows.len(), 2);
     }
 }
+
+    /// 回归：用户在模型清单里勾了 `deepseek-flash`，**没点「把勾选的加进下表」就直接点保存** ——
+    /// 以前勾选被无声丢掉（弹窗一关，渠道上「模型名：不限定」），看着就是「点了没反应」。
+    /// 现在保存前会把勾选并进模型表，这条用例锁住「空表 + 勾选」这个具体场景。
+    #[test]
+    fn ticking_a_model_and_hitting_save_keeps_it_even_with_an_empty_table() {
+        let mut rows: Vec<ModelPair> = Vec::new();
+        let mut picked = BTreeSet::new();
+        picked.insert("deepseek-flash".to_string());
+
+        let merged = add_picked_rows(&mut rows, &picked);
+        assert_eq!(merged, 1, "勾选的必须并进来");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].model, "deepseek-flash");
+        assert_eq!(rows[0].upstream, None, "没填上游名 = 同名发给上游");
+        assert!(!rows[0].vision, "拉回来的名字不许猜能力");
+
+        // 并过之后再并一次不会翻倍（用户点了加进下表又点保存的情形）
+        assert_eq!(add_picked_rows(&mut rows, &picked), 0);
+        assert_eq!(rows.len(), 1);
+    }
