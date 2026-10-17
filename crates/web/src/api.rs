@@ -222,7 +222,7 @@ pub async fn vision_test(id: i64, model: &str, upstream: Option<&str>) -> Result
 
 /// 一键启用/停用一组（面板状态开关）。
 pub async fn set_group_enabled(name: &str, enabled: bool) -> Result<(), ApiErr> {
-    let path = format!("/api/groups/{}/enabled", urlencode(name));
+    let path = format!("{}/enabled", group_path(name));
     call("PUT", &path, Some(json!({ "enabled": enabled })))
         .await
         .map(|_| ())
@@ -242,7 +242,7 @@ pub async fn set_channel_enabled(id: i64, enabled: bool) -> Result<(), ApiErr> {
 /// 给人手动定一组的类型（`auto` = 交还给实测）。
 pub async fn set_group_kind(name: &str, kind: &str) -> Result<(), ApiErr> {
     let body = json!({ "kind": kind });
-    let path = format!("/api/groups/{}/kind", urlencode(name));
+    let path = format!("{}/kind", group_path(name));
     call("PUT", &path, Some(body)).await.map(|_| ())
 }
 
@@ -276,7 +276,16 @@ pub async fn save_group(name: &str, enabled: bool, channels: &[i64]) -> Result<(
 }
 
 pub async fn delete_group(name: &str) -> Result<(), ApiErr> {
-    call("DELETE", &format!("/api/groups/{name}"), None).await.map(|_| ())
+    call("DELETE", &group_path(name), None).await.map(|_| ())
+}
+
+/// 模型组名进 URL 的那一段：**必须转义**。
+///
+/// 组名可以带斜杠（`BAAI/bge-m3` 就是这么来的），不转义的话
+/// `/api/groups/BAAI/bge-m3` 会被当成两段路径，路由匹配不上 → 报「删除失败 HTTP404」。
+/// （用户报过这个，2026-10-18 修的。凡是「名字进 URL」的地方都用这个函数，别手拼。）
+pub(crate) fn group_path(name: &str) -> String {
+    format!("/api/groups/{}", urlencode(name))
 }
 
 pub async fn routing() -> Result<RoutingResp, ApiErr> {
@@ -290,7 +299,7 @@ pub async fn save_routing_config(cfg: &RoutingCfg) -> Result<(), ApiErr> {
 
 /// 不想等 10 分钟时用：把某组的回切检查点归零。
 pub async fn reprobe(group: &str) -> Result<(), ApiErr> {
-    call("POST", &format!("/api/routing/{group}/reprobe"), None).await.map(|_| ())
+    call("POST", &format!("/api/routing/{}/reprobe", urlencode(group)), None).await.map(|_| ())
 }
 
 pub async fn stats(hours: i64) -> Result<StatsResp, ApiErr> {
@@ -350,4 +359,24 @@ pub struct PruneResp {
     pub disabled: bool,
     #[serde(default)]
     pub notice: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：组名带斜杠时进 URL 必须转义 —— 不转义就是用户报的「删除失败 HTTP404」
+    /// （`/api/groups/BAAI/bge-m3` 被当成两段路径，路由匹配不上）。
+    #[test]
+    fn a_slash_in_a_group_name_is_escaped_before_it_goes_into_the_url() {
+        assert_eq!(group_path("BAAI/bge-m3"), "/api/groups/BAAI%2Fbge-m3");
+        assert_eq!(group_path("auto"), "/api/groups/auto", "普通名字不该被改花");
+        // 中文、空格、问号、井号都得转义：这些字符不转义会被当成路径/查询的一部分
+        assert_eq!(group_path("深度/求索"), "/api/groups/%E6%B7%B1%E5%BA%A6%2F%E6%B1%82%E7%B4%A2");
+        assert_eq!(group_path("a b"), "/api/groups/a%20b");
+        assert_eq!(group_path("a?b"), "/api/groups/a%3Fb");
+        assert_eq!(group_path("a#b"), "/api/groups/a%23b");
+        // 合法的普通字符保持原样（`-_.~` 与字母数字）
+        assert_eq!(group_path("gpt-4o_mini.v2~x"), "/api/groups/gpt-4o_mini.v2~x");
+    }
 }
