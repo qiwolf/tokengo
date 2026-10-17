@@ -234,7 +234,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
         <div class="page">
             <PageHead
                 title="模型"
-                desc="客户端打过来的模型名，按下面的顺序依次试渠道：第一条不通就换下一条。"
+                desc="你客户端里填的模型名。收到请求就按下面的顺序依次试渠道，第一条不通就换下一条。"
             >
                 <>
                     <button class="primary" on:click=open_new>"新建模型"</button>
@@ -403,7 +403,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                         <div>
                                             <input type="text" prop:value=d.name.clone()
                                                 disabled=!is_new
-                                                placeholder="如 auto（客户端打这个名字）"
+                                                placeholder="如 auto（你客户端里填的就是这个名字）"
                                                 on:input=move |ev| {
                                                     let s = event_target_value(&ev);
                                                     draft.update(|d| {
@@ -414,7 +414,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                 } />
                                             {(!is_new).then(|| view! {
                                                 <div class="muted small">
-                                                    "组名是客户端打的模型名，改名等于换一个组："
+                                                    "这个名字就是你客户端里填的模型名，改名等于换一个组："
                                                     "要改名请新建一个，再把旧的删掉。"
                                                 </div>
                                             })}
@@ -605,7 +605,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                             <div class="muted small">"切换之后隔这么久回头试首选，成了就切回去。"</div>
                         </div>
 
-                        <label>"没流量时后台探活"</label>
+                        <label>"没人用时也自动去试"</label>
                         <div>
                             <input
                                 type="checkbox"
@@ -613,7 +613,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                 on:change=move |ev| f_probe.set(event_target_checked(&ev))
                             />
                             <span class="muted small">
-                                "开着才不会「夜里没请求就永远不回切」。探活不写记账、不动路由状态。"
+                                "开着才不会「夜里没请求就永远不回切」。这种试探不算进请求记录，也不改当前走哪条。"
                             </span>
                         </div>
                     </div>

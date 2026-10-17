@@ -172,7 +172,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                 return view! {
                                     <tr class="empty-row">
                                         <td colspan="5" class="muted empty-cell">
-                                            "还没有请求进来。客户端打 /v1/chat/completions 或 /v1/embeddings 就会出现在这里。"
+                                            "还没有请求进来。有程序往 /v1/chat/completions 或 /v1/embeddings 发请求，就会出现在这里。"
                                         </td>
                                     </tr>
                                 }
@@ -261,7 +261,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
 
             <h2>"按模型名"</h2>
             <p class="muted small">
-                "看的是客户端打了什么名字 —— 哪个名字最常被调、哪个在报错，一眼能看出来。"
+                "看的是别人请求了哪个名字 —— 哪个名字最常被用、哪个在报错，一眼能看出来。"
             </p>
             <div class="table-wrap">
                 <table class="grid">
