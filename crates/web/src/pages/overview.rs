@@ -1,4 +1,4 @@
-//! 总览：一段时间的账 + 各条腿的分布 + 能被调用的模型名。
+//! 总览：一段时间的账 + 各条渠道的分布 + 能被调用的模型名。
 //!
 //! 这里的数字**全部来自请求记账表**，面板自己不算 —— 面板算出来的数和
 //! `sqlite3` 里查到的不一样时，谁都不信了。
@@ -124,25 +124,25 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 />
             </div>
 
-            <h2>"各条腿的账"</h2>
+            <h2>"各条渠道的账"</h2>
             <p class="muted small">
-                "分母是「被叫了几次」，不是「成功了几次」—— 判断一条腿值不值得留就看这个。"
+                "分母是「被叫了几次」，不是「成功了几次」—— 判断一条渠道值不值得留就看这个。"
             </p>
             <table class="grid">
                 <thead>
                     <tr>
-                        <th>"腿"</th>
+                        <th>"渠道"</th>
                         <th class="num">"被叫"</th>
                         <th class="num">"成功"</th>
                         <th class="num">"成功率"</th>
-                        <th class="num">"腿故障"</th>
+                        <th class="num">"渠道故障"</th>
                         <th class="num">"平均耗时"</th>
                         <th class="num">"Token"</th>
                     </tr>
                 </thead>
                 <tbody>
                     {move || {
-                        let rows = stats.get().stats.by_leg;
+                        let rows = stats.get().stats.by_channel;
                         if rows.is_empty() {
                             return view! {
                                 <tr>
@@ -153,9 +153,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         rows.into_iter()
                             .map(|l| {
                                 let name = l
-                                    .leg_name
+                                    .channel_name
                                     .clone()
-                                    .unwrap_or_else(|| format!("#{}", l.leg_id));
+                                    .unwrap_or_else(|| format!("#{}", l.channel_id));
                                 view! {
                                     <tr>
                                         <td>{name}</td>
@@ -168,8 +168,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                                 .unwrap_or_else(|| "—".into())}
                                         </td>
                                         <td class="num">
-                                            {if l.leg_faults > 0 {
-                                                view! { <span class="bad-text">{fmt::num(l.leg_faults)}</span> }.into_any()
+                                            {if l.channel_faults > 0 {
+                                                view! { <span class="bad-text">{fmt::num(l.channel_faults)}</span> }.into_any()
                                             } else {
                                                 view! { <span class="muted">"0"</span> }.into_any()
                                             }}
@@ -190,9 +190,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <h2>"能被调用的模型名"</h2>
             <p class="muted small">
                 "客户端填这些名字才打得通（和 " <code>"/v1/models"</code>
-                " 用的是同一份判断：组是开着的，且组里至少有一条可用腿）。"
+                " 用的是同一份判断：组是开着的，且组里至少有一条可用渠道）。"
                 "标了" <span class="tag vision">"视觉"</span>
-                "的名字后面有能看图的腿 —— 带图请求要打这类名字，"
+                "的名字后面有能看图的渠道 —— 带图请求要打这类名字，"
                 "打到没标的会回 422（说清楚，不悄悄丢图）。"
             </p>
             <div class="chips">

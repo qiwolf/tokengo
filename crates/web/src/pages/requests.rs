@@ -1,4 +1,4 @@
-//! 请求流水：最近这些请求走了哪条腿、成没成、多久、错在哪。
+//! 请求流水：最近这些请求走了哪条渠道、成没成、多久、错在哪。
 //!
 //! 「自动刷新」用的是浏览器定时器（不是轮询服务端），关掉页面就停，不会在后台空转。
 
@@ -6,13 +6,13 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{LogRow, Leg};
+use crate::model::{LogRow, Channel};
 use crate::Ctx;
 
 #[component]
 pub fn Requests(ctx: Ctx) -> impl IntoView {
     let rows = RwSignal::new(Vec::<LogRow>::new());
-    let legs = RwSignal::new(Vec::<Leg>::new());
+    let channels = RwSignal::new(Vec::<Channel>::new());
     let limit = RwSignal::new(100u32);
     let auto = RwSignal::new(false);
     let timer = RwSignal::new(0i32);
@@ -35,8 +35,8 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                     err.set(Some(e.message));
                 }
             }
-            match api::legs().await {
-                Ok(v) => legs.set(v),
+            match api::channels().await {
+                Ok(v) => channels.set(v),
                 Err(e) => ctx.note_err(&e),
             }
             busy.set(false);
@@ -44,9 +44,9 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
     };
     reload();
 
-    let leg_name = move |id: Option<i64>| match id {
+    let channel_name = move |id: Option<i64>| match id {
         None => "—".to_string(),
-        Some(i) => legs
+        Some(i) => channels
             .get()
             .iter()
             .find(|l| l.id == i)
@@ -115,7 +115,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                         <th>"时间"</th>
                         <th>"端点"</th>
                         <th>"模型"</th>
-                        <th>"走的腿"</th>
+                        <th>"走的渠道"</th>
                         <th>"结果"</th>
                         <th class="num">"HTTP"</th>
                         <th class="num">"耗时"</th>
@@ -138,7 +138,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                         v.into_iter()
                             .map(|r| {
                                 let (label, class) = crate::model::status_label(&r.status);
-                                let leg = leg_name(r.leg_id);
+                                let channel = channel_name(r.channel_id);
                                 let endpoint = crate::model::endpoint_label(&r.endpoint).to_string();
                                 view! {
                                     <tr>
@@ -147,7 +147,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                                         <td>
                                             <code class="small">{r.model.clone()}</code>
                                         </td>
-                                        <td>{leg}</td>
+                                        <td>{channel}</td>
                                         <td>
                                             <span class=format!("tag {class}")>{label}</span>
                                         </td>

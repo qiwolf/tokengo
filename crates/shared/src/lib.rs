@@ -1,13 +1,13 @@
-//! tokengo 共享层：腿/模型组的数据结构 + 路由状态机。
+//! tokengo 共享层：渠道/模型组的数据结构 + 路由状态机。
 //!
 //! 本项目**不是** FreeLLMAPI 的全量移植，而是按本机实际用量做的自用网关
 //! （见 `docs/02-按需功能清单.md`）。所以这里没有 72 个平台枚举，也没有
-//! 37 个 provider 适配器 —— 现网 9 条腿全部是自定义端点，一个内置适配器都没用到。
+//! 37 个 provider 适配器 —— 现网 9 条渠道全部是自定义端点，一个内置适配器都没用到。
 
-pub mod leg;
+pub mod channel;
 pub mod routing;
 
-pub use leg::{render_header_value, request_has_image, Leg, LegId, ModelGroup};
+pub use channel::{render_header_value, request_has_image, Channel, ChannelId, ModelGroup};
 pub use routing::{classify_status, AttemptOutcome, GroupState, Router, RoutingConfig};
 
 /// 本机网关版本，用于 `/api/ping`、`/livez`、面板页脚。

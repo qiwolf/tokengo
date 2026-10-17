@@ -13,21 +13,21 @@ fn main() -> anyhow::Result<()> {
             // 把默认路由参数打出来，方便对着 docs/03-路由策略.md 核
             let c = RoutingConfig::default();
             println!("重试次数（首次失败后）: {}", c.retry_times);
-            println!("单条腿最多尝试:         {}", c.max_attempts());
+            println!("单条渠道最多尝试:         {}", c.max_attempts());
             println!("单次尝试超时:           {} ms", c.attempt_timeout_ms);
             println!("请求重试总预算:         {} ms", c.request_budget_ms);
             println!("回切检查间隔:           {} ms", c.reprobe_interval_ms);
             println!("后台探活:               {}", c.probe_enabled);
             // 走一遍状态机，确认默认参数下行为符合预期
-            let legs = [tokengo_shared::LegId(1), tokengo_shared::LegId(2)];
+            let channels = [tokengo_shared::ChannelId(1), tokengo_shared::ChannelId(2)];
             let mut r = Router::new(c);
             let now = 1_800_000_000_000i64;
-            println!("\n模拟（腿 #1 首选，腿 #2 备选）：");
-            println!("  首次请求顺序:        {:?}", r.attempt_order("auto", &legs, now));
-            r.on_leg_exhausted("auto", tokengo_shared::LegId(1), &legs, now);
-            println!("  首选失败后顺序:      {:?}", r.attempt_order("auto", &legs, now + 1000));
-            println!("  10 分钟后顺序:       {:?}", r.attempt_order("auto", &legs, now + 600_000));
-            r.on_success("auto", tokengo_shared::LegId(1), &legs, now + 600_001);
+            println!("\n模拟（渠道 #1 首选，渠道 #2 备选）：");
+            println!("  首次请求顺序:        {:?}", r.attempt_order("auto", &channels, now));
+            r.on_channel_exhausted("auto", tokengo_shared::ChannelId(1), &channels, now);
+            println!("  首选失败后顺序:      {:?}", r.attempt_order("auto", &channels, now + 1000));
+            println!("  10 分钟后顺序:       {:?}", r.attempt_order("auto", &channels, now + 600_000));
+            r.on_success("auto", tokengo_shared::ChannelId(1), &channels, now + 600_001);
             println!("  探活成功后状态:      {:?}", r.state("auto"));
         }
         Some(other) => {

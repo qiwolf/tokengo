@@ -9,7 +9,7 @@
 //! ```
 //!
 //! 这里只做三件事：**认对外 key**、**拆出模型名与 stream 开关**、**转交给 gateway**。
-//! 重试/换腿/记账/回切都在 `crate::gateway`，别往这个文件里塞业务。
+//! 重试/换渠道/记账/回切都在 `crate::gateway`，别往这个文件里塞业务。
 //!
 //! 鉴权用对外统一 key（`Authorization: Bearer <key>`）。**没配 key 就一律拒绝**：
 //! 少配一次 key 就变成公网裸奔的转发器，这种"默认开放"的坑不能留。
@@ -109,11 +109,11 @@ async fn embeddings(
     .await
 }
 
-/// 模型清单。**只列真的能用的**：组是开着的、组里至少有一条可用腿。
+/// 模型清单。**只列真的能用的**：组是开着的、组里至少有一条可用渠道。
 /// 面板与客户端看同一份判断（`groups::list_servable`），不会出现"清单里有、打了 404"。
 ///
-/// 每条多一个 `vision` 字段：这个模型名后面有没有"能看图"的腿。客户端（Hermes
-/// 之类）可以据此决定要不要把图发过来 —— 带图的请求打到一个没有视觉腿的模型名
+/// 每条多一个 `vision` 字段：这个模型名后面有没有"能看图"的渠道。客户端（Hermes
+/// 之类）可以据此决定要不要把图发过来 —— 带图的请求打到一个没有视觉渠道的模型名
 /// 上会被回 422（`code: no_vision_model`）。这是标准 OpenAI 字段之外的增项，
 /// 老客户端忽略它就行，行为不变。
 async fn models(
@@ -137,7 +137,7 @@ async fn models(
 }
 
 /// 请求体：必须是 JSON 对象且带 model。**模型名写错是客户端的错**，回 400/404，
-/// 不重试不换腿（这条规矩见 `docs/03-路由策略.md` 第四节）。
+/// 不重试不换渠道（这条规矩见 `docs/03-路由策略.md` 第四节）。
 fn parse_body(body: &[u8], endpoint: EndpointKind) -> Result<(String, Value, bool), ApiError> {
     let value: Value = serde_json::from_slice(body).map_err(|e| {
         ApiError::bad_request(format!("{} 的请求体不是合法 JSON：{e}", endpoint.as_str()))

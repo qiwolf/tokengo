@@ -7,7 +7,7 @@
 //! 3. 本机不做的端点（Gemini / Ollama / MCP / 媒体…）必须**真 404**，
 //!    不能悄悄漏进来。
 //!
-//! 阶段 1 起还多一类：面板登录门与腿/组的增删改查**真的落库**。
+//! 阶段 1 起还多一类：面板登录门与渠道/组的增删改查**真的落库**。
 
 use std::sync::Arc;
 
@@ -106,7 +106,7 @@ async fn readyz_really_checks_the_database() {
     // 把表拆了：readyz 必须转成 degraded
     f.state
         .conn()
-        .execute_batch("DROP TABLE legs;")
+        .execute_batch("DROP TABLE channels;")
         .unwrap();
     let (_, v) = send(test_app(&f), "GET", "/readyz", None, None).await;
     assert_eq!(v["checks"]["database"], "fail");
@@ -166,12 +166,12 @@ async fn unknown_path_is_404() {
     );
 }
 
-/// 面板管理面要有的接口（腿管理、模型组、路由状态）。
+/// 面板管理面要有的接口（渠道管理、模型组、路由状态）。
 #[tokio::test]
 async fn admin_surface_exists() {
     let f = fixture();
     for uri in [
-        "/api/legs",
+        "/api/channels",
         "/api/groups",
         "/api/routing",
         "/api/stats",
@@ -185,12 +185,12 @@ async fn admin_surface_exists() {
 
 // ───────────────── 阶段 1：登录门 ─────────────────
 
-/// 没登录时，管理面必须一律 401 —— 不能把腿表和密钥配置暴露出去。
+/// 没登录时，管理面必须一律 401 —— 不能把渠道表和密钥配置暴露出去。
 #[tokio::test]
 async fn admin_surface_is_locked_without_a_session() {
     let f = fixture();
     for uri in [
-        "/api/legs",
+        "/api/channels",
         "/api/groups",
         "/api/routing",
         "/api/stats",
@@ -205,7 +205,7 @@ async fn admin_surface_is_locked_without_a_session() {
     }
     // 写操作同样
     assert_eq!(
-        send(test_app(&f), "DELETE", "/api/legs/1", None, None).await.0,
+        send(test_app(&f), "DELETE", "/api/channels/1", None, None).await.0,
         StatusCode::UNAUTHORIZED
     );
 }
@@ -213,7 +213,7 @@ async fn admin_surface_is_locked_without_a_session() {
 #[tokio::test]
 async fn a_invented_token_is_refused() {
     let f = fixture();
-    let s = send(test_app(&f), "GET", "/api/legs", Some("made-up-token"), None)
+    let s = send(test_app(&f), "GET", "/api/channels", Some("made-up-token"), None)
         .await
         .0;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
@@ -243,9 +243,9 @@ async fn first_run_setup_then_use_the_panel() {
     let token = v["token"].as_str().unwrap().to_string();
 
     // 3) 带上会话就能进管理面了
-    let (s, v) = send(test_app(&f), "GET", "/api/legs", Some(&token), None).await;
+    let (s, v) = send(test_app(&f), "GET", "/api/channels", Some(&token), None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v["legs"].as_array().unwrap().len(), 0);
+    assert_eq!(v["channels"].as_array().unwrap().len(), 0);
 
     // 4) 再初始化一次必须被拒
     let (s, _) = send(
@@ -306,16 +306,16 @@ async fn login_flow_and_wrong_password() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = send(test_app(&f), "GET", "/api/legs", Some(&token), None).await;
+    let (s, _) = send(test_app(&f), "GET", "/api/channels", Some(&token), None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED, "退出后的 token 不能再用");
 }
 
-// ───────────────── 阶段 1：腿与模型组真的落库 ─────────────────
+// ───────────────── 阶段 1：渠道与模型组真的落库 ─────────────────
 
-/// 端到端：建腿（带自定义请求头和密钥）→ 建模型组 → 查回来。
+/// 端到端：建渠道（带自定义请求头和密钥）→ 建模型组 → 查回来。
 /// 这条覆盖用户四项决议里的第 2、3 条（自定义请求头、全自定义端点和 key）。
 #[tokio::test]
-async fn create_a_leg_and_a_group_end_to_end() {
+async fn create_a_channel_and_a_group_end_to_end() {
     let f = fixture();
     let (_, v) = send(
         test_app(&f),
@@ -327,11 +327,11 @@ async fn create_a_leg_and_a_group_end_to_end() {
     .await;
     let token = v["token"].as_str().unwrap().to_string();
 
-    // 两条腿：命令式上游那条需要自定义请求头 + 按腿改模型名
+    // 两条渠道：命令式上游那条需要自定义请求头 + 按渠道改模型名
     let (s, sf) = send(
         test_app(&f),
         "POST",
-        "/api/legs",
+        "/api/channels",
         Some(&token),
         Some(json!({
             "name": "硅基流动",
@@ -347,7 +347,7 @@ async fn create_a_leg_and_a_group_end_to_end() {
     let (s, cg) = send(
         test_app(&f),
         "POST",
-        "/api/legs",
+        "/api/channels",
         Some(&token),
         Some(json!({
             "name": "command-go",
@@ -380,7 +380,7 @@ async fn create_a_leg_and_a_group_end_to_end() {
         "POST",
         "/api/groups",
         Some(&token),
-        Some(json!({ "name": "auto", "legs": [sf_id, cg_id] })),
+        Some(json!({ "name": "auto", "channels": [sf_id, cg_id] })),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -390,18 +390,18 @@ async fn create_a_leg_and_a_group_end_to_end() {
     assert_eq!(s, StatusCode::OK);
     let g = &v["groups"][0];
     assert_eq!(g["name"], "auto");
-    assert_eq!(g["legs"], json!([sf_id, cg_id]));
+    assert_eq!(g["channels"], json!([sf_id, cg_id]));
     assert_eq!(
         v["servable"],
         json!([{"name": "auto", "vision": false}]),
         "只列真实能用的模型名，并如实说能不能看图"
     );
-    assert_eq!(g["can_see"], json!(false), "这条组里没有标能看图的腿");
+    assert_eq!(g["can_see"], json!(false), "这条组里没有标能看图的渠道");
 
     // 路由状态：首选是第一条，还没切过
     let (s, v) = send(test_app(&f), "GET", "/api/routing", Some(&token), None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v["groups"][0]["primary_leg_id"], json!(sf_id));
+    assert_eq!(v["groups"][0]["primary_channel_id"], json!(sf_id));
     assert_eq!(v["groups"][0]["switch_count"], 0);
 
     // 密钥在库里是密文：整个库文件的字节里搜不到明文
@@ -413,7 +413,7 @@ async fn create_a_leg_and_a_group_end_to_end() {
 }
 
 #[tokio::test]
-async fn updating_a_leg_replaces_headers_and_can_clear_the_key() {
+async fn updating_a_channel_replaces_headers_and_can_clear_the_key() {
     let f = fixture();
     let (_, v) = send(
         test_app(&f),
@@ -425,10 +425,10 @@ async fn updating_a_leg_replaces_headers_and_can_clear_the_key() {
     .await;
     let token = v["token"].as_str().unwrap().to_string();
 
-    let (_, leg) = send(
+    let (_, channel) = send(
         test_app(&f),
         "POST",
-        "/api/legs",
+        "/api/channels",
         Some(&token),
         Some(json!({
             "name": "a", "base_url": "http://x/v1", "key": "sk-1",
@@ -436,13 +436,13 @@ async fn updating_a_leg_replaces_headers_and_can_clear_the_key() {
         })),
     )
     .await;
-    let id = leg["id"].as_i64().unwrap();
+    let id = channel["id"].as_i64().unwrap();
 
     // 不传 key 字段 → 密钥保持
     let (s, v) = send(
         test_app(&f),
         "PUT",
-        &format!("/api/legs/{id}"),
+        &format!("/api/channels/{id}"),
         Some(&token),
         Some(json!({
             "name": "a2", "base_url": "http://y/v1", "enabled": false,
@@ -461,7 +461,7 @@ async fn updating_a_leg_replaces_headers_and_can_clear_the_key() {
     let (_, v) = send(
         test_app(&f),
         "PUT",
-        &format!("/api/legs/{id}"),
+        &format!("/api/channels/{id}"),
         Some(&token),
         Some(json!({
             "name": "a2", "base_url": "http://y/v1", "enabled": true, "key": ""
@@ -471,9 +471,9 @@ async fn updating_a_leg_replaces_headers_and_can_clear_the_key() {
     assert_eq!(v["has_secret"], false, "传空串要能清掉密钥");
 }
 
-/// 删腿要连带把它从模型组里摘掉，不能留个悬空引用。
+/// 删渠道要连带把它从模型组里摘掉，不能留个悬空引用。
 #[tokio::test]
-async fn deleting_a_leg_removes_it_from_groups() {
+async fn deleting_a_channel_removes_it_from_groups() {
     let f = fixture();
     let (_, v) = send(
         test_app(&f),
@@ -487,29 +487,29 @@ async fn deleting_a_leg_removes_it_from_groups() {
 
     let mut ids = vec![];
     for name in ["a", "b"] {
-        let (_, leg) = send(
+        let (_, channel) = send(
             test_app(&f),
             "POST",
-            "/api/legs",
+            "/api/channels",
             Some(&token),
             Some(json!({ "name": name, "base_url": format!("http://{name}/v1") })),
         )
         .await;
-        ids.push(leg["id"].as_i64().unwrap());
+        ids.push(channel["id"].as_i64().unwrap());
     }
     send(
         test_app(&f),
         "POST",
         "/api/groups",
         Some(&token),
-        Some(json!({ "name": "auto", "legs": ids })),
+        Some(json!({ "name": "auto", "channels": ids })),
     )
     .await;
 
     let (s, _) = send(
         test_app(&f),
         "DELETE",
-        &format!("/api/legs/{}", ids[0]),
+        &format!("/api/channels/{}", ids[0]),
         Some(&token),
         None,
     )
@@ -517,7 +517,7 @@ async fn deleting_a_leg_removes_it_from_groups() {
     assert_eq!(s, StatusCode::OK);
 
     let (_, v) = send(test_app(&f), "GET", "/api/groups", Some(&token), None).await;
-    assert_eq!(v["groups"][0]["legs"], json!([ids[1]]));
+    assert_eq!(v["groups"][0]["channels"], json!([ids[1]]));
 }
 
 /// 改口令要踢掉所有旧会话。
@@ -545,9 +545,9 @@ async fn changing_the_password_invalidates_old_sessions() {
     assert_eq!(s, StatusCode::OK, "{v}");
     let new = v["token"].as_str().unwrap().to_string();
 
-    let (s, _) = send(test_app(&f), "GET", "/api/legs", Some(&old), None).await;
+    let (s, _) = send(test_app(&f), "GET", "/api/channels", Some(&old), None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED, "旧会话必须失效");
-    let (s, _) = send(test_app(&f), "GET", "/api/legs", Some(&new), None).await;
+    let (s, _) = send(test_app(&f), "GET", "/api/channels", Some(&new), None).await;
     assert_eq!(s, StatusCode::OK, "新会话要能用");
 
     // 旧口令不能再用
@@ -638,14 +638,14 @@ async fn stats_and_logs_read_from_the_database() {
     .await;
     let token = v["token"].as_str().unwrap().to_string();
 
-    // 模拟一条完整请求：腿 1 失败两次，腿 2 接住
+    // 模拟一条完整请求：渠道 1 失败两次，渠道 2 接住
     {
         let conn = f.state.conn();
         let id = tokengo_server::db::requests::start(&conn, "/v1/embeddings", "auto", Some("1.1.1.1"))
             .unwrap();
-        tokengo_server::db::requests::add_attempt(&conn, id, 0, 1, "leg_fault", Some(429), 12, None)
+        tokengo_server::db::requests::add_attempt(&conn, id, 0, 1, "channel_fault", Some(429), 12, None)
             .unwrap();
-        tokengo_server::db::requests::add_attempt(&conn, id, 1, 1, "leg_fault", Some(500), 20, None)
+        tokengo_server::db::requests::add_attempt(&conn, id, 1, 1, "channel_fault", Some(500), 20, None)
             .unwrap();
         tokengo_server::db::requests::add_attempt(&conn, id, 2, 2, "success", Some(200), 44, None)
             .unwrap();
@@ -669,15 +669,15 @@ async fn stats_and_logs_read_from_the_database() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(v["stats"]["total"], 1);
     assert_eq!(v["stats"]["ok"], 1);
-    let by_leg = v["stats"]["by_leg"].as_array().unwrap();
-    assert_eq!(by_leg.len(), 2);
-    let first = &by_leg[0];
-    assert_eq!(first["leg_id"], 1);
+    let by_channel = v["stats"]["by_channel"].as_array().unwrap();
+    assert_eq!(by_channel.len(), 2);
+    let first = &by_channel[0];
+    assert_eq!(first["channel_id"], 1);
     assert_eq!(first["attempts"], 2, "分母是尝试次数，不是成功次数");
     assert_eq!(first["successes"], 0);
-    assert_eq!(first["success_rate"], 0.0, "一次都没成的腿成功率必须是 0");
-    // 没有名字的腿要能兜住，不能报错
-    assert!(first["leg_name"].is_string());
+    assert_eq!(first["success_rate"], 0.0, "一次都没成的渠道成功率必须是 0");
+    // 没有名字的渠道要能兜住，不能报错
+    assert!(first["channel_name"].is_string());
 
     let (s, v) = send(test_app(&f), "GET", "/api/logs?limit=5", Some(&token), None).await;
     assert_eq!(s, StatusCode::OK);
@@ -702,34 +702,34 @@ async fn manual_reprobe_resets_the_checkpoint() {
 
     let mut ids = vec![];
     for name in ["a", "b"] {
-        let (_, leg) = send(
+        let (_, channel) = send(
             test_app(&f),
             "POST",
-            "/api/legs",
+            "/api/channels",
             Some(&token),
             Some(json!({ "name": name, "base_url": format!("http://{name}/v1") })),
         )
         .await;
-        ids.push(leg["id"].as_i64().unwrap());
+        ids.push(channel["id"].as_i64().unwrap());
     }
     send(
         test_app(&f),
         "POST",
         "/api/groups",
         Some(&token),
-        Some(json!({ "name": "auto", "legs": ids })),
+        Some(json!({ "name": "auto", "channels": ids })),
     )
     .await;
 
     // 制造一次切换
     {
-        let legs = vec![
-            tokengo_shared::LegId(ids[0]),
-            tokengo_shared::LegId(ids[1]),
+        let channels = vec![
+            tokengo_shared::ChannelId(ids[0]),
+            tokengo_shared::ChannelId(ids[1]),
         ];
         let mut r = f.state.routing();
-        r.attempt_order("auto", &legs, 1_800_000_000_000);
-        r.on_leg_exhausted("auto", legs[0], &legs, 1_800_000_000_000);
+        r.attempt_order("auto", &channels, 1_800_000_000_000);
+        r.on_channel_exhausted("auto", channels[0], &channels, 1_800_000_000_000);
     }
     f.state.persist_state("auto").unwrap();
     let (_, v) = send(test_app(&f), "GET", "/api/routing", Some(&token), None).await;
@@ -765,11 +765,11 @@ async fn manual_reprobe_resets_the_checkpoint() {
 }
 
 /// 面板上那个"测一下"按钮（阶段 2 起是真探活了）。
-/// 这里只钉"接口在、要登录、腿不存在要 404"；真探通的用例在 `tests/proxy.rs`。
+/// 这里只钉"接口在、要登录、渠道不存在要 404"；真探通的用例在 `tests/proxy.rs`。
 #[tokio::test]
-async fn leg_probe_exists_and_needs_a_session() {
+async fn channel_probe_exists_and_needs_a_session() {
     let f = fixture();
-    let (s, _) = send(test_app(&f), "POST", "/api/legs/1/probe", None, None).await;
+    let (s, _) = send(test_app(&f), "POST", "/api/channels/1/probe", None, None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED, "探活要登录");
 
     let (_, v) = send(
@@ -784,10 +784,10 @@ async fn leg_probe_exists_and_needs_a_session() {
     let (s, _) = send(
         test_app(&f),
         "POST",
-        "/api/legs/1/probe",
+        "/api/channels/1/probe",
         Some(&token),
         None,
     )
     .await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "腿不存在就 404，不许假绿点");
+    assert_eq!(s, StatusCode::NOT_FOUND, "渠道不存在就 404，不许假绿点");
 }

@@ -11,7 +11,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
-use crate::db::{groups, legs, requests, routing, sessions, settings, now_ms};
+use crate::db::{groups, channels, requests, routing, sessions, settings, now_ms};
 use crate::SharedState;
 
 pub fn router() -> Router<SharedState> {
@@ -24,11 +24,11 @@ pub fn router() -> Router<SharedState> {
         .route("/auth/logout", post(auth_logout))
         // —— 需要登录 ——
         .route("/auth/password", put(auth_change_password))
-        .route("/legs", get(legs_list).post(legs_create))
-        .route("/legs/{id}", put(legs_update).delete(legs_delete))
-        .route("/legs/{id}/probe", post(legs_probe))
-        .route("/legs/{id}/models", post(legs_models))
-        .route("/legs/{id}/vision-test", post(legs_vision_test))
+        .route("/channels", get(channels_list).post(channels_create))
+        .route("/channels/{id}", put(channels_update).delete(channels_delete))
+        .route("/channels/{id}/probe", post(channels_probe))
+        .route("/channels/{id}/models", post(channels_models))
+        .route("/channels/{id}/vision-test", post(channels_vision_test))
         .route("/groups", get(groups_list).post(groups_upsert))
         .route("/groups/{name}", delete(groups_delete))
         .route("/routing", get(routing_state))
@@ -212,9 +212,9 @@ async fn auth_change_password(
     Ok(Json(serde_json::json!({ "ok": true, "token": token })))
 }
 
-// ───────────────────────── 腿 ─────────────────────────
+// ───────────────────────── 渠道 ─────────────────────────
 
-fn leg_json(l: &legs::LegRow) -> serde_json::Value {
+fn channel_json(l: &channels::ChannelRow) -> serde_json::Value {
     serde_json::json!({
         "id": l.id.0,
         "name": l.name,
@@ -227,19 +227,19 @@ fn leg_json(l: &legs::LegRow) -> serde_json::Value {
             "upstream": m.upstream,
             "vision": m.vision,
         })).collect::<Vec<_>>(),
-        // 这条腿上「能看图」的模型名有几个 —— 腿列表里直接显示，不用展开也知道。
+        // 这条渠道上「能看图」的模型名有几个 —— 渠道列表里直接显示，不用展开也知道。
         "vision_count": l.models.iter().filter(|m| m.vision).count(),
     })
 }
 
-async fn legs_list(
+async fn channels_list(
     _auth: PanelAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
-    let all = legs::list(&conn)?;
+    let all = channels::list(&conn)?;
     Ok(Json(serde_json::json!({
-        "legs": all.iter().map(leg_json).collect::<Vec<_>>()
+        "channels": all.iter().map(channel_json).collect::<Vec<_>>()
     })))
 }
 
@@ -253,13 +253,13 @@ struct HeaderIn {
 struct ModelIn {
     model: String,
     upstream: Option<String>,
-    /// 这个模型名在这条腿上能不能吃图片输入（面板上的「能看图」勾选）。
+    /// 这个模型名在这条渠道上能不能吃图片输入（面板上的「能看图」勾选）。
     #[serde(default)]
     vision: bool,
 }
 
 #[derive(Deserialize)]
-struct LegBody {
+struct ChannelBody {
     name: String,
     base_url: String,
     #[serde(default = "default_true")]
@@ -276,7 +276,7 @@ fn default_true() -> bool {
     true
 }
 
-impl LegBody {
+impl ChannelBody {
     fn headers(&self) -> Vec<(String, String)> {
         self.headers
             .iter()
@@ -285,12 +285,12 @@ impl LegBody {
             .collect()
     }
 
-    fn models(&self) -> Vec<legs::ModelMapping> {
+    fn models(&self) -> Vec<channels::ModelMapping> {
         self.models
             .iter()
             .filter(|m| !m.model.trim().is_empty())
             .map(|m| {
-                legs::ModelMapping::new(
+                channels::ModelMapping::new(
                     m.model.clone(),
                     m.upstream.clone().filter(|u| !u.trim().is_empty()),
                     m.vision,
@@ -300,70 +300,70 @@ impl LegBody {
     }
 }
 
-async fn legs_create(
+async fn channels_create(
     _auth: PanelAuth,
     State(state): State<SharedState>,
-    Json(body): Json<LegBody>,
+    Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
     // 四条写入（主行 + 密钥 + 请求头 + 模型名）必须一起成或一起败，
-    // 否则会留下"名字在、请求头丢了"的半截腿。
+    // 否则会留下"名字在、请求头丢了"的半截渠道。
     let id = crate::db::in_tx(&conn, |c| {
-        let id = legs::create(
+        let id = channels::create(
             c,
-            &legs::NewLeg {
+            &channels::NewChannel {
                 name: body.name.clone(),
                 base_url: body.base_url.clone(),
                 enabled: body.enabled,
             },
         )?;
         if let Some(k) = body.key.as_deref().filter(|k| !k.trim().is_empty()) {
-            legs::set_secret(c, &state.secrets, id, k)?;
+            channels::set_secret(c, &state.secrets, id, k)?;
         }
-        legs::set_headers(c, id, &body.headers())?;
-        legs::set_models(c, id, &body.models())?;
+        channels::set_headers(c, id, &body.headers())?;
+        channels::set_models(c, id, &body.models())?;
         Ok(id)
     })?;
-    tracing::info!("新建腿 {id}：{}", body.name);
+    tracing::info!("新建渠道 {id}：{}", body.name);
 
-    let l = legs::get(&conn, id)?.ok_or_else(|| ApiError::internal("刚建的腿读不回来"))?;
-    Ok(Json(leg_json(&l)))
+    let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::internal("刚建的渠道读不回来"))?;
+    Ok(Json(channel_json(&l)))
 }
 
-async fn legs_update(
+async fn channels_update(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<LegBody>,
+    Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
-    let id = tokengo_shared::LegId(id);
+    let id = tokengo_shared::ChannelId(id);
     crate::db::in_tx(&conn, |c| {
-        legs::update(c, id, &body.name, &body.base_url, body.enabled)?;
+        channels::update(c, id, &body.name, &body.base_url, body.enabled)?;
         // 密钥：传了才改；传空串 = 明确要清掉
         match body.key.as_deref() {
-            Some("") => legs::clear_secret(c, id)?,
-            Some(k) if !k.trim().is_empty() => legs::set_secret(c, &state.secrets, id, k)?,
+            Some("") => channels::clear_secret(c, id)?,
+            Some(k) if !k.trim().is_empty() => channels::set_secret(c, &state.secrets, id, k)?,
             _ => {}
         }
-        legs::set_headers(c, id, &body.headers())?;
-        legs::set_models(c, id, &body.models())?;
+        channels::set_headers(c, id, &body.headers())?;
+        channels::set_models(c, id, &body.models())?;
         Ok(())
     })?;
-    tracing::info!("更新腿 {id}：{}", body.name);
+    tracing::info!("更新渠道 {id}：{}", body.name);
 
-    let l = legs::get(&conn, id)?.ok_or_else(|| ApiError::not_found(format!("腿 {id} 不存在")))?;
-    Ok(Json(leg_json(&l)))
+    let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::not_found(format!("渠道 {id} 不存在")))?;
+    Ok(Json(channel_json(&l)))
 }
 
-async fn legs_delete(
+async fn channels_delete(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
-    legs::delete(&conn, tokengo_shared::LegId(id))?;
-    tracing::info!("删除腿 #{id}");
+    channels::delete(&conn, tokengo_shared::ChannelId(id))?;
+    tracing::info!("删除渠道 #{id}");
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -373,25 +373,25 @@ struct ProbeQuery {
     kind: Option<String>,
 }
 
-/// 一条"能真发请求"的腿：解密好的密钥 + 自定义头 + 配的模型名。
+/// 一条"能真发请求"的渠道：解密好的密钥 + 自定义头 + 配的模型名。
 ///
 /// 探活和「拉上游模型清单」都要这一套。抽出来是因为这两件事的加载逻辑一模一样，
-/// 各写一份迟早会有一边忘了解密密钥（现象是"这条腿明明有 key，面板却说没有"）。
-struct ReadyLeg {
-    leg: tokengo_shared::Leg,
+/// 各写一份迟早会有一边忘了解密密钥（现象是"这条渠道明明有 key，面板却说没有"）。
+struct ReadyChannel {
+    channel: tokengo_shared::Channel,
     secret: Option<String>,
     has_secret: bool,
-    models: Vec<legs::ModelMapping>,
+    models: Vec<channels::ModelMapping>,
 }
 
-fn ready_leg(state: &SharedState, id: tokengo_shared::LegId) -> Result<Option<ReadyLeg>, ApiError> {
+fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<Option<ReadyChannel>, ApiError> {
     let conn = state.conn();
-    let Some(row) = legs::get(&conn, id)? else {
+    let Some(row) = channels::get(&conn, id)? else {
         return Ok(None);
     };
-    let secret = legs::secret(&conn, &state.secrets, id)?;
-    Ok(Some(ReadyLeg {
-        leg: tokengo_shared::Leg {
+    let secret = channels::secret(&conn, &state.secrets, id)?;
+    Ok(Some(ReadyChannel {
+        channel: tokengo_shared::Channel {
             id: row.id,
             name: row.name.clone(),
             base_url: row.base_url.clone(),
@@ -407,29 +407,29 @@ fn ready_leg(state: &SharedState, id: tokengo_shared::LegId) -> Result<Option<Re
     }))
 }
 
-/// 面板上的「测一下」：**真发一个请求到这条腿**，回的绿点才是真的。
+/// 面板上的「测一下」：**真发一个请求到这条渠道**，回的绿点才是真的。
 ///
 /// 三条纪律：
 /// - 探活**不写记账**（它不是用户请求）；
 /// - 探活**不动路由状态**（面板上的一次手动检查凭据，不该改变谁在用）；
-/// - 模型名是这条腿自己配的那个，拿不到就明说"探不了"，不猜（拿 `auto` 去探必然 400）。
-async fn legs_probe(
+/// - 模型名是这条渠道自己配的那个，拿不到就明说"探不了"，不猜（拿 `auto` 去探必然 400）。
+async fn channels_probe(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Query(q): Query<ProbeQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let id = tokengo_shared::LegId(id);
+    let id = tokengo_shared::ChannelId(id);
     let endpoint = match q.kind.as_deref() {
         Some("embeddings") | Some("embedding") | Some("vec") => crate::gateway::EndpointKind::Embeddings,
         _ => crate::gateway::EndpointKind::Chat,
     };
 
-    let Some(ready) = ready_leg(&state, id)? else {
-        return Err(ApiError::not_found(format!("腿 {id} 不存在")));
+    let Some(ready) = ready_channel(&state, id)? else {
+        return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
     };
-    let ReadyLeg {
-        leg,
+    let ReadyChannel {
+        channel,
         secret,
         has_secret,
         models,
@@ -448,9 +448,9 @@ async fn legs_probe(
     let Some(model) = model else {
         return Ok(Json(serde_json::json!({
             "ok": false,
-            "leg_id": leg.id.0,
+            "channel_id": channel.id.0,
             "endpoint": endpoint.as_str(),
-            "note": "这条腿没配任何模型名，没法探活：面板里先给它填一个「该腿认的模型名」。拿 auto 去探必然被上游打回 400，绿点就不真了。",
+            "note": "这条渠道没配任何模型名，没法探活：面板里先给它填一个「该渠道认的模型名」。拿 auto 去探必然被上游打回 400，绿点就不真了。",
             "has_secret": has_secret,
         })));
     };
@@ -463,7 +463,7 @@ async fn legs_probe(
     let r = state
         .upstream
         .probe(
-            &leg,
+            &channel,
             secret.as_deref(),
             endpoint.path(),
             crate::prober::probe_body(endpoint, &model),
@@ -479,8 +479,8 @@ async fn legs_probe(
             let kind = tokengo_shared::routing::classify_status(code);
             let note = match kind {
                 tokengo_shared::routing::AttemptOutcome::Success => "通了".to_string(),
-                tokengo_shared::routing::AttemptOutcome::LegFault => {
-                    format!("这条腿自己的毛病（HTTP {code}）")
+                tokengo_shared::routing::AttemptOutcome::ChannelFault => {
+                    format!("这条渠道自己的毛病（HTTP {code}）")
                 }
                 _ => format!("上游不接受这个请求（HTTP {code}），多半是模型名或参数不对"),
             };
@@ -491,8 +491,8 @@ async fn legs_probe(
 
     Ok(Json(serde_json::json!({
         "ok": ok,
-        "leg_id": leg.id.0,
-        "leg_name": leg.name,
+        "channel_id": channel.id.0,
+        "channel_name": channel.name,
         "endpoint": endpoint.as_str(),
         "model_sent": model,
         "http_status": status,
@@ -502,7 +502,7 @@ async fn legs_probe(
     })))
 }
 
-/// 面板上的「拉取上游模型清单」：用这条腿自己的 URL、key、自定义头真打
+/// 面板上的「拉取上游模型清单」：用这条渠道自己的 URL、key、自定义头真打
 /// `GET {base_url}/models`，把上游说它支持的模型名列出来。
 ///
 /// 和探活同纪律：**不写记账、不动路由状态** —— 它是面板上的一次人工查询，
@@ -512,16 +512,16 @@ async fn legs_probe(
 /// - 连不上/超时 → 说清是哪个 URL；
 /// - 上游回了非 2xx → 把状态码报出来（404 很常见：这个上游压根没做 /v1/models）；
 /// - 2xx 但格式不像模型清单 → 说"没认出"，并附上正文开头让人自己看。
-async fn legs_models(
+async fn channels_models(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let id = tokengo_shared::LegId(id);
-    let Some(ready) = ready_leg(&state, id)? else {
-        return Err(ApiError::not_found(format!("腿 {id} 不存在")));
+    let id = tokengo_shared::ChannelId(id);
+    let Some(ready) = ready_channel(&state, id)? else {
+        return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
     };
-    let ReadyLeg { leg, secret, .. } = ready;
+    let ReadyChannel { channel, secret, .. } = ready;
 
     let timeout = {
         let cfg = state.routing().cfg.clone();
@@ -531,10 +531,10 @@ async fn legs_models(
     let t0 = now_ms();
     let r = state
         .upstream
-        .fetch_models(&leg, secret.as_deref(), timeout, &crate::upstream::new_uuid(), now_ms())
+        .fetch_models(&channel, secret.as_deref(), timeout, &crate::upstream::new_uuid(), now_ms())
         .await;
     let latency = now_ms() - t0;
-    let url = crate::upstream::join_url(&leg.base_url, "models");
+    let url = crate::upstream::join_url(&channel.base_url, "models");
 
     let (ok, status, models, note) = match r {
         Ok((code, body)) if (200..300).contains(&code) => {
@@ -576,15 +576,15 @@ async fn legs_models(
     };
 
     tracing::info!(
-        "拉腿 {id} 的上游模型清单：{}（{} 个，{latency} ms）",
+        "拉渠道 {id} 的上游模型清单：{}（{} 个，{latency} ms）",
         if ok { "成功" } else { "失败" },
         models.len()
     );
 
     Ok(Json(serde_json::json!({
         "ok": ok,
-        "leg_id": leg.id.0,
-        "leg_name": leg.name,
+        "channel_id": channel.id.0,
+        "channel_name": channel.name,
         "url": url,
         "http_status": status,
         "latency_ms": latency,
@@ -599,10 +599,10 @@ fn snippet(body: &str) -> String {
     crate::upstream::cap_chars(&body.replace('\n', " "), 300)
 }
 
-/// 「测视觉」的入参：测这条腿上的哪个模型名。
+/// 「测视觉」的入参：测这条渠道上的哪个模型名。
 ///
 /// 面板上每一行模型名旁边都有这个按钮，所以要把行里的名字传进来 ——
-/// 不能拿"这条腿随便一个模型名"去测，不然会测出另一个模型的结论。
+/// 不能拿"这条渠道随便一个模型名"去测，不然会测出另一个模型的结论。
 #[derive(Deserialize)]
 struct VisionTestBody {
     /// 对外模型名（通常就是组名，如 `auto`）。
@@ -615,7 +615,7 @@ struct VisionTestBody {
     apply: bool,
 }
 
-/// 面板上的「测视觉」：**真发一张图**问这条腿一个只有看图才能答对的问题。
+/// 面板上的「测视觉」：**真发一张图**问这条渠道一个只有看图才能答对的问题。
 ///
 /// 为什么不能靠猜：上游 FreeLLMAPI 有目录表告诉它哪个模型能看图，我们没有
 /// （本项目的上游全是用户自定义的），而"模型名里带 vl / vision"这种推断经常错
@@ -625,18 +625,18 @@ struct VisionTestBody {
 /// 三条纪律跟探活/拉清单一致：
 /// - **不写记账**（不是用户请求，不能污染统计）；
 /// - **不动路由状态**（一次人工检查不该改变谁在用）；
-/// - 用**这条腿自己的** URL / key / 自定义头。
-async fn legs_vision_test(
+/// - 用**这条渠道自己的** URL / key / 自定义头。
+async fn channels_vision_test(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<VisionTestBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let id = tokengo_shared::LegId(id);
-    let Some(ready) = ready_leg(&state, id)? else {
-        return Err(ApiError::not_found(format!("腿 {id} 不存在")));
+    let id = tokengo_shared::ChannelId(id);
+    let Some(ready) = ready_channel(&state, id)? else {
+        return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
     };
-    let ReadyLeg { leg, secret, .. } = ready;
+    let ReadyChannel { channel, secret, .. } = ready;
 
     let model_name = body.model.trim().to_string();
     if model_name.is_empty() {
@@ -658,7 +658,7 @@ async fn legs_vision_test(
     let r = state
         .upstream
         .call_and_read(
-            &leg,
+            &channel,
             secret.as_deref(),
             crate::gateway::EndpointKind::Chat.path(),
             crate::prober::vision_test_body(&sent),
@@ -678,7 +678,7 @@ async fn legs_vision_test(
                         "上游不收这张图（HTTP {code}）：这个模型多半不支持图像输入。它的原话：{}",
                         snippet(&text)
                     ),
-                    401 | 403 => format!("凭据不对（HTTP {code}）—— 先点「测一下」看看这条腿本身通不通"),
+                    401 | 403 => format!("凭据不对（HTTP {code}）—— 先点「测一下」看看这条渠道本身通不通"),
                     429 => format!("被上游限流了（HTTP {code}），过一会儿再测"),
                     _ => format!("上游回了 HTTP {code}：{}", snippet(&text)),
                 };
@@ -711,9 +711,9 @@ async fn legs_vision_test(
     // 测通了、且用户没关掉 apply → 顺手把这行标上（省得再回表单勾一次）
     let applied = if ok && body.apply {
         let conn = state.conn();
-        match legs::set_model_vision(&conn, id, &model_name, true) {
+        match channels::set_model_vision(&conn, id, &model_name, true) {
             Ok(_) => {
-                tracing::info!("腿 {id} 的「{model_name}」实测能看图，已标上");
+                tracing::info!("渠道 {id} 的「{model_name}」实测能看图，已标上");
                 true
             }
             Err(e) => {
@@ -728,8 +728,8 @@ async fn legs_vision_test(
 
     Ok(Json(serde_json::json!({
         "ok": ok,
-        "leg_id": leg.id.0,
-        "leg_name": leg.name,
+        "channel_id": channel.id.0,
+        "channel_name": channel.name,
         "model": model_name,
         "model_sent": sent,
         "http_status": status,
@@ -777,9 +777,9 @@ async fn groups_list(
         "groups": gs.iter().map(|g| serde_json::json!({
             "name": g.name,
             "enabled": g.enabled,
-            "legs": g.legs.iter().map(|l| l.0).collect::<Vec<_>>(),
-            // 这一组现在有没有「能看图」的可用腿 —— 组层面有个明确说法，
-            // 不用让面板自己去把每条腿的模型名对着组名翻一遍。
+            "channels": g.channels.iter().map(|l| l.0).collect::<Vec<_>>(),
+            // 这一组现在有没有「能看图」的可用渠道 —— 组层面有个明确说法，
+            // 不用让面板自己去把每条渠道的模型名对着组名翻一遍。
             "can_see": groups::group_can_see(&conn, &g.name).unwrap_or(false),
         })).collect::<Vec<_>>(),
         // 只列真实能用的模型名，给 /v1/models 和面板用同一份判断
@@ -796,7 +796,7 @@ struct GroupBody {
     #[serde(default = "default_true")]
     enabled: bool,
     /// 顺序即优先级，第一个是首选。
-    legs: Vec<i64>,
+    channels: Vec<i64>,
 }
 
 async fn groups_upsert(
@@ -805,9 +805,9 @@ async fn groups_upsert(
     Json(body): Json<GroupBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
-    let ids: Vec<tokengo_shared::LegId> = body.legs.iter().map(|i| tokengo_shared::LegId(*i)).collect();
+    let ids: Vec<tokengo_shared::ChannelId> = body.channels.iter().map(|i| tokengo_shared::ChannelId(*i)).collect();
     groups::upsert(&conn, &body.name, body.enabled, &ids)?;
-    tracing::info!("保存模型组 {}：{} 条腿", body.name, ids.len());
+    tracing::info!("保存模型组 {}：{} 条渠道", body.name, ids.len());
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -831,19 +831,19 @@ async fn routing_state(
     let mut out = Vec::new();
     for g in groups::list(&conn)? {
         let st = router.state(&g.name).cloned().unwrap_or_default();
-        let primary = g.legs.first().copied();
+        let primary = g.channels.first().copied();
         out.push(serde_json::json!({
             "group": g.name,
             "enabled": g.enabled,
             // 首选=列表第一条；在用的可能是它也可能是切过去的某条
-            "primary_leg_id": primary.map(|l| l.0),
-            "active_leg_id": st.active.map(|l| l.0),
+            "primary_channel_id": primary.map(|l| l.0),
+            "active_channel_id": st.active.map(|l| l.0),
             "switched": st.active.is_some() && st.active != primary,
             "switch_count": st.switch_count,
             "last_switch_at_ms": st.last_switch_at_ms,
             "next_probe_at_ms": st.next_probe_at_ms,
             "now_ms": now_ms(),
-            "legs": g.legs.iter().map(|l| l.0).collect::<Vec<_>>(),
+            "channels": g.channels.iter().map(|l| l.0).collect::<Vec<_>>(),
         }));
     }
     Ok(Json(serde_json::json!({
@@ -896,7 +896,7 @@ async fn routing_reprobe(
         }
     }
     state.persist_state(&group)?;
-    Ok(Json(serde_json::json!({ "ok": true, "note": "下次请求会先试首选腿" })))
+    Ok(Json(serde_json::json!({ "ok": true, "note": "下次请求会先试首选渠道" })))
 }
 
 // ───────────────────────── 记账 ─────────────────────────
@@ -916,18 +916,18 @@ async fn stats(
     let conn = state.conn();
     let s = requests::stats_since(&conn, now_ms() - hours * 3600 * 1000)?;
 
-    // 附上腿名，面板不用再查一次
-    let names: std::collections::HashMap<i64, String> = legs::list(&conn)?
+    // 附上渠道名，面板不用再查一次
+    let names: std::collections::HashMap<i64, String> = channels::list(&conn)?
         .into_iter()
         .map(|l| (l.id.0, l.name))
         .collect();
     let mut v = serde_json::to_value(&s).map_err(|e| ApiError::internal(e.to_string()))?;
-    if let Some(arr) = v.get_mut("by_leg").and_then(|x| x.as_array_mut()) {
+    if let Some(arr) = v.get_mut("by_channel").and_then(|x| x.as_array_mut()) {
         for item in arr.iter_mut() {
-            let id = item.get("leg_id").and_then(|x| x.as_i64()).unwrap_or(0);
-            let name = names.get(&id).cloned().unwrap_or_else(|| format!("已删除的腿 #{id}"));
+            let id = item.get("channel_id").and_then(|x| x.as_i64()).unwrap_or(0);
+            let name = names.get(&id).cloned().unwrap_or_else(|| format!("已删除的渠道 #{id}"));
             if let Some(obj) = item.as_object_mut() {
-                obj.insert("leg_name".into(), serde_json::json!(name));
+                obj.insert("channel_name".into(), serde_json::json!(name));
                 let attempts = obj.get("attempts").and_then(|x| x.as_i64()).unwrap_or(0);
                 let succ = obj.get("successes").and_then(|x| x.as_i64()).unwrap_or(0);
                 obj.insert(
