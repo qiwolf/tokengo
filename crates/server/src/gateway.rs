@@ -48,6 +48,13 @@ pub enum EndpointKind {
     Rerank,
 }
 
+/// 上游在 `Retry-After` 里要求等的时长超过这个数（毫秒），就认定在这条渠道上耗下去
+/// 不划算 —— 直接放弃剩下的重试、换下一条渠道。
+///
+/// 依据：现网实测的 429 有两类 —— 「Go 用量超了」与「周额度用完」，它们说的恢复时间
+/// 以小时计。这时候"等 1 秒再试 3 次"纯属白等，还会把请求预算烧光。
+const LONG_RETRY_AFTER_MS: u64 = 2000;
+
 impl EndpointKind {
     /// 打上游时接在 base_url 后面的路径。
     pub fn path(self) -> &'static str {
@@ -63,6 +70,15 @@ impl EndpointKind {
             EndpointKind::Chat => "/v1/chat/completions",
             EndpointKind::Embeddings => "/v1/embeddings",
             EndpointKind::Rerank => "/v1/rerank",
+        }
+    }
+
+    /// 这个端点对应的模型类型（写进模型组、回给客户端的那种）。
+    pub fn as_model_kind(self) -> tokengo_shared::ModelKind {
+        match self {
+            EndpointKind::Chat => tokengo_shared::ModelKind::Chat,
+            EndpointKind::Embeddings => tokengo_shared::ModelKind::Embeddings,
+            EndpointKind::Rerank => tokengo_shared::ModelKind::Rerank,
         }
     }
 }
@@ -232,6 +248,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut last_fault: Option<String> = None;
     let mut last_http: Option<UpstreamError> = None;
     let mut last_channel = ChannelId(0);
+    // 上游说的「过多久再来」；下一次重试用它顶掉默认节拍。
+    let mut retry_after_override: Option<u64> = None;
 
     for channel_id in order.iter().copied() {
         let Some(channel) = plan.channel(channel_id) else { continue };
@@ -246,7 +264,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
         for attempt_no in 1..=cfg.max_attempts() {
             if attempt_no > 1 {
-                let d = retry_delay_ms(attempt_no);
+                // 上游在 Retry-After 里说了等多久就等多久（它比我们的默认节拍更懂自己）
+                let d = retry_after_override.take().unwrap_or_else(|| retry_delay_ms(attempt_no));
                 if d > 0 {
                     tokio::time::sleep(Duration::from_millis(d)).await;
                 }
@@ -300,6 +319,58 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let dur = now_ms() - t0;
             match classify_status(status) {
                 AttemptOutcome::Success => {
+                    // 流式：第一个字节发出去之后就不能换腿了，所以先记账、更新路由状态，
+                    // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
+                    if req.stream {
+                        record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
+                        if touch_state {
+                            let mut r = state.routing();
+                            r.on_success(&plan.group, channel.id, &ids, now_ms());
+                            drop(r);
+                            state.persist_state(&plan.group)?;
+                        }
+                        return Ok(stream_passthrough(
+                            state.clone(),
+                            resp,
+                            guard,
+                            request_id,
+                            started_ms,
+                            channel.id.0,
+                        ));
+                    }
+
+                    // 非流式：**先把正文读下来再算成功**。有的上游回 200 却一句话不说
+                    // （现网 4 天 9 次），那种必须当这条腿的毛病去重试/换腿 —— 不能先把
+                    // 路由状态记成「这条腿好了」，更不能把空泡泡原样丢给用户。
+                    let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+                    let (resp, input, output, empty) = if req.endpoint == EndpointKind::Rerank {
+                        let (r, i, o) = buffer_rerank_passthrough(resp, http, &req.body).await;
+                        (r, i, o, None)
+                    } else {
+                        buffer_passthrough(
+                            resp,
+                            http,
+                            channel.unwrap_envelope,
+                            req.endpoint == EndpointKind::Chat,
+                        )
+                        .await
+                    };
+                    if let Some(note) = empty {
+                        record_attempt(
+                            &state,
+                            request_id,
+                            ordinal,
+                            channel,
+                            "empty_reply",
+                            Some(status),
+                            dur,
+                            Some(&note),
+                        );
+                        ordinal += 1;
+                        tracing::warn!("渠道 {} 回了 200 但一句话没说，按这条腿的毛病处理", channel.name);
+                        last_fault = Some(format!("{}：{note}", channel.name));
+                        continue;
+                    }
                     record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
@@ -308,36 +379,19 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         drop(r);
                         state.persist_state(&plan.group)?;
                     }
-                    let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-                    return Ok(if req.stream {
-                        stream_passthrough(
-                            state.clone(),
-                            resp,
-                            guard,
-                            request_id,
-                            started_ms,
-                            channel.id.0,
-                        )
-                    } else {
-                        let (resp, input, output) = if req.endpoint == EndpointKind::Rerank {
-                            buffer_rerank_passthrough(resp, http, &req.body).await
-                        } else {
-                            buffer_passthrough(resp, http, channel.unwrap_envelope).await
-                        };
-                        guard.finish(
-                            &state,
-                            Status::Ok,
-                            Some(status),
-                            Some(channel.id.0),
-                            started_ms,
-                            Some(dur),
-                            input,
-                            output,
-                            false,
-                            None,
-                        );
-                        resp
-                    });
+                    guard.finish(
+                        &state,
+                        Status::Ok,
+                        Some(status),
+                        Some(channel.id.0),
+                        started_ms,
+                        Some(dur),
+                        input,
+                        output,
+                        false,
+                        None,
+                    );
+                    return Ok(resp);
                 }
                 AttemptOutcome::ClientFault => {
                     // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
@@ -365,6 +419,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 }
                 AttemptOutcome::ChannelFault => {
                     let err = read_error(resp).await;
+                    let after = err
+                        .retry_after
+                        .as_ref()
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(crate::upstream::retry_after_ms);
                     record_attempt(
                         &state,
                         request_id,
@@ -378,6 +437,21 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     ordinal += 1;
                     last_fault = Some(format!("{}：HTTP {status} {}", channel.name, err.text));
                     last_http = Some(err);
+                    if let Some(ms) = after {
+                        // 上游自己说了「过多久再来」：
+                        // · 说得很久（>2 秒）→ **别在这条腿上耗**，剩下的尝试直接放弃、换下一条；
+                        //   现网那两种 429（Go 用量 / 周额度）等 1 秒重试纯属白等。
+                        // · 说得不久 → 就按它说的等，比我们的固定节拍更贴合。
+                        if ms > LONG_RETRY_AFTER_MS {
+                            tracing::warn!(
+                                "渠道 {} 回了 {status} 且要求等 {} 秒 → 不重试，直接换下一条渠道",
+                                channel.name,
+                                ms / 1000
+                            );
+                            break;
+                        }
+                        retry_after_override = Some(ms);
+                    }
                     continue;
                 }
                 AttemptOutcome::ClientGone => {
@@ -531,14 +605,21 @@ pub fn usage_from_value(v: &Value) -> (i64, i64) {
 /// `unwrap_envelope`：这条渠道勾了「响应解包」时，先把外面那层壳剥掉再回客户端与记账
 /// （cline.bot 的形状：`{"data": {<标准响应>}, "success": true}`，不剥客户端读顶层
 /// `choices` 只能读到空）。**只在真认出那种形状时才剥**，其余一律原样透传。
+///
+/// `check_empty`：对话端点要顺手看一眼「它到底说没说话」。回了 200 但一句话没有的，
+/// 第四个返回值给出说明 —— 调用方拿它当**这条渠道的毛病**去重试/换腿，而不是把空泡泡
+/// 原样丢给用户。
+#[allow(clippy::type_complexity)]
 async fn buffer_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
     unwrap_envelope: bool,
-) -> (Response, i64, i64) {
+    check_empty: bool,
+) -> (Response, i64, i64, Option<String>) {
     let ctype = content_type(&resp);
     let bytes = resp.bytes().await.unwrap_or_default();
     let mut out = bytes.clone();
+    let mut empty: Option<String> = None;
     let (input, output) = match serde_json::from_slice::<Value>(&bytes) {
         Ok(mut v) => {
             if unwrap_envelope && tokengo_shared::unwrap_envelope(&mut v) {
@@ -546,6 +627,12 @@ async fn buffer_passthrough(
                     Ok(b) => out = Bytes::from(b),
                     Err(e) => tracing::warn!("剥壳后重新序列化失败，原样回：{e}"),
                 }
+            }
+            if check_empty && tokengo_shared::empty_chat_reply(&v) {
+                let head: String = String::from_utf8_lossy(&out).chars().take(200).collect();
+                empty = Some(format!(
+                    "上游回了 200 但一句话都没说（没 content、没 tool_calls、没推理内容）：{head}"
+                ));
             }
             usage_from_value(&v)
         }
@@ -560,6 +647,7 @@ async fn buffer_passthrough(
             .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()),
         input,
         output,
+        empty,
     )
 }
 
@@ -681,19 +769,25 @@ struct StreamState {
 
 impl StreamState {
     /// `complete`：上游把流发完了（true）还是中途断了（false）。
+    ///
+    /// 流完了但**一块真内容都没有**也算失败：客户端刚才收到的是一个空泡泡，
+    /// 我们虽然改不了已经发出去的字节，但账要记对、原因要写清（不然只能看到一条"成功"）。
     fn finish(&mut self, complete: bool) {
         let Some(mut guard) = self.guard.take() else {
             return;
         };
         let (input, output) = self.scanner.totals();
-        let note = if complete {
-            None
-        } else {
+        let empty = complete && !self.scanner.saw_payload();
+        let note = if !complete {
             Some("上游流式中途断了，已发出去的内容收不回来")
+        } else if empty {
+            Some("上游流里一个字都没说（没 content、没 tool_calls、没推理内容）")
+        } else {
+            None
         };
         guard.finish(
             &self.state,
-            if complete { Status::Ok } else { Status::Failed },
+            if complete && !empty { Status::Ok } else { Status::Failed },
             None,
             Some(self.channel_id),
             self.started_ms,
@@ -765,6 +859,9 @@ pub struct SseScanner {
     pending: Vec<u8>,
     input: i64,
     output: i64,
+    /// 整条流里到底有没有真内容（正文 / 工具调用 / 推理内容）——
+    /// 流式不能等读完再判断（字节早发出去了），只能边转边记。
+    payload: bool,
 }
 
 /// 一行都解析不出来的东西不该把内存吃光（上游万一不回 SSE）。
@@ -793,6 +890,9 @@ impl SseScanner {
             return;
         }
         if let Ok(v) = serde_json::from_str::<Value>(data) {
+            if tokengo_shared::chunk_has_payload(&v) {
+                self.payload = true;
+            }
             let (i, o) = usage_from_value(&v);
             if i > 0 || o > 0 {
                 self.input = i;
@@ -803,6 +903,11 @@ impl SseScanner {
 
     pub fn totals(&self) -> (i64, i64) {
         (self.input, self.output)
+    }
+
+    /// 整条流里有没有出现过真内容（判断「上游一个字都没说」用的）。
+    pub fn saw_payload(&self) -> bool {
+        self.payload
     }
 }
 

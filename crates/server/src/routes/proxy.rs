@@ -153,6 +153,9 @@ async fn models(
             "created": 0,
             "owned_by": tokengo_shared::BRAND,
             "vision": m.vision,
+            // 这是向量模型还是对话模型 —— 客户端（Hermes 这类）可以据此挑端点，
+            // 不用靠名字猜（现网那批自定义名字一个特征都没有）。
+            "kind": m.kind.as_str(),
         })).collect::<Vec<_>>(),
     })))
 }

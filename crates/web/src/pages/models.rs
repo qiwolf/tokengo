@@ -22,6 +22,29 @@ pub(crate) fn filter_servable(all: &[Servable], only_vision: bool) -> Vec<Servab
         .collect()
 }
 
+/// 把能打的模型名按类型分堆，顺序固定：对话 → 向量 → 重排 → 还没定。
+///
+/// 为什么要分：同一个网关后面挂着三种用途完全不同的模型（现网 86% 的量是向量），
+/// 混在一起列出来，人得靠名字去猜哪个是哪个 —— 而现网那批名字（`v4.1flash`、
+/// `cline-pass/deepseek-v4.1-flash`）一个特征都没有。
+///
+/// 空的那几堆不返回（不给界面上留几个空标题）。纯函数，好测。
+pub(crate) fn group_servable_by_kind(all: &[Servable]) -> Vec<(&'static str, Vec<Servable>)> {
+    const ORDER: [(&str, &str); 4] = [
+        ("chat", "对话"),
+        ("embeddings", "向量"),
+        ("rerank", "重排"),
+        ("", "还没定"),
+    ];
+    ORDER
+        .iter()
+        .filter_map(|(kind, label)| {
+            let v: Vec<Servable> = all.iter().filter(|m| m.kind == *kind).cloned().collect();
+            (!v.is_empty()).then_some((*label, v))
+        })
+        .collect()
+}
+
 /// 正在编辑的组（草稿状态，保存前只存在浏览器里）。
 #[derive(Debug, Clone, PartialEq)]
 struct Draft {
@@ -108,6 +131,28 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
             .find(|l| l.id == i)
             .map(|l| l.name.clone())
             .unwrap_or_else(|| format!("已删除的渠道 #{i}")),
+    };
+
+    // 改一组是哪种模型：`auto` = 跟着实测走（清空，下次真有请求再学）。
+    //
+    // **手动定过就不再被实测覆盖** —— 面板上要让人放心按。
+    let set_kind = move |name: String, kind: &'static str| {
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::set_group_kind(&name, kind).await {
+                Ok(()) => {
+                    ctx.say(if kind == "auto" {
+                        "已经交还给实测：下次真有请求进来时按端点重新认一次"
+                    } else {
+                        "类型已定，之后不会实测再把它改掉"
+                    });
+                    reload();
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    ctx.say(format!("改类型没成功：{}", e.message));
+                }
+            }
+        });
     };
 
     let open_new = move |_| {
@@ -253,20 +298,36 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                     if v.is_empty() {
                         return view! { <span class="muted small">"（一个都没有）"</span> }.into_any();
                     }
-                    v.into_iter()
-                        .map(|m| {
+                    // 按类型分堆显示：向量模型和对话模型用法完全不同，混着列等于让人猜
+                    group_servable_by_kind(&v)
+                        .into_iter()
+                        .map(|(label, list)| {
                             view! {
-                                <code
-                                    class="chip code"
-                                    title=if m.vision {
-                                        "这个模型名收得下图片输入"
-                                    } else {
-                                        "纯文本：带图的请求会被回 422"
-                                    }
-                                >
-                                    {m.name}
-                                    {m.vision.then(|| view! { <span class="tag vision">"视觉"</span> })}
-                                </code>
+                                <span class="kind-group">
+                                    <span class="muted small">{label}</span>
+                                    {list
+                                        .into_iter()
+                                        .map(|m| {
+                                            view! {
+                                                <code
+                                                    class="chip code"
+                                                    title=if m.kind == "embeddings" {
+                                                        "向量模型：客户端用 /v1/embeddings 调它"
+                                                    } else if m.kind == "rerank" {
+                                                        "重排模型：客户端用 /v1/rerank 调它"
+                                                    } else if m.vision {
+                                                        "对话模型，收得下图片输入"
+                                                    } else {
+                                                        "对话模型；带图的请求会被回 422"
+                                                    }
+                                                >
+                                                    {m.name}
+                                                    {m.vision.then(|| view! { <span class="tag vision">"视觉"</span> })}
+                                                </code>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </span>
                             }
                         })
                         .collect_view()
@@ -288,6 +349,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                     <thead>
                         <tr>
                             <th>"模型名"</th>
+                            <th>"类型"</th>
                             <th>"状态"</th>
                             <th>"渠道顺序（先试 → 后试）"</th>
                             <th>"现在走的"</th>
@@ -302,7 +364,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                             if gs.is_empty() {
                                 return view! {
                                     <tr class="empty-row">
-                                        <td colspan="7" class="muted empty-cell">
+                                        <td colspan="8" class="muted empty-cell">
                                             "还没有模型 —— 点右上角「新建模型」加一个，客户端才能打模型名。"
                                         </td>
                                     </tr>
@@ -312,6 +374,17 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                             gs.into_iter()
                                 .map(|g| {
                                     let name = g.name.clone();
+                                    // 类型那一列要用的几份拷贝（每份都被自己的闭包吃掉）
+                                    let name_kind = g.name.clone();
+                                    let kind_is_auto = g.kind.is_empty();
+                                    let kind_is_chat = g.kind == "chat";
+                                    let kind_is_emb = g.kind == "embeddings";
+                                    let kind_is_rerank = g.kind == "rerank";
+                                    let kind_hint = match g.kind_source.as_str() {
+                                        "auto" => "实测认的",
+                                        "manual" => "你定的",
+                                        _ => "还没人来打过",
+                                    };
                                     let g2 = g.clone();
                                     let g3 = g.clone();
                                     let g4 = g.clone();
@@ -340,11 +413,38 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                         "视觉"
                                                     </span>
                                                 })}
-                                                {(!g.can_see).then(|| view! {
-                                                    <span class="tag muted" title="这一组里没有能看图的渠道：带图的请求会被回 422（说清楚，不悄悄丢图）">
-                                                        "不收图"
-                                                    </span>
-                                                })}
+                                                {(!g.can_see
+                                                    && g.kind != "embeddings"
+                                                    && g.kind != "rerank")
+                                                    .then(|| view! {
+                                                        <span class="tag muted" title="这一组里没有能看图的渠道：带图的请求会被回 422（说清楚，不悄悄丢图）">
+                                                            "不收图"
+                                                        </span>
+                                                    })}
+                                            </td>
+                                            <td data-label="类型">
+                                                <select
+                                                    class="kind-pick"
+                                                    title="这组是哪种模型。默认「跟着实测走」：第一次真有请求进来时按它走的端点认一次；你手动定了之后就不会再被实测改掉。"
+                                                    on:change=move |ev| {
+                                                        let v = event_target_value(&ev);
+                                                        let k: &'static str = match v.as_str() {
+                                                            "chat" => "chat",
+                                                            "embeddings" => "embeddings",
+                                                            "rerank" => "rerank",
+                                                            _ => "auto",
+                                                        };
+                                                        set_kind(name_kind.clone(), k);
+                                                    }
+                                                >
+                                                    <option value="auto" selected=kind_is_auto>
+                                                        "跟着实测走"
+                                                    </option>
+                                                    <option value="chat" selected=kind_is_chat>"对话"</option>
+                                                    <option value="embeddings" selected=kind_is_emb>"向量"</option>
+                                                    <option value="rerank" selected=kind_is_rerank>"重排"</option>
+                                                </select>
+                                                <span class="muted small">{kind_hint}</span>
                                             </td>
                                             <td data-label="状态">
                                                 {if g.enabled {
@@ -634,6 +734,9 @@ mod tests {
         Servable {
             name: name.into(),
             vision,
+            kind: String::new(),
+            kind_label: String::new(),
+            kind_source: String::new(),
         }
     }
 
@@ -641,6 +744,36 @@ mod tests {
     fn vision_filter_keeps_everything_when_off() {
         let all = vec![m("auto", true), m("BAAI/bge-m3", false)];
         assert_eq!(filter_servable(&all, false).len(), 2);
+    }
+
+    #[test]
+    fn servable_splits_into_kind_buckets_in_a_fixed_order() {
+        let s = |name: &str, kind: &str| Servable {
+            name: name.into(),
+            vision: false,
+            kind: kind.into(),
+            kind_label: String::new(),
+            kind_source: String::new(),
+        };
+        let all = vec![
+            s("v4.1flash", ""),
+            s("BAAI/bge-m3", "embeddings"),
+            s("auto", "chat"),
+            s("rerank-x", "rerank"),
+            s("deepseek-v4.1-flash", "chat"),
+        ];
+        let got = group_servable_by_kind(&all);
+        let labels: Vec<&str> = got.iter().map(|(l, _)| *l).collect();
+        assert_eq!(labels, vec!["对话", "向量", "重排", "还没定"], "顺序固定，空的堆不出现");
+        assert_eq!(got[0].1.len(), 2, "两个对话模型在同一堆里");
+        assert_eq!(got[1].1[0].name, "BAAI/bge-m3");
+        assert_eq!(got[3].1[0].name, "v4.1flash");
+
+        // 反证：只有一个类型时，别的堆不许留空标题
+        let only_vec = group_servable_by_kind(&[s("m", "embeddings")]);
+        assert_eq!(only_vec.len(), 1);
+        assert_eq!(only_vec[0].0, "向量");
+        assert!(group_servable_by_kind(&[]).is_empty());
     }
 
     #[test]

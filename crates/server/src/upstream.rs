@@ -285,6 +285,20 @@ pub fn cap_chars(s: &str, max: usize) -> String {
     }
 }
 
+/// 解析 `Retry-After` 头 —— **只认「秒数」这一种写法**（HTTP-date 那种一律当没给，
+/// 宁可不猜）。返回毫秒。
+///
+/// 为什么要它：上游回 429 时它自己会说「等多久再来」。现网实测里 429 有 13 次，
+/// 其中「Go usage limit exceeded」和「周额度用完」这两种等 1 秒重试是毫无意义的
+/// —— 额度的恢复时间以小时计。照着它说的等，或者干脆别在这条腿上耗，更省时间。
+pub fn retry_after_ms(value: &str) -> Option<u64> {
+    let v = value.trim();
+    if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    v.parse::<u64>().ok().map(|s| s.saturating_mul(1000))
+}
+
 /// 这条渠道本次请求要带的头（自定义头在前，Authorization 最后 ——
 /// 免得用户自定义头里写了个 Authorization 又被覆盖，反过来更好查）。
 ///
@@ -434,6 +448,18 @@ mod tests {
         assert!(!looks_like_a_model_list(r#"{"detail":"Not Found"}"#));
         assert!(!looks_like_a_model_list("<html>502</html>"));
         assert!(!looks_like_a_model_list(""));
+    }
+
+    #[test]
+    fn retry_after_only_trusts_plain_seconds() {
+        assert_eq!(retry_after_ms("0"), Some(0));
+        assert_eq!(retry_after_ms(" 3 "), Some(3000));
+        assert_eq!(retry_after_ms("120"), Some(120_000));
+        // 反证：HTTP-date 与垃圾值一律当没给（不猜）
+        assert_eq!(retry_after_ms("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(retry_after_ms("-1"), None);
+        assert_eq!(retry_after_ms("3.5"), None);
+        assert_eq!(retry_after_ms(""), None);
     }
 
     #[test]

@@ -413,3 +413,11 @@ details.fold.tight > summary { font-size: .85rem; }
   }
   .table-wrap table.grid td.empty-cell { white-space: normal; }
 }
+
+/* 模型按类型分开：顶部按类型分堆的模型名 + 表格里那一列类型选择。 */
+.kind-group { display: inline-flex; align-items: center; gap: .4rem; margin-right: .8rem; flex-wrap: wrap; }
+.kind-group > span.muted { min-width: 2.4em; }
+select.kind-pick {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: .15rem .35rem; font-size: .85rem; max-width: 9rem;
+}

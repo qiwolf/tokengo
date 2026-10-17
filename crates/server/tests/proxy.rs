@@ -44,6 +44,10 @@ enum Reply {
     /// 非流式响应外面套一层壳（cline.bot 的真形状）：`{"data": {…}, "success": true}`。
     /// 「响应解包」勾上才该剥掉。
     Enveloped,
+    /// 200 但一句话都没说（没 content、没 tool_calls）—— 现网 4 天 9 次那种。
+    Empty,
+    /// 429 + `Retry-After`（秒）。上游自己说「过多久再来」。
+    RateLimited(u64),
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +152,22 @@ async fn mock_handler(
             body.to_string(),
         )
             .into_response(),
+        Reply::Empty => axum::Json(json!({
+            "id": "chatcmpl-empty",
+            "object": "chat.completion",
+            "model": "mock",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 0}
+        }))
+        .into_response(),
+        Reply::RateLimited(secs) => Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header("retry-after", secs.to_string())
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                r#"{"error":{"message":"Go usage limit exceeded"}}"#,
+            ))
+            .unwrap(),
         Reply::Slow(ms) => {
             tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
             axum::Json(json!({"choices": [], "usage": {}})).into_response()
@@ -1096,6 +1116,21 @@ async fn post_with_token(f: &Fixture, uri: &str, session: &str, body: Value) -> 
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
+/// 面板接口的 PUT 调用（改模型组类型用）。
+async fn put_with_token(f: &Fixture, uri: &str, session: &str, body: Value) -> (StatusCode, Value) {
+    let req = axum::http::Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {session}"))
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
 /// 面板会话的 GET（管理面读操作用）。
 async fn get_with_token(f: &Fixture, uri: &str, session: &str) -> (StatusCode, Value) {
     let req = axum::http::Request::builder()
@@ -1807,4 +1842,198 @@ async fn the_envelope_is_unwrapped_only_when_the_channel_says_so() {
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert!(v.get("choices").is_none(), "没勾解包的渠道不许动响应：{v}");
     assert_eq!(v["data"]["choices"][0]["message"]["content"], "壳里的你好", "{v}");
+}
+
+// ───────── 模型按类型分开（对话 / 向量 / 重排）+ 顺手补的两条可靠性 ─────────
+
+/// 类型是**实测学来的**：真有向量请求进来一次，这组的类型就记成向量，
+/// 面板与 `/v1/models` 都读得到。人手动定过之后，实测不许再改。
+#[tokio::test]
+async fn the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_choice() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let a = f.add_channel(
+        "载荷渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("BAAI/bge-m3".into(), None), ("auto".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.set_group("BAAI/bge-m3", &[a]);
+    f.set_group("auto", &[a]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+
+    // 一开始：两组都「还没定」，谁也不许按名字猜
+    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
+    for name in ["BAAI/bge-m3", "auto"] {
+        let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == name).unwrap();
+        assert_eq!(g["kind"], "", "{name} 不该凭空有个类型：{g}");
+        assert_eq!(g["kind_source"], "");
+    }
+
+    // 真打一发向量请求 → 只有那一组被记成向量
+    let (s, _, _) = post(
+        &f,
+        "/v1/embeddings",
+        Some(KEY),
+        json!({"model": "BAAI/bge-m3", "input": ["爱吃鱼"]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
+    let vec_g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "BAAI/bge-m3").unwrap();
+    let chat_g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "auto").unwrap();
+    assert_eq!(vec_g["kind"], "embeddings", "实测验到的类型要落库：{vec_g}");
+    assert_eq!(vec_g["kind_source"], "auto");
+    assert_eq!(vec_g["kind_label"], "向量");
+    assert_eq!(chat_g["kind"], "", "没被碰过的组不许跟着变：{chat_g}");
+
+    // /v1/models 也要如实说类型（客户端据此挑端点）
+    let (_, v) = get(&f, "/v1/models", Some(KEY)).await;
+    let m_ = v["data"].as_array().unwrap().iter().find(|x| x["id"] == "BAAI/bge-m3").unwrap();
+    assert_eq!(m_["kind"], "embeddings", "{v}");
+    assert_eq!(m_["vision"], false, "向量模型不看图：{m_}");
+
+    // 人手动改成「对话」→ 来源变 manual，再来向量流量也不许把它改回去
+    let (s, v) = put_with_token(
+        &f,
+        "/api/groups/BAAI%2Fbge-m3/kind",
+        &token,
+        json!({"kind": "chat"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["kind"], "chat");
+    assert_eq!(v["kind_source"], "manual");
+    let (s, _, _) = post(
+        &f,
+        "/v1/embeddings",
+        Some(KEY),
+        json!({"model": "BAAI/bge-m3", "input": ["再来一发"]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
+    let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "BAAI/bge-m3").unwrap();
+    assert_eq!(g["kind"], "chat", "手动定过的类型不许被实测改掉：{g}");
+    assert_eq!(g["kind_source"], "manual");
+
+    // 交还给实测 → 清空
+    let (s, v) = put_with_token(&f, "/api/groups/auto/kind", &token, json!({"kind": "auto"})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["kind"], "");
+
+    // 乱写的类型要 400，不许悄悄当成交给实测
+    let (s, _) = put_with_token(&f, "/api/groups/auto/kind", &token, json!({"kind": "随便"})).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // 不存在的组是 404（不是 200 假成功）
+    let (s, _) = put_with_token(&f, "/api/groups/没有这个组/kind", &token, json!({"kind": "chat"})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// 空回复（200 但一句话没说）当**渠道的毛病**处理：立刻重试，不再把空泡泡丢给客户端。
+#[tokio::test]
+async fn an_empty_reply_is_retried_instead_of_being_passed_through() {
+    let f = fixture();
+    f.with_key();
+    // 第一发回空，第二发正常 → 客户端拿到的是正常回复
+    // （假上游的队列「先排的先回、排空了才用默认值」：默认给正常的，把空的那发排在最前）
+    let m = start_mock(Reply::Ok).await;
+    let a = f.add_channel("偶尔发呆的渠道", &m.base, ChannelSpec::default());
+    f.set_group("auto", &[a]);
+    m.inner.replies.lock().unwrap().push_back(Reply::Empty);
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "空回复之后重试成功，客户端不该看到错误");
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["message"]["content"], "你好", "拿到的必须是那发正常的：{v}");
+
+    let att = f.attempts();
+    assert_eq!(att.len(), 2, "第一次空回复、第二次正常：{att:?}");
+    assert_eq!(att[0].1, "empty_reply", "空回复那次要记成 empty_reply：{att:?}");
+    assert_eq!(att[1].1, "success");
+
+    // 反证：一直空 → 4 次尝试都记 empty_reply，请求记失败并**说清原因**
+    let f2 = fixture();
+    f2.with_key();
+    let m2 = start_mock(Reply::Empty).await;
+    let b = f2.add_channel("一直发呆的渠道", &m2.base, ChannelSpec::default());
+    f2.set_group("auto", &[b]);
+    let (s, body, _) = post(
+        &f2,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_ne!(s, StatusCode::OK, "整条链路都只回空，绝不能当成功");
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("一句话都没说"),
+        "要说清上游一个字都没说，不能给个含糊的 502：{text}"
+    );
+    let att = f2.attempts();
+    assert_eq!(att.len(), 4, "按重试策略走满 4 次：{att:?}");
+    assert!(att.iter().all(|a| a.1 == "empty_reply"), "{att:?}");
+    let rows = f2.request_rows();
+    assert_eq!(rows[0].0, "failed", "{rows:?}");
+    assert!(
+        rows[0].5.as_deref().unwrap_or("").contains("一句话都没说"),
+        "流水里要写清原因：{rows:?}"
+    );
+}
+
+/// 上游在 `Retry-After` 里说要等很久 → **别在这条渠道上耗**，剩下的重试直接放弃、换下一条。
+#[tokio::test]
+async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::RateLimited(300)).await;
+    let a = f.add_channel("配额没了的渠道", &m.base, ChannelSpec::default());
+    let good = start_mock(Reply::Ok).await;
+    let b = f.add_channel("好好的渠道", &good.base, ChannelSpec::default());
+    f.set_group("auto", &[a, b]);
+
+    let (s, body, _) = post(
+        &f,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "第一条要等 300 秒 → 直接换下一条，客户端照样拿到回复");
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["message"]["content"], "你好");
+    let att = f.attempts();
+    assert_eq!(att.len(), 2, "第一条只准试一次就放弃：{att:?}");
+    assert_eq!(att[0].0, a.0);
+    assert_eq!(att[0].2, Some(429));
+    assert_eq!(att[1].0, b.0);
+    assert_eq!(m.count(), 1, "要求等 300 秒的渠道，一次都不许多试: {}", m.count());
+
+    // 反证：上游只要求等 0 秒 → 不算「很久」，照旧重试满 4 次
+    let f2 = fixture();
+    f2.with_key();
+    let m2 = start_mock(Reply::RateLimited(0)).await;
+    let c = f2.add_channel("很快就好的渠道", &m2.base, ChannelSpec::default());
+    f2.set_group("auto", &[c]);
+    let (s, _, _) = post(
+        &f2,
+        CHAT,
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_ne!(s, StatusCode::OK);
+    assert_eq!(f2.attempts().len(), 4, "等 0 秒的 429 该照旧重试满：{:?}", f2.attempts());
 }

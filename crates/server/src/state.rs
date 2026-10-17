@@ -18,6 +18,17 @@ use crate::gateway::EndpointKind;
 use crate::gateway_key::GatewayKeyCache;
 use crate::upstream::Upstream;
 
+/// 模型组类型 → 探活该打哪个端点。**还没定的返回 None**（那就按对话探，
+/// 探活那边把 400 当「没结论」，不会乱改路由状态）。
+fn group_kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKind> {
+    match kind {
+        tokengo_shared::ModelKind::Chat => Some(EndpointKind::Chat),
+        tokengo_shared::ModelKind::Embeddings => Some(EndpointKind::Embeddings),
+        tokengo_shared::ModelKind::Rerank => Some(EndpointKind::Rerank),
+        tokengo_shared::ModelKind::Unknown => None,
+    }
+}
+
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub routing: Mutex<RoutingRouter>,
@@ -58,6 +69,21 @@ impl AppState {
             }
         }
 
+        // 把库里记下来的「各组是哪种模型」装进内存：探活要知道该打哪个端点。
+        // **不装的话重启后一律按对话探** —— 拿对话请求去探向量组必然 400，
+        // 表现就是「重启后向量组一直探不通、回切永远不成功」。
+        let mut endpoints = HashMap::new();
+        for g in db::groups::list(&conn).unwrap_or_default() {
+            if let Some(kind) = group_kind_to_endpoint(g.kind) {
+                endpoints.insert(g.name.clone(), kind);
+            }
+        }
+        if !endpoints.is_empty() {
+            tracing::info!("已恢复 {} 个模型组的类型（{}）",
+                endpoints.len(),
+                endpoints.iter().map(|(n, k)| format!("{n}={}", k.as_model_kind().label())).collect::<Vec<_>>().join(" "));
+        }
+
         Ok(Arc::new(Self {
             db: Mutex::new(conn),
             routing: Mutex::new(router),
@@ -65,7 +91,7 @@ impl AppState {
             cfg,
             upstream: Upstream::new()?,
             key_cache: GatewayKeyCache::new(),
-            group_endpoints: Mutex::new(HashMap::new()),
+            group_endpoints: Mutex::new(endpoints),
         }))
     }
 
@@ -96,10 +122,29 @@ impl AppState {
         self.key_cache.forget();
     }
 
-    /// 记下这个模型组平时走哪个端点（转发时顺手调，探活用）。
+    /// 记下这个模型组平时走哪个端点（转发时顺手调，探活用），并**第一次就落库**。
+    ///
+    /// 落库是给重启后的探活用的（内存那份一重启就没了）；只在「还没定」时写，
+    /// 人手动定过或早就学过的一律不动。
+    ///
+    /// **两把锁不许嵌套**：先放掉内存那把，再去拿库那把 —— 反过来的顺序在别处存在，
+    /// 嵌套就是经典的双锁死锁。
     pub fn note_group_endpoint(&self, group: &str, kind: EndpointKind) {
-        let mut g = self.group_endpoints.lock().unwrap_or_else(|e| e.into_inner());
-        g.insert(group.to_string(), kind);
+        let changed = {
+            let mut g = self.group_endpoints.lock().unwrap_or_else(|e| e.into_inner());
+            g.insert(group.to_string(), kind) != Some(kind)
+        };
+        if !changed {
+            return;
+        }
+        let mk = kind.as_model_kind();
+        let learned = {
+            let conn = self.conn();
+            db::groups::learn_kind(&conn, group, mk).unwrap_or(false)
+        };
+        if learned {
+            tracing::info!("模型组 {group} 的类型按实测记下来了：{}", mk.label());
+        }
     }
 
     /// 这个模型组的探活该打哪个端点。没见过流量就按对话探（对话探活对向量组会 400，
