@@ -187,6 +187,18 @@ pub fn delete(conn: &Connection, id: ChannelId) -> Result<()> {
     Ok(())
 }
 
+/// 一键启用/停用这条渠道（面板状态开关点的就是它）。只改一列，不碰密钥/请求头/模型名。
+pub fn set_enabled(conn: &Connection, id: ChannelId, enabled: bool) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE channels SET enabled = ?2, updated_at = datetime('now') WHERE id = ?1",
+        params![id.0, enabled as i64],
+    )?;
+    if n == 0 {
+        return Err(DbError::Other(format!("渠道 {id} 不存在")));
+    }
+    Ok(())
+}
+
 /// 存密钥（加密）。明文只在内存里过一下，绝不落库、绝不回显。
 pub fn set_secret(conn: &Connection, sb: &SecretBox, id: ChannelId, plaintext: &str) -> Result<()> {
     let (nonce, cipher) = sb
