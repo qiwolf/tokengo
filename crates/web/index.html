@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>tokengo 面板</title>
     <!--
+      主题要在 WASM 起来之前先定好，否则每次刷新都会闪一下深色。
+      这段读的键和 Rust 侧（lib.rs 的 THEME_KEY）必须是同一个：tokengo.theme。
+      取值只有 light / dark；没记录过就跟随系统设置。
+    -->
+    <script>
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem("tokengo.theme"); } catch (e) {}
+        if (t !== "light" && t !== "dark") {
+          t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light" : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <!--
       data-bin：这个仓库里有两个 wasm 产物（lib 的 cdylib 和 bin），不点名 trunk 会报
       "found more than one target artifact"。
       data-wasm-opt-params：rustc 1.98 发出来的 wasm 用了 bulk memory / nontrapping

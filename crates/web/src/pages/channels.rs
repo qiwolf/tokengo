@@ -485,8 +485,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                         let v = rows.get();
                         if v.is_empty() {
                             return view! {
-                                <tr>
-                                    <td colspan="8" class="muted">
+                                <tr class="empty-row">
+                                    <td colspan="8" class="muted empty-cell">
                                         "还没有渠道 —— 点左上「新建渠道」加一条上游。"
                                     </td>
                                 </tr>
@@ -503,30 +503,31 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     .unwrap_or((None, String::new(), false));
                                 let show_probe = pid == Some(l.id) && !pmsg.is_empty();
                                 view! {
+                                    // data-label：手机上表格变卡片时当左侧小标签用
                                     <tr>
-                                        <td class="num muted">{l.id}</td>
-                                        <td>
+                                        <td class="num muted" data-label="#">{l.id}</td>
+                                        <td data-label="名称">
                                             <b>{l.name.clone()}</b>
                                         </td>
-                                        <td>
+                                        <td data-label="base_url">
                                             <code class="small">{l.base_url.clone()}</code>
                                         </td>
-                                        <td>
+                                        <td data-label="状态">
                                             {if l.enabled {
                                                 view! { <span class="tag ok">"启用"</span> }.into_any()
                                             } else {
                                                 view! { <span class="tag muted">"停用"</span> }.into_any()
                                             }}
                                         </td>
-                                        <td>
+                                        <td data-label="密钥">
                                             {if l.has_secret {
                                                 view! { <span class="tag ok">"有"</span> }.into_any()
                                             } else {
                                                 view! { <span class="tag warn">"没有"</span> }.into_any()
                                             }}
                                         </td>
-                                        <td class="num">{l.headers.len()}</td>
-                                        <td class="num">
+                                        <td class="num" data-label="请求头">{l.headers.len()}</td>
+                                        <td class="num" data-label="模型名">
                                             {if l.models.is_empty() {
                                                 view! { <span class="muted">"原样透传"</span> }.into_any()
                                             } else if l.vision_count > 0 {
@@ -852,7 +853,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                         });
                                                                 } />
                                                         </td>
-                                                        <td>"→"</td>
+                                                        <td class="arrow">"→"</td>
                                                         <td>
                                                             <input type="text" prop:value=up0
                                                                 placeholder="这条渠道要发的名字（留空=同名）"

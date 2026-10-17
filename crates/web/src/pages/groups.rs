@@ -201,8 +201,8 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                 let v = groups.get();
                                 if v.is_empty() {
                                     return view! {
-                                        <tr>
-                                            <td colspan="4" class="muted">
+                                        <tr class="empty-row">
+                                            <td colspan="4" class="muted empty-cell">
                                                 "还没有模型组 —— 客户端现在打任何模型名都会 404。"
                                             </td>
                                         </tr>
@@ -222,7 +222,7 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                             .join(" → ");
                                         view! {
                                             <tr>
-                                                <td>
+                                                <td data-label="名字">
                                                     <b>{name.clone()}</b>
                                                     {can_see.then(|| view! {
                                                         <span class="tag vision" title="这一组里有「能看图」的渠道，带图的请求走得通">
@@ -236,14 +236,14 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                                     })}
                                                     <div class="muted small">{channels_txt}</div>
                                                 </td>
-                                                <td>
+                                                <td data-label="状态">
                                                     {if g.enabled {
                                                         view! { <span class="tag ok">"启用"</span> }.into_any()
                                                     } else {
                                                         view! { <span class="tag muted">"停用"</span> }.into_any()
                                                     }}
                                                 </td>
-                                                <td class="num">{g.channels.len()}</td>
+                                                <td class="num" data-label="渠道数">{g.channels.len()}</td>
                                                 <td class="actions">
                                                     <button class="ghost" on:click=move |_| open_edit(g2.clone())>
                                                         "编排"
@@ -367,26 +367,57 @@ pub fn Groups(ctx: Ctx) -> impl IntoView {
                                     </table>
 
                                     <h3>"加一条渠道"</h3>
-                                    <select on:change=move |ev| {
-                                        if let Ok(id) = event_target_value(&ev).parse::<i64>() {
-                                            draft.update(|d| {
-                                                if let Some(d) = d {
-                                                    if !d.channels.contains(&id) {
-                                                        d.channels.push(id);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    }>
-                                        <option value="">"挑一条渠道…"</option>
-                                        {move || channels.get().into_iter().map(|l| {
-                                            view! {
-                                                <option value=l.id.to_string()>
-                                                    {format!("{} (#{}, {})", l.name, l.id, if l.enabled { "启用" } else { "停用" })}
-                                                </option>
+                                    <p class="muted small">
+                                        "点一下加进来。手机上不再用下拉框 —— 那种一次只看得到一条，挑起来太慢。"
+                                    </p>
+                                    {move || {
+                                        let in_draft: Vec<i64> = draft
+                                            .get()
+                                            .map(|d| d.channels)
+                                            .unwrap_or_default();
+                                        let avail: Vec<Channel> = channels
+                                            .get()
+                                            .into_iter()
+                                            .filter(|l| !in_draft.contains(&l.id))
+                                            .collect();
+                                        if avail.is_empty() {
+                                            return view! {
+                                                <p class="muted small">"能加的渠道都已经在这个组里了。"</p>
                                             }
-                                        }).collect_view()}
-                                    </select>
+                                                .into_any();
+                                        }
+                                        view! {
+                                            <div class="pick-grid">
+                                                {avail
+                                                    .into_iter()
+                                                    .map(|l| {
+                                                        let id = l.id;
+                                                        view! {
+                                                            <button
+                                                                class="ghost"
+                                                                on:click=move |_| {
+                                                                    draft
+                                                                        .update(|d| {
+                                                                            if let Some(d) = d {
+                                                                                if !d.channels.contains(&id) {
+                                                                                    d.channels.push(id);
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                }
+                                                            >
+                                                                <span>{l.name.clone()}</span>
+                                                                <span class="muted small">
+                                                                    {format!(" #{id} · {}", if l.enabled { "启用" } else { "停用" })}
+                                                                </span>
+                                                            </button>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </div>
+                                        }
+                                            .into_any()
+                                    }}
 
                                     <div class="modal-foot">
                                         <button class="primary" on:click=save>"保存"</button>
