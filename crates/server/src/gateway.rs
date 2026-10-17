@@ -121,8 +121,10 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
     // 名字是否存在、有没有被停用，**先看组这一行**：停用的组对外要像不存在一样。
     // （面板上那个开关点完，客户端立刻打不通 —— 靠的就是这里。）
     let Some(g) = groups::get(&conn, group_name)? else {
+        // 别在报错里点名某个具体模型名（比如 auto）—— 线上不一定有那个名字，
+        // 提示要指向「去面板建组」这件事本身。
         return Err(ApiError::not_found(format!(
-            "模型 {model} 没有配置：面板里给它建一个模型组，或者打 auto"
+            "模型 {model} 没有配置：去面板「模型」页给它建一个模型组，或者改用你面板里已有的模型名"
         )));
     };
     if !g.enabled {
