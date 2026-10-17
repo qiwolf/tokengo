@@ -5,6 +5,7 @@
 //! - 非 2xx 一律变成带人话的 `ApiErr`，页面上直接显示，不需要每处重新解析。
 
 use gloo_net::http::Request;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -264,4 +265,11 @@ pub async fn settings() -> Result<SettingsResp, ApiErr> {
 
 pub async fn set_gateway_key(key: &str) -> Result<(), ApiErr> {
     call("PUT", "/api/settings", Some(json!({ "gateway_key": key }))).await.map(|_| ())
+}
+
+pub async fn generate_gateway_key() -> Result<String, ApiErr> {
+    #[derive(Deserialize)]
+    struct R { gateway_key: String }
+    let r: R = typed("POST", "/api/settings/generate-gateway-key", None).await?;
+    Ok(r.gateway_key)
 }

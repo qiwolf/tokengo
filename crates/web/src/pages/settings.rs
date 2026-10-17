@@ -14,6 +14,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
     let info = RwSignal::new(crate::model::SettingsResp::default());
     let err = RwSignal::new(None::<String>);
     let new_key = RwSignal::new(String::new());
+    let generated = RwSignal::new(None::<String>);
     let old_pw = RwSignal::new(String::new());
     let new_pw = RwSignal::new(String::new());
 
@@ -49,6 +50,23 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 Err(e) => {
                     ctx.note_err(&e);
                     ctx.say(format!("换 key 失败：{}", e.message));
+                }
+            }
+        });
+    };
+
+    let generate_key = move |_| {
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::generate_gateway_key().await {
+                Ok(k) => {
+                    new_key.set(k.clone());
+                    generated.set(Some(k.clone()));
+                    ctx.say(format!("已生成新 key：{}（已填入下方输入框）", k));
+                    reload();
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    ctx.say(format!("生成失败：{}", e.message));
                 }
             }
         });
@@ -115,6 +133,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                     </div>
                 </div>
                 <div class="modal-foot">
+                    <button class="ghost" on:click=generate_key>"生成新 key"</button>
                     <button class="primary" on:click=save_key>"更换对外 key"</button>
                 </div>
             </div>

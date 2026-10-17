@@ -476,7 +476,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
             <div class="table-wrap">
-            <table class="grid">
+            <table class="grid wide">
                 <thead>
                     <tr>
                         <th class="num">"#"</th>
