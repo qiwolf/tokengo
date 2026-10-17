@@ -36,6 +36,12 @@ const VACUUM_INTERVAL_MS: i64 = 7 * DAY_MS;
 /// 超过这个体积就不再自动做「整库重写式」转换，留给停服窗口。
 const AUTO_VACUUM_CONVERT_LIMIT_BYTES: i64 = 200 * 1024 * 1024;
 
+/// 回收空间时，库小于这个体积就直接 `VACUUM`（秒级、文件真变小）；
+/// 大于它就退回有上限的增量回收，绝不长时间独占库锁。
+const VACUUM_DIRECT_LIMIT_BYTES: i64 = 200 * 1024 * 1024;
+/// 大库走增量回收时，单轮最多放多少批（每批 1000 页）。
+const MAX_INCREMENTAL_ROUNDS: usize = 64;
+
 /// 现在保留多少天。没设过就是 30 天；填歪了按默认值走，不因为一个脏值停掉清理。
 pub fn retention_days(conn: &Connection) -> Result<i64> {
     let raw = settings::get(conn, RETENTION_DAYS_KEY)?;
@@ -171,18 +177,28 @@ pub fn maybe_reclaim_space(conn: &Connection, now_ms: i64) -> Result<bool> {
 
 /// 立刻回收一次（面板「立即清理」和定时任务共用）。
 pub fn reclaim_space(conn: &Connection, now_ms: i64) -> Result<()> {
-    // 增量回收：把空闲页一页页还给磁盘。
-    //
-    // 为什么按 freelist_count 判断而不是取 `PRAGMA incremental_vacuum` 的返回值：
-    // 这条 PRAGMA 在 rusqlite 里**不返回行**（拿返回值会得到 QueryReturnedNoRows，
-    // 内存库上尤其明显）。所以先看有多少空闲页，放一轮，再看还剩多少，没了就停。
-    for _ in 0..64 {
-        let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
-        if free <= 0 {
-            break;
+    // 先看有多少空闲页。`PRAGMA incremental_vacuum` 在 rusqlite 里**不返回行**
+    // （拿返回值会 QueryReturnedNoRows），所以判断一律看 freelist_count。
+    let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+    if free > 0 {
+        if db_bytes(conn)? <= VACUUM_DIRECT_LIMIT_BYTES {
+            // 小库：直接整库重写。增量回收在这个体量上要一页一页挪（实测一轮只还一页，
+            // 几千页就要几千轮，反而更久），而 200 MB 以内重写是秒级、且真能把文件缩回去。
+            conn.execute_batch("VACUUM;")?;
+        } else {
+            // 大库：只做有上限的增量回收，宁可这次少还一点，也不长时间独占锁。
+            for _ in 0..MAX_INCREMENTAL_ROUNDS {
+                let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+                if free <= 0 {
+                    break;
+                }
+                conn.execute_batch("PRAGMA incremental_vacuum(1000);")?;
+            }
+            let left: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+            if left > 0 {
+                tracing::warn!("增量回收本轮还剩 {left} 个空闲页没还（库较大，下一轮继续）");
+            }
         }
-        // 一次最多放 1000 页；不一次性全放，避免大库长时间占锁。
-        conn.execute_batch("PRAGMA incremental_vacuum(1000);")?;
     }
     // WAL 截断：让 -wal 文件缩回去。非 WAL 库会报错，忽略即可。
     let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0));

@@ -37,6 +37,13 @@ impl AppState {
         let conn = db::open(&cfg.db_path)?;
         tracing::info!("数据库 {} 就绪", cfg.db_path.display());
 
+        // 把库切成「增量回收」模式。这一步必须在库还小的时候做（改这个属性要整库重写），
+        // 而且**只做一次**：不做的话，下面清理任务删掉的行虽然腾出了空页，但 SQLite
+        // 永远不把空页还给磁盘 —— 表现就是「说清了几千条，文件大小一点没变」。
+        if let Ok(true) = db::maintenance::ensure_incremental_vacuum(&conn) {
+            tracing::info!("数据库已切到增量回收模式，清理腾出的空间会真的还给磁盘");
+        }
+
         let secrets = SecretBox::load_or_init(Path::new(&cfg.master_key_path))?;
 
         let rcfg = db::routing::load_config(&conn)?;
