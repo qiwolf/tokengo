@@ -119,7 +119,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                 <thead>
                     <tr>
                         <th>"时间"</th>
-                        <th>"端点"</th>
+                        <th>"接口"</th>
                         <th>"模型"</th>
                         <th>"走的渠道"</th>
                         <th>"结果"</th>
@@ -136,7 +136,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                             return view! {
                                 <tr class="empty-row">
                                     <td colspan="9" class="muted empty-cell">
-                                        "还没有请求进来。客户端打 /v1/chat/completions 或 /v1/embeddings 就会出现在这里。"
+                                        "还没有请求进来。有程序往 /v1/chat/completions 或 /v1/embeddings 发请求，就会出现在这里。"
                                     </td>
                                 </tr>
                             }.into_any();
@@ -150,7 +150,7 @@ pub fn Requests(ctx: Ctx) -> impl IntoView {
                                     // data-label 是手机上用的：那一档表格变成卡片，标签从这里取
                                     <tr>
                                         <td class="nowrap small" data-label="时间">{fmt::ts_short(r.ts_ms)}</td>
-                                        <td data-label="端点">{endpoint}</td>
+                                        <td data-label="接口">{endpoint}</td>
                                         <td data-label="模型">
                                             <code class="small">{r.model.clone()}</code>
                                         </td>

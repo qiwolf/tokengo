@@ -58,7 +58,7 @@ impl Page {
         match self {
             Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
-            Page::Models => "客户端打过来的模型名，按什么顺序走哪条渠道。",
+            Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
             Page::Requests => "每个请求走了哪条渠道、成没成、花了多久、错在哪。",
             Page::Settings => "对外 key、面板口令、登录着的设备。",
         }

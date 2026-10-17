@@ -165,7 +165,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             return;
         };
         if name.is_empty() || url.is_empty() {
-            ctx.say("名称和 base_url 都得填");
+            ctx.say("名称和接口地址都得填");
             return;
         }
         let key = f_key.get_untracked();
@@ -303,7 +303,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 测通了我们顺手把这行标上（服务端的 apply），界面上勾也随之亮起。
     let vision_test = move |(channel_id, model, upstream): (i64, String, String)| {
         if model.trim().is_empty() {
-            ctx.say("先填左边的模型名（客户端打的那个），不然不知道该测哪一行");
+            ctx.say("先填左边的模型名，不然不知道该测哪一行");
             return;
         }
         vt_busy.set(Some(channel_id));
@@ -496,7 +496,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 .unwrap_or((None, String::new(), false));
                             let show_probe = pid == Some(l.id) && !pmsg.is_empty();
                             let model_txt = if l.models.is_empty() {
-                                "原样透传".to_string()
+                                "不限定".to_string()
                             } else if l.vision_count > 0 {
                                 format!("{} 个（{} 条能看图）", l.models.len(), l.vision_count)
                             } else {
@@ -565,7 +565,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 <label>"名称"</label>
                                 <input type="text" prop:value=f_name placeholder="如：硅基流动"
                                     on:input=move |ev| f_name.set(event_target_value(&ev)) />
-                                <label>"base_url"</label>
+                                <label>"接口地址"</label>
                                 <input type="text" prop:value=f_url
                                     placeholder="如：https://api.siliconflow.cn/v1"
                                     on:input=move |ev| f_url.set(event_target_value(&ev)) />
@@ -579,7 +579,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 <div>
                                     <input type="checkbox" prop:checked=f_enabled
                                         on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
-                                    <span class="muted small">"停用后这条渠道不再参与路由"</span>
+                                    <span class="muted small">"停用后不会再往这家上游发请求"</span>
                                 </div>
                             </div>
 
@@ -666,9 +666,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     {move || if pulling.get() { "拉取中…" } else { "拉取上游模型清单" }}
                                 </button>
                                 <span class="muted small">
-                                    "用这条渠道自己的 base_url、密钥和自定义请求头，真打一次 "
-                                    <code>"GET /v1/models"</code>
-                                    "；拉不到就如实报错，不会给你一份编出来的清单。"
+                                    "去问这家上游：你手上有哪些模型？真发一次请求，问不到就报错，不会编一份名单给你。"
                                 </span>
                             </div>
                             {move || if matches!(form.get(), Form::New) {
@@ -777,15 +775,15 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             // 两段说明原来平铺在表格上面，手机上一屏放不下，用户以为「内容看不见」。
                             // 折起来：标题一句话说清这节在讲什么，想看细节再点开。
                             <details class="fold tight">
-                                <summary>"怎么填这两列、怎么测「能看图」"</summary>
+                                <summary>"这两列怎么填 / 怎么确认一个模型名能收图"</summary>
                                 <p class="muted small">
-                                    "同一条渠道对不同模型组可能要用不同的名字（比如这条渠道要"
+                                    "同一个模型，在不同上游可能叫不同名字（比如这家上游要"
                                     <code>"deepseek/deepseek-v4.1-flash"</code>
-                                    "，别的渠道只要 " <code>"v4.1flash"</code>
-                                    "）。左填客户端打的模型名，右填这条渠道要发的名字；右边留空 = 同名发出去。"
+                                    "，另一家只要 " <code>"v4.1flash"</code>
+                                    "）。左边填你客户端里写的名字，右边填这家上游要的名字；右边不填 = 原名发出去。"
                                 </p>
                                 <p class="muted small">
-                                    "「能看图」= 这个模型名收得下图片输入。"
+                                    "「能看图」= 这个名字能收图片。"
                                     <b>"别猜名字，点「测视觉」"</b>
                                     "：它会真发一张图问一个只有看图才答得出的问题（左上角什么颜色），"
                                     "答对了才勾上。带图的请求只会发给勾了的渠道；一条都没勾就回 422 说清楚，"
@@ -801,7 +799,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             return view! {
                                                 <tr>
                                                     <td class="muted">
-                                                        "没配 → 客户端打什么名字就原样发给上游"
+                                                        "还没填。不填就是客户端写什么名字、就发什么名字过去"
                                                     </td>
                                                 </tr>
                                             }.into_any();
@@ -829,7 +827,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     <tr>
                                                         <td>
                                                             <input type="text" prop:value=model0
-                                                                placeholder="客户端打的模型名"
+                                                                placeholder="你客户端里写的名字"
                                                                 on:input=move |ev| {
                                                                     let s = event_target_value(&ev);
                                                                     f_models
