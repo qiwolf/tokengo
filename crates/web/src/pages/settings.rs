@@ -49,6 +49,17 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
         });
     };
 
+    let copy_key = move |_| {
+        if let Some(k) = generated.get_untracked() {
+            if let Some(window) = web_sys::window() {
+                let _ = window.navigator().clipboard().write_text(&k);
+                ctx.say("已复制到剪贴板");
+            }
+        } else {
+            ctx.say("先点「生成新 key」");
+        }
+    };
+
     let change_pw = move |_| {
         let o = old_pw.get_untracked();
         let n = new_pw.get_untracked();
@@ -108,6 +119,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 })}
                 <div class="modal-foot">
                     <button class="ghost" on:click=generate_key>"生成新 key"</button>
+                    <button class="ghost" on:click=copy_key>"复制"</button>
                 </div>
             </div>
 
