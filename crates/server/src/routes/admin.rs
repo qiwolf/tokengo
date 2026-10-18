@@ -11,7 +11,9 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
-use crate::db::{groups, channels, maintenance, requests, routing, sessions, settings, now_ms};
+use crate::db::{
+    catalog, channels, groups, maintenance, now_ms, requests, routing, sessions, settings,
+};
 use crate::SharedState;
 
 pub fn router() -> Router<SharedState> {
@@ -29,6 +31,7 @@ pub fn router() -> Router<SharedState> {
         .route("/channels/{id}/enabled", put(channels_set_enabled))
         .route("/channels/{id}/probe", post(channels_probe))
         .route("/channels/{id}/models", post(channels_models))
+        .route("/channels/{id}/catalog", get(channel_catalog))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         .route("/groups", get(groups_list).post(groups_upsert))
         .route("/groups/{name}", delete(groups_delete))
@@ -626,6 +629,34 @@ async fn channels_models(
         note
     };
 
+    // 拉成功就**记住**：下次打开弹窗不用再问一遍（有的上游要花钱、有限流），
+    // 也才有「上游这次比上次多了/少了哪些名字」这种漂移事实。
+    // 拉失败一律不写：一次连不上不能把上次真拿到手的清单删掉。
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut fetched_at = 0i64;
+    if ok {
+        let before = {
+            let conn = state.conn();
+            catalog::list(&conn, channel.id)?
+        };
+        let (a, r) = catalog::diff(&before, &catalog);
+        added = a;
+        removed = r;
+        let now = now_ms();
+        {
+            let conn = state.conn();
+            catalog::replace(&conn, channel.id, &catalog, now)?;
+        }
+        fetched_at = now;
+        tracing::info!(
+            "渠道 {id} 的上游模型清单已记住：{} 个（比上次多 {}、少 {}）",
+            catalog.len(),
+            added.len(),
+            removed.len()
+        );
+    }
+
     tracing::info!(
         "拉渠道 {id} 的上游模型清单：{}（{} 个，{latency} ms）",
         if ok { "成功" } else { "失败" },
@@ -645,6 +676,60 @@ async fn channels_models(
         // 名字 + 上游自己报的说明
         "info": catalog,
         "note": note,
+        // 这次拉到的是不是已经落库了（拉失败 = false），以及落库时间
+        "saved": ok,
+        "fetched_at": fetched_at,
+        // 跟上次记住的比：多了哪些、少了哪些（漂移看得见）
+        "added": added,
+        "removed": removed,
+    })))
+}
+
+/// 这条渠道**上次**问到的上游模型清单（不联网，读库）。
+///
+/// 面板打开编辑弹窗先读它，省一次上游请求；要不要刷新由用户按「问一次上游」决定。
+/// `ok` = 库里到底有没有东西（没有就是 `ok: false` + `fetched_at: 0`，界面据此说
+/// 「还没问过上游」而不是假装有一份空清单）。
+async fn channel_catalog(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = tokengo_shared::ChannelId(id);
+    let (entries, fetched_at, name) = {
+        let conn = state.conn();
+        let Some(l) = channels::get(&conn, id)? else {
+            return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
+        };
+        (
+            catalog::list(&conn, id)?,
+            catalog::fetched_at(&conn, id)?,
+            l.name,
+        )
+    };
+    Ok(Json(serde_json::json!({
+        "ok": !entries.is_empty(),
+        "channel_id": id.0,
+        "channel_name": name,
+        "fetched_at": fetched_at,
+        "count": entries.len(),
+        "models": entries.iter().map(|e| e.model.clone()).collect::<Vec<_>>(),
+        "info": entries.iter().map(|e| serde_json::json!({
+            "id": e.model,
+            "owned_by": e.owned_by,
+            "context_window": e.context_window,
+            "price_note": e.price_note,
+            "is_free": e.is_free.unwrap_or(false),
+            "vision": e.vision,
+        })).collect::<Vec<_>>(),
+        "note": if entries.is_empty() {
+            "还没问过这条上游有哪些模型（或者上次没问到）".to_string()
+        } else {
+            format!("这是上次问到的 {} 个模型名（点「问一次上游」可以重新问一遍）", entries.len())
+        },
+        "saved": true,
+        "added": Vec::<String>::new(),
+        "removed": Vec::<String>::new(),
     })))
 }
 

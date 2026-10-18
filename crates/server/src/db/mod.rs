@@ -3,6 +3,7 @@
 //! SQLite（rusqlite，bundled 编译，不依赖系统库），与现网 FreeLLMAPI 同一种库，
 //! 将来搬数据和对拍都方便。
 
+pub mod catalog;
 pub mod groups;
 pub mod channels;
 pub mod maintenance;
@@ -133,6 +134,7 @@ mod tests {
         let got = table_names(&conn);
         for want in [
             "attempts",
+            "channel_catalog",
             "channel_headers",
             "channel_models",
             "channel_secrets",
@@ -147,11 +149,15 @@ mod tests {
         ] {
             assert!(got.contains(&want.to_string()), "缺表 {want}，实际有 {got:?}");
         }
-        assert_eq!(got.len(), 12, "表数与设计不符：{got:?}");
+        assert_eq!(got.len(), 13, "表数与设计不符：{got:?}");
     }
 
     /// 关键反证：**免费模型目录相关的表一张都不该有。**
     /// 用户明确不要目录同步，那些表也是库持续膨胀的来源。
+    ///
+    /// `channel_catalog` 不在禁列里，因为它是**另一回事**：不是随包发的免费模型目录，
+    /// 而是用户按一次「问一次上游」之后，上游当场报回来的清单存下来的一行（v0.7.0）。
+    /// 一张渠道一行清单，量随渠道数走，不随上游目录膨胀。
     #[test]
     fn no_catalog_tables_leak_in() {
         let conn = open_in_memory().unwrap();

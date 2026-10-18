@@ -338,6 +338,18 @@ pub struct ModelPull {
     pub info: Vec<UpstreamModel>,
     #[serde(default)]
     pub note: Option<String>,
+    /// 这次拿到的清单有没有**落库**（拉失败 = false，库里还是上次那份）。
+    #[serde(default)]
+    pub saved: bool,
+    /// 这次落库的时间（毫秒；0 = 从来没问过）。
+    #[serde(default)]
+    pub fetched_at: i64,
+    /// 跟上次记住的比：多了哪些名字。
+    #[serde(default)]
+    pub added: Vec<String>,
+    /// 跟上次记住的比：少了哪些名字（上游改名/下线是常事，一次问答看不出漂移）。
+    #[serde(default)]
+    pub removed: Vec<String>,
 }
 
 /// 上游 `/v1/models` 里的一条。

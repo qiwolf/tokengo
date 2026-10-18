@@ -157,6 +157,16 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
         routable.push(channel);
     }
     if routable.is_empty() {
+        // 一条都没有时先说最可能的原因：组里挂着渠道，但它们勾的是别的名字。
+        let skipped = groups::channels_skipped_by_scope(&conn, group_name)?;
+        if !skipped.is_empty() {
+            return Err(ApiError::not_found(format!(
+                "模型 {model} 现在没有可用的渠道：组里的 {} 都没勾「{model}」这个名字\
+                 （勾选就是白名单 —— 勾了别的名字，请求不会发给它）。\
+                 去面板「渠道」页把它们的这个名字勾上，或者改用你面板里已有的模型名",
+                skipped.join("、")
+            )));
+        }
         return Err(ApiError::not_found(format!(
             "模型 {model} 现在没有可用的渠道（组里的渠道要么停用了，要么没填 base_url）"
         )));

@@ -792,6 +792,57 @@ async fn a_group_with_only_disabled_channels_is_404() {
     assert_eq!(m.count(), 0, "停用的渠道一个字节都不许发出去");
 }
 
+/// 勾选就是白名单：勾了别的名字的渠道，**不会收到这个名字的请求**，
+/// 而且一条都发不出去时要 404 说清是「没勾这个名字」，不是含糊的「没有可用渠道」。
+#[tokio::test]
+async fn a_channel_that_declared_other_names_is_skipped_and_says_so() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    // 这条渠道勾过名字（别的名字），所以它只认勾上的那些 —— auto 不在里面
+    let a = f.add_channel(
+        "勾了别的名字的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("别的名字".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[a]);
+
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("没勾"), "文案要说清是没勾这个名字：{msg}");
+    assert!(msg.contains("勾了别的名字的渠道"), "点出是哪条渠道：{msg}");
+    assert_eq!(m.count(), 0, "没认这个名字，一个字节都不许发出去");
+}
+
+/// 一条渠道勾了别的名字被跳过，同组里**没勾过名字**的渠道照旧服务（老行为不变）。
+#[tokio::test]
+async fn a_channel_that_declared_nothing_still_serves_every_name() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let picky = f.add_channel(
+        "挑名字的渠道",
+        "http://127.0.0.1:1/v1", // 真发过去必失败；这条渠道本来就不该被选中
+        ChannelSpec {
+            models: vec![("别的名字".into(), None)],
+            ..Default::default()
+        },
+    );
+    let easy = f.add_channel("什么都认的渠道", &m.base, ChannelSpec::default());
+    f.set_group("auto", &[picky, easy]);
+
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(m.count(), 1, "没勾名字的渠道照旧服务，而且只发了一发");
+    let seen = m.seen();
+    assert_eq!(seen[0].model.as_str(), "auto", "没配别名就是原名透传");
+}
+
 /// 请求体不是 JSON / 缺 model：这是客户端自己的错，400，且不碰渠道。
 #[tokio::test]
 async fn a_malformed_body_is_a_400() {

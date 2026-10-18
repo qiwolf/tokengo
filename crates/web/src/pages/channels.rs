@@ -55,6 +55,18 @@ pub(crate) fn filter_catalog(all: &[UpstreamModel], filter: &str, limit: usize) 
         .collect()
 }
 
+/// 重新取一次模型组名单（进页面时、以及一键建完组之后）。
+///
+/// 写成自由函数而不是闭包：RwSignal 是 Copy，按钮里（每个模型名一份闭包）随便调，
+/// 闭包会被 move 走、第二个按钮就用不了了。
+fn refresh_groups(group_names: RwSignal<Vec<String>>) {
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Ok(r) = api::groups().await {
+            group_names.set(r.groups.into_iter().map(|g| g.name).collect());
+        }
+    });
+}
+
 /// 上游这次的清单里有没有这个名字。
 pub(crate) fn catalog_has(catalog: &[UpstreamModel], name: &str) -> bool {
     catalog.iter().any(|c| c.id == name)
@@ -215,6 +227,11 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let pulled = RwSignal::new(Vec::<UpstreamModel>::new());
     let pull_msg = RwSignal::new(None::<(String, bool)>);
     let pulling = RwSignal::new(false);
+    // 上次问到上游清单是什么时候（毫秒；0 = 从来没问过）。
+    // 打开弹窗先读库把它显示出来 —— 不用为了看一眼清单又去骚扰一次上游。
+    let cat_at = RwSignal::new(0i64);
+    // 现有哪些模型组名字（判「勾了名字、但还没有同名模型组」= 客户端打会 404）。
+    let group_names = RwSignal::new(Vec::<String>::new());
     let pull_filter = RwSignal::new(String::new());
     // 「加一个自己的名字」输入框里正打着的字
     let manual = RwSignal::new(String::new());
@@ -249,12 +266,16 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 重新进表单：清掉上一次拉的清单，免得看着像这条渠道的
     let reset_pull = move || {
         pulled.set(Vec::new());
+        cat_at.set(0);
         pull_msg.set(None);
         pull_filter.set(String::new());
         manual.set(String::new());
         m_open.set(None);
         mver.update(|v| *v += 1);
     };
+
+    // 模型组名单：进页面取一次 + 建完新组后刷新（不跟着每次重画走）。
+    refresh_groups(group_names);
 
     let reload = move || {
         busy.set(true);
@@ -312,6 +333,28 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         // 去上游拉清单」的地方，停在「基本信息」会让人以为没处可拉（用户实测反馈过）。
         tab.set(TAB_MODELS.to_string());
         form.set(Form::Edit(l.id));
+        // 打开就把它**上次问到**的清单读出来（读库，不联网）：省一次上游请求
+        // （有的上游要花钱、有限流），也让人一眼看见「上次问到几点」。
+        // 要刷新得点上面那个按钮 —— 面板不替你偷偷问上游。
+        let id = l.id;
+        wasm_bindgen_futures::spawn_local(async move {
+            let Ok(r) = api::channel_catalog(id).await else {
+                return;
+            };
+            if form.get_untracked() != Form::Edit(id) {
+                return; // 这期间又打开了别的渠道/新表单，别把它的界面覆盖掉
+            }
+            cat_at.set(r.fetched_at);
+            pulled.set(if r.info.is_empty() {
+                r.models
+                    .into_iter()
+                    .map(|id| UpstreamModel { id, ..Default::default() })
+                    .collect()
+            } else {
+                r.info
+            });
+            mver.update(|v| *v += 1);
+        });
     };
 
     let save = move |_| {
@@ -609,6 +652,25 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             s.push_str(&format!("；{n}"));
                         }
                     }
+                    if r.ok {
+                        cat_at.set(r.fetched_at);
+                        s.push_str("；已记住这一份：下次打开这条渠道不用再问一遍");
+                        // 上游改名/下线是常事，一次问答看不出漂移 —— 把它跟上次的比出来。
+                        if !r.added.is_empty() {
+                            s.push_str(&format!(
+                                "；比上次多了 {}：{}",
+                                r.added.len(),
+                                r.added.join("、")
+                            ));
+                        }
+                        if !r.removed.is_empty() {
+                            s.push_str(&format!(
+                                "；比上次少了 {}：{}（上游可能改名或下线了）",
+                                r.removed.len(),
+                                r.removed.join("、")
+                            ));
+                        }
+                    }
                     pull_msg.set(Some((s, r.ok)));
                     pull_filter.set(String::new());
                     // 勾选状态**不用重置**：它就是模型表里那几条映射。
@@ -760,12 +822,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 .map(|(i, m, ok)| (Some(i), m, ok))
                                 .unwrap_or((None, String::new(), false));
                             let show_probe = pid == Some(l.id) && !pmsg.is_empty();
+                            // 摘要要跟路由口径一致：没勾 = 什么都认；勾了就只认勾上的那些。
                             let model_txt = if l.models.is_empty() {
-                                "不限定".to_string()
+                                "不限定（什么都认）".to_string()
                             } else if l.vision_count > 0 {
-                                format!("{} 个（{} 条能看图）", l.models.len(), l.vision_count)
+                                format!("只认这 {} 个（{} 条能看图）", l.models.len(), l.vision_count)
                             } else {
-                                format!("{} 个", l.models.len())
+                                format!("只认这 {} 个", l.models.len())
                             };
                             view! {
                                 <div class="chan-card">
@@ -1035,8 +1098,34 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             </button>
                                             <span class="muted small">
                                                 "直接问这条渠道：你支持哪些模型？它把名字和说明一起报回来；问不到就如实说，不会编一份名单给你。"
+                                                "问到的那份会记住 —— 下次打开先看上次的，不用再问一遍。"
                                             </span>
                                         </div>
+                                        {move || {
+                                            let at = cat_at.get();
+                                            if at <= 0 {
+                                                view! {
+                                                    <p class="muted small">
+                                                        "这条渠道还没问过上游（或者上次没问到）—— 点上面的按钮问一次。"
+                                                    </p>
+                                                }
+                                                    .into_any()
+                                            } else {
+                                                let now = crate::now_ms();
+                                                let when = if at >= now {
+                                                    "刚刚".to_string()
+                                                } else {
+                                                    fmt::ago(now, at)
+                                                };
+                                                let n = pulled.get().len();
+                                                view! {
+                                                    <p class="muted small">
+                                                        {format!("上次问到 {n} 个名字（{when}）；要刷新就点上面的按钮。")}
+                                                    </p>
+                                                }
+                                                    .into_any()
+                                            }
+                                        }}
                                         {channel_id.is_none().then(|| view! {
                                             <p class="muted small">
                                                 "这条渠道还没保存，拿不到它的密钥去问 —— 先点下面的「保存」，弹窗会停在这一段。"
@@ -1054,9 +1143,15 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 })
                                         }}
                                         <p class="muted small">
-                                            "勾上 = 这条渠道认这个名字：客户端打这个名字，网关就发给它"
+                                            "勾上 = 这条渠道「认」这个名字：客户端打这个名字时，网关才会把请求发给它"
                                             "（同名发过去；要发别的名字，摊开那一条的「详情」填）。"
-                                            "取消勾选 = 不再认它。勾选只是改在屏幕上，点下面的「保存」才会存进网关。"
+                                            "取消勾选 = 这条渠道不再认它，这个名字的请求不会再发给它。"
+                                        </p>
+                                        <p class="muted small">
+                                            "「认」的范围：一条都没勾 = 什么都认（原样转发）；"
+                                            "只要勾了名字，这条渠道就只认勾上的那些 —— 没勾的名字，请求一律不发给它。"
+                                            "另外，客户端要打的名字还得在「模型」页有同名模型组，否则会回 404。"
+                                            "勾选只是改在屏幕上，点下面的「保存」才会存进网关。"
                                         </p>
 
                                         <div class="pull-head">
@@ -1154,6 +1249,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let n_vis_ch = name.clone();
                                                         let n_drop = name.clone();
                                                         let n_test = name.clone();
+                                                        let n_grp = name.clone();
                                                         let cur = f_models
                                                             .get_untracked()
                                                             .into_iter()
@@ -1271,6 +1367,61 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                 </span>
                                                                             }
                                                                         })}
+                                                                    {move || {
+                                                                        let in_use = is_in_use(&f_models.get(), &n_grp);
+                                                                        let has_group = group_names
+                                                                            .get()
+                                                                            .iter()
+                                                                            .any(|g| tokengo_shared::same_model_name(g, &n_grp));
+                                                                        if !in_use || has_group {
+                                                                            return ().into_any();
+                                                                        }
+                                                                        let n_mk = n_grp.clone();
+                                                                        view! {
+                                                                            <span
+                                                                                class="tag warn"
+                                                                                title="你勾了这个名字，但「模型」页还没有同名模型组：客户端打这个名字会回 404。建一个同名组（就挂这条渠道），这个名字就能打了。"
+                                                                            >
+                                                                                "还没有同名模型组（客户端打会 404）"
+                                                                            </span>
+                                                                            <button
+                                                                                class="ghost"
+                                                                                on:click=move |_| {
+                                                                                    let name = n_mk.clone();
+                                                                                    match channel_id {
+                                                                                        Some(id) => {
+                                                                                            wasm_bindgen_futures::spawn_local(async move {
+                                                                                                match api::save_group(&name, true, &[id]).await {
+                                                                                                    Ok(()) => {
+                                                                                                        ctx
+                                                                                                            .say(
+                                                                                                                format!(
+                                                                                                                    "建好了：模型组「{name}」→ 就挂这条渠道。客户端现在能打这个名字了",
+                                                                                                                ),
+                                                                                                            );
+                                                                                                        refresh_groups(group_names);
+                                                                                                    }
+                                                                                                    Err(e) => {
+                                                                                                        ctx.note_err(&e);
+                                                                                                        ctx.say(format!("建组没成：{}", e.message));
+                                                                                                    }
+                                                                                                }
+                                                                                            });
+                                                                                        }
+                                                                                        None => {
+                                                                                            ctx
+                                                                                                .say(
+                                                                                                    "先点「保存」把渠道存下来，再建同名模型组",
+                                                                                                )
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            >
+                                                                                "给它建个同名模型组"
+                                                                            </button>
+                                                                        }
+                                                                            .into_any()
+                                                                    }}
                                                                     <span class="spacer"></span>
                                                                     <button class="ghost" on:click=open_me>
                                                                         {move || if is_open_btn() { "收起" } else { "详情" }}

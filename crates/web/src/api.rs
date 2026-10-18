@@ -205,8 +205,17 @@ pub async fn probe_channel(id: i64, kind: &str) -> Result<ProbeResp, ApiErr> {
 }
 
 /// 拉这条渠道的上游模型清单（真打它的 `GET /v1/models`）。
+/// 拉成功会**落库记住**（响应里的 `saved` / `fetched_at` / `added` / `removed`）。
 pub async fn pull_channel_models(id: i64) -> Result<ModelPull, ApiErr> {
     typed("POST", &format!("/api/channels/{id}/models"), None).await
+}
+
+/// 这条渠道**上次**问到的上游模型清单（读库，不联网）。
+///
+/// 面板打开编辑弹窗先读它：省一次上游请求（有的上游要花钱、有限流），
+/// 也让「上游这次比上次少了哪些名字」有得比。
+pub async fn channel_catalog(id: i64) -> Result<ModelPull, ApiErr> {
+    typed("GET", &format!("/api/channels/{id}/catalog"), None).await
 }
 
 /// 「测视觉」：给这条渠道真发一张带图的小请求，看它认不认得出来。
