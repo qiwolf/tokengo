@@ -205,7 +205,21 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
 pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
-    let plan_all = load_plan(&state, &req.model)?;
+    // 路由不出去（模型名没配置 / 组停用了 / 组里没有可用渠道）时，**也要留一条账**。
+    //
+    // 为什么：面板「请求」页是用户排障的第一站（他就是从那里问出「为什么客户端连不上」的）。
+    // 以前这三类 404 在 `load_plan` 里就直接 return 了，一条账都不记 —— 用户看到的是
+    // 「客户端报 404、面板上干干净净」，只能靠猜。这与带图被拦（422）的处理也不一致：
+    // 那条是记的。**记账绝不能反过来影响请求结果**：这里只记，记账本身错了就吞掉。
+    let plan_all = match load_plan(&state, &req.model) {
+        Ok(p) => p,
+        Err(e) => {
+            if e.status.is_client_error() {
+                record_routing_refusal(&state, &req, started_ms, e.status.as_u16(), &e.message);
+            }
+            return Err(e);
+        }
+    };
     // 这一组的全量可用渠道（状态机一律看这一份，不看带图筛过的那一份）
     let all_ids = plan_all.ids();
 
@@ -1034,6 +1048,50 @@ impl SseScanner {
     pub fn saw_payload(&self) -> bool {
         self.payload
     }
+}
+
+/// 把「这条请求压根没能路由出去」记成一条 `client_error` 账（含 HTTP 状态与原因）。
+///
+/// 不写 attempt（一次上游都没打过）、不改路由状态（不是渠道的毛病）。
+/// **失败一律吞掉**：记账是为排障，绝不能因为它把请求结果改了。
+fn record_routing_refusal(
+    state: &SharedState,
+    req: &ForwardRequest,
+    started_ms: i64,
+    http: u16,
+    msg: &str,
+) {
+    let has_image =
+        req.endpoint == EndpointKind::Chat && tokengo_shared::request_has_image(&req.body);
+    let request_id = {
+        let conn = state.conn();
+        match crate::db::requests::start(
+            &conn,
+            req.endpoint.as_str(),
+            &req.model,
+            req.client_ip.as_deref(),
+            has_image,
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("路由不出去这一发没能开账（不影响请求结果）：{e}");
+                return;
+            }
+        }
+    };
+    let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+    guard.finish(
+        state,
+        Status::ClientError,
+        Some(http),
+        None,
+        started_ms,
+        None,
+        0,
+        0,
+        false,
+        Some(msg),
+    );
 }
 
 /// 请求收尾器：谁先到谁落账，只落一次。
