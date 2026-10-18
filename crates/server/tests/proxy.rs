@@ -39,6 +39,8 @@ enum Reply {
     Sse,
     /// 先睡一会儿再回 200 —— 用来测"客户端中途断开"
     Slow(u64),
+    /// 先睡一会儿再回**正经内容**（量并发用它：`Slow` 回的是空 choices，会被当成空回复重试）
+    SlowOk(u64),
     /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
     SawRed,
     /// 请求里 `max_tokens` 小于 N 就只说半句（`finish_reason=length`），给够了才答"红"。
@@ -70,6 +72,21 @@ struct MockInner {
     replies: Mutex<VecDeque<Reply>>,
     default: Reply,
     seen: Mutex<Vec<Seen>>,
+    /// 现在正被处理着几发 —— 上游侧「同时看到几发」，并发上限该不该拦住只看它。
+    inflight: std::sync::atomic::AtomicUsize,
+    /// 有史以来同时最多几发。
+    peak_inflight: std::sync::atomic::AtomicUsize,
+}
+
+/// 出了作用域就把在途数减回去（不管 handler 从哪个口子返回）。
+struct InflightGuard<'a>(&'a MockInner);
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        self.0
+            .inflight
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[derive(Clone)]
@@ -86,6 +103,13 @@ impl Mock {
     fn count(&self) -> usize {
         self.inner.seen.lock().unwrap().len()
     }
+
+    /// 上游有史以来同时最多看到几发。
+    fn peak_inflight(&self) -> usize {
+        self.inner
+            .peak_inflight
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 async fn start_mock(default: Reply) -> Mock {
@@ -93,6 +117,8 @@ async fn start_mock(default: Reply) -> Mock {
         replies: Mutex::new(VecDeque::new()),
         default,
         seen: Mutex::new(Vec::new()),
+        inflight: std::sync::atomic::AtomicUsize::new(0),
+        peak_inflight: std::sync::atomic::AtomicUsize::new(0),
     });
     let app = Router::new()
         .route("/v1/chat/completions", route_post(mock_handler))
@@ -118,6 +144,12 @@ async fn mock_handler(
 ) -> Response {
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("");
+    {
+        use std::sync::atomic::Ordering::SeqCst;
+        let now = inner.inflight.fetch_add(1, SeqCst) + 1;
+        inner.peak_inflight.fetch_max(now, SeqCst);
+    }
+    let _inflight = InflightGuard(&inner);
     record(&inner, &headers, &uri, model, body_has_image(&v), &v);
 
     let reply = next_reply(&inner);
@@ -131,6 +163,14 @@ async fn mock_handler(
             "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
         }))
         .into_response(),
+        Reply::SlowOk(ms) => {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            axum::Json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "好"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1}
+            }))
+            .into_response()
+        }
         Reply::SawRed => axum::Json(json!({
             "id": "chatcmpl-mock",
             "object": "chat.completion",
@@ -320,6 +360,7 @@ impl Fixture {
                 base_url: base_url.into(),
                 enabled: true,
                 unwrap_envelope: spec.unwrap_envelope,
+                max_concurrent: spec.cap,
             },
         )
         .unwrap();
@@ -354,7 +395,7 @@ impl Fixture {
     }
 
     fn fix_channel(&self, id: ChannelId, base_url: &str) {
-        tokengo_server::db::channels::update(&self.state.conn(), id, "修好的渠道", base_url, true, false)
+        tokengo_server::db::channels::update(&self.state.conn(), id, "修好的渠道", base_url, true, false, 0)
             .unwrap();
     }
 
@@ -413,6 +454,8 @@ struct ChannelSpec {
     drop_fields: Vec<(String, Vec<String>)>,
     /// 这条渠道勾了「响应解包」。
     unwrap_envelope: bool,
+    /// 这条渠道「同时最多几发」（0 = 不限）。
+    cap: u32,
 }
 
 impl ChannelSpec {
@@ -742,7 +785,7 @@ async fn a_group_with_only_disabled_channels_is_404() {
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("停用的渠道", &m.base, ChannelSpec::default());
     f.set_group("auto", &[channel]);
-    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false).unwrap();
+    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false, 0).unwrap();
 
     let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -1028,7 +1071,7 @@ async fn models_lists_only_what_really_works() {
     f.set_group("auto", &[a]);
     f.set_group("bge-m3", &[a, b]);
     f.set_group("坏组", &[b]);
-    tokengo_server::db::channels::update(&f.state.conn(), b, "b", "http://127.0.0.1:59993/v1", false, false)
+    tokengo_server::db::channels::update(&f.state.conn(), b, "b", "http://127.0.0.1:59993/v1", false, false, 0)
         .unwrap();
 
     let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
@@ -1075,7 +1118,7 @@ async fn failed_before_any_attempt_leaves_no_rows() {
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("停用的渠道", &m.base, ChannelSpec::default());
     f.set_group("auto", &[channel]);
-    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false).unwrap();
+    tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false, 0).unwrap();
 
     let _ = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
     assert!(f.request_rows().is_empty());
@@ -2548,4 +2591,168 @@ async fn the_request_log_says_whether_an_image_came_in() {
         ],
         "账上要能分清哪条带了图：{v}"
     );
+}
+
+// ─────────────────── 验收点：每条渠道的并发上限（v0.5.0，2026-10-18） ───────────────────
+
+/// 一条渠道标了「同时最多 2 发」，同时来 4 发：**上游最多同时看到 2 发**，
+/// 另外 2 发在网关门口排队，最后全都成功（不是被拒）。
+///
+/// 反证：让网关不看 `max_concurrent`（当 0 处理）→ 上游会同时看到 4 发，这条用例变红。
+#[tokio::test]
+async fn a_channel_cap_queues_instead_of_stampeding_the_upstream() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::SlowOk(120)).await;
+    let ch = f.add_channel(
+        "限并发",
+        &m.base,
+        ChannelSpec { cap: 2, ..Default::default() },
+    );
+    f.set_group("auto", &[ch]);
+
+    let futures: Vec<_> = (0..4)
+        .map(|i| {
+            let f = &f;
+            async move {
+                post(
+                    f,
+                    CHAT,
+                    Some(KEY),
+                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                )
+                .await
+            }
+        })
+        .collect();
+    let outs = futures_util::future::join_all(futures).await;
+
+    for (s, body, _) in &outs {
+        assert_eq!(*s, StatusCode::OK, "排队的请求最终也要成功：{body:?}");
+    }
+    assert_eq!(m.count(), 4, "四发最后都该真发出去");
+    assert_eq!(
+        m.peak_inflight(),
+        2,
+        "上限 2 就该真跑满 2（只跑到 1 说明排队过头了），实际 {}",
+        m.peak_inflight()
+    );
+}
+
+/// 上限 0 = 不限：四发同时打过去，上游就该同时看到四发（行为与改版前一致）。
+#[tokio::test]
+async fn without_a_cap_requests_are_not_gated() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::SlowOk(120)).await;
+    let ch = f.add_channel("不限", &m.base, ChannelSpec::default());
+    f.set_group("auto", &[ch]);
+
+    let futures: Vec<_> = (0..4)
+        .map(|i| {
+            let f = &f;
+            async move {
+                post(
+                    f,
+                    CHAT,
+                    Some(KEY),
+                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                )
+                .await
+            }
+        })
+        .collect();
+    let outs = futures_util::future::join_all(futures).await;
+    for (s, _, _) in &outs {
+        assert_eq!(*s, StatusCode::OK);
+    }
+    assert_eq!(m.peak_inflight(), 4, "不配上限就不拦：四发同时上去");
+}
+
+/// 一条渠道满了 → **先换别的渠道**（不是干等）。两条渠道各限 1，同时来 2 发：
+/// 两发分别落到两条渠道上，每家同时只看到 1 发。
+#[tokio::test]
+async fn a_saturated_channel_makes_the_request_try_the_other_one() {
+    let f = fixture();
+    f.with_key();
+    let a = start_mock(Reply::SlowOk(120)).await;
+    let b = start_mock(Reply::SlowOk(120)).await;
+    let ca = f.add_channel("甲", &a.base, ChannelSpec { cap: 1, ..Default::default() });
+    let cb = f.add_channel("乙", &b.base, ChannelSpec { cap: 1, ..Default::default() });
+    f.set_group("auto", &[ca, cb]);
+
+    let futures: Vec<_> = (0..2)
+        .map(|i| {
+            let f = &f;
+            async move {
+                post(
+                    f,
+                    CHAT,
+                    Some(KEY),
+                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                )
+                .await
+            }
+        })
+        .collect();
+    let outs = futures_util::future::join_all(futures).await;
+    for (s, _, _) in &outs {
+        assert_eq!(*s, StatusCode::OK);
+    }
+    assert!(a.peak_inflight() <= 1, "甲最多同时 1 发，实际 {}", a.peak_inflight());
+    assert!(b.peak_inflight() <= 1, "乙最多同时 1 发，实际 {}", b.peak_inflight());
+    assert_eq!(a.count() + b.count(), 2, "两发都发出去了");
+}
+
+/// **并发一上来，成功的请求绝不许变成 500**（2026-10-18 压测踩出来的真缺陷）。
+///
+/// 改版前：64 并发打 256 发，稳定有 3%~4% 拿到 500，正文是
+/// 「persist_state(auto) 被重入调用 —— 调用方正持有数据库锁」——
+/// 那发请求上游其实已经答好了（尝试账全是 success），只是记账抢不到库锁。
+///
+/// 反证：把 `persist_state` 改回「抢不到锁就报错」→ 这里会零星出现 500。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn high_concurrency_never_turns_a_good_request_into_a_500() {
+    const N: usize = 256;
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::SlowOk(20)).await;
+    let ch = f.add_channel("mock", &m.base, ChannelSpec::default());
+    f.set_group("auto", &[ch]);
+
+    let futures: Vec<_> = (0..N)
+        .map(|i| {
+            let f = &f;
+            async move {
+                post(
+                    f,
+                    CHAT,
+                    Some(KEY),
+                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                )
+                .await
+            }
+        })
+        .collect();
+    let outs = futures_util::future::join_all(futures).await;
+
+    let bad: Vec<_> = outs
+        .iter()
+        .filter(|(s, _, _)| *s != StatusCode::OK)
+        .map(|(s, b, _)| format!("{s} {}", String::from_utf8_lossy(b)))
+        .collect();
+    assert!(bad.is_empty(), "并发下不许出现非 200，实际 {} 发：{:?}", bad.len(), bad.first());
+
+    // 账要记全：没有哪一发停在半截状态（这才是「记账绝不失败请求」的另一半）
+    f.state.drain_writes();
+    let n_ok: i64 = f
+        .state
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM requests WHERE status = 'ok'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n_ok as usize, N, "每一发都要记成成功");
 }

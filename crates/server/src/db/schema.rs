@@ -216,4 +216,16 @@ ALTER TABLE model_groups ADD COLUMN kind_source TEXT NOT NULL DEFAULT '';
 ALTER TABLE requests ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0;
 "#,
     ),
+    (
+        7,
+        r#"
+-- 每条渠道「同时最多几发」（2026-10-18，v0.5.0）。
+--
+-- 上游的免费额度普遍是按**凭据**限并发的：同一把 key 上同时压 50 发，上游直接回 429/503。
+-- 现网 4 天的账里 503「bridge busy」151 次、502「上游不可用」168 次，就是这一类。
+-- 0 = 不限（默认，行为与以前完全一致）；配了就在网关门口排队/改走别的渠道。
+-- 挂渠道而不是挂模型组：并发是上游那把 key 的属性，同一个模型组下每条渠道的上限额各不相同。
+ALTER TABLE channels ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
 ];

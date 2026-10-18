@@ -338,6 +338,7 @@ mod tests {
                 base_url: "https://x/v1".into(),
                 enabled: true,
                 unwrap_envelope: false,
+                max_concurrent: 0,
             },
         )
         .unwrap();
@@ -352,6 +353,7 @@ mod tests {
             drop_fields: vec![],
             unwrap_envelope: false,
             headers: vec![],
+            max_concurrent: 0,
         };
         assert_eq!(
             probe_model(&conn, &channel, "auto").as_deref(),
@@ -369,6 +371,7 @@ mod tests {
                 base_url: "https://x/v1".into(),
                 enabled: true,
                 unwrap_envelope: false,
+                max_concurrent: 0,
             },
         )
         .unwrap();
@@ -384,6 +387,7 @@ mod tests {
             drop_fields: vec![],
             unwrap_envelope: false,
             headers: vec![],
+            max_concurrent: 0,
         };
         assert_eq!(probe_model(&conn, &channel, "auto").as_deref(), Some("BAAI/bge-m3"));
     }
@@ -399,6 +403,7 @@ mod tests {
                 base_url: "https://x/v1".into(),
                 enabled: true,
                 unwrap_envelope: false,
+                max_concurrent: 0,
             },
         )
         .unwrap();
@@ -413,6 +418,7 @@ mod tests {
             drop_fields: vec![],
             unwrap_envelope: false,
             headers: vec![],
+            max_concurrent: 0,
         };
         assert_eq!(probe_model(&conn, &channel, "auto"), None);
     }

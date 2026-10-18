@@ -962,6 +962,7 @@ mod tests {
             enabled,
             has_secret: true,
             unwrap_envelope: false,
+            max_concurrent: 0,
             headers: Vec::new(),
             models: models
                 .iter()

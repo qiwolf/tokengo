@@ -584,6 +584,7 @@ mod tests {
                 .into_iter()
                 .map(|(a, b)| (a.to_string(), b.to_string()))
                 .collect(),
+                max_concurrent: 0,
         }
     }
 

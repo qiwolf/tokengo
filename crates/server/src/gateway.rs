@@ -22,6 +22,7 @@
 //!    "failed"（默认值）上骗统计。
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -98,6 +99,8 @@ struct Plan {
     group: String,
     channels: Vec<Channel>,
     secrets: HashMap<i64, String>,
+    /// 每条渠道「同时最多几发」（渠道 id → 上限；0 或缺席 = 不限）。
+    caps: HashMap<i64, u32>,
 }
 
 impl Plan {
@@ -111,6 +114,11 @@ impl Plan {
 
     fn secret(&self, id: ChannelId) -> Option<&str> {
         self.secrets.get(&id.0).map(String::as_str)
+    }
+
+    /// 这条渠道同时最多几发（0 = 不限）。
+    fn cap(&self, id: ChannelId) -> u32 {
+        self.caps.get(&id.0).copied().unwrap_or(0)
     }
 }
 
@@ -135,12 +143,16 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
     let channels_all = groups::resolve_channels(&conn, group_name)?;
     let mut routable = Vec::new();
     let mut secrets = HashMap::new();
+    let mut caps = HashMap::new();
     for channel in channels_all {
         if !channel.routable() {
             continue;
         }
         if let Some(s) = channels::secret(&conn, &state.secrets, channel.id)? {
             secrets.insert(channel.id.0, s);
+        }
+        if channel.max_concurrent > 0 {
+            caps.insert(channel.id.0, channel.max_concurrent);
         }
         routable.push(channel);
     }
@@ -153,6 +165,7 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
         group: group_name.to_string(),
         channels: routable,
         secrets,
+        caps,
     })
 }
 
@@ -182,6 +195,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             group: plan_all.group.clone(),
             channels,
             secrets: plan_all.secrets.clone(),
+            caps: plan_all.caps.clone(),
         }
     } else {
         plan_all
@@ -272,8 +286,31 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 上游说的「过多久再来」；下一次重试用它顶掉默认节拍。
     let mut retry_after_override: Option<u64> = None;
 
+    // 每条渠道的「门口闸机」：同时最多几发（面板上按渠道配，0 = 不限）。
+    // 满了**不硬压上去**（现网 503「bridge busy」151 次就是这么来的）：先换别的渠道；
+    // 所有渠道都满，才在门口排队等一个名额，等到再重跑一遍。排队有预算上限，不会挂死。
+    let mut pre_permits: HashMap<i64, tokio::sync::OwnedSemaphorePermit> = HashMap::new();
+    'pass: loop {
+        let mut tried_any = false;
+        let mut busy: Vec<(i64, Arc<tokio::sync::Semaphore>)> = Vec::new();
+
     for channel_id in order.iter().copied() {
         let Some(channel) = plan.channel(channel_id) else { continue };
+        // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
+        let permit = match pre_permits.remove(&channel.id.0) {
+            Some(p) => Some(p),
+            None => match state.leg_gate(channel.id.0, plan.cap(channel.id)) {
+                None => None,
+                Some(sem) => match sem.clone().try_acquire_owned() {
+                    Ok(p) => Some(p),
+                    Err(_) => {
+                        busy.push((channel.id.0, sem));
+                        continue;
+                    }
+                },
+            },
+        };
+        tried_any = true;
         last_channel = channel.id;
         let sent_model = channel.upstream_model(&req.model).to_string();
         // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
@@ -357,6 +394,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             request_id,
                             started_ms,
                             channel.id.0,
+                            permit,
                         ));
                     }
 
@@ -510,6 +548,28 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         }
     }
 
+        if tried_any || busy.is_empty() {
+            break 'pass;
+        }
+        // 所有渠道都到并发上限了：在门口排队等一个名额，等到再重跑一遍。
+        // 预算用「这次请求的剩余重试预算」，排到超时就按「上游太忙」如实回，不挂死。
+        let (id, sem) = busy.remove(0);
+        let left = cfg.request_budget_ms as i64 - (now_ms() - started_ms);
+        if left <= 0 {
+            last_fault = Some("所有渠道都到并发上限了，排队的预算也用完了".to_string());
+            break 'pass;
+        }
+        match tokio::time::timeout(Duration::from_millis(left as u64), sem.acquire_owned()).await {
+            Ok(Ok(p)) => {
+                pre_permits.insert(id, p);
+            }
+            _ => {
+                last_fault = Some("所有渠道都到并发上限了，排队等到超时".to_string());
+                break 'pass;
+            }
+        }
+    }
+
     // 所有渠道都试完了
     let note = last_fault
         .clone()
@@ -569,7 +629,8 @@ fn no_vision_model_response(message: String) -> Response {
         .into_response()
 }
 
-/// 记一次尝试。记账失败不许把请求带崩 —— 日志里有痕迹就行。
+/// 记一次尝试。**记账失败不许把请求带崩**：抢不到库锁就把这一件丢给后台落账员，
+/// 日志里有痕迹就行。
 fn record_attempt(
     state: &SharedState,
     request_id: i64,
@@ -580,18 +641,23 @@ fn record_attempt(
     duration_ms: i64,
     error: Option<&str>,
 ) {
-    let conn = state.conn();
-    if let Err(e) = requests::add_attempt(
-        &conn,
+    let args = requests::AttemptArgs {
         request_id,
         ordinal,
-        channel.id.0,
-        outcome,
-        status,
+        channel_id: channel.id.0,
+        outcome: outcome.to_string(),
+        http_status: status,
         duration_ms,
-        error,
-    ) {
-        tracing::error!("记账失败（尝试级）：{e}");
+        error: error.map(str::to_string),
+    };
+    match state.db.try_lock() {
+        Ok(conn) => {
+            if let Err(e) = requests::add_attempt_args(&conn, &args) {
+                tracing::error!("记账失败（尝试级）：{e}；交给后台补写");
+                state.enqueue_write(crate::state::WriteJob::Attempt(args));
+            }
+        }
+        Err(_) => state.enqueue_write(crate::state::WriteJob::Attempt(args)),
     }
 }
 
@@ -737,6 +803,7 @@ fn stream_passthrough(
     _request_id: i64,
     started_ms: i64,
     channel_id: i64,
+    gate: Option<tokio::sync::OwnedSemaphorePermit>,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
@@ -748,6 +815,7 @@ fn stream_passthrough(
         channel_id,
         state,
         delivered: 0,
+        _gate: gate,
     };
     let stream = unfold(st, |mut st| async move {
         match st.resp.chunk().await {
@@ -786,6 +854,9 @@ struct StreamState {
     channel_id: i64,
     state: SharedState,
     delivered: usize,
+    /// 这条渠道的并发名额。**流式期间一直握着**：不然名额一还，
+    /// 明明还在往外吐字的那条流就不算数了，上游照样被打爆。
+    _gate: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl StreamState {
@@ -973,21 +1044,27 @@ impl RequestGuard {
             return;
         }
         self.done = true;
-        let conn = state.conn();
-        if let Err(e) = requests::finish(
-            &conn,
-            self.request_id,
+        // 记账不许把请求带崩：抢不到库锁就丢给后台落账员（2026-10-18 压测踩出来的规矩）
+        let args = requests::FinishArgs {
+            request_id: self.request_id,
             status,
             http_status,
             channel_id,
-            now_ms() - started_ms,
+            latency_ms: now_ms() - started_ms,
             first_byte_ms,
             input_tokens,
             output_tokens,
             streamed,
-            error,
-        ) {
-            tracing::error!("记账失败（请求级）：{e}");
+            error: error.map(str::to_string),
+        };
+        match state.db.try_lock() {
+            Ok(conn) => {
+                if let Err(e) = requests::finish_args(&conn, &args) {
+                    tracing::error!("记账失败（请求级）：{e}；交给后台补写");
+                    state.enqueue_write(crate::state::WriteJob::Finish(args));
+                }
+            }
+            Err(_) => state.enqueue_write(crate::state::WriteJob::Finish(args)),
         }
     }
 }
@@ -998,25 +1075,28 @@ impl Drop for RequestGuard {
             return;
         }
         self.done = true;
-        // 只 try_lock：丢的时候可能正有别的地方在用库，宁可漏一条账也别卡住进程
-        let Ok(conn) = self.state.db.try_lock() else {
-            tracing::warn!("请求 {} 被中断，且库正忙，未能记成 canceled", self.request_id);
-            return;
+        // 请求被中断（客户端断开等）也要记上一条 canceled —— 以前这里抢不到库锁就整条丢掉，
+        // 面板上那一发就永远停在「进行中」。现在抢不到就丢给后台落账员补写。
+        let args = requests::FinishArgs {
+            request_id: self.request_id,
+            status: Status::Canceled,
+            http_status: None,
+            channel_id: None,
+            latency_ms: now_ms() - self.started_ms,
+            first_byte_ms: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            streamed: false,
+            error: Some("客户端断开（处理函数被丢弃）".to_string()),
         };
-        if let Err(e) = requests::finish(
-            &conn,
-            self.request_id,
-            Status::Canceled,
-            None,
-            None,
-            now_ms() - self.started_ms,
-            None,
-            0,
-            0,
-            false,
-            Some("客户端断开（处理函数被丢弃）"),
-        ) {
-            tracing::warn!("请求 {} 记 canceled 失败：{e}", self.request_id);
+        match self.state.db.try_lock() {
+            Ok(conn) => {
+                if let Err(e) = requests::finish_args(&conn, &args) {
+                    tracing::warn!("请求 {} 记 canceled 失败：{e}；交给后台补写", self.request_id);
+                    self.state.enqueue_write(crate::state::WriteJob::Finish(args));
+                }
+            }
+            Err(_) => self.state.enqueue_write(crate::state::WriteJob::Finish(args)),
         }
     }
 }

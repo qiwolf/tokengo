@@ -58,6 +58,11 @@ pub struct ChannelRow {
     pub has_secret: bool,
     /// 非流式响应外面套了一层壳时自动剥掉（面板上勾「响应解包」）。
     pub unwrap_envelope: bool,
+    /// 这条渠道「同时最多几发」（面板上填「同时最多几发」）。0 = 不限。
+    ///
+    /// 上游免费额度多数按凭据限并发，超过就回 429/503；配了它，网关会在门口
+    /// 排队或改走别的渠道，而不是硬压上去。
+    pub max_concurrent: u32,
     /// 自定义请求头（上游没有的能力，本项目增项）
     pub headers: Vec<(String, String)>,
     /// 该渠道认的模型名（含"能不能看图"、"要丢的字段"）
@@ -71,10 +76,13 @@ pub struct NewChannel {
     pub base_url: String,
     pub enabled: bool,
     pub unwrap_envelope: bool,
+    /// 同时最多几发；0 = 不限。
+    pub max_concurrent: u32,
 }
 
 const SELECT_CHANNEL: &str = "SELECT l.id, l.name, l.base_url, l.enabled, l.unwrap_envelope,
-       EXISTS(SELECT 1 FROM channel_secrets s WHERE s.channel_id = l.id) AS has_secret
+       EXISTS(SELECT 1 FROM channel_secrets s WHERE s.channel_id = l.id) AS has_secret,
+       l.max_concurrent
   FROM channels l";
 
 fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
@@ -85,6 +93,7 @@ fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
         enabled: r.get::<_, i64>(3)? != 0,
         unwrap_envelope: r.get::<_, i64>(4)? != 0,
         has_secret: r.get::<_, i64>(5)? != 0,
+        max_concurrent: r.get::<_, i64>(6)?.max(0) as u32,
         headers: Vec::new(),
         models: Vec::new(),
     })
@@ -141,12 +150,14 @@ pub fn create(conn: &Connection, new: &NewChannel) -> Result<ChannelId> {
         return Err(DbError::Other("base_url 不能为空".into()));
     }
     conn.execute(
-        "INSERT INTO channels (name, base_url, enabled, unwrap_envelope) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO channels (name, base_url, enabled, unwrap_envelope, max_concurrent)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             new.name.trim(),
             new.base_url.trim(),
             new.enabled as i64,
-            new.unwrap_envelope as i64
+            new.unwrap_envelope as i64,
+            new.max_concurrent as i64
         ],
     )?;
     Ok(ChannelId(conn.last_insert_rowid()))
@@ -159,17 +170,19 @@ pub fn update(
     base_url: &str,
     enabled: bool,
     unwrap_envelope: bool,
+    max_concurrent: u32,
 ) -> Result<()> {
     let n = conn.execute(
         "UPDATE channels SET name = ?2, base_url = ?3, enabled = ?4, unwrap_envelope = ?5,
-                updated_at = datetime('now')
+                max_concurrent = ?6, updated_at = datetime('now')
           WHERE id = ?1",
         params![
             id.0,
             name.trim(),
             base_url.trim(),
             enabled as i64,
-            unwrap_envelope as i64
+            unwrap_envelope as i64,
+            max_concurrent as i64
         ],
     )?;
     if n == 0 {
@@ -303,6 +316,7 @@ mod tests {
             base_url: "https://api.siliconflow.cn/v1".into(),
             enabled: true,
             unwrap_envelope: false,
+            max_concurrent: 0,
         }
     }
 
@@ -314,7 +328,7 @@ mod tests {
         assert_eq!(got.name, "硅基流动");
         assert!(!got.has_secret);
 
-        update(&conn, id, "硅基流动 v2", "https://api.siliconflow.cn/v2", false, false).unwrap();
+        update(&conn, id, "硅基流动 v2", "https://api.siliconflow.cn/v2", false, false, 0).unwrap();
         let got = get(&conn, id).unwrap().unwrap();
         assert_eq!(got.name, "硅基流动 v2");
         assert!(!got.enabled);

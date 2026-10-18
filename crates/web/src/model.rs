@@ -60,6 +60,9 @@ pub struct Channel {
     /// 非流式响应外面套了一层壳时自动剥掉（面板上的「响应解包」勾选）。
     #[serde(default)]
     pub unwrap_envelope: bool,
+    /// 这条渠道「同时最多几发」（0 = 不限）—— 上游按凭据限并发时靠它防 429。
+    #[serde(default)]
+    pub max_concurrent: u32,
     #[serde(default)]
     pub headers: Vec<HeaderPair>,
     #[serde(default)]

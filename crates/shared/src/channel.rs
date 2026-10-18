@@ -140,6 +140,13 @@ pub struct Channel {
     /// 模型认的参数不一样，挂渠道上会把别的模型一起改坏。
     #[serde(default)]
     pub drop_fields: Vec<String>,
+    /// 这条渠道「同时最多几发」（面板上填「同时最多几发」）。**0 = 不限**。
+    ///
+    /// 上游免费额度多数是按凭据限并发的：同一把 key 上同时压几十发，上游直接回
+    /// 429/503（现网 4 天 503「bridge busy」151 次、502「上游不可用」168 次就是这类）。
+    /// 由 `db::groups::resolve_channels` 从渠道行带上来，网关按它在门口排队/换腿。
+    #[serde(default)]
+    pub max_concurrent: u32,
     /// **非流式响应外面套了一层壳时自动剥掉**（面板上勾「响应解包」）。
     ///
     /// 有的上游不直接回 OpenAI 形状，而是包一层：`{"data": {<标准响应>}, "success": true}`
@@ -434,6 +441,7 @@ mod tests {
     fn channel(id: i64, alias: Option<&str>) -> Channel {
         Channel {
             id: ChannelId(id),
+ max_concurrent: 0,
             name: format!("channel{id}"),
             base_url: "http://127.0.0.1:1/v1".into(),
             enabled: true,
