@@ -348,7 +348,7 @@ impl Fixture {
     /// 配好对外 key（客户端拿它连网关）。
     fn with_key(&self) {
         let conn = self.state.conn();
-        tokengo_server::db::sessions::set_gateway_key(&conn, KEY).unwrap();
+        tokengo_server::db::sessions::set_gateway_key(&conn, &self.state.secrets, KEY).unwrap();
     }
 
     fn add_channel(&self, name: &str, base_url: &str, spec: ChannelSpec) -> ChannelId {

@@ -417,6 +417,9 @@ pub struct SettingsResp {
     pub active_sessions: i64,
     #[serde(default)]
     pub reprobe_interval_minutes: i64,
+    /// 能不能一键复制（老库只有哈希时为 false）。
+    #[serde(default)]
+    pub gateway_key_copyable: bool,
 }
 
 /// 「账目维护」这一块的状态（`GET /api/maintenance`）。

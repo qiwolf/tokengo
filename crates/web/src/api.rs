@@ -330,6 +330,18 @@ pub async fn set_gateway_key(key: &str) -> Result<(), ApiErr> {
     call("PUT", "/api/settings", Some(json!({ "gateway_key": key }))).await.map(|_| ())
 }
 
+/// 取对外 key 的明文（面板「复制」用）。
+pub async fn reveal_gateway_key() -> Result<String, ApiErr> {
+    let v = call("GET", "/api/settings/gateway-key", None).await?;
+    v.get("gateway_key")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| ApiErr {
+            message: "服务端没回 key".into(),
+            status: 0,
+        })
+}
+
 pub async fn generate_gateway_key() -> Result<String, ApiErr> {
     #[derive(Deserialize)]
     struct R { gateway_key: String }

@@ -97,15 +97,29 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
         });
     };
 
+    // 复制：**任何时候都能用** —— 有刚生成的就直接复制，没有就向服务端取明文
+    // （明文用主密钥加密存在库里，面板只给掩码）。用户的要求就是「生成一次，以后随时复制」。
     let copy_key = move |_| {
-        if let Some(k) = generated.get_untracked() {
-            if let Some(window) = web_sys::window() {
-                let _ = window.navigator().clipboard().write_text(&k);
-                ctx.say("已复制到剪贴板");
+        let already = generated.get_untracked();
+        wasm_bindgen_futures::spawn_local(async move {
+            let key = match already {
+                Some(k) => Some(k),
+                None => match api::reveal_gateway_key().await {
+                    Ok(k) => Some(k),
+                    Err(e) => {
+                        ctx.note_err(&e);
+                        ctx.say(e.message.clone());
+                        None
+                    }
+                },
+            };
+            if let Some(k) = key {
+                if let Some(window) = web_sys::window() {
+                    let _ = window.navigator().clipboard().write_text(&k);
+                    ctx.say("对外 key 已复制到剪贴板");
+                }
             }
-        } else {
-            ctx.say("先点「生成新 key」");
-        }
+        });
     };
 
     let change_pw = move |_| {
@@ -153,7 +167,8 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
             <h2>"对外 key"</h2>
             <p class="muted small">
                 "客户端连网关用的那个 key（" <code>"Authorization: Bearer …"</code>
-                "）。库里只存哈希，面板只能显示提示片段，看不到明文。"
+                "）。**生成一次就行**：明文用主密钥加密存在库里，下面点「复制」随时能取（不用反复生成）。"
+                "换 key 会让旧 key 立刻失效，记得同步改客户端。"
             </p>
                 </header>
                 <div class="card-body">
@@ -166,13 +181,30 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
                 {move || generated.get().map(|k| view! {
                     <div class="banner ok" style="margin-top:8px;word-break:break-all">
-                        "新 key（只显示这一次）：" <code>{k}</code>
+                        "新 key：" <code>{k}</code>
+                        "　（已存下来，以后随时点「复制」都能取，不用再生成）"
                     </div>
                 })}
                 <div class="modal-foot">
+                    <span class="muted small">
+                        "当前 key："
+                        <code>{move || info.get().gateway_key_hint.clone().unwrap_or_else(|| "（还没设）".into())}</code>
+                    </span>
+                    <span class="spacer"></span>
                     <button class="ghost" on:click=generate_key>"生成新 key"</button>
-                    <button class="ghost" on:click=copy_key>"复制"</button>
+                    <button class="primary" on:click=copy_key>"复制"</button>
                 </div>
+                {move || if info.get().gateway_key_hint.is_some() && !info.get().gateway_key_copyable {
+                    view! {
+                        <div class="muted small" style="margin-top:6px">
+                            "这把 key 是旧版生成的（库里只有哈希、取不回明文）：点一次「生成新 key」换一把，"
+                            "之后就随时能复制了（换完记得把客户端里的 key 也更新一下）。"
+                        </div>
+                    }
+                        .into_any()
+                } else {
+                    ().into_any()
+                }}
             </div>
                 </div>
             </section>

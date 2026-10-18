@@ -9,6 +9,13 @@ pub const PANEL_PASSWORD_HASH: &str = "panel_password_hash";
 /// 对外统一 key 的哈希（客户端拿这个 key 连网关）。
 pub const GATEWAY_KEY_HASH: &str = "gateway_key_hash";
 
+/// 对外 key 的明文（用主密钥加密后存这里）。
+///
+/// 为什么留一份可解密的：用户要求「生成一次之后就一直能用，点一下就能复制」——
+/// 只存哈希的话，丢了就只能重新生成（旧的当场失效），每次都要重配客户端。
+/// 存的是密文（`nonce_hex:cipher_hex`），主密钥不在库里，泄库不等于泄 key。
+pub const GATEWAY_KEY_SEALED: &str = "gateway_key_sealed";
+
 pub fn get(conn: &Connection, key: &str) -> Result<Option<String>> {
     Ok(conn
         .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
