@@ -271,9 +271,11 @@ button.icon-btn:hover { border-color: transparent; background: var(--surface-2);
 
 .menu-wrap { position: relative; }
 .menu-pop {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 8px);
+  /* 固定定位、贴右上角：它跟遮罩一起放在顶栏外面（见下面 .nav-scrim 的说明），
+     不能再靠「相对 ☰ 按钮定位」了 —— 那样会被顶栏的毛玻璃包含块限制住。 */
+  position: fixed;
+  right: 14px;
+  top: 62px;
   min-width: 11rem;
   padding: 5px;
   background: var(--surface);
@@ -289,6 +291,24 @@ button.icon-btn:hover { border-color: transparent; background: var(--surface-2);
 .menu-sep { height: 1px; background: var(--line); margin: 6px 4px; }
 
 .nav-toggle { display: none; } /* 只在手机上出现 */
+
+/* 菜单遮罩：盖满整个视口、**全透明**（不挡看内容，只接住「点外面」那一击 → 收起菜单）。
+   它必须是 .topbar 的兄弟节点：顶栏带 backdrop-filter，会成为 fixed 后代的包含块，
+   那时候 inset:0 只铺满顶栏那 54px，点页面别处根本碰不到遮罩（2026-10-18 用户实测）。
+   z-index 45 在顶栏（40）之上、菜单弹窗（50）之下 —— 点哪儿都能收起菜单。 */
+.nav-scrim {
+  position: fixed;
+  inset: 0;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  cursor: default;
+  z-index: 45;
+}
+.nav-scrim:hover { background: none; border: 0; }
 
 .main { flex: 1 1 auto; }
 
@@ -1119,18 +1139,6 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   .topnav { display: none; }
   .menu-item { height: auto; padding: 7px 10px; }
   .menu-sep { margin: 4px 4px; }
-  .nav-scrim {
-    position: fixed;
-    inset: 0;
-    height: auto;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: color-mix(in oklab, #05070b 45%, transparent);
-    z-index: 30;
-  }
-  .nav-scrim:hover { background: color-mix(in oklab, #05070b 45%, transparent); border: 0; }
-
   .content { padding: 18px 14px 56px; }
   .page { gap: 16px; }
   .page-head { padding-bottom: 14px; gap: 12px; }
@@ -1138,7 +1146,8 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   :root { --bar: 44px; }
 
   /* 卡里的表格：手机上横着拖很难受，改成一张张卡片（只动包在 .table-wrap 里的数据表，
-     弹窗里那种两列小表保持原样，别把它们也拆散） */
+     弹窗里那种两列小表保持原样，别把它们也拆散）。
+     注意：「模型」页 v0.11.3 起不用表格了，它有自己的紧凑卡片（.model-card）。 */
   .table-wrap { border: none; background: none; overflow: visible; }
   .card-body.flush { padding: 10px 0 0; }
   .card-body.flush th, .card-body.flush td { padding-left: 14px; padding-right: 14px; }
@@ -1270,11 +1279,6 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   color: var(--accent);
 }
 
-/* 展开的那一行：勾它的渠道 + 渠道顺序 + 那一行的动作。
-   底色用 --surface-2 跟主行分开，一眼看出这几块属于上一行。 */
-.detail-row td {
-  background: var(--surface-2);
-}
 .model-detail {
   display: flex;
   flex-direction: column;
@@ -1371,3 +1375,74 @@ td[data-label="类型"] code {
 .logline.warn { color: var(--warn); }
 .logline.error { color: var(--bad); }
 .logview .muted { font-size: 0.8125rem; padding: 6px 2px; }
+
+
+/* ── 「模型」页的列表卡片（v0.11.3）：一个模型名一张卡、三行说清 ──
+   以前这里是 8 列的表格：手机上每列各占一行，一张卡 260px 高（用户：「卡片高度缩短
+   原来的一半、卡片内容重构、紧凑些」）。现在改成专门的列表排版，桌面手机同一套：
+     第一行 = 状态徽章 + 模型名 + 能看图 + 「详情」
+     第二行 = 用途下拉 + 类型标签 +（实测认的/你定的）+ 「现在走 X」
+     第三行 = 一行小字：勾它的渠道 4 条 · 换过 2 次 · 下次回头试首选 3 分钟后
+   展开的详情接在卡里（.model-detail），不再是表格里的一行。── */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.model-card.open {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.model-card .mline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 行内不折行：折行会让一张卡凭空高一倍。名字（唯一可缩的）超了就省略号截断，
+     完整名字在 .mname 的 title 里；两边的徽章与按钮各自不缩。 */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.model-card .mline > .tag,
+.model-card .mline > button,
+.model-card .mline > .kind-pick { flex: 0 0 auto; }
+.model-card .mline > .spacer { flex: 1 1 auto; }
+.model-card .mname {
+  font-size: 0.9375rem;
+  /* 名字长了不截断（手机上没 hover，截了就看不全）：让它自己折行，
+     右边的徽章与「详情」按钮仍留在这一行（行本身不折）。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.model-card .mline .kind-pick {
+  /* 全局给 select 定了 width:100%，那会让它独占一行、把这一行撑成两行 */
+  width: auto;
+  flex: 0 0 auto;
+  height: 26px;
+}
+.model-card .mline > .muted.small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-card .mline > button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+}
+.model-card .mmeta { line-height: 1.5; overflow-wrap: anywhere; }
+.model-card .model-detail {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.model-empty { padding: 26px 4px; text-align: center; color: var(--fg-3); }

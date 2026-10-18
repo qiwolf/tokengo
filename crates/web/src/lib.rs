@@ -454,56 +454,58 @@ fn Shell(ctx: Ctx) -> impl IntoView {
                         >
                             "☰"
                         </button>
-                        {move || {
-                            ctx.nav_open
-                                .get()
-                                .then(|| {
-                                    view! {
-                                        <>
-                                            // 点页面任何地方都收起菜单（遮罩是透明的，不挡看内容）
-                                            <button
-                                                class="nav-scrim"
-                                                title="收起菜单"
-                                                on:click=move |_| ctx.nav_open.set(false)
-                                            ></button>
-                                            <div class="menu-pop">
-                                                {Page::ALL
-                                                    .iter()
-                                                    .map(|p| {
-                                                        let p = *p;
-                                                        view! {
-                                                            <button
-                                                                class="menu-item"
-                                                                class:active=move || ctx.page.get() == p
-                                                                on:click=move |_| ctx.go(p)
-                                                            >
-                                                                {p.title()}
-                                                            </button>
-                                                        }
-                                                    })
-                                                    .collect_view()}
-                                                <div class="menu-sep"></div>
-                                                <button class="menu-item" on:click=reload>
-                                                    "重新载入面板"
-                                                </button>
-                                                <button class="menu-item danger" on:click=logout>
-                                                    "退出登录"
-                                                </button>
-                                            </div>
-                                        </>
-                                    }
-                                })
-                        }}
                     </div>
                 </div>
             </header>
+            // 菜单的遮罩与弹窗**不能待在顶栏里面**：顶栏带 backdrop-filter（毛玻璃），
+            // 它会变成 fixed 后代的包含块 —— 遮罩的 inset:0 于是只铺满 54px 高的顶栏，
+            // 点页面别处根本点不到它，菜单就关不掉（2026-10-18 用户实测报的）。
+            {move || {
+                ctx.nav_open
+                    .get()
+                    .then(|| {
+                        view! {
+                            <>
+                                <button
+                                    class="nav-scrim"
+                                    title="收起菜单"
+                                    on:click=move |_| ctx.nav_open.set(false)
+                                ></button>
+                                <div class="menu-pop">
+                                    {Page::ALL
+                                        .iter()
+                                        .map(|p| {
+                                            let p = *p;
+                                            view! {
+                                                <button
+                                                    class="menu-item"
+                                                    class:active=move || ctx.page.get() == p
+                                                    on:click=move |_| ctx.go(p)
+                                                >
+                                                    {p.title()}
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()}
+                                    <div class="menu-sep"></div>
+                                    <button class="menu-item" on:click=reload>
+                                        "重新载入面板"
+                                    </button>
+                                    <button class="menu-item danger" on:click=logout>
+                                        "退出登录"
+                                    </button>
+                                </div>
+                            </>
+                        }
+                    })
+            }}
+
             <main class="main">
                 <section class="content">
                     {move || match ctx.page.get() {
                         Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
                         Page::Channels => view! { <pages::channels::Channels ctx=ctx /> }.into_any(),
                         Page::Models => view! { <pages::models::Models ctx=ctx /> }.into_any(),
-                        Page::Requests => view! { <pages::requests::Requests ctx=ctx /> }.into_any(),
                         Page::Logs => view! { <pages::logs::Logs ctx=ctx /> }.into_any(),
                         Page::Settings => view! { <pages::settings::Settings ctx=ctx /> }.into_any(),
                     }}
