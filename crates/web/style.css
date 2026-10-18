@@ -937,6 +937,31 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
 /* 卡里的操作条不再画第二条线（卡自己就有边） */
 .card .modal-foot { border-top: 1px solid var(--line); padding-top: 14px; }
 
+/* 弹窗标题下面那条三段切换（基本信息 / 请求头 N / 模型 N）。
+   之前它俩都没样式，就靠默认按钮外观，手机上看着像三块说明文字、不像能按 ——
+   用户实测反馈「找不到去上游拉模型的地方」。做法：分段按钮的常态描边、选中项
+   加重描边 + 极浅实色底 + 加粗（用户口径：按钮要描边，不要实色大块）。 */
+.modal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -6px;
+}
+.modal-tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  border-radius: 999px;
+}
+.modal-tabs .tab.active {
+  border-color: var(--fg);
+  background: var(--surface-3);
+  font-weight: 600;
+}
+
 /* ---------- 13. 提示条 ---------- */
 /* 顶栏那条短提示：浮在内容右上角，**反色药丸**（深色模式白底黑字），
    一眼能看见又不抢内容 */
