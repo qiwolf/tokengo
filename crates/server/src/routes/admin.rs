@@ -45,6 +45,9 @@ pub fn router() -> Router<SharedState> {
         .route("/timeline", get(|| async { unbuilt(5, "GET /api/timeline") }))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/settings/generate-gateway-key", post(generate_gateway_key))
+        // 面板「复制」按钮走这里：拿到明文（要面板会话）。
+        // 为什么单独一个接口：明文不进列表响应，减少它出现在日志/缓存里的机会。
+        .route("/settings/gateway-key", get(reveal_gateway_key))
         .route("/maintenance", get(maintenance_get).post(maintenance_set))
         .route("/maintenance/prune", post(maintenance_prune))
 }
@@ -144,7 +147,7 @@ async fn auth_setup(
         Some(k) if !k.trim().is_empty() => (k.trim().to_string(), false),
         _ => (format!("tk-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]), true),
     };
-    sessions::set_gateway_key(&conn, &key)?;
+    sessions::set_gateway_key(&conn, &state.secrets, &key)?;
     // 换 key 必须把校验快路径忘掉，否则旧 key 还能用最多一个缓存周期
     state.forget_gateway_key();
     sessions::purge_expired(&conn)?;
@@ -1260,7 +1263,9 @@ async fn settings_get(
     let router = state.routing();
     Ok(Json(serde_json::json!({
         "routing_config": router.cfg,
-        "gateway_key_hint": sessions::gateway_key_hint(&conn)?,
+        "gateway_key_hint": sessions::gateway_key_hint(&conn, &state.secrets)?,
+        // 能不能一键复制：老库只有哈希时为 false（面板会提示「生成新 key」）。
+        "gateway_key_copyable": sessions::gateway_key_plain(&conn, &state.secrets)?.is_some(),
         "active_sessions": sessions::active_count(&conn)?,
         "reprobe_interval_minutes": router.cfg.reprobe_interval_ms / 60_000,
     })))
@@ -1282,11 +1287,28 @@ async fn settings_put(
         if k.trim().is_empty() {
             return Err(ApiError::bad_request("对外 key 不能为空"));
         }
-        sessions::set_gateway_key(&conn, k)?;
+        sessions::set_gateway_key(&conn, &state.secrets, k)?;
         state.forget_gateway_key();
         tracing::info!("对外 key 已更换");
     }
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// 面板「复制对外 key」：返回明文。必须带面板会话（PanelAuth）。
+///
+/// 用户要求：「生成一次之后就一直可以用，真实 key 不显示，点一下复制就行」。
+/// 所以明文不渲染进页面，只在点复制时取一次。
+async fn reveal_gateway_key(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    match sessions::gateway_key_plain(&conn, &state.secrets)? {
+        Some(k) => Ok(Json(serde_json::json!({ "gateway_key": k }))),
+        None => Err(ApiError::not_found(
+            "这把 key 是旧版生成的，库里只有哈希、取不回明文：点「生成新 key」换一把，之后就随时能复制",
+        )),
+    }
 }
 
 async fn generate_gateway_key(
@@ -1295,7 +1317,7 @@ async fn generate_gateway_key(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let key = format!("tk-{}", &uuid::Uuid::new_v4().simple().to_string()[..24]);
     let conn = state.conn();
-    sessions::set_gateway_key(&conn, &key)?;
+    sessions::set_gateway_key(&conn, &state.secrets, &key)?;
     state.forget_gateway_key();
     tracing::info!("对外 key 已自动生成");
     Ok(Json(serde_json::json!({
