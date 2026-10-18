@@ -55,23 +55,6 @@ pub(crate) fn filter_catalog(all: &[UpstreamModel], filter: &str, limit: usize) 
         .collect()
 }
 
-/// 重新取一次模型组名单（进页面时、以及一键建完组之后）。
-///
-/// 写成自由函数而不是闭包：RwSignal 是 Copy，按钮里（每个模型名一份闭包）随便调，
-/// 闭包会被 move 走、第二个按钮就用不了了。
-fn refresh_groups(group_names: RwSignal<Vec<String>>) {
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(r) = api::groups().await {
-            group_names.set(r.groups.into_iter().map(|g| g.name).collect());
-        }
-    });
-}
-
-/// 上游这次的清单里有没有这个名字。
-pub(crate) fn catalog_has(catalog: &[UpstreamModel], name: &str) -> bool {
-    catalog.iter().any(|c| c.id == name)
-}
-
 /// 表里「客户端名字 = client」的那一条映射。
 pub(crate) fn mapping_for<'a>(rows: &'a [ModelPair], client: &str) -> Option<&'a ModelPair> {
     rows.iter().find(|m| m.model.trim() == client.trim())
@@ -230,8 +213,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 上次问到上游清单是什么时候（毫秒；0 = 从来没问过）。
     // 打开弹窗先读库把它显示出来 —— 不用为了看一眼清单又去骚扰一次上游。
     let cat_at = RwSignal::new(0i64);
-    // 现有哪些模型组名字（判「勾了名字、但还没有同名模型组」= 客户端打会 404）。
-    let group_names = RwSignal::new(Vec::<String>::new());
     let pull_filter = RwSignal::new(String::new());
     // 「加一个自己的名字」输入框里正打着的字
     let manual = RwSignal::new(String::new());
@@ -273,9 +254,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         m_open.set(None);
         mver.update(|v| *v += 1);
     };
-
-    // 模型组名单：进页面取一次 + 建完新组后刷新（不跟着每次重画走）。
-    refresh_groups(group_names);
 
     let reload = move || {
         busy.set(true);
@@ -1172,30 +1150,15 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 mver.get();
                                                 let catalog = pulled.get();
                                                 let filter = pull_filter.get();
-                                                let mut names: Vec<String> =
+                                                // 这份清单只放**上游报回来的名字**
+                                                // （用户 2026-10-18：上游没有的名字不许混进来 —— 虚拟组名
+                                                // auto 这类会让人以为上游真有这个模型）。这条渠道自己认、
+                                                // 上游没报的名字另起一块显示，见 m-list 下面那个 .m-own。
+                                                let names: Vec<String> =
                                                     filter_catalog(&catalog, &filter, SHOW_LIMIT)
                                                         .into_iter()
                                                         .map(|m| m.id)
                                                         .collect();
-                                                // 在用的、但上游这次没报的名字也要列出来（比如虚拟组名 auto），
-                                                // 不然它会在界面上凭空消失，看着像被删了。过滤框照样管它 ——
-                                                // 「全选当前显示的」勾的就是屏幕上真看得见的那几行。
-                                                let needle = filter.trim().to_lowercase();
-                                                for m in f_models.get_untracked().iter() {
-                                                    let n = m.model.trim().to_string();
-                                                    if n.is_empty()
-                                                        || catalog_has(&catalog, &n)
-                                                        || names.iter().any(|x| x == &n)
-                                                    {
-                                                        continue;
-                                                    }
-                                                    if !needle.is_empty()
-                                                        && !n.to_lowercase().contains(&needle)
-                                                    {
-                                                        continue;
-                                                    }
-                                                    names.push(n);
-                                                }
                                                 if names.is_empty() {
                                                     return view! {
                                                         <p class="muted small">
@@ -1207,7 +1170,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     .into_iter()
                                                     .map(|name| {
                                                         let info = catalog.iter().find(|c| c.id == name).cloned();
-                                                        let reported = info.is_some();
                                                         let owner = info.as_ref().and_then(|i| i.owned_by.clone());
                                                         let ctx_len = info.as_ref().and_then(|i| i.context_window);
                                                         let price = info
@@ -1228,7 +1190,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let n_vis_ch = name.clone();
                                                         let n_drop = name.clone();
                                                         let n_test = name.clone();
-                                                        let n_grp = name.clone();
                                                         let cur = f_models
                                                             .get_untracked()
                                                             .into_iter()
@@ -1258,7 +1219,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                 class="m-row"
                                                                 class:on=move || is_in_use(&f_models.get(), &n_on)
                                                             >
-                                                                <label class="m-pick" title="勾上 = 这条渠道认这个名字">
+                                                                <div class="m-col">
+                                                                    <div class="m-line">
+                                                                        <label
+                                                                            class="m-pick"
+                                                                            title="勾上 = 这条渠道认这个名字"
+                                                                        >
                                                                         <input
                                                                             type="checkbox"
                                                                             prop:checked=move || {
@@ -1305,9 +1271,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                 }
                                                                             }
                                                                         />
-                                                                </label>
-                                                                <div class="m-col">
-                                                                    <div class="m-line">
+                                                                        </label>
                                                                         <code class="m-name">{name.clone()}</code>
                                                                         <span class="spacer"></span>
                                                                         <button class="ghost" on:click=open_me>
@@ -1349,69 +1313,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                         }
                                                                         None => ().into_any(),
                                                                     }}
-                                                                    {(!reported)
-                                                                        .then(|| {
-                                                                            view! {
-                                                                                <span class="tag warn" title="这条渠道认这个名字，但这次问上游它没报出来（可能是虚拟组名，或者上游已经不带它了）">
-                                                                                    "上游这次没报这个名字"
-                                                                                </span>
-                                                                            }
-                                                                        })}
-                                                                    {move || {
-                                                                        let in_use = is_in_use(&f_models.get(), &n_grp);
-                                                                        let has_group = group_names
-                                                                            .get()
-                                                                            .iter()
-                                                                            .any(|g| tokengo_shared::same_model_name(g, &n_grp));
-                                                                        if !in_use || has_group {
-                                                                            return ().into_any();
-                                                                        }
-                                                                        let n_mk = n_grp.clone();
-                                                                        view! {
-                                                                            <span
-                                                                                class="tag warn"
-                                                                                title="你勾了这个名字，但「模型」页还没有同名模型组：客户端打这个名字会回 404。建一个同名组（就挂这条渠道），这个名字就能打了。"
-                                                                            >
-                                                                                "还没有同名模型组（客户端打会 404）"
-                                                                            </span>
-                                                                            <button
-                                                                                class="ghost"
-                                                                                on:click=move |_| {
-                                                                                    let name = n_mk.clone();
-                                                                                    match channel_id {
-                                                                                        Some(id) => {
-                                                                                            wasm_bindgen_futures::spawn_local(async move {
-                                                                                                match api::save_group(&name, true, &[id]).await {
-                                                                                                    Ok(()) => {
-                                                                                                        ctx
-                                                                                                            .say(
-                                                                                                                format!(
-                                                                                                                    "建好了：模型组「{name}」→ 就挂这条渠道。客户端现在能打这个名字了",
-                                                                                                                ),
-                                                                                                            );
-                                                                                                        refresh_groups(group_names);
-                                                                                                    }
-                                                                                                    Err(e) => {
-                                                                                                        ctx.note_err(&e);
-                                                                                                        ctx.say(format!("建组没成：{}", e.message));
-                                                                                                    }
-                                                                                                }
-                                                                                            });
-                                                                                        }
-                                                                                        None => {
-                                                                                            ctx
-                                                                                                .say(
-                                                                                                    "先点「保存」把渠道存下来，再建同名模型组",
-                                                                                                )
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            >
-                                                                                "给它建个同名模型组"
-                                                                            </button>
-                                                                        }
-                                                                            .into_any()
-                                                                    }}
+
                                                                     </div>
                                                                 {move || if !is_open_body() {
                                                                     ().into_any()
@@ -1581,6 +1483,38 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             }}
                                         </div>
 
+                                        {move || {
+                                            // 上游没报、但这条渠道自己认的名字（虚拟组名 auto 这类）。
+                                            // 单独一条、写清来路 —— 不混进上面那份上游清单，也不再给
+                                            // 「一键建同名模型组」那种按钮（用户：不应该有这东西）。
+                                            mver.get();
+                                            let up: Vec<String> = pulled
+                                                .get_untracked()
+                                                .into_iter()
+                                                .map(|m| m.id.trim().to_string())
+                                                .collect();
+                                            let mine: Vec<String> = f_models
+                                                .get_untracked()
+                                                .into_iter()
+                                                .map(|m| m.model.trim().to_string())
+                                                .filter(|n| {
+                                                    !n.is_empty() && !up.iter().any(|x| x == n)
+                                                })
+                                                .collect();
+                                            if mine.is_empty() {
+                                                return ().into_any();
+                                            }
+                                            view! {
+                                                <div class="m-own">
+                                                    <span class="muted small">
+                                                        "这条渠道自己认、上游没报的名字（不在这份清单里）："
+                                                    </span>
+                                                    <code>{mine.join("、")}</code>
+                                                </div>
+                                            }
+                                                .into_any()
+                                        }}
+
                                         <div class="pull-bar">
                                             <input
                                                 type="text"
@@ -1737,14 +1671,6 @@ mod tests {
         assert_eq!(out[1].upstream.as_deref(), Some("BAAI/bge-m3"), "两头空白去掉");
     }
 
-    #[test]
-    fn catalog_lookup_is_exact() {
-        let cat = vec![up("v4.1flash"), up("BGE-M3")];
-        assert!(catalog_has(&cat, "v4.1flash"));
-        assert!(catalog_has(&cat, "BGE-M3"), "上游名字大小写敏感，原样比");
-        assert!(!catalog_has(&cat, "bge-m3"));
-        assert!(!catalog_has(&cat, "auto"));
-    }
 }
 
 // ─────────── 渠道页加模型 = 顺手建组（2026-10-18，按用户要求改） ───────────
