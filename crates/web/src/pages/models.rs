@@ -21,6 +21,40 @@ use crate::model::{AutoRoutes, Channel, NameRoute, RoutingCfg};
 use crate::pages::PageHead;
 use crate::Ctx;
 
+/// 「新增模型」用：把要放行的名字加到选中的每条渠道的模型清单上。
+///
+/// 返回 `(渠道 id, 这条渠道保存时该带的模型清单)`。已经声明过这个名字的渠道原样返回
+/// （不重复加、也不偷偷改它的上游名）。只处理 `picked` 里点到的渠道。
+///
+/// v0.11.0 拿掉了「模型组」这一层：**一个名字出现在渠道的模型清单里，它就存在**
+/// （能不能被调用 = 有没有启用着的渠道勾着它）。所以「新增模型」就是这一件事。
+pub(crate) fn declare_names_on(
+    channels: &[Channel],
+    picked: &[i64],
+    name: &str,
+    upstream: Option<&str>,
+) -> Vec<(i64, Vec<crate::model::ModelPair>)> {
+    channels
+        .iter()
+        .filter(|c| picked.contains(&c.id))
+        .map(|c| {
+            let mut models = c.models.clone();
+            let has = models
+                .iter()
+                .any(|m| tokengo_shared::same_model_name(&m.model, name));
+            if !has {
+                models.push(crate::model::ModelPair {
+                    model: name.to_string(),
+                    upstream: upstream.map(str::to_string),
+                    vision: false,
+                    drop_fields: String::new(),
+                });
+            }
+            (c.id, models)
+        })
+        .collect()
+}
+
 /// 一档用途：分档按钮上写什么、这一档收哪些类型、配色。
 pub(crate) struct KindTab {
     /// 分档键。
@@ -189,6 +223,15 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
     // 现在看哪一档。默认「对话模型」：绝大多数人在找的就是它
     let tab = RwSignal::new("chat".to_string());
 
+    // 「新增模型」表单：在模型页直接把一个名字勾到渠道上（v0.11.0 之后没有「模型组」，
+    // 名字出现在渠道清单里就算存在）
+    let n_open = RwSignal::new(false);
+    let n_name = RwSignal::new(String::new());
+    let n_upstream = RwSignal::new(String::new());
+    let n_kind = RwSignal::new(String::new());
+    let n_picked = RwSignal::new(Vec::<i64>::new());
+    let n_busy = RwSignal::new(false);
+
     // 路由参数表单
     let f_retry = RwSignal::new(3i64);
     let f_timeout = RwSignal::new(30_000i64);
@@ -276,6 +319,91 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
     };
 
     // 不想等回切间隔时用：把这个模型名的回切检查点归零。
+    // 「新增模型」：把名字勾到选中的渠道上（可选顺手定用途）。
+    //
+    // 用户口径（2026-10-18 晚）：「模型列表不能自己新增模型了」—— 0.10.0 之后这一页只列
+    // **渠道里勾过的名字**，于是没有任何新增入口。这里补一个：改名 + 勾渠道一个动作做完，
+    // 否则光有名字没有渠道勾它，客户端打它照样 404（又一个「白配了」）。
+    //
+    // 先试哪条不用在这里选：渠道顺序全站一份（`channels.priority`），在「渠道」页用 ↑↓ 调。
+    let create_model = move |_| {
+        let name = n_name.get_untracked().trim().to_string();
+        if name.is_empty() {
+            ctx.say("先填模型名");
+            return;
+        }
+        let picked = n_picked.get_untracked();
+        if picked.is_empty() {
+            ctx.say("至少勾一条渠道 —— 不勾渠道，客户端打这个名字还是 404");
+            return;
+        }
+        let up_raw = n_upstream.get_untracked().trim().to_string();
+        let upstream = if up_raw.is_empty() { None } else { Some(up_raw) };
+        let kind = n_kind.get_untracked();
+        let chans = channels.get_untracked();
+        n_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            let work = declare_names_on(&chans, &picked, &name, upstream.as_deref());
+            let mut done = 0usize;
+            let mut already = 0usize;
+            for (id, models) in work {
+                let Some(c) = chans.iter().find(|c| c.id == id) else {
+                    continue;
+                };
+                let had = c
+                    .models
+                    .iter()
+                    .any(|m| tokengo_shared::same_model_name(&m.model, &name));
+                if had {
+                    already += 1;
+                }
+                match api::save_channel(
+                    Some(c.id),
+                    &c.name,
+                    &c.base_url,
+                    c.enabled,
+                    c.unwrap_envelope,
+                    c.max_concurrent,
+                    None,
+                    &c.headers,
+                    &models,
+                )
+                .await
+                {
+                    Ok(_) => done += 1,
+                    Err(e) => {
+                        ctx.note_err(&e);
+                        ctx.say(format!("渠道「{}」没勾上：{}", c.name, e.message));
+                    }
+                }
+            }
+            if !kind.is_empty() {
+                if let Err(e) = api::set_model_kind(&name, &kind).await {
+                    ctx.note_err(&e);
+                    ctx.say(format!("用途没定上：{}", e.message));
+                }
+            }
+            ctx.say(if already > 0 {
+                format!(
+                    "「{name}」已在 {done} 条渠道上（其中 {already} 条本来就有它）—— 客户端现在能打这个名字"
+                )
+            } else {
+                format!("「{name}」建好了：已勾在 {done} 条渠道上，客户端现在能打这个名字")
+            });
+            n_open.set(false);
+            // 跳到它所在的档：不然用户停在「对话模型」档，新建的名字落在「还没定」档，
+            // 列表还是空的，看着像没建成。
+            let t = tab_of(&kind);
+            tab.set(t.to_string());
+            n_name.set(String::new());
+            n_upstream.set(String::new());
+            n_kind.set(String::new());
+            n_picked.set(Vec::new());
+            n_busy.set(false);
+            reload();
+        });
+    };
+
     let do_reprobe = move |name: String| {
         wasm_bindgen_futures::spawn_local(async move {
             match api::reprobe(&name).await {
@@ -319,12 +447,111 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                 title="模型"
                 desc="一行 = 渠道里勾过的一个名字。收到请求就按渠道顺序（在「渠道」页用 ↑↓ 调）依次试，第一条不通就换下一条。"
             >
+                <button
+                    class="primary"
+                    on:click=move |_| n_open.set(!n_open.get_untracked())
+                >
+                    "新增模型"
+                </button>
                 <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
                     {move || if busy.get() { "刷新中…" } else { "刷新" }}
                 </button>
             </PageHead>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
+
+            // 新增模型：把名字勾到渠道上就完事（v0.11.0 起没有「模型组」这一层）。
+            // 先试哪条不在这一步定 —— 顺序全站一份，在「渠道」页用 ↑↓ 调。
+            {move || n_open.get().then(|| view! {
+                <section class="card">
+                    <header class="card-head">
+                        <h2>"新增模型"</h2>
+                        <span class="spacer"></span>
+                        <span class="muted small">
+                            "填客户端要打的名字，勾上哪几条渠道服务它（勾上就是放行；先试哪条由「渠道」页的顺序决定）"
+                        </span>
+                    </header>
+                    <div class="card-body">
+                        <div class="form-grid">
+                            <label>"模型名（客户端打的）"</label>
+                            <input
+                                class="input"
+                                placeholder="例如 deepseek-ai/DeepSeek-V4.1-Flash"
+                                prop:value=move || n_name.get()
+                                on:input=move |ev| n_name.set(event_target_value(&ev))
+                            />
+                            <label>"上游模型名（可留空）"</label>
+                            <input
+                                class="input"
+                                placeholder="留空 = 按同名发出去；上游认别的名字才填"
+                                prop:value=move || n_upstream.get()
+                                on:input=move |ev| n_upstream.set(event_target_value(&ev))
+                            />
+                            <label>"用途（可留空）"</label>
+                            <select
+                                class="input"
+                                prop:value=move || n_kind.get()
+                                on:change=move |ev| n_kind.set(event_target_value(&ev))
+                            >
+                                <option value="">"留空 = 跟着实测走（推荐）"</option>
+                                <option value="chat">"对话"</option>
+                                <option value="embeddings">"向量"</option>
+                                <option value="rerank">"重排"</option>
+                            </select>
+                        </div>
+                        <div class="muted small" style="margin:10px 0 6px">
+                            "哪几条渠道放行这个名字（停用的灰着，勾不了）"
+                        </div>
+                        <div class="chips">
+                            {move || {
+                                channels
+                                    .get()
+                                    .into_iter()
+                                    .map(|c| {
+                                        let id = c.id;
+                                        let disabled = !c.enabled;
+                                        let label = format!("{} #{}", c.name, id)
+                                            + if c.enabled { "" } else { "（已停用）" };
+                                        view! {
+                                            <label class="pick">
+                                                <input
+                                                    type="checkbox"
+                                                    disabled=disabled
+                                                    prop:checked=move || n_picked.get().contains(&id)
+                                                    on:change=move |ev| {
+                                                        let on = event_target_checked(&ev);
+                                                        n_picked
+                                                            .update(|v| {
+                                                                if on {
+                                                                    if !v.contains(&id) {
+                                                                        v.push(id);
+                                                                    }
+                                                                } else {
+                                                                    v.retain(|x| *x != id);
+                                                                }
+                                                            });
+                                                    }
+                                                />
+                                                {label}
+                                            </label>
+                                        }
+                                    })
+                                    .collect_view()
+                            }}
+                        </div>
+                        <div class="modal-foot">
+                            <button class="ghost" on:click=move |_| n_open.set(false)>"取消"</button>
+                            <button
+                                class="primary"
+                                disabled=move || n_busy.get()
+                                on:click=create_model
+                            >
+                                {move || if n_busy.get() { "正在建…" } else { "建好并勾上" }}
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            })}
 
             // ———————— 保留名 auto ————————
             <section class="card">
@@ -1015,6 +1242,78 @@ mod tests {
             auto_list(&a, "chat"),
             &["fast".to_string(), "slow".to_string()],
             "候选链按服务端给的顺序"
+        );
+    }
+}
+
+#[cfg(test)]
+mod create_tests {
+    use super::*;
+    use crate::model::{Channel, ModelPair};
+
+    fn ch(id: i64, name: &str, models: &[&str]) -> Channel {
+        Channel {
+            id,
+            name: name.into(),
+            base_url: "http://x/v1".into(),
+            enabled: true,
+            unwrap_envelope: false,
+            max_concurrent: 0,
+            has_secret: true,
+            vision_count: 0,
+            headers: vec![],
+            models: models
+                .iter()
+                .map(|m| ModelPair {
+                    model: (*m).into(),
+                    upstream: None,
+                    vision: false,
+                    drop_fields: String::new(),
+                })
+                .collect(),
+        }
+    }
+
+    /// 新增模型：只动勾中的渠道；已有的行不重复加；留空上游名 = 同名发出去。
+    ///
+    /// 反证：把 `declare_names_on` 里那句 `filter(|c| picked.contains(&c.id))` 去掉 → 这条变红
+    /// （会去改没勾中的渠道）。
+    #[test]
+    fn creating_a_model_declares_it_only_on_the_picked_channels() {
+        let chans = vec![
+            ch(1, "甲", &["auto"]),
+            ch(2, "乙", &[]),
+            ch(3, "丙", &["BAAI/bge-m3"]),
+        ];
+        let work = declare_names_on(&chans, &[2, 3], "新模型", None);
+        assert_eq!(work.len(), 2, "只该动勾中的两条：{work:?}");
+        assert_eq!(work[0].0, 2);
+        assert_eq!(
+            work[0].1.iter().map(|m| m.model.as_str()).collect::<Vec<_>>(),
+            vec!["新模型"]
+        );
+        assert!(work[0].1[0].upstream.is_none(), "留空 = 同名发出去");
+        assert_eq!(work[1].0, 3);
+        assert_eq!(
+            work[1].1.iter().map(|m| m.model.as_str()).collect::<Vec<_>>(),
+            vec!["BAAI/bge-m3", "新模型"],
+            "已有的行要留着，新的往后加"
+        );
+    }
+
+    /// 上游名给了就带上；同一个名字大小写不同不算新行（不重复加）。
+    #[test]
+    fn creating_a_model_sets_the_upstream_name_and_never_duplicates() {
+        let chans = vec![ch(1, "甲", &["Auto"])];
+        let work = declare_names_on(&chans, &[1], "auto", Some("deepseek-v4.1-flash"));
+        assert_eq!(work[0].1.len(), 1, "已有 auto 就不该再加一行：{:?}", work[0].1);
+        let work2 = declare_names_on(&chans, &[1], "全新名字", Some("up-x"));
+        assert_eq!(work2[0].1.len(), 2);
+        assert_eq!(work2[0].1[1].upstream.as_deref(), Some("up-x"));
+        assert_eq!(
+            declare_names_on(&chans, &[], "谁都不勾", None).len(),
+            0,
+            "一条都不勾就什么都不动"
         );
     }
 }
