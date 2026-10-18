@@ -139,11 +139,11 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
             // 四个数：并排的数字条（不是卡片，靠竖线分隔）
-            <div class="stats">
+            <div class="overview-metrics">
                 <div class="stat">
                     <div class="stat-title">"请求数"</div>
                     <div class="stat-value">{move || fmt::num(stats.get().stats.total)}</div>
-                    <div class="stat-sub">{move || format!("窗口 {} 小时", stats.get().window_hours)}</div>
+                    <div class="stat-sub">"当前时间窗口"</div>
                 </div>
                 <div class="stat">
                     <div class="stat-title">"成功率"</div>
@@ -156,7 +156,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     <div class="stat-sub">{move || format!("成功 {}", fmt::num(stats.get().stats.ok))}</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-title">"失败的请求"</div>
+                    <div class="stat-title">"失败"</div>
                     <div class="stat-value">{move || fmt::num(stats.get().stats.failed)}</div>
                     <div class="stat-sub">
                         {move || {
