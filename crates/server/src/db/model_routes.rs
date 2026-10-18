@@ -46,6 +46,9 @@ pub struct NameRoute {
     pub channels: Vec<ChannelId>,
     /// 这些可用渠道里有没有标了「能看图」的。
     pub vision_channels: bool,
+    /// Conservative limit across usable mappings; absent if any target is unknown.
+    pub context_window: Option<i64>,
+    pub context_source: Option<String>,
 }
 
 impl NameRoute {
@@ -93,6 +96,8 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
                         declared_by: Vec::new(),
                         channels: Vec::new(),
                         vision_channels: false,
+                        context_window: None,
+                        context_source: None,
                     });
                     out.len() - 1
                 }
@@ -115,6 +120,12 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
         super::catalog::list(conn, ch.id).map(|entries| (ch.id, entries))
     }).collect::<Result<HashMap<_, _>>>()?;
     for r in &mut out {
+        r.context_window = crate::capability_detector::conservative_context(
+            chans.iter().filter(|ch| usable(ch) && r.channels.contains(&ch.id))
+                .flat_map(|ch| ch.models.iter().filter(|m| same_model_name(&m.model, &r.name))
+                    .map(|m| crate::capability_detector::mapped_context(&catalogs[&ch.id], m)))
+        );
+        r.context_source = r.context_window.map(|_| "upstream".to_string());
         let mut claims = Vec::new();
         for ch in &chans {
             if !r.declared_by.contains(&ch.id) { continue; }
