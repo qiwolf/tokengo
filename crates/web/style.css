@@ -899,6 +899,62 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
 .pull-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.8125rem; }
 .pull-list, .pull-rows { display: flex; flex-direction: column; gap: 6px; max-height: 18rem; overflow: auto; }
 
+/* 「获取上游模型」拿回来的那份清单：一个模型一格。勾上的行整格标出来，
+   这样「哪几个名字这条渠道认」扫一眼就知道，不用去数勾选框。 */
+.m-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 2px;
+}
+.m-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.m-row.on { border-color: var(--accent); background: var(--surface-3); }
+.m-pick { display: inline-grid; place-items: center; width: 18px; padding-top: 3px; }
+.m-pick input { width: 16px; height: 16px; margin: 0; }
+.m-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.m-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* 名字这一格占满剩下的宽度、长了就用省略号，别把「详情」挤出去 */
+.m-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+.m-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.m-tags:empty { display: none; }
+.m-tags .tag { font-size: 0.6875rem; }
+.m-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.m-map { font-size: 0.8125rem; color: var(--fg-2); overflow-wrap: anywhere; }
+/* 详情里那几行：左边固定宽的字段名，右边输入框占满 */
+.m-f { display: flex; align-items: center; gap: 8px; }
+.m-f > span:first-child { flex: 0 0 6.5rem; color: var(--fg-3); font-size: 0.8125rem; }
+.m-f input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.m-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 46rem) {
+  .m-row { padding: 9px 10px; gap: 8px; }
+  .m-f { flex-wrap: wrap; row-gap: 4px; }
+  .m-f > span:first-child { flex: 0 0 auto; }
+}
+
 /* ---------- 12. 弹窗 ---------- */
 .modal-backdrop {
   position: fixed;
