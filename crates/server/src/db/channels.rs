@@ -334,6 +334,7 @@ pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> 
             ],
         )?;
     }
+    super::catalog::adopt_vision(conn, id)?;
     Ok(())
 }
 

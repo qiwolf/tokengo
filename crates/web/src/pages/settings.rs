@@ -4,6 +4,44 @@
 //! 不然会有人手一滑把在跑的客户端全打 401。
 
 use leptos::prelude::*;
+use wasm_bindgen::{JsCast, JsValue};
+
+async fn copy_text(text: &str) -> bool {
+    let Some(window) = web_sys::window() else { return false };
+    // HTTP origins have no Clipboard API; denied permissions must also fall back.
+    if let Ok(value) = js_sys::Reflect::get(window.navigator().as_ref(), &JsValue::from_str("clipboard")) {
+        if !value.is_null() && !value.is_undefined() {
+            if let Ok(clipboard) = value.dyn_into::<web_sys::Clipboard>() {
+                if wasm_bindgen_futures::JsFuture::from(clipboard.write_text(text)).await.is_ok() {
+                    return true;
+                }
+            }
+        }
+    }
+    let Some(document) = window.document() else { return false };
+    let Some(body) = document.body() else { return false };
+    let Ok(element) = document.create_element("textarea") else { return false };
+    let Ok(area) = element.dyn_into::<web_sys::HtmlTextAreaElement>() else { return false };
+    area.set_value(text);
+    let _ = area.set_attribute("style", "position:fixed;left:0;top:0;opacity:0");
+    let _ = area.set_attribute("readonly", "");
+    if body.append_child(&area).is_err() { return false; }
+    let previous = document.active_element();
+    let _ = area.focus();
+    area.select();
+    let _ = area.set_selection_range(0, text.encode_utf16().count() as u32);
+    let copied = js_sys::Reflect::get(document.as_ref(), &JsValue::from_str("execCommand"))
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .and_then(|f| f.call1(document.as_ref(), &JsValue::from_str("copy")).ok())
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    area.remove();
+    if let Some(element) = previous.and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+        let _ = element.focus();
+    }
+    copied
+}
 
 use crate::api;
 use crate::fmt;
@@ -114,9 +152,11 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 },
             };
             if let Some(k) = key {
-                if let Some(window) = web_sys::window() {
-                    let _ = window.navigator().clipboard().write_text(&k);
+                if copy_text(&k).await {
                     ctx.say("对外 key 已复制到剪贴板");
+                } else {
+                    generated.set(Some(k));
+                    ctx.say("浏览器阻止了自动复制，请长按下方 key 手动复制");
                 }
             }
         });
@@ -181,7 +221,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
                 {move || generated.get().map(|k| view! {
                     <div class="banner ok" style="margin-top:8px;word-break:break-all">
-                        "新 key：" <code>{k}</code>
+                        "可复制的 key：" <code style="user-select:all">{k}</code>
                         "　（已存下来，以后随时点「复制」都能取，不用再生成）"
                     </div>
                 })}

@@ -1451,7 +1451,46 @@ async fn get_with_token(f: &Fixture, uri: &str, session: &str) -> (StatusCode, V
 
 // ───────────────────────── 拉上游模型清单 ─────────────────────────
 
-/// 面板「拉取上游模型清单」：真打这条渠道的 `GET /v1/models`，用它自己的 key 和自定义头。
+/// Explicit image-input metadata reaches aliases without paid probes or accounting.
+#[tokio::test]
+async fn catalog_refresh_and_channel_save_publish_explicit_vision_for_aliases() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Status(200, r#"{"data":[
+        {"id":"real","input_modalities":["text","image"]},
+        {"id":"image-output","architecture":{"modality":"text->image"}},
+        {"id":"vision-name-only"}
+    ]}"#)).await;
+    let id = f.add_channel("mock", &m.base, ChannelSpec {
+        models: vec![("alias".into(), Some("real".into())),
+            ("image-output".into(), None), ("vision-name-only".into(), None)],
+        ..Default::default()
+    });
+    let token = tokengo_server::db::sessions::create_session(&f.state.conn(), None).unwrap();
+    let (s, v) = get_via_post(&f, &format!("/api/channels/{}/models", id.0), &token).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], true);
+    let (_, listed) = get(&f, "/v1/models", Some(KEY)).await;
+    let rows = listed["data"].as_array().unwrap();
+    for (name, expected) in [("alias", true), ("image-output", false), ("vision-name-only", false)] {
+        assert_eq!(rows.iter().find(|r| r["id"] == name).unwrap()["vision"], expected);
+    }
+    let (s, saved) = put_with_token(&f, &format!("/api/channels/{}", id.0), &token, json!({
+        "name":"mock", "base_url":m.base, "models":[
+            {"model":"new-alias","upstream":"real","vision":false}
+        ]
+    })).await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    assert_eq!(saved["models"][0]["vision"], true);
+    let (_, listed) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(listed["data"].as_array().unwrap().iter()
+        .find(|r| r["id"] == "new-alias").unwrap()["vision"], true);
+    assert_eq!(m.seen().len(), 1, "saving uses cached metadata, never a paid probe");
+    assert!(f.request_rows().is_empty());
+    assert!(f.attempts().is_empty());
+    assert!(f.state.routing().state("alias").is_none());
+}
+
 #[tokio::test]
 async fn the_panel_can_pull_the_upstream_model_list() {
     let f = fixture();
