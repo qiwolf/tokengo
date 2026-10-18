@@ -22,7 +22,6 @@ pub enum Page {
     Overview,
     Channels,
     Models,
-    Logs,
     Settings,
 }
 
@@ -31,7 +30,6 @@ impl Page {
         Page::Overview,
         Page::Channels,
         Page::Models,
-        Page::Logs,
         Page::Settings,
     ];
 
@@ -41,7 +39,6 @@ impl Page {
             Page::Overview => "overview",
             Page::Channels => "channels",
             Page::Models => "models",
-            Page::Logs => "logs",
             Page::Settings => "settings",
         }
     }
@@ -52,7 +49,6 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
-            Page::Logs => "日志",
             Page::Settings => "设置",
         }
     }
@@ -63,7 +59,6 @@ impl Page {
             Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
-            Page::Logs => "网关自己记的日志：按级别和关键词筛，关键词可以直接填请求号。",
             Page::Settings => "对外 key、面板口令、登录着的设备。",
         }
     }
@@ -80,6 +75,7 @@ impl Page {
         let name = name.split('/').next().unwrap_or("");
         match name {
             "groups" | "routing" => Page::Models,
+            "logs" => Page::Settings,
             _ => Self::ALL
                 .iter()
                 .copied()
@@ -128,6 +124,6 @@ mod tests {
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
         // 五页：总览 · 渠道 · 模型 · 日志 · 设置（「请求」撤了）
-        assert_eq!(Page::ALL.len(), 5);
+        assert_eq!(Page::ALL.len(), 4);
     }
 }

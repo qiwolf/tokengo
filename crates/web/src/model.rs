@@ -85,6 +85,8 @@ pub struct ChannelsResp {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
     #[serde(default)]
+    pub runtime: RuntimeScore,
+    #[serde(default)]
     pub detection_status: String,
     #[serde(default)]
     pub kind_conflict: bool,
@@ -117,6 +119,18 @@ pub struct NameRoute {
     pub switch_count: i64,
     #[serde(default)]
     pub next_probe_at_ms: Option<i64>,
+}
+
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]
+pub struct RuntimeScore {
+    #[serde(default)] pub avg_first_byte_ms:Option<i64>,
+    #[serde(default)] pub samples:i64,
+    #[serde(default)] pub successes:i64,
+    #[serde(default)] pub faults:i64,
+    #[serde(default)] pub avg_ms:Option<i64>,
+    #[serde(default)] pub score:Option<f64>,
+    #[serde(default)] pub last_at:Option<i64>,
+    #[serde(default)] pub last_error:Option<String>,
 }
 
 /// 保留名 `auto` 现在会挑谁 —— 服务端按实测成绩排好序给的。
@@ -293,6 +307,8 @@ pub struct StatsResp {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LogRow {
     #[serde(default)]
+    pub error_code:Option<String>,
+    #[serde(default)]
     pub first_byte_ms: Option<i64>,
     #[serde(default)]
     pub client_ip: Option<String>,
@@ -326,6 +342,8 @@ pub struct LogsResp {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct AttemptRow {
+    #[serde(default)] pub model_name:Option<String>,
+    #[serde(default)] pub upstream_model:Option<String>,
     pub ordinal: i64,
     pub channel_id: i64,
     pub channel_name: Option<String>,

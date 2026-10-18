@@ -50,6 +50,7 @@ use crate::Ctx;
 
 #[component]
 pub fn Settings(ctx: Ctx) -> impl IntoView {
+    let logs_open=RwSignal::new(false);
     let info = RwSignal::new(crate::model::SettingsResp::default());
     let err = RwSignal::new(None::<String>);
     let generated = RwSignal::new(None::<String>);
@@ -343,6 +344,10 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
             </section>
 
+        <details class="fold settings-logs" on:toggle=move |ev| {if let Some(target)=ev.target(){logs_open.set(js_sys::Reflect::get(&target,&"open".into()).ok().and_then(|v|v.as_bool()).unwrap_or(false));}}>
+            <summary>"运行日志"</summary>
+            <Show when=move ||logs_open.get()><crate::pages::logs::Logs ctx=ctx /></Show>
+        </details>
         </div>
     }
 }

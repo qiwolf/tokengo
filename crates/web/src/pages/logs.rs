@@ -11,7 +11,7 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::pages::PageHead;
+
 use crate::Ctx;
 
 #[component]
@@ -73,10 +73,12 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
             timer.set(0);
         }
     };
-    toggle_auto(true);
+    toggle_auto(false);
+    on_cleanup(move || {let id=timer.get_untracked();if id!=0 {crate::stop_timer(id);}});
 
     // 每 15 秒走一次"当前时间"，让限时倒计时会动
-    let _tick = crate::every(15000, move || now.set(crate::now_ms()));
+    let tick = crate::every(15000, move || now.set(crate::now_ms()));
+    on_cleanup(move ||crate::stop_timer(tick));
 
     let remaining = move || {
         let at = revert_at.get();
@@ -117,22 +119,7 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
 
     view! {
         <div class="page">
-            <PageHead
-                title="日志"
-                desc="网关自己记的日志：出问题时在这里找现场，按级别和关键词筛，关键词可以直接填请求号。"
-            >
-                <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
-                    {move || if busy.get() { "刷新中…" } else { "刷新" }}
-                </button>
-                <button
-                    class="chip"
-                    class:active=move || auto.get()
-                    on:click=move |_| toggle_auto(!auto.get_untracked())
-                >
-                    {move || if auto.get() { "自动刷新：开（5 秒）" } else { "自动刷新：关" }}
-                </button>
-            </PageHead>
-
+            <div class="toolbar"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新日志"</button><button class="ghost" on:click=move |_|toggle_auto(!auto.get_untracked())>{move ||if auto.get(){"停止自动刷新"}else{"5 秒自动刷新"}}</button></div>
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
             // 当前级别 + 限时开关
@@ -145,13 +132,6 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
                             <span class="muted small" style="margin-left:8px">
                                 {move || remaining()}
                             </span>
-                        </div>
-                        <div class="muted small" style="margin-top:4px">
-                            {move || if file.get().is_empty() {
-                                "（这台机器上没写日志文件，只有内存里这一份）".to_string()
-                            } else {
-                                format!("日志文件：{}（单文件 4 MB 自动轮转，最多留 3 个）", file.get())
-                            }}
                         </div>
                     </div>
                     <span class="spacer"></span>

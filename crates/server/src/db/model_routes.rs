@@ -219,37 +219,14 @@ pub fn auto_candidates(
     want_vision: bool,
     now_ms: i64,
 ) -> Result<Vec<String>> {
-    let stats = channel_stats(conn, now_ms - AUTO_STATS_WINDOW_MS)?;
-    let mut scored: Vec<(String, f64, i64)> = Vec::new();
+    let stats=super::scores::all(conn,now_ms)?;
+    let mut scored:Vec<(String,f64,i64)>=Vec::new();
     for r in list(conn)? {
-        if !r.routed() || !kind_serves(r.kind, want) {
-            continue;
-        }
-        if want_vision && !r.can_see() {
-            continue;
-        }
-        // 这个名字的成绩 = 它后面那几条可用渠道合起来算（同一个名字换渠道不是换模型）。
-        let mut attempts = 0i64;
-        let mut faults = 0i64;
-        let mut total_ms = 0i64;
-        for id in &r.channels {
-            let s = stats.get(&id.0).copied().unwrap_or_default();
-            attempts += s.attempts;
-            faults += s.faults;
-            total_ms += s.total_ms;
-        }
-        let (fail_rate, avg_ms) = if attempts > 0 {
-            (faults as f64 / attempts as f64, total_ms / attempts)
-        } else {
-            (0.0, i64::MAX)
-        };
-        scored.push((r.name, fail_rate, avg_ms));
+        if !r.routed() || !kind_serves(r.kind,want) || (want_vision && !r.can_see()) {continue;}
+        let v=stats.get(&normalize_model_name(&r.name)).cloned().unwrap_or_default();
+        scored.push((r.name,v.value(),v.avg_ms.unwrap_or(i64::MAX)));
     }
-    scored.sort_by(|a, b| {
-        a.1.total_cmp(&b.1)
-            .then(a.2.cmp(&b.2))
-            .then(a.0.cmp(&b.0))
-    });
+    scored.sort_by(|a,b|b.1.total_cmp(&a.1).then(a.2.cmp(&b.2)).then(a.0.cmp(&b.0)));
     Ok(scored.into_iter().map(|x| x.0).collect())
 }
 
@@ -259,37 +236,6 @@ pub fn auto_candidates(
 /// 所以对外清单里要不要列 auto，由它说了算。
 pub fn auto_available(conn: &Connection) -> Result<bool> {
     Ok(list(conn)?.iter().any(|r| r.routed()))
-}
-
-/// 最近一段时间每条渠道的成绩。**只数渠道自己的毛病**：连不上 / 5xx / 429 / 上游回了
-/// 200 却一句话不说；客户端把请求写错（400/422）与客户端自己断开不算渠道的账。
-#[derive(Debug, Default, Clone, Copy)]
-struct Stats {
-    attempts: i64,
-    faults: i64,
-    total_ms: i64,
-}
-
-fn channel_stats(conn: &Connection, since_ms: i64) -> Result<HashMap<i64, Stats>> {
-    let mut stmt = conn.prepare(
-        "SELECT a.channel_id, a.outcome, a.duration_ms
-           FROM attempts a JOIN requests r ON r.id = a.request_id
-          WHERE r.ts_ms >= ?1",
-    )?;
-    let mut out: HashMap<i64, Stats> = HashMap::new();
-    let mut rows = stmt.query([since_ms])?;
-    while let Some(row) = rows.next()? {
-        let id: i64 = row.get(0)?;
-        let outcome: String = row.get(1)?;
-        let dur: i64 = row.get(2)?;
-        let s = out.entry(id).or_default();
-        s.attempts += 1;
-        s.total_ms += dur.max(0);
-        if outcome == "channel_fault" || outcome == "empty_reply" {
-            s.faults += 1;
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -540,8 +486,8 @@ mod tests {
                 )
                 .unwrap();
             conn.execute(
-                "INSERT INTO attempts (request_id, ordinal, channel_id, outcome, duration_ms)
-                 VALUES (?1, 0, ?2, ?3, ?4)",
+                "INSERT INTO attempts (request_id, ordinal, channel_id, outcome, duration_ms,model_name)
+                 VALUES (?1, 0, ?2, ?3, ?4,(SELECT model_name FROM channel_models WHERE channel_id=?2 LIMIT 1))",
                 rusqlite::params![rid, ch.0, outcome, dur],
             )
             .unwrap();

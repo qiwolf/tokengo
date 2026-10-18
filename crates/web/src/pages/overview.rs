@@ -236,7 +236,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         let rows = recent.get();
                         if rows.is_empty() { return view! { <div class="empty">"暂无调用"</div> }.into_any(); }
                         rows.into_iter().map(|r| {
-                            let (label,css) = status_label(&r.status);
+                            let (base_label,css) = status_label(&r.status);
+                            let label=match r.error_code.as_deref() {Some("model_not_configured")=>"模型未配置",Some("auto_no_candidate")=>"无可用候选",Some("vision_not_ready")=>"视觉未就绪",Some("request_invalid")=>"请求参数错误",_=>base_label};
                             let id=r.id;
                             let opened=expanded.get()==Some(id);
                             let channel=channel_name(r.channel_id);
@@ -385,6 +386,7 @@ fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
             <li class="request-attempt">
                 <div class="attempt-head"><b>{format!("第 {} 次 · {action}", i + 1)}</b><span class=format!("tag {css}")>{outcome.to_string()}</span></div>
                 <div>{format!("{} · 渠道 #{} · {} · {}", a.channel_name.unwrap_or_else(|| "已删除的渠道".into()), a.channel_id, a.http_status.map(|h| format!("HTTP {h}")).unwrap_or_else(|| "未收到 HTTP 状态".into()), fmt::dur(a.duration_ms))}</div>
+                {a.model_name.map(|m|view!{<div>{format!("模型：{} → {}",m,a.upstream_model.unwrap_or_else(||"未记录".into()))}</div>})}
                 {a.error.filter(|e| !e.is_empty()).map(|e| view! { <p class="bad-text">{e}</p> })}
             </li>
         }
@@ -392,9 +394,9 @@ fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
     view! {
         <div class="recent-detail">
             <span>{format!("{} · {} · {}", fmt::ts(r.ts_ms), r.endpoint, r.model)}</span>
-            <span>{format!("结果：{} · HTTP {}", status_label(&r.status).0, r.http_status.map(|h| h.to_string()).unwrap_or_else(|| "未记录".into()))}</span>
+            <span>{format!("结果：{} · HTTP {}", match r.error_code.as_deref(){Some("model_not_configured")=>"模型未配置",Some("auto_no_candidate")=>"无可用候选",Some("vision_not_ready")=>"视觉未就绪",Some("request_invalid")=>"请求参数错误",_=>status_label(&r.status).0}, r.http_status.map(|h| h.to_string()).unwrap_or_else(|| "未记录".into()))}</span>
             <span>{format!("总耗时：{} · 首字节：{}", fmt::dur(r.latency_ms), r.first_byte_ms.map(fmt::dur).unwrap_or_else(|| "未记录".into()))}</span>
-            <span>{format!("最终渠道：{}", r.channel_id.map(|id| format!("#{id}")).unwrap_or_else(|| "未进入渠道".into()))}</span>
+            <span>{format!("最终渠道：{}", r.channel_id.map(|id| format!("#{id}")).unwrap_or_else(|| "未发送上游".into()))}</span>
             <span>{format!("来源 IP：{}", r.client_ip.as_deref().unwrap_or("未提供"))}</span>
             <span>{format!("请求应用（User-Agent）：{}", r.user_agent.as_deref().unwrap_or("未提供"))}</span>
             <span>{if r.streamed { "输出方式：流式" } else { "输出方式：非流式" }}</span>
