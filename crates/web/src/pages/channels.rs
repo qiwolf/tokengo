@@ -286,7 +286,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_cap_text.set(l.max_concurrent.to_string());
         reset_pull();
         form_ver.update(|v| *v += 1);
-        tab.set(TAB_BASIC.to_string());
+        // 编辑已有渠道：直接停在「模型」那一栏 —— 这一栏才是「挑这条渠道认哪些名字、
+        // 去上游拉清单」的地方，停在「基本信息」会让人以为没处可拉（用户实测反馈过）。
+        tab.set(TAB_MODELS.to_string());
         form.set(Form::Edit(l.id));
     };
 
@@ -843,6 +845,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     ().into_any()
                                 } else {
                                     view! {
+                                        <p class="muted small">
+                                            "这条渠道认哪些模型、怎么去上游拉清单，都在上面「模型」那一栏里。"
+                                        </p>
                                         <div class="form-grid">
                                             <label>"名称"</label>
                                             <input type="text" prop:value=f_name placeholder="如：硅基流动"
@@ -975,8 +980,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 } else {
                                     view! {
                                         <div class="pull-bar">
+                                            // 这是「模型」段的主操作，用默认的描边按钮（.ghost 是纯文字，
+                                            // 用户实测反馈「看着不像能点的」）
                                             <button
-                                                class="ghost"
                                                 disabled=move || pulling.get() || channel_id.is_none()
                                                 on:click=pull
                                             >
