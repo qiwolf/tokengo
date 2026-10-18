@@ -616,6 +616,16 @@ mod tests {
     }
 
     #[test]
+    fn recent_calls_expose_actual_model_without_changing_request_name() {
+        let conn=open_in_memory().unwrap();
+        let id=start(&conn,"/v1/chat/completions","auto",None,false).unwrap();
+        conn.execute("UPDATE requests SET served_model='actual-model' WHERE id=?1",[id]).unwrap();
+        let row=recent(&conn,1).unwrap().remove(0);
+        assert_eq!(row.model,"auto");
+        assert_eq!(row.served_model,"actual-model");
+    }
+
+    #[test]
     fn default_status_is_failed_so_a_crash_still_counts_as_a_failure() {
         let conn = open_in_memory().unwrap();
         let id = start(&conn, "/v1/chat/completions", "auto", None, false).unwrap();
