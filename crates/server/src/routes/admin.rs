@@ -1040,6 +1040,7 @@ async fn model_routes_list(
         })
     };
     let scores = {let conn=state.conn(); crate::db::scores::all(&conn,now_ms())?};
+    let totals = {let conn=state.conn();crate::db::scores::total_calls(&conn)?};
     let router = state.routing();
     let rows = routes
         .iter()
@@ -1051,6 +1052,7 @@ async fn model_routes_list(
             };
             serde_json::json!({
                 "name": r.name,
+                "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),
                 "score_window_ms": crate::db::scores::WINDOW_MS,
                 "exploration_count": ({let c=state.conn();c.query_row("SELECT COUNT(*) FROM requests WHERE explored=1 AND served_model=?1",[&r.name],|r|r.get::<_,i64>(0)).unwrap_or(0)}),

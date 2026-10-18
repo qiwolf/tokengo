@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use super::Result;
 use tokengo_shared::normalize_model_name;
-pub const WINDOW_MS:i64=15*60*1000;
+pub const WINDOW_MS:i64=2*60*60*1000;
 #[derive(Debug,Clone,Default,Serialize)]
 pub struct Score {
  pub samples:i64,pub successes:i64,pub faults:i64,
@@ -34,8 +34,23 @@ pub fn for_channel(conn:&Connection,now:i64,channel:Option<i64>)->Result<HashMap
  Ok(out)
 }
 pub fn all(conn:&Connection,now:i64)->Result<HashMap<String,Score>> {for_channel(conn,now,None)}
+/// Deduplicate retries and canonical spelling without coupling lifetime totals to retention.
+pub fn total_calls(conn:&Connection)->Result<HashMap<String,i64>> {
+ let mut st=conn.prepare("SELECT request_id,model_name FROM model_invocations")?;
+ let pairs=st.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?;
+ let mut seen=std::collections::HashSet::new();let mut out=HashMap::new();
+ for pair in pairs {let (id,name)=pair?;let key=normalize_model_name(&name);if seen.insert((id,key.clone())){*out.entry(key).or_insert(0)+=1;}}
+ Ok(out)
+}
 #[cfg(test)]mod tests{
  use super::*;
+ #[test]fn totals_deduplicate_and_survive_pruning(){
+ let c=crate::db::open_in_memory().unwrap();c.execute("INSERT INTO requests(ts_ms,endpoint,model,status) VALUES(1000,'chat','auto','ok')",[]).unwrap();
+ for name in ["a","a","b"]{c.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,model_name) VALUES(1,0,3,'success',?1)",[name]).unwrap();}
+ assert_eq!(total_calls(&c).unwrap()["a"],1);assert_eq!(total_calls(&c).unwrap()["b"],1);
+ assert_eq!(all(&c,60*60*1000).unwrap()["a"].samples,2);assert!(all(&c,3*60*60*1000).unwrap().is_empty());
+ crate::db::requests::prune_before(&c,2000).unwrap();assert_eq!(total_calls(&c).unwrap()["a"],1);
+ }
  #[test]fn same_channel_different_models_have_independent_scores(){
   let c=crate::db::open_in_memory().unwrap();
   c.execute("INSERT INTO requests(ts_ms,endpoint,model,status) VALUES(1000,'chat','auto','ok')",[]).unwrap();
