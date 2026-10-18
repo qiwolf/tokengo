@@ -7,58 +7,157 @@
 //! - **密钥留空 = 不改**：编辑一条渠道时密钥框留空表示沿用已存的；想清掉要**明确**点
 //!   「清空密钥」。不然每次改个名字都得重输一遍密钥。
 //! - **清单是上游说的，不是我们编的**：拉不到就只说实话（连不上/HTTP 404/格式没认出），
-//!   绝不给一份看着挺像的假清单。勾选也**默认一个不勾**，要加哪几条自己挑。
+//!   绝不给一份看着挺像的假清单。上游报的**模型说明**（归属方、上下文长度、价钱、
+//!   它自称能不能收图）一并显示；它没说的字段，界面上一个标签都不标。
 //! - **「能不能看图」只认实测**：模型名里带 vl/vision 不代表能看图（deepseek 的 flash
-//!   就能读图，有些带 vision 的名字反倒是纯文本）。所以每一行都有「测视觉」按钮：
+//!   就能读图，有些带 vision 的名字反倒是纯文本）。所以每一条上都有「测一下能不能看图」：
 //!   真发一张图问一个只有看图才答得出的问题（左上角什么颜色），答对了才勾上。
 //!   勾了才有资格接带图的请求 —— 没勾的渠道，带图请求一条都不会发给它。
-
-use std::collections::BTreeSet;
+//!
+//! ## 编辑弹窗（v0.5.0 重做）
+//!
+//! 弹窗顶上一排切换条，分三段：**基本信息**（名称/地址/密钥/启用/响应解包）、
+//! **请求头**、**模型**。为什么分三段：三段各自都能很长，平铺在一屏里手机上一定
+//! 看不到底（用户报过"这些内容看不见"），切换条把"哪一段有活干"摆在最上面。
+//!
+//! 「模型」那一段是主角，一条规则贯穿始终：
+//!
+//! > **一行 = 一条映射，键是"客户端里写的名字"。勾着 = 这条渠道认这个名字。**
+//!
+//! 它把原先的两步走合成一步：勾选状态本身就是保存内容（以前要"先在清单里勾、
+//! 再点一下加进下表"，勾了忘了加就等于白勾）；上游给的名字和说明直接挂在勾选项上；
+//! 客户端名字跟上游名字不一样时（`auto` → `v4.1flash` 这种），用「加一个自己的名字」
+//! 加一条，再在它的「详情」里填上游实际叫什么。
 
 use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{HeaderPair, Channel, ModelPair};
+use crate::model::{Channel, HeaderPair, ModelPair, UpstreamModel};
 use crate::pages::PageHead;
 use crate::Ctx;
 
 /// 上游清单一次最多显示这么多行（真有上游报上千个模型，全塞进 DOM 会卡）。
 const SHOW_LIMIT: usize = 200;
 
+/// 弹窗三段的名字（`tab` 信号里存的就是这几个字面量）。
+const TAB_BASIC: &str = "basic";
+const TAB_HEADERS: &str = "headers";
+const TAB_MODELS: &str = "models";
+
 /// 按关键字过滤上游报的模型名（大小写不敏感），最多取 `limit` 个。
-pub(crate) fn filter_models(all: &[String], filter: &str, limit: usize) -> Vec<String> {
+pub(crate) fn filter_catalog(all: &[UpstreamModel], filter: &str, limit: usize) -> Vec<UpstreamModel> {
     let needle = filter.trim().to_lowercase();
     all.iter()
-        .filter(|m| needle.is_empty() || m.to_lowercase().contains(&needle))
+        .filter(|m| needle.is_empty() || m.id.to_lowercase().contains(&needle))
         .take(limit)
         .cloned()
         .collect()
 }
 
-/// 把勾选的模型名追加成「该渠道认的模型名」表单行，返回加了几个。
-///
-/// 空名字跳过、表里已有的**不重复加**（否则连点两次就一堆重复行）。
-/// 加进来的行右边留空 = 同名发给上游；要改名人在右框里自己填。
-pub(crate) fn add_picked_rows(rows: &mut Vec<ModelPair>, picked: &BTreeSet<String>) -> usize {
-    let mut added = 0;
-    for name in picked {
-        let name = name.trim();
-        if name.is_empty() || rows.iter().any(|m| m.model.trim() == name) {
+/// 上游这次的清单里有没有这个名字。
+pub(crate) fn catalog_has(catalog: &[UpstreamModel], name: &str) -> bool {
+    catalog.iter().any(|c| c.id == name)
+}
+
+/// 表里「客户端名字 = client」的那一条映射。
+pub(crate) fn mapping_for<'a>(rows: &'a [ModelPair], client: &str) -> Option<&'a ModelPair> {
+    rows.iter().find(|m| m.model.trim() == client.trim())
+}
+
+/// 这条渠道认不认这个名字（= 表里有没有这条映射）。面板上的勾就认它。
+pub(crate) fn is_in_use(rows: &[ModelPair], client: &str) -> bool {
+    mapping_for(rows, client).is_some()
+}
+
+/// 加一条映射：客户端名字 = `name`，上游同名（上游那栏留空 = 同名发出去）。
+/// 已经有了、或者名字是空的就不动，回 `false`。
+pub(crate) fn add_mapping(rows: &mut Vec<ModelPair>, name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() || is_in_use(rows, name) {
+        return false;
+    }
+    rows.push(ModelPair {
+        model: name.to_string(),
+        upstream: None,
+        // 刚加进来的名字**不许猜能力**：要标能看图得点这一条的「测一下能不能看图」。
+        vision: false,
+        // 要丢的字段也一样不许猜：默认一个字段都不丢。
+        drop_fields: String::new(),
+    });
+    true
+}
+
+/// 批量加（「全选当前显示的」）。回真正加了几条。
+pub(crate) fn add_many(rows: &mut Vec<ModelPair>, names: &[String]) -> usize {
+    let mut n = 0;
+    for name in names {
+        if add_mapping(rows, name) {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// 删掉「客户端名字 = client」的映射，回删了几条。
+pub(crate) fn drop_mapping(rows: &mut Vec<ModelPair>, client: &str) -> usize {
+    let before = rows.len();
+    rows.retain(|m| m.model.trim() != client.trim());
+    before - rows.len()
+}
+
+/// 这一条额外配过东西吗（能看图 / 要丢的字段）—— 取消勾选前要提醒一句，
+/// 不然"顺手把配置删掉了"看不出来。
+pub(crate) fn mapping_has_config(rows: &[ModelPair], client: &str) -> bool {
+    mapping_for(rows, client)
+        .map(|m| m.vision || !m.drop_fields.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// 同一个客户端名字出现两次的名字（保存前拦下来：一个名字只能有一条映射）。
+pub(crate) fn duplicate_client_names(rows: &[ModelPair]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut dup: Vec<String> = Vec::new();
+    for m in rows {
+        let n = m.model.trim().to_string();
+        if n.is_empty() {
             continue;
         }
-        rows.push(ModelPair {
-            model: name.to_string(),
-            upstream: None,
-            // 刚从上游清单里拉回来的名字，能力未知 —— **不许猜**，
-            // 要标能看图得点这一行的「测视觉」实测。
-            vision: false,
-            // 要丢的字段也一样不许猜：拉回来的名字默认一个字段都不丢。
-            drop_fields: String::new(),
-        });
-        added += 1;
+        if seen.contains(&n) {
+            if !dup.contains(&n) {
+                dup.push(n);
+            }
+        } else {
+            seen.push(n);
+        }
     }
-    added
+    dup
+}
+
+/// 表单 → 要提交的映射表：两头空白去掉、空名字的行丢掉，并如实回报丢了几条。
+pub(crate) fn mappings_to_save(rows: &[ModelPair]) -> (Vec<ModelPair>, usize) {
+    let mut out: Vec<ModelPair> = Vec::new();
+    let mut skipped = 0usize;
+    for m in rows {
+        let client = m.model.trim();
+        if client.is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let upstream = m
+            .upstream
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(str::to_string);
+        out.push(ModelPair {
+            model: client.to_string(),
+            upstream,
+            vision: m.vision,
+            drop_fields: m.drop_fields.clone(),
+        });
+    }
+    (out, skipped)
 }
 
 /// 编辑表单的状态。
@@ -81,14 +180,23 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let probe_kind = RwSignal::new("chat".to_string());
     let probe_msg = RwSignal::new(None::<(i64, String, bool)>);
 
+    // 弹窗停在哪一段
+    let tab = RwSignal::new(TAB_BASIC.to_string());
+
     // 「拉取上游模型清单」的状态
-    let pulled = RwSignal::new(Vec::<String>::new());
-    let picked = RwSignal::new(BTreeSet::<String>::new());
+    let pulled = RwSignal::new(Vec::<UpstreamModel>::new());
     let pull_msg = RwSignal::new(None::<(String, bool)>);
     let pulling = RwSignal::new(false);
     let pull_filter = RwSignal::new(String::new());
+    // 「加一个自己的名字」输入框里正打着的字
+    let manual = RwSignal::new(String::new());
+    // 模型那一段的结构变化（勾/取消/加/删/拉到清单）后 +1 —— 只有它会重排那一列。
+    // **打字不重排**，否则正在输入的框会丢焦点。
+    let mver = RwSignal::new(0u32);
+    // 哪一条的「详情」摊开了（键 = 客户端名字）
+    let m_open = RwSignal::new(None::<String>);
 
-    // 「测视觉」的状态：(这行的渠道 id, 给人看的结果, 好不好)
+    // 「测一下能不能看图」的状态：(渠道 id, 给人看的结果, 好不好)
     let vt_msg = RwSignal::new(None::<(i64, String, bool)>);
     let vt_busy = RwSignal::new(None::<i64>);
 
@@ -108,9 +216,11 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 重新进表单：清掉上一次拉的清单，免得看着像这条渠道的
     let reset_pull = move || {
         pulled.set(Vec::new());
-        picked.set(BTreeSet::new());
         pull_msg.set(None);
         pull_filter.set(String::new());
+        manual.set(String::new());
+        m_open.set(None);
+        mver.update(|v| *v += 1);
     };
 
     let reload = move || {
@@ -142,6 +252,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_unwrap.set(false);
         reset_pull();
         form_ver.update(|v| *v += 1);
+        tab.set(TAB_BASIC.to_string());
         form.set(Form::New);
     };
 
@@ -160,18 +271,23 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_unwrap.set(l.unwrap_envelope);
         reset_pull();
         form_ver.update(|v| *v += 1);
+        tab.set(TAB_BASIC.to_string());
         form.set(Form::Edit(l.id));
     };
 
     let save = move |_| {
-        let (Some(name), Some(url)) = (
-            Some(f_name.get_untracked().trim().to_string()),
-            Some(f_url.get_untracked().trim().to_string()),
-        ) else {
-            return;
-        };
+        let name = f_name.get_untracked().trim().to_string();
+        let url = f_url.get_untracked().trim().to_string();
         if name.is_empty() || url.is_empty() {
             ctx.say("名称和接口地址都得填");
+            return;
+        }
+        let dup = duplicate_client_names(&f_models.get_untracked());
+        if !dup.is_empty() {
+            ctx.say(format!(
+                "一个客户端名字只能有一条：「{}」出现了两次，改掉再保存",
+                dup.join("」「")
+            ));
             return;
         }
         let key = f_key.get_untracked();
@@ -180,18 +296,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             _ => None,
         };
         let headers = f_headers.get_untracked();
-        // 勾了上游清单里的模型、却没点「把勾选的加进下表」就直接保存 —— 保存时替他一起加进去。
-        // （不然勾了就白勾：弹窗一关，勾选不知道去哪了，看着就是「点了没反应」。用户报过这个。）
-        let mut merged = 0usize;
-        let mut models = f_models.get_untracked();
-        let sel = picked.get_untracked();
-        if !sel.is_empty() {
-            merged = add_picked_rows(&mut models, &sel);
-        }
-        let models = models
-            .into_iter()
-            .filter(|m| !m.model.trim().is_empty())
-            .collect::<Vec<_>>();
+        let (models, skipped) = mappings_to_save(&f_models.get_untracked());
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
@@ -202,27 +307,24 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                 .await
             {
                 Ok(new_id) => {
-                    picked.set(BTreeSet::new()); // 勾选已经落到模型表里了，清掉
+                    let tail = if skipped > 0 {
+                        format!("（有 {skipped} 条没填客户端名字，没存）")
+                    } else {
+                        String::new()
+                    };
                     match new_id {
-                        // 新建：**表单不关**，直接切成"编辑这条新渠道" ——
-                        // 这样能马上用它的 URL/密钥去拉上游模型清单，不用先关再点编辑
+                        // 新建：**表单不关**，直接切成"编辑这条新渠道"并跳到「模型」那一段 ——
+                        // 这样能马上用它的 URL/密钥去问上游有哪些模型，不用先关再点编辑
                         Some(i) => {
                             form.set(Form::Edit(i));
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
-                            ctx.say(if merged > 0 {
-                                format!("渠道已新建，顺带把勾选的 {merged} 个模型加进来了 —— 接着可以点「问一下它有哪些模型」")
-                            } else {
-                                "渠道已新建 —— 接着可以点「问一下它有哪些模型」".to_string()
-                            });
+                            tab.set(TAB_MODELS.to_string());
+                            ctx.say(format!("渠道已新建{tail} —— 接着问一下它有哪些模型"));
                         }
                         None => {
                             form.set(Form::Closed);
-                            ctx.say(if merged > 0 {
-                                format!("渠道已保存，顺带把勾选的 {merged} 个模型加进来了")
-                            } else {
-                                "渠道已保存".to_string()
-                            });
+                            ctx.say(format!("渠道已保存{tail}"));
                         }
                     }
                     reload();
@@ -236,13 +338,15 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     };
 
     let clear_key = move |_| {
-        let Form::Edit(id) = form.get_untracked() else { return };
+        let Form::Edit(id) = form.get_untracked() else {
+            return;
+        };
         let name = f_name.get_untracked();
         let url = f_url.get_untracked();
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let headers = f_headers.get_untracked();
-        let models = f_models.get_untracked();
+        let (models, _) = mappings_to_save(&f_models.get_untracked());
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
             match api::save_channel(Some(id), &name, &url, enabled, unwrap, Some(""), &headers, &models).await {
@@ -309,11 +413,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             match api::probe_channel(l.id, &kind).await {
                 Ok(r) => {
                     let mut s = String::new();
-                    if r.ok {
-                        s.push_str("通了");
-                    } else {
-                        s.push_str("没通");
-                    }
+                    s.push_str(if r.ok { "通了" } else { "没通" });
                     if let Some(m) = &r.model_sent {
                         s.push_str(&format!("；发给上游的模型名是 {m}"));
                     }
@@ -342,14 +442,14 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    // 「测视觉」：给这一行真发一张带图的小请求，看这条渠道认不认得出来。
+    // 「测一下能不能看图」：给这一条真发一张带图的小请求，看这条渠道认不认得出来。
     //
     // 为什么要真发：我们不像上游 FreeLLMAPI 那样有一份带能力标记的目录
     // （本项目的上游全是自己加的），而"名字里带 vl"这种推断经常错。
     // 测通了我们顺手把这行标上（服务端的 apply），界面上勾也随之亮起。
     let vision_test = move |(channel_id, model, upstream): (i64, String, String)| {
         if model.trim().is_empty() {
-            ctx.say("先填左边的模型名，不然不知道该测哪一行");
+            ctx.say("这一条没有客户端名字，先填上再测");
             return;
         }
         vt_busy.set(Some(channel_id));
@@ -384,20 +484,23 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     if let Some(reply) = r.reply.as_deref().filter(|x| !x.trim().is_empty()) {
                         s.push_str(&format!("；它回的话「{reply}」"));
                     }
-                    if r.applied {
-                        s.push_str("；已顺手勾上「能看图」");
-                        // 把表里这一行的勾也点亮（勾=服务端真落库了，不是本地糊弄）
+                    if let Some(n) = &r.note {
+                        s.push_str(&format!("；{n}"));
+                    }
+                    if r.ok {
+                        // 实测通过就是通过 —— 先在屏幕上勾上。服务端能顺手落库就落
+                        // （applied）；没落（比如这一条还没保存过）也要说清楚差哪一步，
+                        // 别让人以为已经记下了。
                         f_models.update(|v| {
-                            if let Some(x) = v
-                                .iter_mut()
-                                .find(|x| x.model.trim() == model.trim())
-                            {
+                            if let Some(x) = v.iter_mut().find(|x| x.model.trim() == model.trim()) {
                                 x.vision = true;
                             }
                         });
-                    }
-                    if let Some(n) = &r.note {
-                        s.push_str(&format!("；{n}"));
+                        if r.applied {
+                            s.push_str("；已顺手勾上「能看图」");
+                        } else {
+                            s.push_str("；先在屏幕上勾上了「能看图」—— 这一条还没存过，点「保存」写进网关");
+                        }
                     }
                     vt_msg.set(Some((channel_id, s, r.ok)));
                 }
@@ -410,26 +513,22 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    // 拉这条渠道的上游模型清单：真打一次 GET /v1/models。
+    // 拉这条渠道的上游模型清单：真打一次 GET /v1/models，连名字带说明一起拿回来。
     let pull = move |_| {
         let Form::Edit(id) = form.get_untracked() else {
-            ctx.say("这条渠道还没保存：先点「保存」，再用它自己的 URL 和密钥去拉清单");
+            ctx.say("这条渠道还没保存：先点「保存」，再用它自己的 URL 和密钥去问上游");
             return;
         };
         pulling.set(true);
-        pull_msg.set(Some(("正在真打上游的 /v1/models…".into(), true)));
+        pull_msg.set(Some(("正在问上游要模型清单…".into(), true)));
         wasm_bindgen_futures::spawn_local(async move {
             match api::pull_channel_models(id).await {
                 Ok(r) => {
                     pulling.set(false);
                     let mut s = String::new();
-                    s.push_str(if r.ok {
-                        "拉到清单了"
-                    } else {
-                        "没拉到清单"
-                    });
+                    s.push_str(if r.ok { "问到清单了" } else { "没问到清单" });
                     if r.ok {
-                        s.push_str(&format!("：{} 个模型名", r.count));
+                        s.push_str(&format!("：{} 个模型", r.count));
                     }
                     if let Some(u) = &r.url {
                         s.push_str(&format!("；打的地址 {u}"));
@@ -447,10 +546,18 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                         }
                     }
                     pull_msg.set(Some((s, r.ok)));
-                    // 默认**一个都不勾**：真要哪个自己挑，免得一把加进来几十条
-                    picked.set(BTreeSet::new());
                     pull_filter.set(String::new());
-                    pulled.set(r.models);
+                    // 勾选状态**不用重置**：它就是模型表里那几条映射。
+                    // 拉清单只换"能看见什么"（上游报的名字 + 说明）。
+                    pulled.set(if r.info.is_empty() {
+                        r.models
+                            .into_iter()
+                            .map(|id| UpstreamModel { id, ..Default::default() })
+                            .collect()
+                    } else {
+                        r.info
+                    });
+                    mver.update(|v| *v += 1);
                 }
                 Err(e) => {
                     pulling.set(false);
@@ -461,44 +568,82 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    // 勾选「当前显示的那些」
+    // 「全选当前显示的」：把清单里现在显示的那些名字都加进模型表。
     let select_shown = move |_| {
-        let names = filter_models(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT);
-        picked.update(|s| {
-            for n in names {
-                s.insert(n);
-            }
-        });
-    };
-
-    // 把勾选的模型名加进「该渠道认的模型名」表
-    let add_picked = move |_| {
-        let sel = picked.get_untracked();
-        if sel.is_empty() {
-            ctx.say("先勾选要加的模型名");
+        let names: Vec<String> =
+            filter_catalog(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT)
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
+        if names.is_empty() {
+            ctx.say("现在没有可勾的名字");
             return;
         }
         let added = {
-            let mut rows = f_models.get_untracked();
-            let n = add_picked_rows(&mut rows, &sel);
-            f_models.set(rows);
+            let mut v = f_models.get_untracked();
+            let n = add_many(&mut v, &names);
+            f_models.set(v);
             n
         };
-        form_ver.update(|v| *v += 1);
+        mver.update(|v| *v += 1);
         if added == 0 {
-            ctx.say("勾选的这些已经在表里了");
+            ctx.say("现在显示的名字都已经在用着");
         } else {
-            ctx.say(format!(
-                "加了 {added} 条 —— 右边留空就是同名发出去，要改名在这填"
-            ));
+            ctx.say(format!("加了 {added} 条 —— 要改上游实际叫的名字，点那一条的「详情」"));
         }
+    };
+
+    // 「取消当前显示的勾选」：只动清单里这次报的、现在显示着的那些。
+    let unselect_shown = move |_| {
+        let names: Vec<String> =
+            filter_catalog(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT)
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
+        let mut removed = 0usize;
+        {
+            let mut v = f_models.get_untracked();
+            for n in &names {
+                removed += drop_mapping(&mut v, n);
+            }
+            f_models.set(v);
+        }
+        mver.update(|v| *v += 1);
+        if removed == 0 {
+            ctx.say("现在显示的名字本来就没在用");
+        } else {
+            ctx.say(format!("取消了 {removed} 条（这些名字这条渠道不再认）"));
+        }
+    };
+
+    // 「加一个自己的名字」：客户端打的名字跟上游不一样时用（比如虚拟组名 auto）。
+    let add_manual = move |_| {
+        let name = manual.get_untracked().trim().to_string();
+        if name.is_empty() {
+            ctx.say("先填一个客户端里写的名字");
+            return;
+        }
+        let added = {
+            let mut v = f_models.get_untracked();
+            let ok = add_mapping(&mut v, &name);
+            f_models.set(v);
+            ok
+        };
+        if !added {
+            ctx.say(format!("「{name}」已经在模型表里了"));
+            return;
+        }
+        manual.set(String::new());
+        m_open.set(Some(name.clone()));
+        mver.update(|v| *v += 1);
+        ctx.say(format!("加了「{name}」—— 它发给上游的名字在「详情」里填（不填就同名发出去）"));
     };
 
     view! {
         <div class="page">
             <PageHead
                 title="渠道"
-                desc="各个上游的地址和密钥：加一条、改一条、测通不通。"
+                desc="各个上游的地址、密钥，和它认哪些模型。"
             >
                 <>
                     <button class="primary" on:click=open_new>"新建渠道"</button>
@@ -628,198 +773,211 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                 ().into_any()
             } else {
                 let editing = matches!(form.get(), Form::Edit(_));
+                let channel_id = match form.get() {
+                    Form::Edit(i) => Some(i),
+                    _ => None,
+                };
                 view! {
                     <div class="modal-backdrop">
                         <div class="modal">
-                            <h2>{if editing { "编辑渠道" } else { "新建渠道" }}</h2>
-                            <div class="form-grid">
-                                <label>"名称"</label>
-                                <input type="text" prop:value=f_name placeholder="如：硅基流动"
-                                    on:input=move |ev| f_name.set(event_target_value(&ev)) />
-                                <label>"接口地址"</label>
-                                <input type="text" prop:value=f_url
-                                    placeholder="如：https://api.siliconflow.cn/v1"
-                                    on:input=move |ev| f_url.set(event_target_value(&ev)) />
-                                <label>"密钥"</label>
-                                <div>
-                                    <input type="password" prop:value=f_key
-                                        on:input=move |ev| f_key.set(event_target_value(&ev)) />
-                                    <div class="muted small">{move || f_key_note.get()}</div>
-                                </div>
-                                <label>"启用"</label>
-                                <div>
-                                    <input type="checkbox" prop:checked=f_enabled
-                                        on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
-                                    <span class="muted small">"停用后不会再往这家上游发请求"</span>
-                                </div>
-                                <label>"响应解包"</label>
-                                <div>
-                                    <input type="checkbox" prop:checked=f_unwrap
-                                        on:change=move |ev| f_unwrap.set(event_target_checked(&ev)) />
-                                    <span class="muted small">
-                                        "这家上游把正常回复包了一层外壳时勾上（形状是 "
-                                        <code>"{\"data\": {…}, \"success\": true}"</code>
-                                        "）。只有认得出那种形状才会剥，认不出就原样回给你。"
-                                        "正常的上游不用勾。"
-                                    </span>
-                                </div>
-                            </div>
-
-                            <h3>"自定义请求头"</h3>
-                            <p class="muted small">
-                                "值支持模板：" <code>"{{uuid}}"</code> "（每次请求换新 UUID）、"
-                                <code>"{{timestamp_ms}}"</code> "（当前毫秒）、"
-                                <code>"{{session_id}}"</code>
-                                "（同一段对话里保持不变 —— 上游靠它认出\"这还是同一段对话\"，"
-                                "能少算一遍；探活和拉清单没有对话，这个头那时不会发出去）。"
-                            </p>
-                            <div class="table-wrap">
-                            <table class="grid tight">
-                                <tbody>
-                                    {move || {
-                                        form_ver.get(); // 只在加/删行时重绘
-                                        let v = f_headers.get_untracked();
-                                        if v.is_empty() {
-                                            return view! {
-                                                <tr>
-                                                    <td class="muted">"没有自定义请求头"</td>
-                                                </tr>
-                                            }.into_any();
-                                        }
-                                        v.iter()
-                                            .enumerate()
-                                            .map(|(i, h)| {
-                                                let h = h.clone();
-                                                let name0 = h.name.clone();
-                                                let val0 = h.value.clone();
-                                                view! {
-                                                    <tr>
-                                                        <td>
-                                                            <input type="text" prop:value=name0
-                                                                placeholder="头名，如 x-opencode-session"
-                                                                on:input=move |ev| {
-                                                                    let s = event_target_value(&ev);
-                                                                    f_headers
-                                                                        .update(|v| {
-                                                                            if let Some(x) = v.get_mut(i) {
-                                                                                x.name = s;
-                                                                            }
-                                                                        });
-                                                                } />
-                                                        </td>
-                                                        <td>
-                                                            <input type="text" prop:value=val0
-                                                                placeholder="值"
-                                                                on:input=move |ev| {
-                                                                    let s = event_target_value(&ev);
-                                                                    f_headers
-                                                                        .update(|v| {
-                                                                            if let Some(x) = v.get_mut(i) {
-                                                                                x.value = s;
-                                                                            }
-                                                                        });
-                                                                } />
-                                                        </td>
-                                                        <td>
-                                                            <button class="ghost danger" on:click=move |_| {
-                                                                f_headers.update(|v| { v.remove(i); });
-                                                                form_ver.update(|v| *v += 1);
-                                                            }>"删"</button>
-                                                        </td>
-                                                    </tr>
-                                                }
-                                            })
-                                            .collect_view()
-                                            .into_any()
-                                    }}
-                                </tbody>
-                            </table>
-                            </div>
-                            <button class="ghost" on:click=move |_| {
-                                f_headers.update(|v| v.push(HeaderPair::default()));
-                                form_ver.update(|v| *v += 1);
-                            }>"加一个请求头"</button>
-
-                            <h3>"这条渠道支持哪些模型"</h3>
-
-                            <div class="pull-bar">
-                                <button
-                                    class="ghost"
-                                    disabled=move || pulling.get() || !matches!(form.get(), Form::Edit(_))
-                                    on:click=pull
-                                >
-                                    {move || if pulling.get() { "正在问…" } else { "问一下它有哪些模型" }}
-                                </button>
+                            <div class="modal-head">
+                                <h2>{if editing { "编辑渠道" } else { "新建渠道" }}</h2>
                                 <span class="muted small">
-                                    "直接问这条渠道：你支持哪些模型？问不到就如实报错，不会编一份名单给你。"
+                                    {move || {
+                                        let models = f_models.get().len();
+                                        let headers = f_headers.get().len();
+                                        format!("{models} 条模型 · {headers} 条请求头")
+                                    }}
                                 </span>
                             </div>
-                            {move || if matches!(form.get(), Form::New) {
-                                view! {
-                                    <p class="muted small">
-                                        "这条渠道还没保存，拿不到它的密钥去问 —— 先点下面「保存」。"
-                                    </p>
-                                }
-                                    .into_any()
-                            } else {
-                                ().into_any()
-                            }}
-                            {move || {
-                                pull_msg
-                                    .get()
-                                    .map(|(m, ok)| {
-                                        view! {
-                                            <div class=if ok { "banner ok" } else { "banner bad" }>
-                                                {m}
+
+                            <div class="modal-tabs">
+                                <button
+                                    class="tab"
+                                    class:active=move || tab.get() == TAB_BASIC
+                                    on:click=move |_| tab.set(TAB_BASIC.to_string())
+                                >
+                                    "基本信息"
+                                </button>
+                                <button
+                                    class="tab"
+                                    class:active=move || tab.get() == TAB_HEADERS
+                                    on:click=move |_| tab.set(TAB_HEADERS.to_string())
+                                >
+                                    "请求头"
+                                    <span class="tag muted">{move || f_headers.get().len()}</span>
+                                </button>
+                                <button
+                                    class="tab"
+                                    class:active=move || tab.get() == TAB_MODELS
+                                    on:click=move |_| tab.set(TAB_MODELS.to_string())
+                                >
+                                    "模型"
+                                    <span class="tag muted">{move || f_models.get().len()}</span>
+                                </button>
+                            </div>
+
+                            <div class="modal-body">
+                                // ———————— 基本信息 ————————
+                                {move || if tab.get() != TAB_BASIC {
+                                    ().into_any()
+                                } else {
+                                    view! {
+                                        <div class="form-grid">
+                                            <label>"名称"</label>
+                                            <input type="text" prop:value=f_name placeholder="如：硅基流动"
+                                                on:input=move |ev| f_name.set(event_target_value(&ev)) />
+                                            <label>"接口地址"</label>
+                                            <input type="text" prop:value=f_url
+                                                placeholder="如：https://api.siliconflow.cn/v1"
+                                                on:input=move |ev| f_url.set(event_target_value(&ev)) />
+                                            <label>"密钥"</label>
+                                            <div>
+                                                <input type="password" prop:value=f_key
+                                                    on:input=move |ev| f_key.set(event_target_value(&ev)) />
+                                                <div class="muted small">{move || f_key_note.get()}</div>
                                             </div>
-                                        }
-                                    })
-                            }}
-                            {move || {
-                                let all = pulled.get();
-                                if all.is_empty() {
-                                    return ().into_any();
-                                }
-                                let shown = filter_models(&all, &pull_filter.get(), SHOW_LIMIT);
-                                let total = all.len();
-                                let shown_n = shown.len();
-                                let picked_n = picked.get().len();
-                                let rows = shown
-                                    .into_iter()
-                                    .map(|name| {
-                                        let key = name.clone();
-                                        let checked = picked.get().contains(&name);
-                                        let already = f_models
-                                            .get_untracked()
-                                            .iter()
-                                            .any(|m| m.model.trim() == name.trim());
-                                        let key2 = key.clone();
-                                        view! {
-                                            <label class="pick">
-                                                <input
-                                                    type="checkbox"
-                                                    prop:checked=checked
-                                                    on:change=move |ev| {
-                                                        if event_target_checked(&ev) {
-                                                            picked.update(|s| {
-                                                                s.insert(key.clone());
-                                                            });
-                                                        } else {
-                                                            picked.update(|s| {
-                                                                s.remove(&key);
-                                                            });
-                                                        }
+                                            <label>"启用"</label>
+                                            <div>
+                                                <input type="checkbox" prop:checked=f_enabled
+                                                    on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
+                                                <span class="muted small">"停用后不会再往这家上游发请求"</span>
+                                            </div>
+                                            <label>"响应解包"</label>
+                                            <div>
+                                                <input type="checkbox" prop:checked=f_unwrap
+                                                    on:change=move |ev| f_unwrap.set(event_target_checked(&ev)) />
+                                                <span class="muted small">
+                                                    "这家上游把正常回复包了一层外壳时勾上（形状是 "
+                                                    <code>"{\"data\": {…}, \"success\": true}"</code>
+                                                    "）。只有认得出那种形状才会剥，认不出就原样回给你。"
+                                                    "正常的上游不用勾。"
+                                                </span>
+                                            </div>
+                                        </div>
+                                    }.into_any()
+                                }}
+
+                                // ———————— 请求头 ————————
+                                {move || if tab.get() != TAB_HEADERS {
+                                    ().into_any()
+                                } else {
+                                    view! {
+                                        <p class="muted small">
+                                            "值支持模板：" <code>"{{uuid}}"</code> "（每次请求换新 UUID）、"
+                                            <code>"{{timestamp_ms}}"</code> "（当前毫秒）、"
+                                            <code>"{{session_id}}"</code>
+                                            "（同一段对话里保持不变 —— 上游靠它认出\"这还是同一段对话\"，"
+                                            "能少算一遍；探活和拉清单没有对话，这个头那时不会发出去）。"
+                                        </p>
+                                        <div class="table-wrap">
+                                        <table class="grid tight">
+                                            <tbody>
+                                                {move || {
+                                                    form_ver.get(); // 只在加/删行时重绘
+                                                    let v = f_headers.get_untracked();
+                                                    if v.is_empty() {
+                                                        return view! {
+                                                            <tr>
+                                                                <td class="muted">"没有自定义请求头"</td>
+                                                            </tr>
+                                                        }.into_any();
                                                     }
-                                                />
-                                                <code>{key2}</code>
-                                                {already
-                                                    .then(|| view! { <span class="tag muted">"已在表里"</span> })}
-                                            </label>
-                                        }
-                                    })
-                                    .collect_view();
-                                view! {
-                                    <div class="pull-list">
+                                                    v.iter()
+                                                        .enumerate()
+                                                        .map(|(i, h)| {
+                                                            let h = h.clone();
+                                                            let name0 = h.name.clone();
+                                                            let val0 = h.value.clone();
+                                                            view! {
+                                                                <tr>
+                                                                    <td>
+                                                                        <input type="text" prop:value=name0
+                                                                            placeholder="头名，如 x-opencode-session"
+                                                                            on:input=move |ev| {
+                                                                                let s = event_target_value(&ev);
+                                                                                f_headers
+                                                                                    .update(|v| {
+                                                                                        if let Some(x) = v.get_mut(i) {
+                                                                                            x.name = s;
+                                                                                        }
+                                                                                    });
+                                                                            } />
+                                                                    </td>
+                                                                    <td>
+                                                                        <input type="text" prop:value=val0
+                                                                            placeholder="值"
+                                                                            on:input=move |ev| {
+                                                                                let s = event_target_value(&ev);
+                                                                                f_headers
+                                                                                    .update(|v| {
+                                                                                        if let Some(x) = v.get_mut(i) {
+                                                                                            x.value = s;
+                                                                                        }
+                                                                                    });
+                                                                            } />
+                                                                    </td>
+                                                                    <td>
+                                                                        <button class="ghost danger" on:click=move |_| {
+                                                                            f_headers.update(|v| { v.remove(i); });
+                                                                            form_ver.update(|v| *v += 1);
+                                                                        }>"删"</button>
+                                                                    </td>
+                                                                </tr>
+                                                            }
+                                                        })
+                                                        .collect_view()
+                                                        .into_any()
+                                                }}
+                                            </tbody>
+                                        </table>
+                                        </div>
+                                        <button class="ghost" on:click=move |_| {
+                                            f_headers.update(|v| v.push(HeaderPair::default()));
+                                            form_ver.update(|v| *v += 1);
+                                        }>"加一个请求头"</button>
+                                    }.into_any()
+                                }}
+
+                                // ———————— 模型 ————————
+                                {move || if tab.get() != TAB_MODELS {
+                                    ().into_any()
+                                } else {
+                                    view! {
+                                        <div class="pull-bar">
+                                            <button
+                                                class="ghost"
+                                                disabled=move || pulling.get() || channel_id.is_none()
+                                                on:click=pull
+                                            >
+                                                {move || if pulling.get() { "正在问…" } else { "问一下它有哪些模型" }}
+                                            </button>
+                                            <span class="muted small">
+                                                "直接问这条渠道：你支持哪些模型？它把名字和说明一起报回来；问不到就如实说，不会编一份名单给你。"
+                                            </span>
+                                        </div>
+                                        {channel_id.is_none().then(|| view! {
+                                            <p class="muted small">
+                                                "这条渠道还没保存，拿不到它的密钥去问 —— 先点下面的「保存」，弹窗会停在这一段。"
+                                            </p>
+                                        })}
+                                        {move || {
+                                            pull_msg
+                                                .get()
+                                                .map(|(m, ok)| {
+                                                    view! {
+                                                        <div class=if ok { "banner ok" } else { "banner bad" }>
+                                                            {m}
+                                                        </div>
+                                                    }
+                                                })
+                                        }}
+                                        <p class="muted small">
+                                            "勾上 = 这条渠道认这个名字：客户端打这个名字，网关就发给它"
+                                            "（同名发过去；要发别的名字，摊开那一条的「详情」填）。"
+                                            "取消勾选 = 不再认它。勾选只是改在屏幕上，点下面的「保存」才会存进网关。"
+                                        </p>
+
                                         <div class="pull-head">
                                             <input
                                                 type="text"
@@ -827,213 +985,398 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 placeholder="按关键字过滤，如 deepseek"
                                                 on:input=move |ev| pull_filter.set(event_target_value(&ev))
                                             />
-                                            <button class="ghost" on:click=select_shown>"全选当前显示"</button>
-                                            <button
-                                                class="ghost"
-                                                on:click=move |_| picked.set(BTreeSet::new())
-                                            >
-                                                "全部取消"
-                                            </button>
-                                            <button class="ghost" on:click=add_picked>
-                                                "把勾选的加进下表"
-                                            </button>
+                                            <button class="ghost" on:click=select_shown>"全选当前显示的"</button>
+                                            <button class="ghost" on:click=unselect_shown>"取消当前显示的勾选"</button>
                                             <span class="muted small">
-                                                {format!(
-                                                    "共 {total} 个，列出 {shown_n} 个，已勾选 {picked_n} 个",
-                                                )}
+                                                {move || {
+                                                    let total = pulled.get().len();
+                                                    let shown = filter_catalog(
+                                                            &pulled.get_untracked(),
+                                                            &pull_filter.get_untracked(),
+                                                            SHOW_LIMIT,
+                                                        )
+                                                        .len();
+                                                    let in_use = f_models
+                                                        .get()
+                                                        .iter()
+                                                        .filter(|m| !m.model.trim().is_empty())
+                                                        .count();
+                                                    if total == 0 {
+                                                        format!("这条渠道现在认 {in_use} 个名字（上面问一次上游，就能对着清单挑）")
+                                                    } else {
+                                                        format!("上游报了 {total} 个，列出 {shown} 个；这条渠道认 {in_use} 个")
+                                                    }
+                                                }}
                                             </span>
-                                            // 勾了却没加进下表时，说清楚两条路都行 —— 免得「点了保存没反应」
-                                            {move || (picked.get().len() > 0).then(|| view! {
-                                                <span class="tag warn">
-                                                    "勾选的还没加进下表：点上面的按钮加，或者直接点「保存」也会一起加"
-                                                </span>
-                                            })}
                                         </div>
-                                        <div class="pull-rows">{rows}</div>
-                                        {(total > shown_n)
-                                            .then(|| {
-                                                view! {
-                                                    <p class="muted small">
-                                                        "列表只列出了前面这些 —— 用上面的过滤框找具体的名字（勾选状态不会丢）。"
-                                                    </p>
-                                                }
-                                            })}
-                                    </div>
-                                }
-                                    .into_any()
-                            }}
 
-                            // 两段说明原来平铺在表格上面，手机上一屏放不下，用户以为「内容看不见」。
-                            // 折起来：标题一句话说清这节在讲什么，想看细节再点开。
-                            <details class="fold tight">
-                                <summary>"这两列怎么填 · 怎么确认能收图"</summary>
-                                <p class="muted small">
-                                    "同一个模型，在不同上游可能叫不同名字（比如这家上游要"
-                                    <code>"deepseek/deepseek-v4.1-flash"</code>
-                                    "，另一家只要 " <code>"v4.1flash"</code>
-                                    "）。左边填你客户端里写的名字，右边填这家上游要的名字；右边不填 = 原名发出去。"
-                                </p>
-                                <p class="muted small">
-                                    "「能看图」= 这个名字能收图片。"
-                                    <b>"别猜名字，点「测一下能不能看图」"</b>
-                                    "：它会真发一张图问一个只有看图才答得出的问题（左上角什么颜色），"
-                                    "答对了才勾上。带图的请求只会发给勾了的渠道；一条都没勾就回 422 说清楚，"
-                                    "而不是把图悄悄丢掉。"
-                                </p>
-                            </details>
-                            <table class="grid tight">
-                                <tbody>
-                                    {move || {
-                                        form_ver.get();
-                                        let v = f_models.get_untracked();
-                                        if v.is_empty() {
-                                            return view! {
-                                                <tr>
-                                                    <td class="muted">
-                                                        "还没填。不填就是客户端写什么名字、就原样发什么名字过去"
-                                                    </td>
-                                                </tr>
-                                            }.into_any();
-                                        }
-                                        v.iter()
-                                            .enumerate()
-                                            .map(|(i, m)| {
-                                                let m = m.clone();
-                                                let model0 = m.model.clone();
-                                                let up0 = m.upstream.clone().unwrap_or_default();
-                                                // 「测视觉」要知道这一行属于哪条渠道（表单里必须是已保存的渠道）
-                                                let channel_for_test = match form.get_untracked() {
-                                                    Form::Edit(id) => Some(id),
-                                                    _ => None,
-                                                };
-                                                let model_for_test = m.model.clone();
-                                                let up_for_test = m.upstream.clone().unwrap_or_default();
-                                                // 结果行：这一条的渠道 id 对上了才显示
-                                                let (vt_show, vt_text, vt_ok) = vt_msg
-                                                    .get()
-                                                    .map(|(id, t, ok)| (Some(id), t, ok))
-                                                    .unwrap_or((None, String::new(), false));
-                                                let show_vt = vt_show == channel_for_test.filter(|_| !vt_text.is_empty());
-                                                view! {
-                                                    <tr>
-                                                        <td>
-                                                            <input type="text" prop:value=model0
-                                                                placeholder="你客户端里写的名字"
-                                                                on:input=move |ev| {
-                                                                    let s = event_target_value(&ev);
-                                                                    f_models
-                                                                        .update(|v| {
-                                                                            if let Some(x) = v.get_mut(i) {
-                                                                                x.model = s;
-                                                                            }
-                                                                        });
-                                                                } />
-                                                        </td>
-                                                        <td class="arrow">"→"</td>
-                                                        <td>
-                                                            <input type="text" prop:value=up0
-                                                                placeholder="这条渠道实际叫的名字（不填=一样）"
-                                                                on:input=move |ev| {
-                                                                    let s = event_target_value(&ev);
-                                                                    f_models
-                                                                        .update(|v| {
-                                                                            if let Some(x) = v.get_mut(i) {
-                                                                                x.upstream = if s.trim().is_empty() {
-                                                                                    None
-                                                                                } else {
-                                                                                    Some(s)
-                                                                                };
-                                                                            }
-                                                                        });
-                                                                } />
-                                                        </td>
-                                                        <td class="vision-cell">
-                                                            <label class="pick" title="这个模型收不收得下图片（带图的请求只发给勾了的渠道）">
-                                                                <input type="checkbox"
-                                                                    prop:checked=move || {
-                                                                        f_models
-                                                                            .get()
-                                                                            .get(i)
-                                                                            .map(|x| x.vision)
-                                                                            .unwrap_or(false)
-                                                                    }
-                                                                    on:change=move |ev| {
-                                                                        let on = event_target_checked(&ev);
-                                                                        f_models
-                                                                            .update(|v| {
-                                                                                if let Some(x) = v.get_mut(i) {
-                                                                                    x.vision = on;
-                                                                                }
-                                                                            });
-                                                                    } />
-                                                                "能看图"
-                                                            </label>
-                                                        </td>
-                                                        <td>
-                                                            <input type="text" prop:value=m.drop_fields.clone()
-                                                                placeholder="要丢的字段（如 reasoning_effort）"
-                                                                title="发上游之前跟这个模型名一起把这些字段删掉：有的上游收下参数却直接回 400（opencode 的 beam-free 不认 reasoning_effort），不删每次都会失败。多个用逗号分隔；只在顶层删，别的一个字节都不动。"
-                                                                on:input=move |ev| {
-                                                                    let s = event_target_value(&ev);
-                                                                    f_models
-                                                                        .update(|v| {
-                                                                            if let Some(x) = v.get_mut(i) {
-                                                                                x.drop_fields = s;
-                                                                            }
-                                                                        });
-                                                                } />
-                                                        </td>
-                                                        <td>
-                                                            <button
-                                                                class="ghost"
-                                                                disabled=move || vt_busy.get().is_some()
-                                                                on:click=move |_| {
-                                                                    match channel_for_test {
-                                                                        Some(id) => {
-                                                                            vision_test((
-                                                                                id,
-                                                                                model_for_test.clone(),
-                                                                                up_for_test.clone(),
-                                                                            ))
-                                                                        }
-                                                                        None => {
-                                                                            ctx
-                                                                                .say(
-                                                                                    "还没保存：先点「保存」，再测它认不认得图",
-                                                                                )
-                                                                        }
-                                                                    }
-                                                                }
-                                                            >
-                                                                "测一下能不能看图"
-                                                            </button>
-                                                        </td>
-                                                        <td>
-                                                            <button class="ghost danger" on:click=move |_| {
-                                                                f_models.update(|v| { v.remove(i); });
-                                                                form_ver.update(|v| *v += 1);
-                                                            }>"删"</button>
-                                                        </td>
-                                                    </tr>
-                                                    {show_vt.then(|| view! {
-                                                        <tr class="probe-row">
-                                                            <td></td>
-                                                            <td colspan="6" class=if vt_ok { "probe ok" } else { "probe bad" }>
-                                                                {vt_text.clone()}
-                                                            </td>
-                                                        </tr>
-                                                    })}
+                                        <div class="m-list">
+                                            {move || {
+                                                // 结构性的东西：清单 + 过滤 + mver（勾/取消/加/删之后重排）。
+                                                // 打字**不**在这儿重排 —— 输入框在「详情」里，重排会丢焦点。
+                                                mver.get();
+                                                let catalog = pulled.get();
+                                                let filter = pull_filter.get();
+                                                let mut names: Vec<String> =
+                                                    filter_catalog(&catalog, &filter, SHOW_LIMIT)
+                                                        .into_iter()
+                                                        .map(|m| m.id)
+                                                        .collect();
+                                                // 在用的、但上游这次没报的名字也要列出来（比如虚拟组名 auto），
+                                                // 不然它会在界面上凭空消失，看着像被删了。过滤框照样管它 ——
+                                                // 「全选当前显示的」勾的就是屏幕上真看得见的那几行。
+                                                let needle = filter.trim().to_lowercase();
+                                                for m in f_models.get_untracked().iter() {
+                                                    let n = m.model.trim().to_string();
+                                                    if n.is_empty()
+                                                        || catalog_has(&catalog, &n)
+                                                        || names.iter().any(|x| x == &n)
+                                                    {
+                                                        continue;
+                                                    }
+                                                    if !needle.is_empty()
+                                                        && !n.to_lowercase().contains(&needle)
+                                                    {
+                                                        continue;
+                                                    }
+                                                    names.push(n);
                                                 }
-                                            })
-                                            .collect_view()
-                                            .into_any()
-                                    }}
-                                </tbody>
-                            </table>
-                            <button class="ghost" on:click=move |_| {
-                                f_models.update(|v| v.push(ModelPair::default()));
-                                form_ver.update(|v| *v += 1);
-                            }>"加一行"</button>
+                                                if names.is_empty() {
+                                                    return view! {
+                                                        <p class="muted small">
+                                                            "还没有模型名。上面问一次上游、或者用下面「加一个自己的名字」自己填一个。"
+                                                        </p>
+                                                    }.into_any();
+                                                }
+                                                names
+                                                    .into_iter()
+                                                    .map(|name| {
+                                                        let info = catalog.iter().find(|c| c.id == name).cloned();
+                                                        let reported = info.is_some();
+                                                        let owner = info.as_ref().and_then(|i| i.owned_by.clone());
+                                                        let ctx_len = info.as_ref().and_then(|i| i.context_window);
+                                                        let price = info
+                                                            .as_ref()
+                                                            .and_then(|i| i.price_note.clone().map(|p| (p, i.is_free)));
+                                                        let vision_claim = info.as_ref().and_then(|i| i.vision);
+                                                        // 每条闭包各拿一份克隆，别互相移动
+                                                        let n_ck = name.clone();
+                                                        let n_add = name.clone();
+                                                        let n_del_ck = name.clone();
+                                                        let n_del_btn = name.clone();
+                                                        let n_open = name.clone();
+                                                        let n_close_btn = name.clone();
+                                                        let n_close_body = name.clone();
+                                                        let n_field = name.clone();
+                                                        let n_up = name.clone();
+                                                        let n_vis_ck = name.clone();
+                                                        let n_vis_ch = name.clone();
+                                                        let n_drop = name.clone();
+                                                        let n_test = name.clone();
+                                                        let cur = f_models
+                                                            .get_untracked()
+                                                            .into_iter()
+                                                            .find(|m| m.model.trim() == name.trim());
+                                                        let cur_up =
+                                                            cur.as_ref().and_then(|m| m.upstream.clone()).unwrap_or_default();
+                                                        let cur_drop =
+                                                            cur.as_ref().map(|m| m.drop_fields.clone()).unwrap_or_default();
+                                                        let open_me = move |_| {
+                                                            if m_open.get_untracked().as_deref()
+                                                                == Some(n_open.as_str())
+                                                            {
+                                                                m_open.set(None);
+                                                            } else {
+                                                                m_open.set(Some(n_open.clone()));
+                                                            }
+                                                        };
+                                                        let is_open_btn = move || {
+                                                            m_open.get().as_deref() == Some(n_close_btn.as_str())
+                                                        };
+                                                        let is_open_body = move || {
+                                                            m_open.get().as_deref() == Some(n_close_body.as_str())
+                                                        };
+                                                        view! {
+                                                            <div class="m-row">
+                                                                <div class="m-line">
+                                                                    <label class="m-pick" title="勾上 = 这条渠道认这个名字">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            prop:checked=move || {
+                                                                                is_in_use(&f_models.get(), &n_ck)
+                                                                            }
+                                                                            on:change=move |ev| {
+                                                                                if event_target_checked(&ev) {
+                                                                                    f_models
+                                                                                        .update(|v| {
+                                                                                            add_mapping(v, &n_add);
+                                                                                        });
+                                                                                    mver.update(|v| *v += 1);
+                                                                                    ctx.say("加上了 —— 记得点「保存」");
+                                                                                } else {
+                                                                                    let had = mapping_has_config(
+                                                                                        &f_models.get_untracked(),
+                                                                                        &n_del_ck,
+                                                                                    );
+                                                                                    let go = !had
+                                                                                        || web_sys::window()
+                                                                                            .and_then(|w| {
+                                                                                                w
+                                                                                                    .confirm_with_message(
+                                                                                                        &format!(
+                                                                                                            "「{n_del_ck}」这一条配过「能看图」或「要丢的字段」，取消勾选会一起删掉。继续？",
+                                                                                                        ),
+                                                                                                    )
+                                                                                                    .ok()
+                                                                                            })
+                                                                                            .unwrap_or(false);
+                                                                                    if go {
+                                                                                        f_models
+                                                                                            .update(|v| {
+                                                                                                drop_mapping(v, &n_del_ck);
+                                                                                            });
+                                                                                        if m_open.get_untracked().as_deref()
+                                                                                            == Some(n_del_ck.as_str())
+                                                                                        {
+                                                                                            m_open.set(None);
+                                                                                        }
+                                                                                        mver.update(|v| *v += 1);
+                                                                                        ctx.say("取消了 —— 记得点「保存」");
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        />
+                                                                    </label>
+                                                                    <code class="m-name">{name.clone()}</code>
+                                                                    {owner
+                                                                        .map(|o| view! { <span class="tag muted">{o}</span> })}
+                                                                    {ctx_len
+                                                                        .map(|c| {
+                                                                            view! {
+                                                                                <span class="tag" title="上游报的上下文长度">
+                                                                                    {format!("上下文 {}", fmt::ctx(c))}
+                                                                                </span>
+                                                                            }
+                                                                        })}
+                                                                    {price
+                                                                        .map(|(p, free)| {
+                                                                            let cls = if free { "tag ok" } else { "tag muted" };
+                                                                            view! { <span class=cls title="上游报的价钱">{p}</span> }
+                                                                        })}
+                                                                    {match vision_claim {
+                                                                        Some(true) => {
+                                                                            view! {
+                                                                                <span class="tag" title="上游自称能收图 —— 但我们只认实测：要不要给它接带图的请求，点「详情」里那个按钮真发一张图试试">
+                                                                                    "上游自称能收图"
+                                                                                </span>
+                                                                            }
+                                                                                .into_any()
+                                                                        }
+                                                                        Some(false) => {
+                                                                            view! {
+                                                                                <span class="tag muted" title="上游说这个模型不收图">
+                                                                                    "上游说不能收图"
+                                                                                </span>
+                                                                            }
+                                                                                .into_any()
+                                                                        }
+                                                                        None => ().into_any(),
+                                                                    }}
+                                                                    {(!reported)
+                                                                        .then(|| {
+                                                                            view! {
+                                                                                <span class="tag warn" title="这条渠道认这个名字，但这次问上游它没报出来（可能是虚拟组名，或者上游已经不带它了）">
+                                                                                    "上游这次没报这个名字"
+                                                                                </span>
+                                                                            }
+                                                                        })}
+                                                                    <span class="spacer"></span>
+                                                                    <button class="ghost" on:click=open_me>
+                                                                        {move || if is_open_btn() { "收起" } else { "详情" }}
+                                                                    </button>
+                                                                </div>
+                                                                {move || if !is_open_body() {
+                                                                    ().into_any()
+                                                                } else {
+                                                                    // 这一块每次重画都要重新拿一份克隆：
+                                                                    // 里面的 on:input 是 move 闭包，不克隆的话
+                                                                    // 这个块就成 FnOnce 了（Leptos 要它能反复跑）。
+                                                                    let n_field = n_field.clone();
+                                                                    let n_up = n_up.clone();
+                                                                    let n_vis_ck = n_vis_ck.clone();
+                                                                    let n_vis_ch = n_vis_ch.clone();
+                                                                    let n_drop = n_drop.clone();
+                                                                    let n_test = n_test.clone();
+                                                                    let n_del_btn = n_del_btn.clone();
+                                                                    // 箭头右边那个名字要跟着输入框走 —— 用一个只更新
+                                                                    // 这个文本节点的闭包，别让它把整块详情重排（会丢焦点）
+                                                                    let map_field = n_field.clone();
+                                                                    view! {
+                                                                        <div class="m-detail">
+                                                                            <div class="m-map">
+                                                                                "客户端打 " <code>{n_field.clone()}</code>
+                                                                                " → 发给上游 "
+                                                                                <code>
+                                                                                    {move || {
+                                                                                        let up = f_models
+                                                                                            .get()
+                                                                                            .into_iter()
+                                                                                            .find(|x| x.model.trim() == map_field.trim())
+                                                                                            .and_then(|x| x.upstream)
+                                                                                            .unwrap_or_default();
+                                                                                        if up.trim().is_empty() { map_field.clone() } else { up }
+                                                                                    }}
+                                                                                </code>
+                                                                            </div>
+                                                                            <label class="m-f">
+                                                                                <span>"上游实际叫的名字"</span>
+                                                                                <input type="text" prop:value=cur_up.clone()
+                                                                                    placeholder="不填 = 跟客户端打的一样"
+                                                                                    on:input=move |ev| {
+                                                                                        let s = event_target_value(&ev);
+                                                                                        f_models
+                                                                                            .update(|v| {
+                                                                                                if let Some(x) = v
+                                                                                                    .iter_mut()
+                                                                                                    .find(|x| x.model.trim() == n_up.trim())
+                                                                                                {
+                                                                                                    x.upstream = if s.trim().is_empty() {
+                                                                                                        None
+                                                                                                    } else {
+                                                                                                        Some(s)
+                                                                                                    };
+                                                                                                }
+                                                                                            });
+                                                                                    } />
+                                                                            </label>
+                                                                            <div class="m-f">
+                                                                                <span>"能看图"</span>
+                                                                                <label class="pick" title="这个模型收不收得下图片（带图的请求只发给勾了的渠道）">
+                                                                                    <input type="checkbox"
+                                                                                        prop:checked=move || {
+                                                                                            f_models
+                                                                                                .get()
+                                                                                                .iter()
+                                                                                                .find(|x| x.model.trim() == n_vis_ck.trim())
+                                                                                                .map(|x| x.vision)
+                                                                                                .unwrap_or(false)
+                                                                                        }
+                                                                                        on:change=move |ev| {
+                                                                                            let on = event_target_checked(&ev);
+                                                                                            f_models
+                                                                                                .update(|v| {
+                                                                                                    if let Some(x) = v
+                                                                                                        .iter_mut()
+                                                                                                        .find(|x| x.model.trim() == n_vis_ch.trim())
+                                                                                                    {
+                                                                                                        x.vision = on;
+                                                                                                    }
+                                                                                                });
+                                                                                        } />
+                                                                                    "能收图"
+                                                                                </label>
+                                                                                <button
+                                                                                    class="ghost"
+                                                                                    disabled=move || vt_busy.get().is_some()
+                                                                                    on:click=move |_| {
+                                                                                        match channel_id {
+                                                                                            Some(id) => {
+                                                                                                let up = f_models
+                                                                                                    .get_untracked()
+                                                                                                    .into_iter()
+                                                                                                    .find(|x| x.model.trim() == n_test.trim())
+                                                                                                    .and_then(|x| x.upstream)
+                                                                                                    .unwrap_or_default();
+                                                                                                vision_test((id, n_test.clone(), up))
+                                                                                            }
+                                                                                            None => {
+                                                                                                ctx
+                                                                                                    .say(
+                                                                                                        "还没保存：先点「保存」，再测它认不认得图",
+                                                                                                    )
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                >
+                                                                                    "测一下能不能看图"
+                                                                                </button>
+                                                                            </div>
+                                                                            <p class="muted small">
+                                                                                "「能看图」只认实测：点上面那个按钮真发一张图、问它左上角什么颜色，"
+                                                                                "答对了才勾得上。带图的请求只会发给勾了的渠道 —— 一条都没勾就回 422 说清楚，"
+                                                                                "而不是把图悄悄丢掉。"
+                                                                            </p>
+                                                                            {move || {
+                                                                                match vt_msg.get() {
+                                                                                    Some((id, text, ok)) if Some(id) == channel_id => {
+                                                                                        view! {
+                                                                                            <div class=if ok { "banner ok" } else { "banner bad" }>
+                                                                                                {text}
+                                                                                            </div>
+                                                                                        }
+                                                                                            .into_any()
+                                                                                    }
+                                                                                    _ => ().into_any(),
+                                                                                }
+                                                                            }}
+                                                                            <label class="m-f">
+                                                                                <span>"要丢的字段"</span>
+                                                                                <input type="text" prop:value=cur_drop.clone()
+                                                                                    placeholder="留空 = 一个都不丢（如 reasoning_effort）"
+                                                                                    title="发上游之前跟这个模型名一起把这些字段删掉：有的上游收下参数却直接回 400（opencode 的 beam-free 不认 reasoning_effort），不删每次都会失败。多个用逗号分隔；只在顶层删，别的一个字节都不动。"
+                                                                                    on:input=move |ev| {
+                                                                                        let s = event_target_value(&ev);
+                                                                                        f_models
+                                                                                            .update(|v| {
+                                                                                                if let Some(x) = v
+                                                                                                    .iter_mut()
+                                                                                                    .find(|x| x.model.trim() == n_drop.trim())
+                                                                                                {
+                                                                                                    x.drop_fields = s;
+                                                                                                }
+                                                                                            });
+                                                                                    } />
+                                                                            </label>
+                                                                            <div class="m-actions">
+                                                                                <button class="ghost danger" on:click=move |_| {
+                                                                                    f_models
+                                                                                        .update(|v| {
+                                                                                            drop_mapping(v, &n_del_btn);
+                                                                                        });
+                                                                                    m_open.set(None);
+                                                                                    mver.update(|v| *v += 1);
+                                                                                    ctx.say("删掉了这一条 —— 记得点「保存」");
+                                                                                }>"删掉这一条"</button>
+                                                                                <span class="muted small">
+                                                                                    "客户端名字在这儿改不了：要换名字就删掉这条、用下面「加一个自己的名字」再加一条。"
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                    }.into_any()
+                                                                }}
+                                                            </div>
+                                                        }
+                                                    })
+                                                    .collect_view()
+                                                    .into_any()
+                                            }}
+                                        </div>
+
+                                        <div class="pull-bar">
+                                            <input
+                                                type="text"
+                                                prop:value=move || manual.get()
+                                                placeholder="客户端里写的名字，如 auto"
+                                                on:input=move |ev| manual.set(event_target_value(&ev))
+                                            />
+                                            <button class="ghost" on:click=add_manual>"加一个自己的名字"</button>
+                                            <span class="muted small">
+                                                "客户端打的名字跟上游不一样时用它（比如虚拟组名 auto）—— 加完在「详情」里填上游实际叫什么。"
+                                            </span>
+                                        </div>
+                                    }.into_any()
+                                }}
+                            </div>
 
                             <div class="modal-foot">
                                 <button class="primary" on:click=save>"保存"</button>
@@ -1057,66 +1400,130 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
 mod tests {
     use super::*;
 
-    fn names(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    fn up(id: &str) -> UpstreamModel {
+        UpstreamModel {
+            id: id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn mapping(model: &str, upstream: Option<&str>) -> ModelPair {
+        ModelPair {
+            model: model.to_string(),
+            upstream: upstream.map(str::to_string),
+            vision: false,
+            drop_fields: String::new(),
+        }
     }
 
     #[test]
     fn filter_is_case_insensitive_and_limited() {
-        let all = names(&["deepseek-v4.1-flash", "BGE-M3", "gpt-oss"]);
-        assert_eq!(filter_models(&all, "", 10).len(), 3, "不过滤就全列");
-        assert_eq!(filter_models(&all, "deep", 10), names(&["deepseek-v4.1-flash"]));
-        assert_eq!(filter_models(&all, "BGE", 10), names(&["BGE-M3"]), "过滤不分大小写");
-        assert_eq!(filter_models(&all, "  gpt  ", 10), names(&["gpt-oss"]), "两头空白忽略");
-        assert_eq!(filter_models(&all, "", 2).len(), 2, "显示有上限，免得塞爆 DOM");
-        assert!(filter_models(&all, "没有这个名字", 10).is_empty());
+        let all = vec![up("deepseek-v4.1-flash"), up("BGE-M3"), up("gpt-oss")];
+        let ids = |v: Vec<UpstreamModel>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(filter_catalog(&all, "", 10).len(), 3, "不过滤就全列");
+        assert_eq!(ids(filter_catalog(&all, "deep", 10)), vec!["deepseek-v4.1-flash"]);
+        assert_eq!(ids(filter_catalog(&all, "BGE", 10)), vec!["BGE-M3"], "过滤不分大小写");
+        assert_eq!(ids(filter_catalog(&all, "  gpt  ", 10)), vec!["gpt-oss"], "两头空白忽略");
+        assert_eq!(filter_catalog(&all, "", 2).len(), 2, "显示有上限，免得塞爆 DOM");
+        assert!(filter_catalog(&all, "没有这个名字", 10).is_empty());
     }
 
+    /// 勾选状态就是模型表本身：加一条就"认这个名字"，删一条就不再认。
     #[test]
-    fn adding_never_duplicates_and_never_adds_blanks() {
-        let mut rows = vec![ModelPair {
-            model: "bge-m3".into(),
-            upstream: Some("x".into()),
-            vision: true,
-            drop_fields: String::new(),
-        }];
-        let mut picked = BTreeSet::new();
-        picked.insert("bge-m3".to_string()); // 表里已经有了
-        picked.insert("   ".to_string()); // 空白，跳过
-        picked.insert("deepseek-v4.1-flash".to_string());
+    fn ticking_a_name_is_the_mapping_itself() {
+        let mut rows: Vec<ModelPair> = Vec::new();
+        assert!(!is_in_use(&rows, "deepseek-flash"));
 
-        assert_eq!(add_picked_rows(&mut rows, &picked), 1);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[1].model, "deepseek-v4.1-flash");
-        assert_eq!(rows[1].upstream, None, "加进来的默认同名发出去");
-        assert_eq!(rows[0].upstream.as_deref(), Some("x"), "已有的行不许被动过");
-        // 从上游清单加进来的行**不许猜能力**：一律先当纯文本，要标得实测
-        assert!(!rows[1].vision, "拉回来的模型名不能自动当能看图");
-        assert!(rows[0].vision, "已有行的标记不许被动过");
+        assert!(add_mapping(&mut rows, "deepseek-flash"));
+        assert!(is_in_use(&rows, "deepseek-flash"), "加进来就该是认它");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].upstream, None, "没填上游名字 = 同名发出去");
+        assert!(!rows[0].vision, "刚加的名字不许猜能力");
+        assert!(rows[0].drop_fields.is_empty(), "刚加的名字一个字段都不丢");
 
         // 连点两次不该堆重复行
-        assert_eq!(add_picked_rows(&mut rows, &picked), 0);
+        assert!(!add_mapping(&mut rows, "deepseek-flash"));
+        assert_eq!(rows.len(), 1);
+
+        // 空名字进不来；两头的空白不算名字的一部分
+        assert!(!add_mapping(&mut rows, "   "));
+        assert!(add_mapping(&mut rows, "  bge-m3  "));
+        assert!(is_in_use(&rows, "bge-m3"));
         assert_eq!(rows.len(), 2);
     }
-}
 
-    /// 回归：用户在模型清单里勾了 `deepseek-flash`，**没点「把勾选的加进下表」就直接点保存** ——
-    /// 以前勾选被无声丢掉（弹窗一关，渠道上「模型名：不限定」），看着就是「点了没反应」。
-    /// 现在保存前会把勾选并进模型表，这条用例锁住「空表 + 勾选」这个具体场景。
+    /// 取消勾选 = 把那一条删掉；删之前要能问出"这一条配过东西吗"，
+    /// 不然用户不知道自己的「能看图」/「要丢的字段」跟着没了。
     #[test]
-    fn ticking_a_model_and_hitting_save_keeps_it_even_with_an_empty_table() {
-        let mut rows: Vec<ModelPair> = Vec::new();
-        let mut picked = BTreeSet::new();
-        picked.insert("deepseek-flash".to_string());
+    fn unticking_removes_it_and_reports_what_would_be_lost() {
+        let mut rows = vec![mapping("auto", Some("v4.1flash")), mapping("v4.1flash", None)];
+        rows[1].vision = true;
 
-        let merged = add_picked_rows(&mut rows, &picked);
-        assert_eq!(merged, 1, "勾选的必须并进来");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].model, "deepseek-flash");
-        assert_eq!(rows[0].upstream, None, "没填上游名 = 同名发给上游");
-        assert!(!rows[0].vision, "拉回来的名字不许猜能力");
+        assert!(!mapping_has_config(&rows, "auto"), "这条路没配过东西");
+        assert!(mapping_has_config(&rows, "v4.1flash"), "标过能看图，取消前要问一句");
+        assert!(!mapping_has_config(&rows, "没有的名字"));
 
-        // 并过之后再并一次不会翻倍（用户点了加进下表又点保存的情形）
-        assert_eq!(add_picked_rows(&mut rows, &picked), 0);
-        assert_eq!(rows.len(), 1);
+        assert_eq!(drop_mapping(&mut rows, "v4.1flash"), 1);
+        assert_eq!(rows.len(), 1, "只删同名的那一条，别名那条不动");
+        assert_eq!(rows[0].model, "auto");
+        assert_eq!(drop_mapping(&mut rows, "v4.1flash"), 0, "再删一次什么也不删");
+        // 别名那条也在用它，但键是客户端名字
+        assert!(!is_in_use(&rows, "v4.1flash"));
+        assert!(is_in_use(&rows, "auto"));
     }
+
+    #[test]
+    fn bulk_ticking_never_double_adds() {
+        let mut rows: Vec<ModelPair> = Vec::new();
+        let list: Vec<String> = ["a", "b", "a", "  ", "c"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(add_many(&mut rows, &list), 3, "重复的和空名字不算");
+        assert_eq!(add_many(&mut rows, &list), 0);
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// 保存前把重复的客户端名字拦下来：一个名字只能一条映射，
+    /// 不拦的话后写的那条会把前一条盖掉，用户改过的「能看图」就悄悄没了。
+    #[test]
+    fn duplicate_client_names_are_caught_before_saving() {
+        let rows = vec![
+            mapping("auto", Some("v4.1flash")),
+            mapping("bge-m3", None),
+            mapping(" auto ", Some("x")),
+            mapping("", None),
+            mapping("", Some("y")),
+        ];
+        assert_eq!(duplicate_client_names(&rows), vec!["auto".to_string()]);
+    }
+
+    #[test]
+    fn saving_trims_and_drops_blank_rows_honestly() {
+        let rows = vec![
+            ModelPair {
+                model: "  auto  ".into(),
+                upstream: Some("   ".into()),
+                vision: true,
+                drop_fields: "reasoning_effort".into(),
+            },
+            mapping("bge-m3", Some(" BAAI/bge-m3 ")),
+            mapping("   ", None),
+        ];
+        let (out, skipped) = mappings_to_save(&rows);
+        assert_eq!(skipped, 1, "空名字的行要如实回报丢了几条");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].model, "auto");
+        assert_eq!(out[0].upstream, None, "上游那栏全是空白 = 同名发出去");
+        assert!(out[0].vision, "已经实测标上的能力不许被抹掉");
+        assert_eq!(out[0].drop_fields, "reasoning_effort");
+        assert_eq!(out[1].model, "bge-m3");
+        assert_eq!(out[1].upstream.as_deref(), Some("BAAI/bge-m3"), "两头空白去掉");
+    }
+
+    #[test]
+    fn catalog_lookup_is_exact() {
+        let cat = vec![up("v4.1flash"), up("BGE-M3")];
+        assert!(catalog_has(&cat, "v4.1flash"));
+        assert!(catalog_has(&cat, "BGE-M3"), "上游名字大小写敏感，原样比");
+        assert!(!catalog_has(&cat, "bge-m3"));
+        assert!(!catalog_has(&cat, "auto"));
+    }
+}

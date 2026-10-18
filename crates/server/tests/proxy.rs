@@ -226,7 +226,10 @@ async fn mock_models(State(inner): State<Arc<MockInner>>, headers: HeaderMap, ur
             "data": [
                 {"id": "mock-chat-a", "object": "model"},
                 {"id": "mock-chat-a", "object": "model"},
-                {"id": "mock-embed-b", "object": "model"}
+                // 这条故意带上「上游自报的信息」—— 面板的「模型」段要照抄它，
+                // 没说的字段（比如能不能收图）就得留空，一个标签都不许编。
+                {"id": "mock-embed-b", "object": "model", "owned_by": "mock-vendor",
+                 "context_length": 8192, "pricing": {"prompt": "0", "completion": "0"}}
             ]
         }))
         .into_response(),
@@ -1205,6 +1208,20 @@ async fn the_panel_can_pull_the_upstream_model_list() {
     assert_eq!(v["models"], json!(["mock-chat-a", "mock-embed-b"]), "{v}");
     assert_eq!(v["count"], 2);
     assert!(v["url"].as_str().unwrap().ends_with("/v1/models"), "{v}");
+    // 「模型」段要的不只是名字：上游自报的归属方/上下文/价钱/能不能收图都跟着回来，
+    // 上游没说的一律 null（面板上一个标签都不许显示 —— 别替上游吹）。
+    let info = v["info"].as_array().expect("info 数组");
+    assert_eq!(info.len(), 2, "info 去重后跟 models 一一对应：{v}");
+    assert_eq!(info[0]["id"], "mock-chat-a");
+    assert!(info[0]["owned_by"].is_null(), "上游没报归属方就得是 null：{v}");
+    assert!(info[0]["context_window"].is_null(), "上游没报上下文就得是 null：{v}");
+    assert!(info[0]["price_note"].is_null(), "上游没报价钱就得是 null：{v}");
+    assert!(info[0]["vision"].is_null(), "上游没报能不能收图就得是 null：{v}");
+    assert_eq!(info[1]["id"], "mock-embed-b");
+    assert_eq!(info[1]["owned_by"], "mock-vendor");
+    assert_eq!(info[1]["context_window"], 8192);
+    assert_eq!(info[1]["is_free"], true, "每一档价都是 0 = 免费：{v}");
+    assert!(info[1]["vision"].is_null(), "平价不等于能收图：{v}");
 
     // 真的发出去了，而且带的是**这条渠道自己的** key 和自定义头
     let seen = m.seen();

@@ -172,69 +172,302 @@ fn clamp_body(text: String) -> String {
     text[..cut].to_string()
 }
 
-/// 从上游 `/v1/models` 的响应里挑出模型名。
+/// 上游 `/v1/models` 里的一条：模型名 + **上游自己报**的说明。
 ///
-/// 三种**真实见过**的形状都认：
+/// 每个说明字段只在**上游真给了**的时候才有值；上游没给就是 `None`，
+/// 界面上什么都不显示。**不许拿名字猜** —— "名字里带 vl 就能看图"这条
+/// 已经在视觉能力上栽过一次（deepseek 的 flash 能读图，有的 vision 名字反倒不能）。
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
+pub struct UpstreamModel {
+    /// 上游认的名字（客户端要发的就是它）。
+    pub id: String,
+    /// 归属方（`owned_by` / `organization` / `publisher` …）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
+    /// 上游自报的上下文长度（tokens）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<i64>,
+    /// 价格提示：上游写 `free` 就是 `free`，写数字就换算成"每百万 tokens 多少美元"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_note: Option<String>,
+    /// 上游报的每一档价格都是 0（或者它直接写了 free）。**只按上游的话判**，
+    /// 绝不拿提示文字去猜（不然"$10/M in"会被涂成绿色）。
+    #[serde(skip_serializing_if = "is_false")]
+    pub is_free: bool,
+    /// 上游**自称**能不能收图。这不是我们的"能看图"标记 ——
+    /// 那个只认面板上实测（真发一张图问它左上角什么颜色）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// 模型清单的信封字段：`data`（OpenAI 与多数中转）、`models`（Ollama）、
+/// `result`/`results`/`items`（别家网关）。
+const LIST_KEYS: [&str; 5] = ["data", "models", "result", "results", "items"];
+/// 名字字段的各种拼法。
+const ID_KEYS: [&str; 6] = ["id", "name", "model", "model_id", "modelId", "slug"];
+/// 归属方字段的各种拼法。
+const OWNER_KEYS: [&str; 6] = [
+    "owned_by",
+    "ownedBy",
+    "organization",
+    "owner",
+    "provider",
+    "publisher",
+];
+/// 上下文长度字段的各种拼法（OpenRouter / Ollama / vLLM 各写各的）。
+const CONTEXT_KEYS: [&str; 7] = [
+    "context_length",
+    "context_window",
+    "max_model_len",
+    "max_context_length",
+    "max_context_tokens",
+    "ctx_len",
+    "contextWindow",
+];
+/// 价格字段（OpenRouter 是 `pricing:{prompt,completion}`，也有的直接写字符串）。
+const PRICE_KEYS: [&str; 2] = ["price", "pricing"];
+/// "能不能收图"的布尔字段。
+const VISION_KEYS: [&str; 5] = [
+    "vision",
+    "supports_vision",
+    "supportsVision",
+    "image_input",
+    "multimodal",
+];
+/// 模态字段（OpenRouter 把真信号放在 `architecture` 里）。
+const MODALITY_KEYS: [&str; 4] = ["modalities", "input_modalities", "inputModalities", "modality"];
+/// 模态里哪几个值代表能收图。
+const VISION_MODALITIES: [&str; 3] = ["image", "vision", "image-input"];
+/// 低于这个数只可能是"每 token"报价（OpenRouter 写 `0.00000125`），
+/// 大于等于它的已经是"每百万"了。
+const PER_TOKEN_CEILING: f64 = 0.01;
+/// 名字长到这个程度肯定不是模型名（别把一段正文塞进列表）。
+const MAX_MODEL_ID_LEN: usize = 256;
+
+/// 模型数组在哪个字段里 —— 信封长得五花八门，最多再往下一层找
+/// （`{"data":{"models":[…]}}` 这种包两层的也见过）。
+fn find_model_array(v: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    fn dive(v: &serde_json::Value, depth: u8) -> Option<&Vec<serde_json::Value>> {
+        if let Some(arr) = v.as_array() {
+            return Some(arr);
+        }
+        let o = v.as_object()?;
+        for key in LIST_KEYS {
+            let Some(value) = o.get(key) else { continue };
+            if let Some(arr) = value.as_array() {
+                return Some(arr);
+            }
+            if depth < 1 {
+                if let Some(found) = dive(value, depth + 1) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    dive(v, 0)
+}
+
+fn first_string(o: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|k| {
+        o.get(*k)
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// 上下文长度：数字或者"数字字符串"都认（有的上游把数字写成字符串），
+/// 不是正数就当没给。
+fn first_positive_int(
+    o: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<i64> {
+    keys.iter().find_map(|k| {
+        let v = o.get(*k)?;
+        let n = match v {
+            serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+            serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
+            _ => None,
+        }?;
+        (n > 0).then_some(n)
+    })
+}
+
+/// 一份价格换算成"每百万 tokens 多少美元"。上游写的是每 token 就按量级换算。
+fn per_million(raw: &serde_json::Value) -> Option<f64> {
+    let value = match raw {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }?;
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    Some(if value > 0.0 && value < PER_TOKEN_CEILING {
+        value * 1_000_000.0
+    } else {
+        value
+    })
+}
+
+/// 好看的美元数字：最多四位小数，不留浮点尾巴。
+fn usd(value: f64) -> String {
+    let rounded = (value * 10_000.0).round() / 10_000.0;
+    format!("${rounded}")
+}
+
+/// 价格提示 + "是不是免费"。认不出来就返回 None（界面上一个标签都不显示）。
+fn price_hint(o: &serde_json::Map<String, serde_json::Value>) -> Option<(String, bool)> {
+    for key in PRICE_KEYS {
+        let Some(value) = o.get(key) else { continue };
+        if let Some(text) = value.as_str() {
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            // 只有"就是 free 这个词"才算免费 —— 绝不拿提示文字去猜
+            if text.eq_ignore_ascii_case("free") {
+                return Some(("free".to_string(), true));
+            }
+            return Some((cap_chars(text, 39), false));
+        }
+        let Some(pricing) = value.as_object() else {
+            continue;
+        };
+        let prompt = pricing.get("prompt").and_then(per_million);
+        let completion = pricing.get("completion").and_then(per_million);
+        if prompt.is_none() && completion.is_none() {
+            continue;
+        }
+        // OpenRouter 的 `:free` 名字报的是平的 {"prompt":"0","completion":"0"}
+        if prompt.unwrap_or(0.0) == 0.0 && completion.unwrap_or(0.0) == 0.0 {
+            return Some(("free".to_string(), true));
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(p) = prompt.filter(|p| *p > 0.0) {
+            parts.push(format!("{}/M in", usd(p)));
+        }
+        if let Some(c) = completion.filter(|c| *c > 0.0) {
+            parts.push(format!("{}/M out", usd(c)));
+        }
+        return Some((cap_chars(&parts.join(" "), 39), false));
+    }
+    None
+}
+
+/// 从模态字段判能不能收图：数组（`["text","image"]`）或者字符串
+/// （`"text+image->text"` —— 只看箭头左边的输入侧）。
+fn modality_vision(o: &serde_json::Map<String, serde_json::Value>) -> Option<bool> {
+    for key in MODALITY_KEYS {
+        let Some(value) = o.get(key) else { continue };
+        if let Some(arr) = value.as_array() {
+            return Some(arr.iter().any(|m| {
+                m.as_str()
+                    .map(|s| {
+                        let s = s.to_lowercase();
+                        VISION_MODALITIES.iter().any(|v| s == *v)
+                    })
+                    .unwrap_or(false)
+            }));
+        }
+        if let Some(text) = value.as_str() {
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let input = text.to_lowercase();
+            let input = input.split("->").next().unwrap_or("").to_string();
+            return Some(VISION_MODALITIES.iter().any(|v| input.contains(v)));
+        }
+    }
+    None
+}
+
+/// 上游**自称**能不能收图：布尔字段、顶层模态数组，或者 OpenRouter 放在
+/// `architecture` 里的那份。都没有就是"没说"（None），界面上不标。
+fn vision_of(o: &serde_json::Map<String, serde_json::Value>) -> Option<bool> {
+    for key in VISION_KEYS {
+        if let Some(b) = o.get(key).and_then(|v| v.as_bool()) {
+            return Some(b);
+        }
+    }
+    if let Some(v) = modality_vision(o) {
+        return Some(v);
+    }
+    o.get("architecture")
+        .and_then(|a| a.as_object())
+        .and_then(modality_vision)
+}
+
+/// 一条上游条目 → 一条说明。认不出名字就整条丢掉（不编）。
+fn to_upstream_model(entry: &serde_json::Value) -> Option<UpstreamModel> {
+    if let Some(s) = entry.as_str() {
+        let id = s.trim();
+        return (!id.is_empty())
+            .then(|| UpstreamModel { id: id.to_string(), ..Default::default() });
+    }
+    let o = entry.as_object()?;
+    let id = first_string(o, &ID_KEYS)?;
+    if id.chars().count() > MAX_MODEL_ID_LEN {
+        return None;
+    }
+    let mut m = UpstreamModel {
+        id,
+        owned_by: first_string(o, &OWNER_KEYS),
+        ..Default::default()
+    };
+    m.context_window = first_positive_int(o, &CONTEXT_KEYS);
+    if let Some((note, free)) = price_hint(o) {
+        m.price_note = Some(note);
+        m.is_free = free;
+    }
+    m.vision = vision_of(o);
+    Some(m)
+}
+
+/// 解析上游 `/v1/models`：模型名 + 上游自己报的说明，顺序按上游给的
+/// （不排序），同名的只留第一条，最多 [`MAX_MODEL_IDS`] 条。
 ///
-/// - OpenAI 标准：`{"data":[{"id":"gpt-x","object":"model"}, …]}`
-/// - `{"models":[{"name":"llama3"}, …]}`（Ollama 风格）
-/// - 直接一个字符串数组：`["a","b"]`
+/// 同时回一个"上游一共报了多少条"（截断之前），面板要如实说
+/// "报了 N 个，这里只列了前 …" 而不是假装就这么多。
+pub fn parse_model_catalog_with_total(body: &str) -> (Vec<UpstreamModel>, usize) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return (Vec::new(), 0);
+    };
+    let Some(entries) = find_model_array(&v) else {
+        return (Vec::new(), 0);
+    };
+    let mut out: Vec<UpstreamModel> = Vec::with_capacity(entries.len().min(MAX_MODEL_IDS));
+    for entry in entries {
+        let Some(m) = to_upstream_model(entry) else {
+            continue;
+        };
+        if out.iter().any(|x| x.id == m.id) {
+            continue;
+        }
+        out.push(m);
+    }
+    let seen = out.len();
+    out.truncate(MAX_MODEL_IDS);
+    (out, seen)
+}
+
+/// 只要清单本身（不要"一共报了多少"那一位）。
+pub fn parse_model_catalog(body: &str) -> Vec<UpstreamModel> {
+    parse_model_catalog_with_total(body).0
+}
+
+/// 只挑模型名（老口径，面板之外的地方还在用）。
 ///
 /// **认不出来就回空列表** —— 面板会说"拉回来了但没认出清单"，绝不编造名字。
-/// 顺序按上游给的来（不排序），只去重、去空白、限量。
 pub fn parse_model_ids(body: &str) -> Vec<String> {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
-        return Vec::new();
-    };
-
-    let mut out: Vec<String> = Vec::new();
-    let mut push = |s: &str| {
-        let s = s.trim();
-        if !s.is_empty() && !out.iter().any(|x| x == s) {
-            out.push(s.to_string());
-        }
-    };
-
-    let from_array = |arr: &Vec<serde_json::Value>| {
-        let mut ids: Vec<String> = Vec::new();
-        for item in arr {
-            let name = match item {
-                serde_json::Value::String(s) => Some(s.clone()),
-                serde_json::Value::Object(o) => ["id", "name", "model"]
-                    .iter()
-                    .find_map(|k| o.get(*k).and_then(|x| x.as_str()).map(str::to_owned)),
-                _ => None,
-            };
-            if let Some(n) = name {
-                let n = n.trim().to_string();
-                if !n.is_empty() && !ids.contains(&n) {
-                    ids.push(n);
-                }
-            }
-        }
-        ids
-    };
-
-    match &v {
-        serde_json::Value::Array(arr) => {
-            for id in from_array(arr) {
-                push(&id);
-            }
-        }
-        serde_json::Value::Object(o) => {
-            for key in ["data", "models"] {
-                if let Some(arr) = o.get(key).and_then(|x| x.as_array()) {
-                    for id in from_array(arr) {
-                        push(&id);
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-
-    out.truncate(MAX_MODEL_IDS);
-    out
+    parse_model_catalog(body).into_iter().map(|m| m.id).collect()
 }
 
 /// 面板列表里最多显示这么多模型名。
@@ -249,13 +482,7 @@ pub fn looks_like_a_model_list(body: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
         return false;
     };
-    match &v {
-        serde_json::Value::Array(_) => true,
-        serde_json::Value::Object(o) => ["data", "models"]
-            .iter()
-            .any(|k| o.get(*k).map(|x| x.is_array()).unwrap_or(false)),
-        _ => false,
-    }
+    find_model_array(&v).is_some()
 }
 
 /// 网络错分类成人能看懂的话。**不要把 key 打进日志。**
@@ -507,5 +734,110 @@ mod tests {
             parse_model_ids(r#"{"data":[{"id":"  spaced  "},{"id":""},{"id":"ok"}]}"#),
             vec!["spaced", "ok"]
         );
+    }
+
+    // ---------- 拉清单时把上游说的"信息"也带回来 ----------
+
+    /// OpenAI 形状：名字 + 归属方。上游没给的字段（上下文/价格/能不能收图）
+    /// **一个都不许凭空出现** —— 界面据此决定显示哪些小标签。
+    #[test]
+    fn the_catalog_carries_only_what_the_upstream_actually_said() {
+        let cat = parse_model_catalog(
+            r#"{"object":"list","data":[
+                {"id":"deepseek-v4.1-flash","object":"model","created":1750000000,"owned_by":"deepseek"},
+                {"id":"bge-m3","object":"model","owned_by":"BAAI"}
+            ]}"#,
+        );
+        assert_eq!(cat.len(), 2);
+        assert_eq!(cat[0].id, "deepseek-v4.1-flash");
+        assert_eq!(cat[0].owned_by.as_deref(), Some("deepseek"));
+        assert_eq!(cat[0].context_window, None, "上游没说上下文，就不许自己填");
+        assert_eq!(cat[0].price_note, None, "上游没说价钱，就不许自己填");
+        assert_eq!(cat[0].vision, None, "上游没说能不能收图，就不许猜");
+        assert!(!cat[0].is_free);
+        assert_eq!(cat[1].owned_by.as_deref(), Some("BAAI"));
+    }
+
+    /// OpenRouter 那种：上下文长度 + `pricing:{prompt,completion}`（写的是每 token
+    /// 的价，要按量级换算成每百万）+ `architecture` 里的 `input_modalities`。
+    #[test]
+    fn openrouter_style_details_are_read() {
+        let cat = parse_model_catalog(
+            r#"{"data":[{
+                "id":"deepseek/deepseek-v4.1-flash",
+                "context_length":163840,
+                "pricing":{"prompt":"0.00000125","completion":"0.0000025"},
+                "architecture":{"input_modalities":["text","image"],"modality":"text+image->text"}
+            }]}"#,
+        );
+        assert_eq!(cat[0].context_window, Some(163_840));
+        assert_eq!(cat[0].price_note.as_deref(), Some("$1.25/M in $2.5/M out"));
+        assert!(!cat[0].is_free, "有价钱就不是免费");
+        assert_eq!(cat[0].vision, Some(true));
+    }
+
+    /// 免费只有两种写法算数：就是 `free` 这个词，或者每一档价都是 0。
+    /// **绝不拿提示文字去猜** —— 不然 "$10/M in" 会被涂成绿色。
+    #[test]
+    fn free_is_only_the_word_free_or_all_zero_prices() {
+        let a = parse_model_catalog(r#"{"data":[{"id":"x","price":"free"}]}"#);
+        assert_eq!(a[0].price_note.as_deref(), Some("free"));
+        assert!(a[0].is_free);
+
+        let b = parse_model_catalog(
+            r#"{"data":[{"id":"y","pricing":{"prompt":"0","completion":"0"}}]}"#,
+        );
+        assert!(b[0].is_free, "OpenRouter 的 :free 报的是平的 0");
+
+        let c = parse_model_catalog(r#"{"data":[{"id":"z","price":"$10/M in $20/M out"}]}"#);
+        assert_eq!(c[0].price_note.as_deref(), Some("$10/M in $20/M out"));
+        assert!(!c[0].is_free, "写了价钱就不是免费");
+
+        // 反证：别家写的 free 字样混在句子里，不算
+        let d = parse_model_catalog(r#"{"data":[{"id":"w","price":"freemium $1/M"}]}"#);
+        assert!(!d[0].is_free);
+    }
+
+    /// 别的信封与拼法：Ollama 的 `models`+`name`+`ctx_len`、包两层的 `result`、
+    /// 纯字符串数组、数字写成字符串。
+    #[test]
+    fn other_envelopes_and_spellings_are_recognised() {
+        let a = parse_model_catalog(r#"{"models":[{"name":"llama3.2","ctx_len":"8192"}]}"#);
+        assert_eq!(a[0].id, "llama3.2");
+        assert_eq!(a[0].context_window, Some(8192), "数字写成字符串也认");
+
+        let b = parse_model_catalog(r#"{"result":{"data":[{"model_id":"m1","publisher":"acme"}]}}"#);
+        assert_eq!(b[0].id, "m1");
+        assert_eq!(b[0].owned_by.as_deref(), Some("acme"));
+
+        let c = parse_model_catalog(r#"["a","b"]"#);
+        assert_eq!(c.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+
+        // 布尔字段与顶层模态数组两种说法
+        let d = parse_model_catalog(r#"{"data":[{"id":"p","supports_vision":true},{"id":"q","modalities":["text"]}]}"#);
+        assert_eq!(d[0].vision, Some(true));
+        assert_eq!(d[1].vision, Some(false), "只列了文本 = 上游明说不能收图");
+    }
+
+    /// 同名的只留第一条（第一个说法的信息为准），顺序按上游给的。
+    #[test]
+    fn duplicates_keep_the_first_entry_and_upstream_order() {
+        let cat = parse_model_catalog(
+            r#"{"data":[{"id":"b","owned_by":"first"},{"id":"a"},{"id":"b","owned_by":"second"}]}"#,
+        );
+        assert_eq!(cat.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["b", "a"]);
+        assert_eq!(cat[0].owned_by.as_deref(), Some("first"));
+    }
+
+    /// 上限之外的条目要能被数出来（面板要如实说"报了 N 个、这里列了前 M 个"）。
+    #[test]
+    fn the_total_count_survives_the_cap() {
+        let items: Vec<String> = (0..(MAX_MODEL_IDS + 5))
+            .map(|i| format!(r#"{{"id":"m{i}"}}"#))
+            .collect();
+        let body = format!(r#"{{"data":[{}]}}"#, items.join(","));
+        let (cat, seen) = parse_model_catalog_with_total(&body);
+        assert_eq!(cat.len(), MAX_MODEL_IDS);
+        assert_eq!(seen, MAX_MODEL_IDS + 5, "截断前一共多少条要数得出来");
     }
 }

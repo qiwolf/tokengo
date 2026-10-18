@@ -568,10 +568,12 @@ async fn channels_models(
     let latency = now_ms() - t0;
     let url = crate::upstream::join_url(&channel.base_url, "models");
 
-    let (ok, status, models, note) = match r {
+    // 拉回来的不只是名字：上游自己报的归属方/上下文/价钱/能不能收图也一并带回去
+    // （`UpstreamModel`）。上游没说的字段就是空，界面据此决定显示哪些小标签。
+    let (ok, status, catalog, seen, note) = match r {
         Ok((code, body)) if (200..300).contains(&code) => {
-            let models = crate::upstream::parse_model_ids(&body);
-            if models.is_empty() {
+            let (catalog, seen) = crate::upstream::parse_model_catalog_with_total(&body);
+            if catalog.is_empty() {
                 let note = if crate::upstream::looks_like_a_model_list(&body) {
                     format!(
                         "上游回的是清单形状，但里面一个模型名都没有 —— 它自己没报。正文：{}",
@@ -583,26 +585,36 @@ async fn channels_models(
                         snippet(&body)
                     )
                 };
-                (false, Some(code), Vec::new(), note)
+                (false, Some(code), Vec::new(), 0usize, note)
             } else {
                 // 成功时的说明文字在下面统一拼（要带上真实个数）
-                (true, Some(code), models, String::new())
+                (true, Some(code), catalog, seen, String::new())
             }
         }
         Ok((code, body)) => (
             false,
             Some(code),
             Vec::new(),
+            0usize,
             format!(
                 "上游回了 HTTP {code}（{url}）：多半是这个上游不支持 /v1/models。正文开头：{}",
                 snippet(&body)
             ),
         ),
-        Err(fault) => (false, None, Vec::new(), fault.message),
+        Err(fault) => (false, None, Vec::new(), 0usize, fault.message),
     };
 
     let note = if ok {
-        format!("拉到 {} 个模型名", models.len())
+        if seen > catalog.len() {
+            // 如实说：上游报的比这里列出来的多（列表有上限）
+            format!(
+                "拉到 {} 个模型名（上游一共报了 {seen} 个，列表只放得下前 {} 个）",
+                catalog.len(),
+                catalog.len()
+            )
+        } else {
+            format!("拉到 {} 个模型名", catalog.len())
+        }
     } else {
         note
     };
@@ -610,7 +622,7 @@ async fn channels_models(
     tracing::info!(
         "拉渠道 {id} 的上游模型清单：{}（{} 个，{latency} ms）",
         if ok { "成功" } else { "失败" },
-        models.len()
+        catalog.len()
     );
 
     Ok(Json(serde_json::json!({
@@ -620,8 +632,11 @@ async fn channels_models(
         "url": url,
         "http_status": status,
         "latency_ms": latency,
-        "count": models.len(),
-        "models": models,
+        "count": catalog.len(),
+        // 名字数组（老口径，别动：旧面板只认它）
+        "models": catalog.iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+        // 名字 + 上游自己报的说明
+        "info": catalog,
         "note": note,
     })))
 }

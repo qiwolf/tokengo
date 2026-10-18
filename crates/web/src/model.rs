@@ -329,8 +329,35 @@ pub struct ModelPull {
     /// 上游报的模型名。**拉不到就是空**，界面不许自己编。
     #[serde(default)]
     pub models: Vec<String>,
+    /// 上游报的模型名 + **上游自己给**的说明（归属方、上下文长度、价钱、它自称能不能收图）。
+    /// 上游没说的字段就是空 —— 界面上一个标签都不显示，绝不替它猜。
+    #[serde(default)]
+    pub info: Vec<UpstreamModel>,
     #[serde(default)]
     pub note: Option<String>,
+}
+
+/// 上游 `/v1/models` 里的一条。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct UpstreamModel {
+    /// 上游认的名字。
+    pub id: String,
+    /// 归属方（有的上游不报）。
+    #[serde(default)]
+    pub owned_by: Option<String>,
+    /// 上游自报的上下文长度（tokens）。
+    #[serde(default)]
+    pub context_window: Option<i64>,
+    /// 价格提示：`free` 或 `$1.25/M in $2/M out`。
+    #[serde(default)]
+    pub price_note: Option<String>,
+    /// 每一档价都是 0（或上游直接写 free）。
+    #[serde(default)]
+    pub is_free: bool,
+    /// 上游**自称**能不能收图。`None` = 它没说。**这不是我们的「能看图」标记** ——
+    /// 那个只认实测（真发一张图问它左上角什么颜色），两者别混。
+    #[serde(default)]
+    pub vision: Option<bool>,
 }
 
 /// 「测视觉」的响应：真发一张图之后，上游到底说了什么。
