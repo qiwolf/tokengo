@@ -232,6 +232,8 @@ fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AttemptRow {
+    pub model_name: Option<String>,
+    pub upstream_model: Option<String>,
     pub ordinal: i64,
     pub channel_id: i64,
     pub channel_name: Option<String>,
@@ -258,11 +260,12 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let Some(request) = request else { return Ok(None); };
     // LEFT JOIN keeps history readable after a channel has been deleted.
     let mut stmt = conn.prepare(
-        "SELECT a.ordinal, a.channel_id, c.name, a.outcome, a.http_status, a.duration_ms, a.error
+        "SELECT a.ordinal, a.channel_id, c.name, a.outcome, a.http_status, a.duration_ms, a.error,a.model_name,a.upstream_model
          FROM attempts a LEFT JOIN channels c ON c.id = a.channel_id
          WHERE a.request_id = ?1 ORDER BY a.ordinal ASC, a.id ASC",
     )?;
     let attempts = stmt.query_map([id], |r| Ok(AttemptRow {
+        model_name:r.get(7)?,upstream_model:r.get(8)?,
         ordinal: r.get(0)?, channel_id: r.get(1)?, channel_name: r.get(2)?,
         outcome: r.get(3)?, http_status: r.get(4)?, duration_ms: r.get(5)?, error: r.get(6)?,
     }))?.collect::<rusqlite::Result<Vec<_>>>()?;

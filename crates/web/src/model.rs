@@ -342,6 +342,8 @@ pub struct LogsResp {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct AttemptRow {
+    #[serde(default)] pub model_name:Option<String>,
+    #[serde(default)] pub upstream_model:Option<String>,
     pub ordinal: i64,
     pub channel_id: i64,
     pub channel_name: Option<String>,
