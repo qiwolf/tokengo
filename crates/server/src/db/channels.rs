@@ -334,6 +334,13 @@ pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> 
             ],
         )?;
     }
+    conn.execute("DELETE FROM registry_associations WHERE channel_id=?1 AND NOT EXISTS (
+        SELECT 1 FROM channel_models m WHERE m.channel_id=registry_associations.channel_id
+        AND m.model_name=registry_associations.model_name
+        AND COALESCE(NULLIF(TRIM(m.upstream_model),''),m.model_name)=registry_associations.upstream_model)", [id.0])?;
+    conn.execute("DELETE FROM channel_context_overrides WHERE channel_id=?1 AND NOT EXISTS (
+        SELECT 1 FROM channel_models m WHERE m.channel_id=channel_context_overrides.channel_id
+        AND COALESCE(NULLIF(TRIM(m.upstream_model),''),m.model_name)=channel_context_overrides.upstream_model)", [id.0])?;
     super::catalog::adopt_vision(conn, id)?;
     super::policy::sync_order(conn)?;
     Ok(())

@@ -183,13 +183,21 @@ pub(crate) fn auto_list<'a>(auto: &'a AutoRoutes, kind: &str) -> &'a [String] {
 fn context_badge(route: &NameRoute) -> (String, String) {
     match route.context_window.filter(|n| *n > 0) {
         Some(tokens) => {
-            let source = if route.context_source == "upstream" { "上游声明" } else { "来源未注明" };
+            let source = match route.context_source.as_str() { "upstream"=>"上游声明", "user_confirmed"=>"用户确认", "user_confirmed+upstream"=>"用户确认 / 上游声明", _=>"来源未注明" };
             (
                 format!("上下文 {} · {source}", fmt::ctx(tokens)),
                 format!("{tokens} tokens；{source}，非容量实测，不代表每条渠道都支持相同长度"),
             )
         }
-        None => ("上下文 未知".into(), "尚无上下文长度元数据，不按模型名猜测".into()),
+        None => match route.nominal_context_window.filter(|n| *n > 0) {
+            Some(tokens) if route.nominal_context_source.as_deref() == Some("models.dev") => (
+                format!("上下文 {} · models.dev 标称", fmt::ctx(tokens)),
+                format!("{tokens} tokens；models.dev 精确 ID，渠道未验证，不作为对外安全容量。{}", route.context_reason),
+            ),
+            _ => ("上下文 未知".into(), if route.context_reason.is_empty() {
+                "尚无上下文长度元数据，不按模型名猜测".into()
+            } else { route.context_reason.clone() }),
+        },
     }
 }
 
@@ -273,7 +281,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                         <div class="model-cooling">{r.cooldowns.iter().map(|c|{let id=c.channel_id;let name=r.name.clone();let remaining=(c.until_ms.max(c.lease_until)-updated.get()).max(0);view!{<div><span>{format!("{} · {} · 连续失败 {}",channel_name(id),if remaining>0{format!("冷却剩余 {}",fmt::span(remaining))}else if c.failures>0{"待试用".into()}else{"可用".into()},c.failures)}</span>{(c.failures>0).then(||view!{<button on:click=move |_|reset(name.clone(),Some(id))>"重置冷却"</button>})}</div>}}).collect_view()}</div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         <footer><span>{channels}</span><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></footer>
-                        {opened.then(||view!{<div class="score-details"><span>{format!("成功 {} · 上游失败 {} · 探索调用 {}",s.successes,s.faults,r.exploration_count)}</span><span>{format!("平均首字节延迟：{}",s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span><span>{format!("类型来源：{source} · {}",r.detection_status)}</span><span>{format!("最近样本：{}",s.last_at.map(fmt::ts).unwrap_or_else(||"无".into()))}</span><p>{route_detail}</p>{r.cooldowns.iter().filter(|c|!c.reason.is_empty()).map(|c|view!{<p>{format!("{}：{} · 可重试 {}",channel_name(c.channel_id),c.reason,fmt::ts(c.until_ms))}</p>}).collect_view()}<button on:click=move |_|reset(reset_name.clone(),None)>"重置该模型全部冷却"</button>{s.last_error.map(|e|view!{<p class="bad-text">{e}</p>})}<small>"90% 稳定性 + 10% 速度；不代表回答质量。旧记录无法归属的尝试不计分。"</small></div>})}
+                        {opened.then(||view!{<div class="score-details"><span>{format!("成功 {} · 上游失败 {} · 探索调用 {}",s.successes,s.faults,r.exploration_count)}</span><span>{format!("平均首字节延迟：{}",s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span><span>{format!("类型来源：{source} · {}",r.detection_status)}</span><span>{format!("最近样本：{}",s.last_at.map(fmt::ts).unwrap_or_else(||"无".into()))}</span><p>{route_detail}</p><p>{format!("上下文依据：{}", r.context_reason)}</p>{r.cooldowns.iter().filter(|c|!c.reason.is_empty()).map(|c|view!{<p>{format!("{}：{} · 可重试 {}",channel_name(c.channel_id),c.reason,fmt::ts(c.until_ms))}</p>}).collect_view()}<button on:click=move |_|reset(reset_name.clone(),None)>"重置该模型全部冷却"</button>{s.last_error.map(|e|view!{<p class="bad-text">{e}</p>})}<small>"90% 稳定性 + 10% 速度；不代表回答质量。旧记录无法归属的尝试不计分。"</small></div>})}
                     </article>}
                 }).collect_view().into_any()
             }}</div>
@@ -311,6 +319,16 @@ mod tests {
         assert_eq!(label, "上下文 131K · 上游声明");
         assert!(title.contains("131072 tokens"));
         assert!(title.contains("非容量实测"));
+        r.context_window = None;
+        r.nominal_context_window = Some(8192);
+        r.nominal_context_source = Some("models.dev".into());
+        r.context_reason = "no exact ID for custom alias".into();
+        let (label, title) = context_badge(&r);
+        assert!(label.contains("models.dev 标称"));
+        assert!(title.contains("渠道未验证"));
+        r.nominal_context_window = None;
+        assert!(context_badge(&r).1.contains("no exact ID"));
+        r.context_window = Some(131072);
         r.context_source = "future-source".into();
         assert!(context_badge(&r).0.contains("来源未注明"));
     }

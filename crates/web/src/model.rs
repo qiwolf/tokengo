@@ -111,6 +111,12 @@ pub struct NameRoute {
     /// `upstream` = 上游声明；未知来源不能当作实测。
     #[serde(default)]
     pub context_source: String,
+    #[serde(default)]
+    pub nominal_context_window: Option<i64>,
+    #[serde(default)]
+    pub nominal_context_source: Option<String>,
+    #[serde(default)]
+    pub context_reason: String,
     /// 现在有没有渠道能用（`false` = 客户端打这个名字会 404）。
     #[serde(default)]
     pub routed: bool,

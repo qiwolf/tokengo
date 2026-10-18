@@ -68,8 +68,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let detail = RwSignal::new(None::<RequestDetail>);
     let detail_error = RwSignal::new(None::<String>);
     let detail_busy = RwSignal::new(false);
-    let lookup = RwSignal::new(String::new());
-    let lookup_detail = RwSignal::new(false);
     let detail_generation = RwSignal::new(0u64);
     let open_detail = move |id: i64| {
         detail_generation.update(|v| *v += 1);
@@ -213,25 +211,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <Show when=move || category.get()==0>
             <section class="card recent-calls">
                 <header class="card-head"><h2>"最近调用"</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
-                <form class="request-lookup" on:submit=move |ev| {
-                    ev.prevent_default();
-                    match lookup.get_untracked().trim().parse::<i64>() {
-                        Ok(id) if id > 0 => { lookup_detail.set(true); open_detail(id); },
-                        _ => { lookup_detail.set(true); detail_error.set(Some("请输入正整数请求号".into())); expanded.set(None); }
-                    }
-                }>
-                    <label for="request-id">"按请求号查找"</label>
-                    <input id="request-id" inputmode="numeric" placeholder="完整请求 ID" prop:value=move || lookup.get() on:input=move |ev| lookup.set(event_target_value(&ev))/>
-                    <button class="ghost" type="submit">"查找"</button>
-                </form>
-                {move || (lookup_detail.get()).then(|| detail_error.get()).flatten().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
-                <Show when=move || lookup_detail.get() && expanded.get().is_some()>
-                    <section class="request-inspector" aria-label="请求详情" aria-live="polite">
-                        <header><h3>{move || format!("请求 #{}", expanded.get().unwrap_or_default())}</h3><button class="ghost" on:click=move |_| expanded.set(None)>"关闭详情"</button></header>
-                        <Show when=move || detail_busy.get()><p class="muted">"正在读取尝试记录…"</p></Show>
-                        {move || detail.get().map(|d| view! { <RequestDetailView detail=d/> })}
-                    </section>
-                </Show>
                 <div class="recent-list">
                     <Show when=move || recent.with(|rows| rows.is_empty())>
                         <div class="empty">"暂无调用"</div>
@@ -241,17 +220,15 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         each=move || {
                             let mut ids = recent.with(|rows| rows.iter().map(|r| r.id).collect::<Vec<_>>());
                             // Keep an inspected request when new calls push it out of the window.
-                            if !lookup_detail.get() {
-                                if let Some(id) = expanded.get() {
-                                    if !ids.contains(&id) { ids.push(id); }
-                                }
+                            if let Some(id) = expanded.get() {
+                                if !ids.contains(&id) { ids.push(id); }
                             }
                             ids
                         }
                         key=|id| *id
                         children=move |id| {
                             let row = Memo::new(move |_| recent.with(|rows| rows.iter().find(|r| r.id == id).cloned()).or_else(|| detail.get().filter(|d| d.request.id == id).map(|d| d.request)));
-                            let opened = move || !lookup_detail.get() && expanded.get() == Some(id);
+                            let opened = move || expanded.get() == Some(id);
                             view! {
                                 <article class="recent-call" data-request-id=id>
                                     {move || row.get().map(|r| {
@@ -276,7 +253,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                         })}
                                     <button class="ghost" aria-expanded=opened on:click=move |_| {
                                         if opened() { expanded.set(None); }
-                                        else { lookup_detail.set(false); open_detail(id); }
+                                        else { open_detail(id); }
                                     }>{move || if opened() {"收起"} else {"详情"}}</button>
                                     </div>
                                     <Show when=opened>

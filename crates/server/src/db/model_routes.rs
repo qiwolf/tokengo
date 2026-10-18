@@ -49,6 +49,10 @@ pub struct NameRoute {
     /// Conservative limit across usable mappings; absent if any target is unknown.
     pub context_window: Option<i64>,
     pub context_source: Option<String>,
+    /// Nominal fallback, never advertised as a confirmed channel limit.
+    pub nominal_context_window: Option<i64>,
+    pub nominal_context_source: Option<String>,
+    pub context_reason: String,
 }
 
 impl NameRoute {
@@ -98,6 +102,9 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
                         vision_channels: false,
                         context_window: None,
                         context_source: None,
+                        nominal_context_window: None,
+                        nominal_context_source: None,
+                        context_reason: String::new(),
                     });
                     out.len() - 1
                 }
@@ -120,12 +127,53 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
         super::catalog::list(conn, ch.id).map(|entries| (ch.id, entries))
     }).collect::<Result<HashMap<_, _>>>()?;
     for r in &mut out {
-        r.context_window = crate::capability_detector::conservative_context(
-            chans.iter().filter(|ch| usable(ch) && r.channels.contains(&ch.id))
-                .flat_map(|ch| ch.models.iter().filter(|m| same_model_name(&m.model, &r.name))
-                    .map(|m| crate::capability_detector::mapped_context(&catalogs[&ch.id], m)))
-        );
-        r.context_source = r.context_window.map(|_| "upstream".to_string());
+        let mut confirmed = Vec::new();
+        let mut manual_used = false;
+        let mut upstream_used = false;
+        for ch in chans.iter().filter(|ch| usable(ch) && r.channels.contains(&ch.id)) {
+            for m in ch.models.iter().filter(|m| same_model_name(&m.model, &r.name)) {
+                let manual = crate::model_registry::context_override(conn, ch.id, m)?;
+                manual_used |= manual.is_some();
+                let value = manual.or_else(|| crate::capability_detector::mapped_context(&catalogs[&ch.id], m));
+                upstream_used |= manual.is_none() && value.is_some();
+                confirmed.push(value);
+            }
+        }
+        r.context_window = crate::capability_detector::conservative_context(confirmed);
+        r.context_source = r.context_window.map(|_| if manual_used {
+            if upstream_used { "user_confirmed+upstream" } else { "user_confirmed" }
+        } else { "upstream" }.to_string());
+        let mut nominal = Vec::new();
+        let mut reasons = Vec::new();
+        let mut registry_used = false;
+        for ch in chans.iter().filter(|ch| usable(ch) && r.channels.contains(&ch.id)) {
+            for m in ch.models.iter().filter(|m| same_model_name(&m.model, &r.name)) {
+                if let Some(tokens) = crate::model_registry::context_override(conn, ch.id, m)?.or_else(|| crate::capability_detector::mapped_context(&catalogs[&ch.id], m)) {
+                    nominal.push(Some(tokens));
+                } else {
+                    registry_used = true;
+                    let context = crate::model_registry::mapped(conn, ch.id, m)?;
+                    nominal.push(context.tokens);
+                    if context.tokens.is_none() {
+                        reasons.push(format!("渠道 {}：{}", ch.id.0, context.reason));
+                    }
+                }
+            }
+        }
+        if registry_used {
+            r.nominal_context_window = crate::capability_detector::conservative_context(nominal);
+            r.nominal_context_source = r.nominal_context_window.map(|_| "models.dev".into());
+        }
+        r.context_reason = if r.context_window.is_some() {
+            if manual_used { "用户确认的渠道容量优先；跨可用映射取保守最小值".into() } else { "上游声明；不是渠道容量实测".into() }
+        } else if r.nominal_context_window.is_some() {
+            "models.dev 精确身份；仅标称上下文，渠道容量未验证；取可用映射最小值".into()
+        } else if reasons.is_empty() {
+            "没有可用渠道上下文依据".into()
+        } else {
+            // Bound panel payload even for unusually large channel sets.
+            reasons.into_iter().take(8).collect::<Vec<_>>().join("; ")
+        };
         let mut claims = Vec::new();
         for ch in &chans {
             if !r.declared_by.contains(&ch.id) { continue; }

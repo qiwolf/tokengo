@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod capability_detector;
+pub mod model_registry;
 pub mod crypto;
 pub mod db;
 pub mod gateway;

@@ -244,7 +244,10 @@ async fn models(
                 "kind": kind.as_str(),
                 "context_window": context,
                 "context_length": context,
-                "context_source": context.map(|_| "upstream"),
+                "context_source": context.map(|_| {
+                    let sources=servable.iter().filter_map(|m|m.context_source.as_deref()).collect::<std::collections::HashSet<_>>();
+                    if sources.len()==1 { *sources.iter().next().unwrap() } else { "user_confirmed+upstream" }
+                }),
             })]
         } else {
             Vec::new()
