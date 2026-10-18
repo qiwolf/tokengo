@@ -22,6 +22,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let busy = RwSignal::new(false);
 
     let reload = move || {
+        if busy.get_untracked() { return; }
         busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let h = hours.get_untracked();
@@ -58,6 +59,21 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         });
     };
     reload();
+
+    let recent_busy = RwSignal::new(false);
+    let expanded = RwSignal::new(None::<i64>);
+    let refresh_timer = crate::every(5000, move || {
+        if busy.get_untracked() || recent_busy.get_untracked() { return; }
+        recent_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::logs(12).await {
+                Ok(v) => recent.set(v),
+                Err(e) => ctx.note_err(&e),
+            }
+            recent_busy.set(false);
+        });
+    });
+    on_cleanup(move || crate::stop_timer(refresh_timer));
 
     let pick = move |h: i64| {
         set_hours.set(h);
@@ -159,56 +175,45 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </div>
             </div>
 
-            <section class="card">
-                <header class="card-head">
-            <h2>"最近调用"</h2>
-            <p class="muted small">"最新进来的请求 —— 哪个模型、走了哪条渠道、成没成、花了多久。"</p>
-                </header>
-                <div class="card-body flush">
-            <div class="table-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th>"时间"</th>
-                            <th>"模型"</th>
-                            <th>"走的渠道"</th>
-                            <th>"结果"</th>
-                            <th class="num">"耗时"</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {move || {
-                            let v = recent.get();
-                            if v.is_empty() {
-                                return view! {
-                                    <tr class="empty-row">
-                                        <td colspan="5" class="muted empty-cell">
-                                            "还没有请求进来。有程序往 /v1/chat/completions 或 /v1/embeddings 发请求，就会出现在这里。"
-                                        </td>
-                                    </tr>
-                                }
-                                .into_any();
+            <section class="card recent-calls">
+                <header class="card-head"><h2>"最近调用"</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
+                <div class="recent-list">
+                    {move || {
+                        let rows = recent.get();
+                        if rows.is_empty() { return view! { <div class="empty">"暂无调用"</div> }.into_any(); }
+                        rows.into_iter().map(|r| {
+                            let (label,css) = status_label(&r.status);
+                            let id=r.id;
+                            let opened=expanded.get()==Some(id);
+                            let channel=channel_name(r.channel_id);
+                            let time=fmt::ts(r.ts_ms);
+                            let clock=time.get(11..).unwrap_or(&time).to_string();
+                            let served=r.served_model.clone();
+                            view! {
+                                <article class="recent-call">
+                                    <div class="recent-main">
+                                        <span class=format!("tag {css}")>{label}</span>
+                                        <b class="recent-model">{r.model.clone()}</b>
+                                        <span class="recent-duration">{fmt::dur(r.latency_ms)}</span>
+                                    </div>
+                                    <div class="recent-meta">
+                                        <time title=time>{clock}</time><span class="recent-channel">{channel.clone()}</span>
+                                        {r.has_image.then(||view! { <span class="tag vision">"带图"</span> })}
+                                        <button class="ghost" aria-expanded=opened on:click=move |_| expanded.update(|v| *v=if *v==Some(id) {None} else {Some(id)})>{if opened {"收起"} else {"详情"}}</button>
+                                    </div>
+                                    {opened.then(||view! {
+                                        <div class="recent-detail">
+                                            <span>{format!("请求 #{} · {}",id,r.endpoint)}</span>
+                                            {(!served.is_empty()).then(||view! { <span>{format!("实际模型：{served}")}</span> })}
+                                            <span>{format!("Token 入 {} / 出 {}",fmt::num(r.input_tokens),fmt::num(r.output_tokens))}</span>
+                                            {r.http_status.map(|h|view! { <span>{format!("HTTP {h}")}</span> })}
+                                            {r.error.filter(|e| !e.is_empty()).map(|e|view! { <p class="bad-text">{e}</p> })}
+                                        </div>
+                                    })}
+                                </article>
                             }
-                            v.into_iter()
-                                .map(|r| {
-                                    let (label, class) = status_label(&r.status);
-                                    let channel = channel_name(r.channel_id);
-                                    view! {
-                                        <tr>
-                                            <td data-label="时间" class="nowrap small">{fmt::ts_short(r.ts_ms)}</td>
-                                            <td data-label="模型"><code class="small">{r.model.clone()}</code></td>
-                                            <td data-label="走的渠道">{channel}</td>
-                                            <td data-label="结果"><span class=format!("tag {class}")>{label}</span></td>
-                                            <td data-label="耗时" class="num">{fmt::dur(r.latency_ms)}</td>
-                                        </tr>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
-                    </tbody>
-                </table>
-            </div>
+                        }).collect_view().into_any()
+                    }}
                 </div>
             </section>
 

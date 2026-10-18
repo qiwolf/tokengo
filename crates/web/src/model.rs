@@ -292,6 +292,8 @@ pub struct StatsResp {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LogRow {
+    #[serde(default)]
+    pub served_model: String,
     pub id: i64,
     pub ts_ms: i64,
     pub endpoint: String,
