@@ -874,3 +874,33 @@ async fn the_logs_page_can_read_lines_and_change_the_level() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "非法级别必须拒");
 }
+
+/// 面板接口收到格式不对的请求体：必须回**标准错误信封**（400 + JSON + 中文），
+/// 不能把 axum 的英文反序列化原文（text/plain 422）直接丢给外面。
+///
+/// 反证：把 admin::router 上那层 `rewrite_deserialize_error` 摘掉 → 这条变红（422 + 纯文本）。
+#[tokio::test]
+async fn a_malformed_panel_body_gets_the_standard_error_envelope() {
+    let f = fixture();
+    let token = panel_token(&f).await;
+    // 模型行少写字段（真实踩过：字段从 model_name 改成 model 之后，旧脚本还在发 model_name）
+    let (s, v) = send(
+        test_app(&f),
+        "POST",
+        "/api/channels",
+        Some(&token),
+        Some(serde_json::json!({
+            "name": "格式不对", "base_url": "http://127.0.0.1:1/v1", "key": "x",
+            "models": [{"model_name": "auto"}]
+        })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "该回 400：{v}");
+    let msg = v["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("请求体格式不对"), "要用标准信封与中文说明：{v}");
+    assert!(
+        msg.contains("model") || msg.contains("deserialize") || msg.contains("missing"),
+        "要带上原话，方便对字段：{msg}"
+    );
+    assert!(v["error"]["type"].is_string(), "信封要有 type 字段：{v}");
+}

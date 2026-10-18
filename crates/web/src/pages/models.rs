@@ -88,6 +88,19 @@ pub(crate) struct ModelRow {
     pub members: Vec<i64>,
 }
 
+/// 把某个渠道提到最前面（其余保持原来的相对顺序）。给「设为首选」按钮用。
+///
+/// 只在成员列表里挪位置 —— `id` 不在列表里就**原样返回**（不然会把一条不属于这个模型的
+/// 渠道塞进来，等于偷偷改了成员表）。
+pub(crate) fn promote_to_front(members: &[i64], id: i64) -> Vec<i64> {
+    if !members.contains(&id) {
+        return members.to_vec();
+    }
+    let mut out: Vec<i64> = members.iter().copied().filter(|x| *x != id).collect();
+    out.insert(0, id);
+    out
+}
+
 /// 这个类型落在第几档（`KIND_TABS` 的下标）。认不出来 = 「还没定」那一档。
 pub(crate) fn kind_tab(kind: &str) -> usize {
     KIND_TABS
@@ -437,6 +450,37 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
         });
     };
 
+    // 「设为首选」：挪到最前 + 保存 + 立刻回切（下一发请求先试它）。
+    //
+    // 为什么要连回切一起做：顺序改了但状态机还停在老渠道上，用户会看到「设了首选、
+    // 请求还是走老那条」——那他会以为按钮没用。回切是现成接口（`POST /api/routing/{组}/reprobe`），
+    // 语义正是「下一次请求先试首选」。
+    let set_preferred = move |name: String, id: i64, members: Vec<i64>, enabled: bool| {
+        let next = promote_to_front(&members, id);
+        if next == members {
+            ctx.say("它已经在最前面了");
+            return;
+        }
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::save_group(&name, enabled, &next).await {
+                Ok(()) => {
+                    // 立刻生效：清掉回切检查点，让下一发请求先试新的首选
+                    // 回切失败不影响顺序（顺序已经存下了），如实不吭声：下一发请求自然会按新顺序试
+                    let _ = api::reprobe(&name).await;
+                    ctx.say(format!(
+                        "已设为首选 —— 下一发请求会先试它（顺序：{}）",
+                        next.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(" → ")
+                    ));
+                    reload();
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    ctx.say(format!("没设成：{}", e.message));
+                }
+            }
+        });
+    };
+
     let move_channel = move |i: usize, up: bool| {
         draft.update(|d| {
             if let Some(d) = d {
@@ -749,6 +793,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                     {is_open
                                                         .then(move || {
                                                             let members_v = members.clone();
+                                                            let group_enabled_v = enabled;
                                                             let gated_v = gated.clone();
                                                             let name_v = r.name.clone();
                                                             let declare_v = declare.clone();
@@ -798,18 +843,55 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                                                 .then(|| {
                                                                                     view! {
                                                                                         <div class="detail-block">
-                                                                                            <span class="detail-label">"渠道顺序（先试 → 后试）"</span>
+                                                                                            <span class="detail-label">"渠道顺序（先试 → 后试；点「设为首选」让它排到最前）"</span>
                                                                                             <div class="member-list">
                                                                                                 {members_v
                                                                                                     .iter()
-                                                                                                    .map(|id| {
+                                                                                                    .enumerate()
+                                                                                                    .map(|(i, id)| {
                                                                                                         let id = *id;
                                                                                                         let is_gated = gated_v.contains(&id);
                                                                                                         let gated_inner = gated_v.clone();
                                                                                                         let name_inner = name_v.clone();
+                                                                                                        // 「设为首选」用的三样东西：模型名、当前顺序、这一组的启用状态
+                                                                                                        let pref_name = name_v.clone();
+                                                                                                        let pref_members = members_v.clone();
+                                                                                                        let pref_id = id;
+                                                                                                        let pref_enabled = group_enabled_v;
                                                                                                         view! {
                                                                                                             <span class="member">
+                                                                                                                <span class="num muted">{format!("{}.", i + 1)}</span>
                                                                                                                 {channel_name(id)}
+                                                                                                                {(i == 0)
+                                                                                                                    .then(|| {
+                                                                                                                        view! {
+                                                                                                                            <span
+                                                                                                                                class="tag ok"
+                                                                                                                                title="请求会先试它；它不通才换下一条"
+                                                                                                                            >
+                                                                                                                                "首选"
+                                                                                                                            </span>
+                                                                                                                        }
+                                                                                                                    })}
+                                                                                                                {(i > 0)
+                                                                                                                    .then(|| {
+                                                                                                                        view! {
+                                                                                                                            <button
+                                                                                                                                class="ghost"
+                                                                                                                                title="把它挪到最前面，并让下一发请求先试它"
+                                                                                                                                on:click=move |_| {
+                                                                                                                                    set_preferred(
+                                                                                                                                        pref_name.clone(),
+                                                                                                                                        pref_id,
+                                                                                                                                        pref_members.clone(),
+                                                                                                                                        pref_enabled,
+                                                                                                                                    )
+                                                                                                                                }
+                                                                                                                            >
+                                                                                                                                "设为首选"
+                                                                                                                            </button>
+                                                                                                                        }
+                                                                                                                    })}
                                                                                                                 {is_gated
                                                                                                                     .then(|| {
                                                                                                                         view! {
@@ -1391,5 +1473,29 @@ mod tests {
                 assert_ne!(KIND_TABS[i].key, KIND_TABS[j].key, "两档键重了");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod prefer_tests {
+    use super::*;
+
+    /// 提到最前：其余保持相对顺序；已经在最前就原样；不在列表里就**别动**（不许偷偷加成员）。
+    ///
+    /// 反证：把 `promote_to_front` 里那句 `if !members.contains(&id)` 去掉 → 第三条变红。
+    #[test]
+    fn promoting_a_channel_to_the_front_only_reorders_existing_members() {
+        assert_eq!(promote_to_front(&[1, 2, 3], 3), vec![3, 1, 2]);
+        assert_eq!(promote_to_front(&[1, 2, 3], 2), vec![2, 1, 3]);
+        assert_eq!(promote_to_front(&[1, 2, 3], 1), vec![1, 2, 3], "已经在最前就不动");
+        assert_eq!(
+            promote_to_front(&[1, 2, 3], 99),
+            vec![1, 2, 3],
+            "不在成员里的渠道不许被塞进来"
+        );
+        assert_eq!(promote_to_front(&[], 1), Vec::<i64>::new());
+        // 单成员 / 重复 id 也不许出怪结果
+        assert_eq!(promote_to_front(&[7], 7), vec![7]);
+        assert_eq!(promote_to_front(&[5, 5, 6], 6), vec![6, 5, 5]);
     }
 }

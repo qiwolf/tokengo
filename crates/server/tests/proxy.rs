@@ -439,6 +439,20 @@ impl Fixture {
             .unwrap_or_default()
     }
 
+    /// 请求级账目：状态 / HTTP / 渠道号 / 错误原因（按 id 升序）。
+    fn ledger(&self) -> Vec<(String, Option<i64>, Option<i64>, Option<String>)> {
+        let conn = self.state.conn();
+        let mut stmt = conn
+            .prepare("SELECT status, http_status, channel_id, error FROM requests ORDER BY id")
+            .unwrap();
+        let v = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        v
+    }
+
     fn request_rows(&self) -> Vec<(String, Option<i64>, i64, i64, i64, Option<String>)> {
         let conn = self.state.conn();
         let mut stmt = conn
@@ -811,7 +825,41 @@ async fn an_unknown_model_is_404_without_touching_any_channel() {
     // 用户照着打反而又撞一个 404。
     assert!(!msg.contains("auto"), "报错不该点名某个模型名：{msg}");
     assert_eq!(m.count(), 0);
-    assert!(f.request_rows().is_empty(), "没试过就不该建记账行");
+    // 账上**要有一条**，记成 client_error（客户端写错名字），带上 HTTP 状态与原因。
+    // 为什么改主意（2026-10-18）：面板「请求」页是用户排障的第一站，
+    // 以前这三类 404 一条都不记，用户看到的是「客户端报 404、面板上干干净净」，只能靠猜。
+    // 注意：只记请求级（attempt 级仍然空 —— 一次上游都没打过）。
+    let rows = f.ledger();
+    assert_eq!(rows.len(), 1, "路由不出去也要留一条账：{rows:?}");
+    let (status, http, channel, err) = &rows[0];
+    assert_eq!(status, "client_error");
+    assert_eq!(*http, Some(404));
+    assert_eq!(*channel, None, "没打过任何渠道，别挂渠道号");
+    assert!(err.as_deref().unwrap_or("").contains("没有配置"), "{err:?}");
+    assert!(f.attempts().is_empty(), "一次上游都没打过，不该有 attempt 行");
+}
+
+/// 组里的渠道都没勾这个组名（v0.9.0 严格白名单）→ 404，而且账上要看得见。
+#[tokio::test]
+async fn a_group_with_no_scoped_channel_is_404_and_recorded() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    // 渠道一个模型名都不勾（no_declare），严格白名单下它谁也不认
+    let channel = f.add_channel("没勾名字的渠道", &m.base, ChannelSpec { no_declare: true, ..Default::default() });
+    f.set_group("auto", &[channel]);
+
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("没有可用的渠道"), "要说清是「没有可用的渠道」：{msg}");
+    assert_eq!(m.count(), 0, "跳过的渠道一个字节都不许发出去");
+
+    let rows = f.ledger();
+    assert_eq!(rows.len(), 1, "要留一条账：{rows:?}");
+    assert_eq!(rows[0].0, "client_error");
+    assert_eq!(rows[0].1, Some(404));
 }
 
 /// 组里全是停用的渠道 = 对外不该暴露，打了要 404 而不是 500。
@@ -1240,9 +1288,12 @@ async fn embeddings_go_to_their_own_group() {
     assert_eq!(seen[0].path, "/v1/embeddings");
 }
 
-/// 记账里"没试过就不建行"这条纪律：一次上游都没打，不该有 requests 行。
+/// 一次上游都没打时：**请求级**要有且只有一条 client_error 账（让用户看得见这次没成），
+/// **尝试级**必须一行都没有（没打过就是没打过）。
+///
+/// 2026-10-18 调整口径：以前是「一条都不记」，结果是面板上「客户端报 404、这里干干净净」。
 #[tokio::test]
-async fn failed_before_any_attempt_leaves_no_rows() {
+async fn failed_before_any_attempt_records_the_request_but_no_attempt() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
@@ -1251,8 +1302,11 @@ async fn failed_before_any_attempt_leaves_no_rows() {
     tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false, 0).unwrap();
 
     let _ = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
-    assert!(f.request_rows().is_empty());
-    assert!(f.attempts().is_empty());
+    let rows = f.ledger();
+    assert_eq!(rows.len(), 1, "要留一条请求级账：{rows:?}");
+    assert_eq!(rows[0].0, "client_error");
+    assert_eq!(rows[0].1, Some(404));
+    assert!(f.attempts().is_empty(), "没打过上游就不该有 attempt 行");
 }
 
 /// 面板「测一下」：真发请求，通与不通都要有真凭据。
