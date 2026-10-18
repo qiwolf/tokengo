@@ -123,6 +123,7 @@ async fn start_mock(default: Reply) -> Mock {
     let app = Router::new()
         .route("/v1/chat/completions", route_post(mock_handler))
         .route("/v1/embeddings", route_post(mock_handler))
+        .route("/v1/rerank", route_post(mock_handler))
         .route("/v1/models", axum::routing::get(mock_models))
         .with_state(inner.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3194,4 +3195,67 @@ async fn completed_stream_teaches_the_served_model_type() {
     let kind = tokengo_server::db::kinds::get(&conn,"stream-model").unwrap().unwrap();
     assert_eq!(kind.kind,tokengo_shared::ModelKind::Chat);
     assert!(tokengo_server::db::kinds::get(&conn,"auto").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn autonomous_type_detection_needs_no_user_traffic_and_respects_scope() {
+    let f=fixture(); f.with_key();
+    let mock=start_mock(Reply::Ok).await;
+    let ch=f.add_channel("detect",&mock.base,ChannelSpec::default());
+    f.serve("public",&[ch]);
+    tokengo_server::db::channels::set_models(&f.state.conn(),ch,&[
+        tokengo_server::db::channels::ModelMapping::new("public",Some("upstream-real".into()),false),
+        tokengo_server::db::channels::ModelMapping::new("auto",None,false),
+    ]).unwrap();
+    tokengo_server::type_detector::tick(&f.state).await.unwrap();
+    assert_eq!(mock.count(),1);
+    assert_eq!(mock.seen()[0].model,"upstream-real");
+    let conn=f.state.conn();
+    assert_eq!(tokengo_server::db::kinds::get(&conn,"public").unwrap().unwrap().kind,tokengo_shared::ModelKind::Chat);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM requests",[],|x|x.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM attempts",[],|x|x.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM routing_state",[],|x|x.get::<_,i64>(0)).unwrap(),0);
+    drop(conn);
+    tokengo_server::type_detector::tick(&f.state).await.unwrap();
+    assert_eq!(mock.count(),1,"identified models must not be probed again");
+}
+
+#[tokio::test]
+async fn autonomous_detection_checks_embedding_and_rerank_response_shapes() {
+    for (body,expected) in [
+        (r#"{"data":[{"embedding":[0.1,0.2]}]}"#,tokengo_shared::ModelKind::Embeddings),
+        (r#"{"results":[{"index":0,"relevance_score":0.6}]}"#,tokengo_shared::ModelKind::Rerank),
+    ] {
+        let f=fixture(); let mock=start_mock(Reply::Status(200,body)).await;
+        let ch=f.add_channel("detect",&mock.base,ChannelSpec::default()); f.serve("test",&[ch]);
+        tokengo_server::type_detector::tick(&f.state).await.unwrap();
+        assert_eq!(tokengo_server::db::kinds::get(&f.state.conn(),"test").unwrap().unwrap().kind,expected);
+    }
+}
+
+#[tokio::test]
+async fn failed_autonomous_detection_backs_off_and_disabled_models_are_skipped() {
+    let f=fixture();let mock=start_mock(Reply::Status(429,"limited")).await;
+    let ch=f.add_channel("detect",&mock.base,ChannelSpec::default());f.serve("test",&[ch]);
+    tokengo_server::type_detector::tick(&f.state).await.unwrap();
+    tokengo_server::type_detector::tick(&f.state).await.unwrap();
+    assert_eq!(mock.count(),1,"429 must stop the endpoint loop and back off");
+    assert!(tokengo_server::db::kinds::get(&f.state.conn(),"test").unwrap().is_none());
+    tokengo_server::db::channels::update(&f.state.conn(),ch,"detect",&mock.base,false,false,0).unwrap();
+    tokengo_server::type_detector::tick(&f.state).await.unwrap();
+    assert_eq!(mock.count(),1);
+}
+
+#[tokio::test]
+async fn detector_background_task_identifies_without_any_client_request() {
+    let f=fixture();let mock=start_mock(Reply::Ok).await;
+    let ch=f.add_channel("background",&mock.base,ChannelSpec::default());f.serve("background-model",&[ch]);
+    let task=tokengo_server::type_detector::spawn(f.state.clone());
+    for _ in 0..100 {
+        if tokengo_server::db::kinds::get(&f.state.conn(),"background-model").unwrap().is_some() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    task.abort();
+    assert_eq!(mock.count(),1);
+    assert_eq!(tokengo_server::db::kinds::get(&f.state.conn(),"background-model").unwrap().unwrap().kind,tokengo_shared::ModelKind::Chat);
 }

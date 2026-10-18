@@ -1029,12 +1029,17 @@ async fn model_routes_list(
         .iter()
         .map(|r| {
             let st = router.state(&r.name).cloned().unwrap_or_default();
+            let detection_status = {
+                let conn=state.conn();
+                conn.query_row("SELECT status FROM model_type_checks WHERE model_name=?1 ORDER BY next_at DESC LIMIT 1", [&r.name], |x| x.get::<_,String>(0)).unwrap_or_else(|_| if r.kind.is_set() { String::new() } else { "等待自动识别".into() })
+            };
             serde_json::json!({
                 "name": r.name,
                 "kind": r.kind.as_str(),
                 "kind_label": r.kind.label(),
                 "kind_source": r.kind_origin,
                 "kind_conflict": r.kind_conflict,
+                "detection_status": detection_status,
                 // 有启用的渠道勾了它并标了能看图（只对对话类有意义）
                 "can_see": r.can_see(),
                 // 现在有没有渠道能用（没有 = 客户端打这个名字会 404）
