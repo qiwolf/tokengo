@@ -426,7 +426,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
                             tab.set(TAB_MODELS.to_string());
-                            ctx.say(format!("渠道已新建{tail}{made_note} —— 接着问一下它有哪些模型"));
+                            ctx.say(format!("渠道已新建{tail}{made_note} —— 接着点「获取上游模型」"));
                         }
                         None => {
                             form.set(Form::Closed);
@@ -1094,38 +1094,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 disabled=move || pulling.get() || channel_id.is_none()
                                                 on:click=pull
                                             >
-                                                {move || if pulling.get() { "正在问…" } else { "问一下它有哪些模型" }}
+                                                {move || if pulling.get() { "获取中…" } else { "获取上游模型" }}
                                             </button>
-                                            <span class="muted small">
-                                                "直接问这条渠道：你支持哪些模型？它把名字和说明一起报回来；问不到就如实说，不会编一份名单给你。"
-                                                "问到的那份会记住 —— 下次打开先看上次的，不用再问一遍。"
-                                            </span>
                                         </div>
-                                        {move || {
-                                            let at = cat_at.get();
-                                            if at <= 0 {
-                                                view! {
-                                                    <p class="muted small">
-                                                        "这条渠道还没问过上游（或者上次没问到）—— 点上面的按钮问一次。"
-                                                    </p>
-                                                }
-                                                    .into_any()
-                                            } else {
-                                                let now = crate::now_ms();
-                                                let when = if at >= now {
-                                                    "刚刚".to_string()
-                                                } else {
-                                                    fmt::ago(now, at)
-                                                };
-                                                let n = pulled.get().len();
-                                                view! {
-                                                    <p class="muted small">
-                                                        {format!("上次问到 {n} 个名字（{when}）；要刷新就点上面的按钮。")}
-                                                    </p>
-                                                }
-                                                    .into_any()
-                                            }
-                                        }}
                                         {channel_id.is_none().then(|| view! {
                                             <p class="muted small">
                                                 "这条渠道还没保存，拿不到它的密钥去问 —— 先点下面的「保存」，弹窗会停在这一段。"
@@ -1142,17 +1113,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     }
                                                 })
                                         }}
-                                        <p class="muted small">
-                                            "勾上 = 这条渠道「认」这个名字：客户端打这个名字时，网关才会把请求发给它"
-                                            "（同名发过去；要发别的名字，摊开那一条的「详情」填）。"
-                                            "取消勾选 = 这条渠道不再认它，这个名字的请求不会再发给它。"
-                                        </p>
-                                        <p class="muted small">
-                                            "「认」的范围：一条都没勾 = 什么都认（原样转发）；"
-                                            "只要勾了名字，这条渠道就只认勾上的那些 —— 没勾的名字，请求一律不发给它。"
-                                            "另外，客户端要打的名字还得在「模型」页有同名模型组，否则会回 404。"
-                                            "勾选只是改在屏幕上，点下面的「保存」才会存进网关。"
-                                        </p>
 
                                         <div class="pull-head">
                                             <input
@@ -1178,9 +1138,28 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         .filter(|m| !m.model.trim().is_empty())
                                                         .count();
                                                     if total == 0 {
-                                                        format!("这条渠道现在认 {in_use} 个名字（上面问一次上游，就能对着清单挑）")
+                                                        format!("这条渠道认 {in_use} 个名字")
                                                     } else {
-                                                        format!("上游报了 {total} 个，列出 {shown} 个；这条渠道认 {in_use} 个")
+                                                        // 清单是什么时候拿的：做成行内的一个括注，
+                                                        // 不再单起一段说明文字
+                                                        let at = cat_at.get();
+                                                        let now = crate::now_ms();
+                                                        let when = if at <= 0 {
+                                                            String::new()
+                                                        } else if at >= now {
+                                                            "刚刚".to_string()
+                                                        } else {
+                                                            fmt::ago(now, at)
+                                                        };
+                                                        if when.is_empty() {
+                                                            format!(
+                                                                "上游报 {total} 个 · 列出 {shown} 个 · 认 {in_use} 个",
+                                                            )
+                                                        } else {
+                                                            format!(
+                                                                "上游报 {total} 个（{when}）· 列出 {shown} 个 · 认 {in_use} 个",
+                                                            )
+                                                        }
                                                     }
                                                 }}
                                             </span>
@@ -1220,7 +1199,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 if names.is_empty() {
                                                     return view! {
                                                         <p class="muted small">
-                                                            "还没有模型名。上面问一次上游、或者用下面「加一个自己的名字」自己填一个。"
+                                                            "还没有模型名。点上面的「获取上游模型」，或者用下面「加一个自己的名字」自己填一个。"
                                                         </p>
                                                     }.into_any();
                                                 }
@@ -1273,10 +1252,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let is_open_body = move || {
                                                             m_open.get().as_deref() == Some(n_close_body.as_str())
                                                         };
+                                                        let n_on = name.clone();
                                                         view! {
-                                                            <div class="m-row">
-                                                                <div class="m-line">
-                                                                    <label class="m-pick" title="勾上 = 这条渠道认这个名字">
+                                                            <div
+                                                                class="m-row"
+                                                                class:on=move || is_in_use(&f_models.get(), &n_on)
+                                                            >
+                                                                <label class="m-pick" title="勾上 = 这条渠道认这个名字">
                                                                         <input
                                                                             type="checkbox"
                                                                             prop:checked=move || {
@@ -1323,8 +1305,16 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                 }
                                                                             }
                                                                         />
-                                                                    </label>
-                                                                    <code class="m-name">{name.clone()}</code>
+                                                                </label>
+                                                                <div class="m-col">
+                                                                    <div class="m-line">
+                                                                        <code class="m-name">{name.clone()}</code>
+                                                                        <span class="spacer"></span>
+                                                                        <button class="ghost" on:click=open_me>
+                                                                            {move || if is_open_btn() { "收起" } else { "详情" }}
+                                                                        </button>
+                                                                    </div>
+                                                                    <div class="m-tags">
                                                                     {owner
                                                                         .map(|o| view! { <span class="tag muted">{o}</span> })}
                                                                     {ctx_len
@@ -1422,11 +1412,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                         }
                                                                             .into_any()
                                                                     }}
-                                                                    <span class="spacer"></span>
-                                                                    <button class="ghost" on:click=open_me>
-                                                                        {move || if is_open_btn() { "收起" } else { "详情" }}
-                                                                    </button>
-                                                                </div>
+                                                                    </div>
                                                                 {move || if !is_open_body() {
                                                                     ().into_any()
                                                                 } else {
@@ -1586,6 +1572,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                         </div>
                                                                     }.into_any()
                                                                 }}
+                                                                </div>
                                                             </div>
                                                         }
                                                     })
