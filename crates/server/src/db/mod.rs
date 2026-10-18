@@ -5,6 +5,7 @@
 
 pub mod catalog;
 pub mod groups;
+pub mod kinds;
 pub mod channels;
 pub mod maintenance;
 pub mod requests;
@@ -141,6 +142,7 @@ mod tests {
             "channels",
             "model_group_channels",
             "model_groups",
+            "model_kinds",
             "panel_sessions",
             "requests",
             "routing_state",
@@ -149,7 +151,7 @@ mod tests {
         ] {
             assert!(got.contains(&want.to_string()), "缺表 {want}，实际有 {got:?}");
         }
-        assert_eq!(got.len(), 13, "表数与设计不符：{got:?}");
+        assert_eq!(got.len(), 14, "表数与设计不符：{got:?}");
     }
 
     /// 关键反证：**免费模型目录相关的表一张都不该有。**

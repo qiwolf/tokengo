@@ -272,6 +272,21 @@ fn urlencode(s: &str) -> String {
     out
 }
 
+/// 全部「模型名 → 用途」（面板「模型」页一次拿走）。
+pub async fn model_kinds() -> Result<Vec<NameKind>, ApiErr> {
+    let r: ModelKindsResp = typed("GET", "/api/model-kinds", None).await?;
+    Ok(r.kinds)
+}
+
+/// 给人手动定一个**模型名**的用途；`auto` = 交还给实测（清空）。
+///
+/// 名字可能带斜杠（`BAAI/bge-m3`），进路径前必须转义 —— 否则会被当成两段路径。
+pub async fn set_model_kind(name: &str, kind: &str) -> Result<(), ApiErr> {
+    let body = json!({ "kind": kind });
+    let path = format!("/api/models/{}/kind", urlencode(name));
+    call("PUT", &path, Some(body)).await.map(|_| ())
+}
+
 pub async fn groups() -> Result<GroupsResp, ApiErr> {
     typed("GET", "/api/groups", None).await
 }

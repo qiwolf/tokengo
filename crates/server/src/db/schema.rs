@@ -256,4 +256,26 @@ CREATE TABLE channel_catalog (
 ALTER TABLE channels ADD COLUMN catalog_at INTEGER NOT NULL DEFAULT 0;
 "#,
     ),
+    (
+        9,
+        r#"
+-- 「模型名 → 用途」独立成表（2026-10-18，v0.10.0）。
+--
+-- 原来用途只挂在模型组上（迁移 v5）。面板「模型」页改成以「渠道里勾过的名字」为行
+-- 之后，没建组的名字就没地方标用途，图像 / 视频 / 音频 这类网关暂不转发、只能手标的
+-- 名字永远归不了档。所以用途改成挂在**名字**上；组上那份继续写（路由与对外清单要用），
+-- 由 db::groups 的两个写入点成对维护。
+--
+-- 这一步只做两件事：建表 + 把组上已有的非空类型搬过来。幂等：重复跑不改数据。
+-- 不碰任何现有表 —— 回滚就是丢掉这张表，路由数据一个字节不动。
+CREATE TABLE IF NOT EXISTS model_kinds (
+    model_name  TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL DEFAULT '',
+    kind_source TEXT NOT NULL DEFAULT '',
+    updated_at  INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO model_kinds (model_name, kind, kind_source, updated_at)
+SELECT name, kind, kind_source, 0 FROM model_groups WHERE kind <> '';
+"#,
+    ),
 ];

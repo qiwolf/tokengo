@@ -27,7 +27,12 @@ fn group_kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKin
         tokengo_shared::ModelKind::Chat => Some(EndpointKind::Chat),
         tokengo_shared::ModelKind::Embeddings => Some(EndpointKind::Embeddings),
         tokengo_shared::ModelKind::Rerank => Some(EndpointKind::Rerank),
-        tokengo_shared::ModelKind::Unknown => None,
+        // 图像 / 视频 / 音频：网关目前没有这几个转发端点，探活也就无从谈起。
+        // **不能**糊一个对话端点上去 —— 那会让探活拿对话请求去打生图模型。
+        tokengo_shared::ModelKind::Image
+        | tokengo_shared::ModelKind::Video
+        | tokengo_shared::ModelKind::Audio
+        | tokengo_shared::ModelKind::Unknown => None,
     }
 }
 
