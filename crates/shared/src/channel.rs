@@ -28,6 +28,12 @@ pub enum ModelKind {
     Chat,
     Embeddings,
     Rerank,
+    /// 生成图片的模型。网关暂时不转发这类端点，所以只能人在面板上标 —— 学不出来。
+    Image,
+    /// 生成视频的模型（同上）。
+    Video,
+    /// 语音合成 / 转写的模型（同上）。
+    Audio,
 }
 
 impl ModelKind {
@@ -38,6 +44,9 @@ impl ModelKind {
             ModelKind::Chat => "chat",
             ModelKind::Embeddings => "embeddings",
             ModelKind::Rerank => "rerank",
+            ModelKind::Image => "image",
+            ModelKind::Video => "video",
+            ModelKind::Audio => "audio",
         }
     }
 
@@ -47,6 +56,9 @@ impl ModelKind {
             "chat" | "completion" | "completions" => ModelKind::Chat,
             "embedding" | "embeddings" | "vector" => ModelKind::Embeddings,
             "rerank" | "reranker" => ModelKind::Rerank,
+            "image" | "images" | "image_generation" => ModelKind::Image,
+            "video" | "videos" | "video_generation" => ModelKind::Video,
+            "audio" | "speech" | "tts" | "transcription" | "audio_speech" => ModelKind::Audio,
             _ => ModelKind::Unknown,
         }
     }
@@ -63,6 +75,9 @@ impl ModelKind {
             ModelKind::Chat => "对话",
             ModelKind::Embeddings => "向量",
             ModelKind::Rerank => "重排",
+            ModelKind::Image => "图像",
+            ModelKind::Video => "视频",
+            ModelKind::Audio => "音频",
         }
     }
 }

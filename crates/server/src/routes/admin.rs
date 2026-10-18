@@ -5,18 +5,57 @@
 //! 除 `ping` / `auth/*` 外，**所有接口都要过会话门**。
 
 use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::http::request::Parts;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
-use crate::db::{
-    catalog, channels, groups, maintenance, now_ms, requests, routing, sessions, settings,
-};
+use crate::db::{catalog, channels, groups, kinds, maintenance, now_ms, requests, routing, sessions, settings};
 use crate::SharedState;
 
 pub fn router() -> Router<SharedState> {
+    // 请求体格式不对时，axum 默认回的是**英文散文**
+    // （`Failed to deserialize the JSON body into the target type: …`）、状态码 422、
+    // 内容类型 text/plain —— 与全站 `{"error":{…}}` 信封格格不入，面板与体检脚本都按信封解析，
+    // 外部调用方也一头雾水。这里统一改写成 400 + 信封（并带上原话，方便对字段）。
+    // 只改写「反序列化失败」这一类 422；领域里的 422（如带图却没有视觉渠道）原样放过。
+    router_inner().layer(axum::middleware::map_response(rewrite_deserialize_error))
+}
+
+async fn rewrite_deserialize_error(resp: Response) -> Response {
+    if resp.status() != StatusCode::UNPROCESSABLE_ENTITY {
+        return resp;
+    }
+    let plain = resp
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.starts_with("text/plain"))
+        .unwrap_or(false);
+    if !plain {
+        return resp;
+    }
+    let (parts, body) = resp.into_parts();
+    let bytes = match axum::body::to_bytes(body, 64 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return ApiError::bad_request("请求体格式不对").into_response(),
+    };
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    if !text.contains("Failed to deserialize") {
+        return Response::from_parts(parts, axum::body::Body::from(bytes));
+    }
+    tracing::debug!("面板接口收到格式不对的请求体：{text}");
+    ApiError::bad_request(format!(
+        "请求体格式不对：{}。这一般是面板与后端版本不一致（刷新页面）或字段名写错了。",
+        text.trim()
+    ))
+    .into_response()
+}
+
+fn router_inner() -> Router<SharedState> {
     Router::new()
         // —— 无鉴权 ——
         .route("/ping", get(ping))
@@ -34,6 +73,9 @@ pub fn router() -> Router<SharedState> {
         .route("/channels/{id}/catalog", get(channel_catalog))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         .route("/groups", get(groups_list).post(groups_upsert))
+        // 「模型名 → 用途」：面板「模型」页以渠道里勾过的名字为行，用途读这张表
+        .route("/model-kinds", get(model_kinds_list))
+        .route("/models/{name}/kind", put(models_set_kind))
         .route("/groups/{name}", delete(groups_delete))
         .route("/groups/{name}/kind", put(groups_set_kind))
         .route("/groups/{name}/enabled", put(groups_set_enabled))
@@ -986,6 +1028,67 @@ async fn groups_list(
     })))
 }
 
+/// 全部「名字 → 用途」。面板一次拿走，省得一个名字一个请求。
+async fn model_kinds_list(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    let ks = kinds::all(&conn)?;
+    Ok(Json(serde_json::json!({
+        "kinds": ks.iter().map(|k| serde_json::json!({
+            "name": k.name,
+            "kind": k.kind.as_str(),
+            "kind_label": k.kind.label(),
+            "kind_source": k.source.as_str(),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+/// 给人手动定一个**模型名**的用途（对话 / 嵌入 / 重排 / 图像 / 视频 / 音频），
+/// 或交还给实测（`kind: "auto"`）。名字没建模型组也能定 —— 这正是它单独立表的原因。
+async fn models_set_kind(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(body): Json<GroupKindBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let kind = parse_kind(&body.kind)?;
+    let conn = state.conn();
+    kinds::set(&conn, &name, kind)?;
+    // 有同名模型组时把组上那份一起改掉，两边不许说法不一致
+    if groups::get(&conn, &name)?.is_some() {
+        groups::set_kind(&conn, &name, kind)?;
+    }
+    tracing::info!("模型名 {} 的类型被改成 {}", name.trim(), kind.label());
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "kind": kind.as_str(),
+        "kind_label": kind.label(),
+        "kind_source": if kind.is_set() { "manual" } else { "" },
+    })))
+}
+
+/// 界面上的类型字面值 → `ModelKind`。`auto` / 空 = 交还给实测（清空）。
+fn parse_kind(raw: &str) -> Result<tokengo_shared::ModelKind, ApiError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "auto" | "" => Ok(tokengo_shared::ModelKind::Unknown),
+        other => {
+            let k = tokengo_shared::ModelKind::parse(other);
+            if !k.is_set() {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "invalid_kind",
+                    format!(
+                        "不认识这个类型：{other}（只能是 auto / chat / embeddings / rerank / image / video / audio）"
+                    ),
+                ));
+            }
+            Ok(k)
+        }
+    }
+}
+
 /// 给人手动定这组的类型（对话 / 向量 / 重排），或交还给实测（`kind: "auto"`）。
 ///
 /// 手动定过之后**实测不许再覆盖** —— 用户拍过的板不被流量改掉。
@@ -995,21 +1098,7 @@ async fn groups_set_kind(
     axum::extract::Path(name): axum::extract::Path<String>,
     Json(body): Json<GroupKindBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let kind = match body.kind.trim().to_ascii_lowercase().as_str() {
-        // 「自动」= 清空，下次真收到请求再学
-        "auto" | "" => tokengo_shared::ModelKind::Unknown,
-        other => {
-            let k = tokengo_shared::ModelKind::parse(other);
-            if !k.is_set() {
-                return Err(ApiError::new(
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "invalid_kind",
-                    format!("不认识这个类型：{other}（只能是 auto / chat / embeddings / rerank）"),
-                ));
-            }
-            k
-        }
-    };
+    let kind = parse_kind(&body.kind)?;
     let conn = state.conn();
     // 先确认这组真在（set_kind 只改一行，不区分"改了几行"和"组不存在"）
     if groups::get(&conn, &name)?.is_none() {
@@ -1068,7 +1157,7 @@ async fn groups_set_enabled(
 
 #[derive(Deserialize)]
 struct GroupKindBody {
-    /// `auto`（交还给实测）/ `chat` / `embeddings` / `rerank`。
+    /// `auto`（交还给实测）/ `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
     kind: String,
 }
 

@@ -94,6 +94,9 @@ pub fn set_kind(conn: &Connection, name: &str, kind: ModelKind) -> Result<()> {
     if n == 0 {
         return Err(DbError::Other(format!("模型组 {} 不存在", name.trim())));
     }
+    // 名字上那份也跟着写：面板「模型」页以名字为行，读的是它。
+    // 只写一边会出现「界面上是图像、对外清单还当对话」这种看不出来的错。
+    super::kinds::set(conn, name, kind)?;
     Ok(())
 }
 
@@ -109,7 +112,9 @@ pub fn learn_kind(conn: &Connection, name: &str, kind: ModelKind) -> Result<bool
           WHERE name = ?1 AND kind = ''",
         params![name.trim(), kind.as_str(), KindSource::Auto.as_str()],
     )?;
-    Ok(n > 0)
+    // 学到的类型也记到名字上（成对维护，见 db::kinds 的模块注释）
+    let learned_name = super::kinds::learn(conn, name, kind)?;
+    Ok(n > 0 || learned_name)
 }
 
 /// 新建或覆盖一组。`channels` 的顺序就是优先级顺序。
@@ -294,8 +299,9 @@ pub fn list_servable(conn: &Connection) -> Result<Vec<Servable>> {
             out.push(Servable {
                 // 只有对话模型才谈「能不能看图」：向量/重排模型压根不收图，
                 // 给它们挂个「不收图」的标签只会让人以为配错了。
-                vision: g.kind != ModelKind::Embeddings
-                    && g.kind != ModelKind::Rerank
+                // 「能不能看图」只对**对话类**有定义：向量 / 重排 / 图像 / 视频 / 音频
+                // 都不吃图片输入，别给它们挂「视觉」。
+                vision: matches!(g.kind, ModelKind::Chat | ModelKind::Unknown)
                     && group_can_see(conn, &g.name)?,
                 name: g.name.clone(),
                 kind: g.kind,

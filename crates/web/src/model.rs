@@ -114,6 +114,26 @@ pub struct Servable {
     pub kind_source: String,
 }
 
+/// 一个**模型名**的用途（v0.10.0 起类型挂在名字上，没建模型的名字也能有用途）。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct NameKind {
+    pub name: String,
+    /// `""` / `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub kind_label: String,
+    /// 谁定的：`""` / `auto`（实测学的）/ `manual`（人选的）。
+    #[serde(default)]
+    pub kind_source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ModelKindsResp {
+    #[serde(default)]
+    pub kinds: Vec<NameKind>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct GroupsResp {
     #[serde(default)]

@@ -1202,66 +1202,100 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   .topbar, .page-head-actions, .toast { display: none; }
 }
 
-/* ── 四类模型的「用途卡」（v0.7.2）：用户报「重排/嵌入/对话/视觉 不好区分」。
-   配色固定：蓝=对话、绿=向量、橙=重排、灰=还没定；块内是模型名 chip。── */
-.kind-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px;
-}
-.kind-card {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: var(--surface-2);
-  border-left: 3px solid var(--line-strong);
-}
-.kind-card.kind-chat {
-  border-left-color: #3b82f6;
-}
-.kind-card.kind-emb {
-  border-left-color: #10b981;
-}
-.kind-card.kind-rerank {
-  border-left-color: #f59e0b;
-}
-.kind-card.kind-unknown {
-  border-left-color: var(--fg-3);
-}
-.kind-card-head {
+/* ── 「模型」页的用途分档条（v0.10.0）：一个「模型」页，用途当标签用
+   （参考 freellmapi 的排版）。手机上左右滑动，不折行、也不用下拉。── */
+.kind-tabs {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
+  flex-wrap: wrap; /* 手机上折成两行，**不横滑** —— 横滑会把「Video」藏在屏幕外，
+                       用户报过「手机看不完整」 */
+  gap: 6px;
+  margin-bottom: 10px;
 }
-.kind-dot {
-  width: 8px;
-  height: 8px;
+.kind-tabs::-webkit-scrollbar {
+  display: none;
+}
+.kind-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  /* 压住全局 button 的 44px 触摸高度，不然一排按钮占掉半屏 */
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.kind-tab:hover {
+  background: var(--surface-3);
+  color: var(--fg);
+}
+.kind-tab.on {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  color: var(--fg);
+  font-weight: 600;
+}
+.kind-tab .kind-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: var(--fg-3);
   flex: 0 0 auto;
 }
-.kind-card.kind-chat .kind-dot {
+.kind-tab.kind-chat .kind-dot {
   background: #3b82f6;
 }
-.kind-card.kind-emb .kind-dot {
+.kind-tab.kind-emb .kind-dot {
   background: #10b981;
 }
-.kind-card.kind-rerank .kind-dot {
-  background: #f59e0b;
+.kind-tab.kind-image .kind-dot {
+  background: #a855f7;
 }
-.kind-names {
+.kind-tab.kind-video .kind-dot {
+  background: #ec4899;
+}
+.kind-tab.kind-audio .kind-dot {
+  background: #06b6d4;
+}
+.kind-tab .tab-n {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--fg-3);
+}
+.kind-tab.on .tab-n {
+  color: var(--accent);
+}
+
+/* 展开的那一行：勾它的渠道 + 渠道顺序 + 那一行的动作。
+   底色用 --surface-2 跟主行分开，一眼看出这几块属于上一行。 */
+.detail-row td {
+  background: var(--surface-2);
+}
+.model-detail {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+.detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.detail-label {
+  font-size: 0.78rem;
+  color: var(--fg-3);
+}
+.detail-actions {
+  display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
 }
-.kind-names .chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
+
 /* 类型标记：在「模型名 → 渠道顺序」那张表里也照同一套颜色走 */
 .tag.count {
   font-variant-numeric: tabular-nums;
@@ -1278,15 +1312,31 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   border-color: #f59e0b;
   color: #f59e0b;
 }
+.tag.kind-image {
+  border-color: #a855f7;
+  color: #a855f7;
+}
+.tag.kind-video {
+  border-color: #ec4899;
+  color: #ec4899;
+}
+.tag.kind-audio {
+  border-color: #06b6d4;
+  color: #06b6d4;
+}
 .tag.kind-unknown {
   border-color: var(--line-strong);
   color: var(--fg-3);
 }
 
-/* 类型列容易被名字挤成两行碎字（v0.7.2 实测观感）：给它留够宽度，
-   「类型名」和「端点」各自不折行，端点用弱色，别抢名字的注意力。 */
-td[data-label="类型"] {
-  min-width: 11rem;
+/* 用途列容易被别的列挤成竖排碎字（v0.10.0 实测观感）：给下拉框和旁边那句
+   「你定的 / 实测认的」都留够宽度、各自不折行。 */
+td[data-label="用途"] {
+  min-width: 9.5rem;
+  white-space: nowrap;
+}
+td[data-label="用途"] .muted.small {
+  white-space: nowrap;
 }
 td[data-label="类型"] .tag {
   white-space: nowrap;
