@@ -945,16 +945,6 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
 /* 「详情」按钮：小一号（全局 button 是 44px 触摸高度），别把那一行撑到 44px */
 .m-line > button { height: 28px; padding: 0 10px; font-size: 0.75rem; }
 .m-tags:empty { display: none; }
-.m-own {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-sm);
-}
-.m-own code { font-size: 0.75rem; }
 .m-tags .tag { font-size: 0.6875rem; }
 .m-detail {
   display: flex;
