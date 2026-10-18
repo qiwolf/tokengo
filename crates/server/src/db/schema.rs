@@ -333,14 +333,23 @@ failures INTEGER NOT NULL DEFAULT 0,until_ms INTEGER NOT NULL DEFAULT 0,
 reason TEXT NOT NULL DEFAULT '',generation INTEGER NOT NULL DEFAULT 0,lease_until INTEGER NOT NULL DEFAULT 0,
 PRIMARY KEY(channel_id,model_name,upstream_model));
 ALTER TABLE requests ADD COLUMN explored INTEGER NOT NULL DEFAULT 0;"#),
-    (16, r#"CREATE TABLE registry_context (
+    (16,r#"
+-- Independent of request retention: preserve one attributable invocation per request/model.
+CREATE TABLE model_invocations(request_id INTEGER NOT NULL,model_name TEXT NOT NULL,PRIMARY KEY(request_id,model_name));
+INSERT OR IGNORE INTO model_invocations SELECT request_id,model_name FROM attempts WHERE TRIM(COALESCE(model_name,''))<>'' AND LOWER(TRIM(model_name))<>'auto';
+INSERT OR IGNORE INTO model_invocations SELECT id,CASE WHEN TRIM(served_model)<>'' THEN served_model ELSE model END FROM requests WHERE channel_id IS NOT NULL AND LOWER(TRIM(CASE WHEN TRIM(served_model)<>'' THEN served_model ELSE model END))<>'auto';
+CREATE TRIGGER model_invocation_insert AFTER INSERT ON attempts WHEN TRIM(COALESCE(NEW.model_name,''))<>'' AND LOWER(TRIM(NEW.model_name))<>'auto' BEGIN
+ INSERT OR IGNORE INTO model_invocations VALUES(NEW.request_id,NEW.model_name);
+END;
+"#),
+    (17, r#"CREATE TABLE registry_context (
         model_id TEXT PRIMARY KEY, context_window INTEGER, reason TEXT NOT NULL);
     CREATE TABLE registry_context_status (
         id INTEGER PRIMARY KEY CHECK(id=1), fetched_at INTEGER NOT NULL DEFAULT 0,
         next_at INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0,
         origin TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '');
     INSERT INTO registry_context_status(id) VALUES(1);"#),
-    (17, r#"CREATE TABLE registry_associations (
+    (18, r#"CREATE TABLE registry_associations (
         channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
         model_name TEXT NOT NULL, upstream_model TEXT NOT NULL, model_id TEXT NOT NULL,
         PRIMARY KEY(channel_id, model_name, upstream_model));
