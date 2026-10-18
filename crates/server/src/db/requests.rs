@@ -66,6 +66,9 @@ pub struct FinishArgs {
     pub output_tokens: i64,
     pub streamed: bool,
     pub error: Option<String>,
+    /// 这次真正被叫的模型名。普通模型名时与 `model` 一样；`auto` 时是它挑中的那个
+    /// —— 不然面板上只能看到一条「auto 成功了」，看不出到底走了谁。
+    pub served_model: Option<String>,
 }
 
 /// 一次「渠道尝试」的落账参数。同上：要能被丢进后台队列。
@@ -94,7 +97,17 @@ pub fn finish_args(conn: &Connection, a: &FinishArgs) -> Result<()> {
         a.output_tokens,
         a.streamed,
         a.error.as_deref(),
-    )
+    )?;
+    // served_model 只在「真正被叫的名字与客户端打的名字不一样」时才有值（auto）。
+    // 单独一条小 UPDATE：既不用给 finish 加第 12 个参数（把一圈调用点全改了），
+    // 也让「没值」时连这一句都不发。
+    if let Some(s) = a.served_model.as_deref().filter(|s| !s.trim().is_empty()) {
+        conn.execute(
+            "UPDATE requests SET served_model = ?2 WHERE id = ?1",
+            params![a.request_id, s],
+        )?;
+    }
+    Ok(())
 }
 
 /// `AttemptArgs` 的落库入口（参数化版本）。
@@ -268,7 +281,7 @@ pub struct ErrorStat {
 /// 「向量这条路稳不稳」—— 而现网里向量占了 86% 的量（`docs/12-模型类型.md`）。
 ///
 /// **按 `endpoint` 归类，不按模型组现在的类型**：`endpoint` 是这条请求当时实际打的端点，
-/// 既成事实；组类型是后来配的、还能随时改，用它会**让历史账跟着变**（今天把某组从
+/// 既成事实；用途是后来配的、还能随时改，用它会**让历史账跟着变**（今天把某个名字从
 /// 对话改成向量，昨天那批对话请求就会被算成向量）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct KindStat {

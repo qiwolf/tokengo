@@ -10,8 +10,8 @@
 //! - 探活**不写记账**。它不是用户请求，混进 `requests`/`attempts` 会把"这条渠道被叫了
 //!   几次"的账搅浑。只在日志里留痕。
 //! - 探活请求要小：对话用 `max_tokens=1`，向量用 1 个字符。
-//! - **发出去的是这条渠道真认的模型名**。组名 `auto` 是个虚拟名，上游不认 —— 拿 `auto`
-//!   去探活必然 400，而 400 按规矩不算渠道的毛病，探活就永远得不出结论。
+//! - **发出去的是这条渠道真认的模型名**。保留名 `auto` 不是一个真模型名（它由网关现场挑）——
+//!   拿 `auto` 去探活必然 400，而 400 按规矩不算渠道的毛病，探活就永远得不出结论。
 
 use std::time::Duration;
 
@@ -19,11 +19,11 @@ use tokengo_shared::channel::Channel;
 use tokengo_shared::routing::{classify_status, AttemptOutcome};
 use tokengo_shared::ChannelId;
 
-use crate::db::{groups, channels, now_ms};
+use crate::db::{model_routes, channels, now_ms};
 use crate::gateway::EndpointKind;
 use crate::SharedState;
 
-/// 探活间隔：每分钟看一遍到点的模型组。
+/// 探活间隔：每分钟看一遍到点的模型名。
 pub const TICK: Duration = Duration::from_secs(60);
 /// 探活单次超时上限：别拿 30 秒去等一个探活。
 const PROBE_TIMEOUT_CAP: Duration = Duration::from_secs(15);
@@ -42,7 +42,7 @@ pub enum ProbeOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeResult {
-    pub group: String,
+    pub model: String,
     pub channel: ChannelId,
     pub outcome: ProbeOutcome,
 }
@@ -59,7 +59,7 @@ pub fn spawn(state: SharedState) -> tokio::task::JoinHandle<()> {
             for r in tick(&state, now_ms()).await {
                 tracing::info!(
                     "探活 {} → 渠道 {}：{:?}",
-                    r.group,
+                    r.model,
                     r.channel.0,
                     r.outcome
                 );
@@ -68,38 +68,39 @@ pub fn spawn(state: SharedState) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// 走一遍：哪些组到点了、挨个探。单独拆出来是为了能测（不用等真定时器）。
+/// 走一遍：哪些模型名到点了、挨个探。单独拆出来是为了能测（不用等真定时器）。
 pub async fn tick(state: &SharedState, now: i64) -> Vec<ProbeResult> {
     let due = {
         let r = state.routing();
         if !r.cfg.probe_enabled {
             return Vec::new();
         }
-        r.groups_needing_probe(now)
+        r.models_needing_probe(now)
     };
     let mut out = Vec::new();
-    for group in due {
-        out.push(probe_group(state, &group, now).await);
+    for model in due {
+        out.push(probe_route(state, &model, now).await);
     }
     out
 }
 
-/// 探一个组的首选渠道。
-pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeResult {
-    let endpoint = state.group_endpoint(group);
+/// 探一个模型名的首选渠道。
+pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResult {
+    let endpoint = state.model_endpoint(name);
 
     // 一次性把要用的东西捞齐（同步短锁，绝不在持锁期间 await）
     let loaded = {
         let conn = state.conn();
-        let channels_all = groups::resolve_channels(&conn, group).unwrap_or_default();
+        let channels_all = model_routes::channels_for(&conn, name).unwrap_or_default();
         let Some(primary) = channels_all.into_iter().find(|l| l.routable()) else {
             return ProbeResult {
-                group: group.to_string(),
+                model: name.to_string(),
                 channel: ChannelId(0),
-                outcome: ProbeOutcome::Skipped("这组没有可用渠道".into()),
+                outcome: ProbeOutcome::Skipped("这个名字没有可用渠道".into()),
             };
         };
-        let model = probe_model(&conn, &primary, group);
+        // 探活要发的名字：这条渠道为这个模型名配的那个（别名优先，见 probe_model）
+        let model = probe_model(&conn, &primary, name);
         let secret = channels::secret(&conn, &state.secrets, primary.id).unwrap_or(None);
         (primary, model, secret)
     };
@@ -107,7 +108,7 @@ pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeRes
 
     let Some(model) = model else {
         return ProbeResult {
-            group: group.to_string(),
+            model: name.to_string(),
             channel: channel.id,
             outcome: ProbeOutcome::Skipped(format!(
                 "渠道 {} 没配任何模型名，拿不到能发出去的模型名，跳过（不猜）",
@@ -118,7 +119,7 @@ pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeRes
 
     let ids: Vec<ChannelId> = {
         let conn = state.conn();
-        groups::resolve_channels(&conn, group)
+        model_routes::channels_for(&conn, name)
             .unwrap_or_default()
             .into_iter()
             .filter(|l| l.routable())
@@ -148,23 +149,23 @@ pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeRes
 
     let outcome = match status {
         Err(fault) => {
-            tracing::warn!("探活 {} 渠道 {} 连不上：{fault}", group, channel.name);
-            mark_exhausted(state, group, channel.id, &ids, now);
+            tracing::warn!("探活 {} 渠道 {} 连不上：{fault}", name, channel.name);
+            mark_exhausted(state, name, channel.id, &ids, now);
             ProbeOutcome::StillDown
         }
         Ok(code) => match classify_status(code) {
             AttemptOutcome::Success => {
                 {
                     let mut r = state.routing();
-                    r.on_success(group, channel.id, &ids, now);
+                    r.on_success(name, channel.id, &ids, now);
                 }
-                if let Err(e) = state.persist_state(group) {
+                if let Err(e) = state.persist_state(name) {
                     tracing::error!("探活成功后落库失败：{e}");
                 }
                 ProbeOutcome::SwitchedBack
             }
             AttemptOutcome::ChannelFault => {
-                mark_exhausted(state, group, channel.id, &ids, now);
+                mark_exhausted(state, name, channel.id, &ids, now);
                 ProbeOutcome::StillDown
             }
             // 400/404/422：多半是探活用的模型名这条渠道不认（配置问题），不是渠道坏了。
@@ -176,39 +177,38 @@ pub async fn probe_group(state: &SharedState, group: &str, now: i64) -> ProbeRes
     };
 
     ProbeResult {
-        group: group.to_string(),
+        model: name.to_string(),
         channel: channel.id,
         outcome,
     }
 }
 
-fn mark_exhausted(state: &SharedState, group: &str, channel: ChannelId, ids: &[ChannelId], now: i64) {
+fn mark_exhausted(state: &SharedState, model: &str, channel: ChannelId, ids: &[ChannelId], now: i64) {
     {
         let mut r = state.routing();
-        r.on_channel_exhausted(group, channel, ids, now);
+        r.on_channel_exhausted(model, channel, ids, now);
     }
-    if let Err(e) = state.persist_state(group) {
+    if let Err(e) = state.persist_state(model) {
         tracing::error!("探活失败后落库失败：{e}");
     }
 }
 
 /// 探活该用哪个模型名。优先级：
-///   1. 这条渠道为这个组名配的别名（`auto` → `deepseek/deepseek-v4.1-flash`）；
+///   1. 这条渠道为这个模型名配的别名（`v4.1flash` → `deepseek/deepseek-v4.1-flash`）；
 ///   2. 这条渠道配的任意一个上游模型名；
 ///   3. 这条渠道配的任意一个模型名（原样透传）。
-/// 都没有就不探 —— 拿组名 `auto` 去探一定被上游 400，探也是白探。
+/// 都没有就不探 —— 拿保留名 `auto` 去探一定被上游 400，探也是白探。
 pub fn probe_model(
     conn: &rusqlite::Connection,
     channel: &Channel,
-    group: &str,
+    name: &str,
 ) -> Option<String> {
     if let Some(a) = channel.model_alias.as_deref() {
-        if !a.trim().is_empty() && a != group {
+        if !a.trim().is_empty() && a != name {
             return Some(a.to_string());
         }
     }
     let row = channels::get(conn, channel.id).ok().flatten()?;
-    let _ = group;
     row.models
         .iter()
         .find_map(|m| m.upstream.clone().filter(|u| !u.trim().is_empty()))
@@ -268,7 +268,7 @@ pub const VISION_TEST_TOKENS_RETRY: u32 = 256;
 
 /// 「测视觉」的请求体：带图的一发最小对话请求。
 ///
-/// 和探活同一条纪律：模型名是**这条渠道自己认的那个**（拿虚拟组名 `auto` 去问
+/// 和探活同一条纪律：模型名是**这条渠道自己认的那个**（拿保留名 `auto` 去问
 /// 必然 400，绿点就不真了）。
 pub fn vision_test_body(model: &str, max_tokens: u32) -> bytes::Bytes {
     let v = serde_json::json!({
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_model_prefers_the_alias_for_this_group() {
+    fn probe_model_prefers_the_alias_of_that_model_name() {
         let conn = open_in_memory().unwrap();
         let id = channels::create(
             &conn,
@@ -392,7 +392,7 @@ mod tests {
         assert_eq!(probe_model(&conn, &channel, "auto").as_deref(), Some("BAAI/bge-m3"));
     }
 
-    /// 反证：什么模型名都没配的渠道，**不许拿组名 `auto` 去探**（那一定 400）。
+    /// 反证：什么模型名都没配的渠道，**不许拿保留名 `auto` 去探**（那一定 400）。
     #[test]
     fn probe_model_refuses_to_guess_the_virtual_name() {
         let conn = open_in_memory().unwrap();

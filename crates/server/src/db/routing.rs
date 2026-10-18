@@ -6,21 +6,21 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use tokengo_shared::routing::{GroupState, RoutingConfig};
+use tokengo_shared::routing::{RouteState, RoutingConfig};
 use tokengo_shared::ChannelId;
 
 use super::Result;
 
-pub fn load_state(conn: &Connection, group: &str) -> Result<Option<GroupState>> {
+pub fn load_state(conn: &Connection, model: &str) -> Result<Option<RouteState>> {
     let row: Option<(Option<i64>, Option<i64>, i64, Option<i64>)> = conn
         .query_row(
             "SELECT active_channel_id, next_probe_at_ms, switch_count, last_switch_at_ms
                FROM routing_state WHERE group_name = ?1",
-            [group],
+            [model],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    Ok(row.map(|(active, probe, switches, last)| GroupState {
+    Ok(row.map(|(active, probe, switches, last)| RouteState {
         active: active.map(ChannelId),
         next_probe_at_ms: probe,
         switch_count: switches as u32,
@@ -28,8 +28,8 @@ pub fn load_state(conn: &Connection, group: &str) -> Result<Option<GroupState>> 
     }))
 }
 
-/// 覆盖写一组的状态。路由每次变更后调一次。
-pub fn save_state(conn: &Connection, group: &str, st: &GroupState) -> Result<()> {
+/// 覆盖写一个模型名的状态。路由每次变更后调一次。
+pub fn save_state(conn: &Connection, model: &str, st: &RouteState) -> Result<()> {
     conn.execute(
         "INSERT INTO routing_state
              (group_name, active_channel_id, next_probe_at_ms, switch_count, last_switch_at_ms)
@@ -40,7 +40,7 @@ pub fn save_state(conn: &Connection, group: &str, st: &GroupState) -> Result<()>
              switch_count      = excluded.switch_count,
              last_switch_at_ms = excluded.last_switch_at_ms",
         params![
-            group,
+            model,
             st.active.map(|l| l.0),
             st.next_probe_at_ms,
             st.switch_count as i64,
@@ -75,7 +75,7 @@ pub fn save_config(conn: &Connection, cfg: &RoutingConfig) -> Result<()> {
     super::settings::set(conn, CFG_KEY, &json)
 }
 
-/// 把所有组的状态灌进 Router。启动时调一次。
+/// 把所有模型名的状态灌进 Router。启动时调一次。
 pub fn load_all_into(conn: &Connection, router: &mut tokengo_shared::routing::Router) -> Result<usize> {
     let mut stmt = conn.prepare("SELECT DISTINCT group_name FROM routing_state")?;
     let names: Vec<String> = stmt
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn state_round_trips_exactly() {
         let conn = open_in_memory().unwrap();
-        let st = GroupState {
+        let st = RouteState {
             active: Some(ChannelId(47)),
             next_probe_at_ms: Some(1_800_000_600_000),
             switch_count: 3,
@@ -123,11 +123,11 @@ mod tests {
     #[test]
     fn save_overwrites_not_appends() {
         let conn = open_in_memory().unwrap();
-        save_state(&conn, "auto", &GroupState::default()).unwrap();
+        save_state(&conn, "auto", &RouteState::default()).unwrap();
         save_state(
             &conn,
             "auto",
-            &GroupState {
+            &RouteState {
                 active: Some(ChannelId(2)),
                 ..Default::default()
             },

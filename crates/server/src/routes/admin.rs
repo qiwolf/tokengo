@@ -8,12 +8,15 @@ use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::http::request::Parts;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
-use crate::db::{catalog, channels, groups, kinds, maintenance, now_ms, requests, routing, sessions, settings};
+use crate::db::{
+    catalog, channels, kinds, maintenance, model_routes, now_ms, requests, routing, sessions,
+    settings,
+};
 use crate::SharedState;
 
 pub fn router() -> Router<SharedState> {
@@ -72,16 +75,15 @@ fn router_inner() -> Router<SharedState> {
         .route("/channels/{id}/models", post(channels_models))
         .route("/channels/{id}/catalog", get(channel_catalog))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
-        .route("/groups", get(groups_list).post(groups_upsert))
         // 「模型名 → 用途」：面板「模型」页以渠道里勾过的名字为行，用途读这张表
+        .route("/channels/{id}/move", post(channels_move))
         .route("/model-kinds", get(model_kinds_list))
         .route("/models/{name}/kind", put(models_set_kind))
-        .route("/groups/{name}", delete(groups_delete))
-        .route("/groups/{name}/kind", put(groups_set_kind))
-        .route("/groups/{name}/enabled", put(groups_set_enabled))
+        // 面板「模型」页要的全部事实（一名字一行 + 它后面那串渠道 + 路由状态 + auto 的候选）。
+        .route("/model-routes", get(model_routes_list))
         .route("/routing", get(routing_state))
         .route("/routing/config", put(routing_set_config))
-        .route("/routing/{group}/reprobe", post(routing_reprobe))
+        .route("/routing/{model}/reprobe", post(routing_reprobe))
         .route("/stats", get(stats))
         .route("/logs", get(logs))
         // 面板「日志」页：看运行日志（内存里最近那些）+ 临时开 debug
@@ -280,6 +282,8 @@ fn channel_json(l: &channels::ChannelRow) -> serde_json::Value {
         "has_secret": l.has_secret,
         "unwrap_envelope": l.unwrap_envelope,
         "max_concurrent": l.max_concurrent,
+        // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
+        "priority": l.priority,
         "headers": l.headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect::<Vec<_>>(),
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
@@ -994,37 +998,59 @@ fn extract_reply(body: &str) -> String {
     String::new()
 }
 
-async fn groups_list(
+/// 面板「模型」页要的全部事实：一名字一行 + 它后面那串渠道（按先试顺序）+ 路由状态，
+/// 外加 `auto` 的候选顺序。**面板不再自己算行** —— 以前面板按「渠道里勾过的名字」算、
+/// 对外清单按模型组算，两处各算各的就会漂移（v0.11.0 起只有这一份）。
+///
+/// `auto` 三类的候选各给一份：面板上点开 auto 就能看见「这一刻会挑中谁」。
+async fn model_routes_list(
     _auth: PanelAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
-    let gs = groups::list(&conn)?;
+    let routes = {
+        let conn = state.conn();
+        model_routes::list(&conn)?
+    };
+    let auto = {
+        let conn = state.conn();
+        let cand = |k: tokengo_shared::ModelKind| {
+            model_routes::auto_candidates(&conn, k, false, now_ms()).unwrap_or_default()
+        };
+        serde_json::json!({
+            // 一个勾选过的模型都没有 → 对外不显示 auto（用户口径）
+            "available": model_routes::auto_available(&conn)?,
+            "chat": cand(tokengo_shared::ModelKind::Chat),
+            "embeddings": cand(tokengo_shared::ModelKind::Embeddings),
+            "rerank": cand(tokengo_shared::ModelKind::Rerank),
+        })
+    };
+    let router = state.routing();
+    let rows = routes
+        .iter()
+        .map(|r| {
+            let st = router.state(&r.name).cloned().unwrap_or_default();
+            serde_json::json!({
+                "name": r.name,
+                "kind": r.kind.as_str(),
+                "kind_label": r.kind.label(),
+                "kind_source": r.kind_source.as_str(),
+                // 有启用的渠道勾了它并标了能看图（只对对话类有意义）
+                "can_see": r.can_see(),
+                // 现在有没有渠道能用（没有 = 客户端打这个名字会 404）
+                "routed": r.routed(),
+                // 谁勾了它（含停用的渠道）；以及现在真能用的那串，按先试顺序
+                "declared_by": r.declared_by.iter().map(|l| l.0).collect::<Vec<_>>(),
+                "channels": r.channels.iter().map(|l| l.0).collect::<Vec<_>>(),
+                "active_channel_id": st.active.map(|l| l.0),
+                "switch_count": st.switch_count,
+                "next_probe_at_ms": st.next_probe_at_ms,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(Json(serde_json::json!({
-        "groups": gs.iter().map(|g| serde_json::json!({
-            "name": g.name,
-            "enabled": g.enabled,
-            "channels": g.channels.iter().map(|l| l.0).collect::<Vec<_>>(),
-            // 这一组现在有没有「能看图」的可用渠道 —— 组层面有个明确说法，
-            // 不用让面板自己去把每条渠道的模型名对着组名翻一遍。
-            "can_see": groups::group_can_see(&conn, &g.name).unwrap_or(false),
-            // 哪种模型（对话/向量/重排）+ 谁定的（还没定 auto manual）——
-            // 面板按它分区显示，也让人能一眼看出「这条是实测认出来的还是我自己选的」。
-            "kind": g.kind.as_str(),
-            "kind_label": g.kind.label(),
-            "kind_source": g.kind_source.as_str(),
-        })).collect::<Vec<_>>(),
-        // 只列真实能用的模型名，给 /v1/models 和面板用同一份判断
-        "servable": groups::list_servable(&conn)?
-            .into_iter()
-            .map(|s| serde_json::json!({
-                "name": s.name,
-                "vision": s.vision,
-                "kind": s.kind.as_str(),
-                "kind_label": s.kind.label(),
-                "kind_source": s.kind_source.as_str(),
-            }))
-            .collect::<Vec<_>>(),
+        "models": rows,
+        "auto": auto,
+        "now_ms": now_ms(),
     })))
 }
 
@@ -1055,11 +1081,9 @@ async fn models_set_kind(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let kind = parse_kind(&body.kind)?;
     let conn = state.conn();
+    // 用途挂在**名字**上（v0.10.0 起），模型组那一层已经没有了（v0.11.0）——
+    // 路由、对外清单、面板读的都是这一份。
     kinds::set(&conn, &name, kind)?;
-    // 有同名模型组时把组上那份一起改掉，两边不许说法不一致
-    if groups::get(&conn, &name)?.is_some() {
-        groups::set_kind(&conn, &name, kind)?;
-    }
     tracing::info!("模型名 {} 的类型被改成 {}", name.trim(), kind.label());
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -1089,31 +1113,30 @@ fn parse_kind(raw: &str) -> Result<tokengo_shared::ModelKind, ApiError> {
     }
 }
 
-/// 给人手动定这组的类型（对话 / 向量 / 重排），或交还给实测（`kind: "auto"`）。
+/// 把一条渠道在全局顺序里上移/下移一位（面板「渠道」页的 ▲▼）。
 ///
-/// 手动定过之后**实测不许再覆盖** —— 用户拍过的板不被流量改掉。
-async fn groups_set_kind(
+/// 顺序全站只有一份（`channels.priority`）：模型组拿掉之后，「这个模型名下先试哪条」
+/// 也由它决定 —— 用户只需要在一个地方维护优先级，不用为每个模型名各排一遍。
+async fn channels_move(
     _auth: PanelAuth,
     State(state): State<SharedState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-    Json(body): Json<GroupKindBody>,
+    Path(id): Path<i64>,
+    Json(body): Json<MoveBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let kind = parse_kind(&body.kind)?;
     let conn = state.conn();
-    // 先确认这组真在（set_kind 只改一行，不区分"改了几行"和"组不存在"）
-    if groups::get(&conn, &name)?.is_none() {
-        return Err(ApiError::not_found(format!("模型组 {name} 不存在")));
+    let cid = tokengo_shared::ChannelId(id);
+    if channels::get(&conn, cid)?.is_none() {
+        return Err(ApiError::not_found(format!("渠道 {cid} 不存在")));
     }
-    groups::set_kind(&conn, &name, kind)?;
-    let g = groups::get(&conn, &name)?
-        .ok_or_else(|| ApiError::not_found(format!("模型组 {name} 不存在")))?;
-    tracing::info!("模型组 {} 的类型被改成 {}", name, g.kind.label());
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "kind": g.kind.as_str(),
-        "kind_label": g.kind.label(),
-        "kind_source": g.kind_source.as_str(),
-    })))
+    channels::reorder(&conn, cid, body.up)?;
+    let order: Vec<i64> = channels::list(&conn)?.iter().map(|l| l.id.0).collect();
+    Ok(Json(serde_json::json!({ "ok": true, "order": order })))
+}
+
+#[derive(Deserialize)]
+struct MoveBody {
+    /// true = 往上挪一位（更要紧），false = 往下挪一位。
+    up: bool,
 }
 
 /// 一键启用/停用一条渠道（面板状态开关）。**只改这一列**，密钥/请求头/模型名一个都不碰。
@@ -1139,22 +1162,6 @@ async fn channels_set_enabled(
     })))
 }
 
-/// 一键启用/停用一组（面板状态开关）。**只改这一列**，渠道顺序/类型/名字一个都不碰。
-async fn groups_set_enabled(
-    _auth: PanelAuth,
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(body): Json<EnabledBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
-    if groups::get(&conn, &name)?.is_none() {
-        return Err(ApiError::not_found(format!("模型组 {name} 不存在")));
-    }
-    groups::set_enabled(&conn, &name, body.enabled)?;
-    tracing::info!("模型组 {} 被{}", name, if body.enabled { "启用" } else { "停用" });
-    Ok(Json(serde_json::json!({ "ok": true, "name": name, "enabled": body.enabled })))
-}
-
 #[derive(Deserialize)]
 struct GroupKindBody {
     /// `auto`（交还给实测）/ `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
@@ -1167,57 +1174,25 @@ struct EnabledBody {
     enabled: bool,
 }
 
-#[derive(Deserialize)]
-struct GroupBody {
-    name: String,
-    #[serde(default = "default_true")]
-    enabled: bool,
-    /// 顺序即优先级，第一个是首选。
-    channels: Vec<i64>,
-}
-
-async fn groups_upsert(
-    _auth: PanelAuth,
-    State(state): State<SharedState>,
-    Json(body): Json<GroupBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
-    let ids: Vec<tokengo_shared::ChannelId> = body.channels.iter().map(|i| tokengo_shared::ChannelId(*i)).collect();
-    groups::upsert(&conn, &body.name, body.enabled, &ids)?;
-    tracing::info!("保存模型组 {}：{} 条渠道", body.name, ids.len());
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-async fn groups_delete(
-    _auth: PanelAuth,
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
-    // 同渠道那条：不在了就 404（不假装删成功，也不回 500）
-    if groups::get(&conn, &name)?.is_none() {
-        return Err(ApiError::not_found(format!("模型组 {name} 不存在")));
-    }
-    groups::delete(&conn, &name)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
 // ───────────────────────── 路由状态 ─────────────────────────
 
 async fn routing_state(
     _auth: PanelAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
+    let routes = {
+        let conn = state.conn();
+        model_routes::list(&conn)?
+    };
     let router = state.routing();
     let mut out = Vec::new();
-    for g in groups::list(&conn)? {
-        let st = router.state(&g.name).cloned().unwrap_or_default();
-        let primary = g.channels.first().copied();
+    for r in routes.iter().filter(|r| r.routed()) {
+        let st = router.state(&r.name).cloned().unwrap_or_default();
+        // 首选 = 这个名字下第一条可用渠道（渠道顺序 = 先试顺序）
+        let primary = r.channels.first().copied();
         out.push(serde_json::json!({
-            "group": g.name,
-            "enabled": g.enabled,
-            // 首选=列表第一条；在用的可能是它也可能是切过去的某条
+            "model": r.name,
+            // 在用的可能是首选，也可能是切过去的某一条
             "primary_channel_id": primary.map(|l| l.0),
             "active_channel_id": st.active.map(|l| l.0),
             "switched": st.active.is_some() && st.active != primary,
@@ -1225,12 +1200,12 @@ async fn routing_state(
             "last_switch_at_ms": st.last_switch_at_ms,
             "next_probe_at_ms": st.next_probe_at_ms,
             "now_ms": now_ms(),
-            "channels": g.channels.iter().map(|l| l.0).collect::<Vec<_>>(),
+            "channels": r.channels.iter().map(|l| l.0).collect::<Vec<_>>(),
         }));
     }
     Ok(Json(serde_json::json!({
         "config": router.cfg,
-        "groups": out,
+        "models": out,
     })))
 }
 
@@ -1257,27 +1232,27 @@ async fn routing_set_config(
     Ok(Json(serde_json::json!({ "ok": true, "config": cfg })))
 }
 
-/// 立刻把某组的回切检查点归零 —— 不想等 10 分钟时用。
+/// 立刻把某个模型名的回切检查点归零 —— 不想等 10 分钟时用（面板上的「立刻试首选」）。
 async fn routing_reprobe(
     _auth: PanelAuth,
     State(state): State<SharedState>,
-    Path(group): Path<String>,
+    Path(model): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     {
         let conn = state.conn();
-        if groups::get(&conn, &group)?.is_none() {
-            return Err(ApiError::not_found(format!("模型组 {group} 不存在")));
+        if model_routes::routes_for(&conn, &model)?.is_none() {
+            return Err(ApiError::not_found(format!("模型名 {model} 这里没有")));
         }
     }
     {
         let mut r = state.routing();
-        if let Some(st) = r.state(&group) {
+        if let Some(st) = r.state(&model) {
             let mut st = st.clone();
             st.next_probe_at_ms = Some(now_ms());
-            r.restore(&group, st);
+            r.restore(&model, st);
         }
     }
-    state.persist_state(&group)?;
+    state.persist_state(&model)?;
     Ok(Json(serde_json::json!({ "ok": true, "note": "下次请求会先试首选渠道" })))
 }
 

@@ -12,7 +12,7 @@ use crate::crypto::SecretBox;
 /// 用结构体而不是元组：这些字段一起读写，元组顺序错了不会报错、只会静默错位。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelMapping {
-    /// 客户端打的名字（通常就是组名，如 `auto`）。
+    /// 客户端打的名字（如 `BAAI/bge-m3` 或保留名 `auto`）。
     pub model: String,
     /// 发给上游的名字。None = 原样透传。
     pub upstream: Option<String>,
@@ -63,6 +63,11 @@ pub struct ChannelRow {
     /// 上游免费额度多数按凭据限并发，超过就回 429/503；配了它，网关会在门口
     /// 排队或改走别的渠道，而不是硬压上去。
     pub max_concurrent: u32,
+    /// 全局顺序：小的先试，相同按 id（面板「渠道」页从上到下就是这个顺序）。
+    ///
+    /// 模型组那一层拿掉之后（v0.11.0），「同一个模型名下先试哪条渠道」就由它决定 ——
+    /// 每条渠道只有一份顺序，不用为每个模型名各排一遍。
+    pub priority: i64,
     /// 自定义请求头（上游没有的能力，本项目增项）
     pub headers: Vec<(String, String)>,
     /// 该渠道认的模型名（含"能不能看图"、"要丢的字段"）
@@ -82,7 +87,7 @@ pub struct NewChannel {
 
 const SELECT_CHANNEL: &str = "SELECT l.id, l.name, l.base_url, l.enabled, l.unwrap_envelope,
        EXISTS(SELECT 1 FROM channel_secrets s WHERE s.channel_id = l.id) AS has_secret,
-       l.max_concurrent
+       l.max_concurrent, l.priority
   FROM channels l";
 
 fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
@@ -94,6 +99,7 @@ fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
         unwrap_envelope: r.get::<_, i64>(4)? != 0,
         has_secret: r.get::<_, i64>(5)? != 0,
         max_concurrent: r.get::<_, i64>(6)?.max(0) as u32,
+        priority: r.get::<_, i64>(7)?,
         headers: Vec::new(),
         models: Vec::new(),
     })
@@ -124,8 +130,11 @@ fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
     Ok(())
 }
 
+/// 全部渠道，**按全局顺序排**（`priority` 小的先，相同按 id）。
+///
+/// 面板「渠道」页与路由都用这一份顺序：页面上从上到下就是「先试哪条」。
 pub fn list(conn: &Connection) -> Result<Vec<ChannelRow>> {
-    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} ORDER BY l.id"))?;
+    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} ORDER BY l.priority, l.id"))?;
     let mut rows: Vec<ChannelRow> = stmt.query_map([], row_to_channel)?.collect::<rusqlite::Result<_>>()?;
     for l in &mut rows {
         load_children(conn, l)?;
@@ -149,15 +158,22 @@ pub fn create(conn: &Connection, new: &NewChannel) -> Result<ChannelId> {
     if new.base_url.trim().is_empty() {
         return Err(DbError::Other("base_url 不能为空".into()));
     }
+    // 新渠道排到最后：面板上从上到下 = 先试，新加的默认不插队。
+    let next: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(priority), -1) + 1 FROM channels",
+        [],
+        |r| r.get(0),
+    )?;
     conn.execute(
-        "INSERT INTO channels (name, base_url, enabled, unwrap_envelope, max_concurrent)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO channels (name, base_url, enabled, unwrap_envelope, max_concurrent, priority)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             new.name.trim(),
             new.base_url.trim(),
             new.enabled as i64,
             new.unwrap_envelope as i64,
-            new.max_concurrent as i64
+            new.max_concurrent as i64,
+            next
         ],
     )?;
     Ok(ChannelId(conn.last_insert_rowid()))
@@ -210,6 +226,48 @@ pub fn set_enabled(conn: &Connection, id: ChannelId, enabled: bool) -> Result<()
         return Err(DbError::Other(format!("渠道 {id} 不存在")));
     }
     Ok(())
+}
+
+/// 把这条渠道在全局顺序里上移/下移一位（面板「渠道」页的上下移按钮）。
+///
+/// **每次先把顺序压成一条 0..n-1 的密排名再换位。** 不这么做的话，两条渠道的
+/// priority 相同（老库刚升级、或手工改过库时很常见）时换位等于什么都没换 ——
+/// 用户点了按钮没反应，还看不出为什么。
+///
+/// 到顶/到底就原样返回（不报错）：按钮点多了不该红一片。
+pub fn reorder(conn: &Connection, id: ChannelId, up: bool) -> Result<()> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn.prepare("SELECT id FROM channels ORDER BY priority, id")?;
+        let v = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        v
+    };
+    let Some(pos) = ids.iter().position(|x| *x == id.0) else {
+        return Err(DbError::Other(format!("渠道 {id} 不存在")));
+    };
+    let other = if up {
+        if pos == 0 {
+            return Ok(());
+        }
+        pos - 1
+    } else {
+        if pos + 1 >= ids.len() {
+            return Ok(());
+        }
+        pos + 1
+    };
+    let mut ids = ids;
+    ids.swap(pos, other);
+    super::in_tx(conn, |c| {
+        for (ord, cid) in ids.iter().enumerate() {
+            c.execute(
+                "UPDATE channels SET priority = ?2 WHERE id = ?1",
+                params![cid, ord as i64],
+            )?;
+        }
+        Ok(())
+    })
 }
 
 /// 存密钥（加密）。明文只在内存里过一下，绝不落库、绝不回显。

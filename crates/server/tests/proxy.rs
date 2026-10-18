@@ -397,13 +397,17 @@ impl Fixture {
         id
     }
 
-    /// 把这个组挂到这些渠道上。
+    /// 把这个**模型名**声明到这些渠道上，并让它们按入参顺序先试。
     ///
-    /// **夹具约定（v0.9.0 严格白名单之后）**：成员里「一个名字都还没勾」的渠道，默认替它
-    /// 勾上这个组名 —— 否则严格白名单下这些渠道谁也不认，路由/重试/记账那几十条用例会全
-    /// 变成 404（它们本来测的不是白名单）。要专门测「没勾就不放行」的用例，建渠道时加
-    /// `ChannelSpec { no_declare: true, .. }`。
-    fn set_group(&self, name: &str, channels: &[ChannelId]) {
+    /// 模型组那一层已经没有了（v0.11.0）：一个名字 = 勾了它的那些渠道，顺序 = 渠道的
+    /// 全局顺序（面板「渠道」页从上到下）。所以这里做两件事：
+    ///   1. 替「一个名字都还没勾」的渠道勾上这个名字（绝大多数用例测的是路由/重试/记账，
+    ///      不是勾选本身）；
+    ///   2. 把入参顺序压成渠道顺序 —— 用例里写 `serve("mock-chat", &[a, b])` 的意思就是
+    ///      「先试 a 再试 b」，与在面板上把 a 上移到 b 之前等价。
+    ///
+    /// 要专门测「没勾就不放行」的用例，建渠道时加 `ChannelSpec { no_declare: true, .. }`。
+    fn serve(&self, name: &str, channels: &[ChannelId]) {
         let conn = self.state.conn();
         let pinned = self.no_declare.lock().unwrap().clone();
         for id in channels {
@@ -423,7 +427,21 @@ impl Fixture {
                 .unwrap();
             }
         }
-        tokengo_server::db::groups::upsert(&conn, name, true, channels).unwrap();
+        for (want, id) in channels.iter().enumerate() {
+            for _ in 0..channels.len() {
+                let order: Vec<i64> = tokengo_server::db::channels::list(&conn)
+                    .unwrap()
+                    .iter()
+                    .map(|l| l.id.0)
+                    .collect();
+                match order.iter().position(|x| *x == id.0) {
+                    Some(cur) if cur > want => {
+                        tokengo_server::db::channels::reorder(&conn, *id, true).unwrap();
+                    }
+                    _ => break,
+                }
+            }
+        }
     }
 
     fn fix_channel(&self, id: ChannelId, base_url: &str) {
@@ -431,10 +449,10 @@ impl Fixture {
             .unwrap();
     }
 
-    fn routing(&self, group: &str) -> tokengo_shared::routing::GroupState {
+    fn routing(&self, name: &str) -> tokengo_shared::routing::RouteState {
         self.state
             .routing()
-            .state(group)
+            .state(name)
             .cloned()
             .unwrap_or_default()
     }
@@ -504,13 +522,13 @@ struct ChannelSpec {
     cap: u32,
     /// 认死「一个名字都不勾」：入组时**不要**替我补勾这个组名。
     ///
-    /// 夹具默认会补勾（见 `set_group`）：严格白名单下「没勾 = 不服务」，而绝大多数用例
+    /// 夹具默认会补勾（见 `serve`）：没勾 = 不服务，而绝大多数用例
     /// 关心的是路由/重试/记账，不是白名单本身。专门测白名单的用例才用它。
     no_declare: bool,
 }
 
 impl ChannelSpec {
-    /// 标一个模型名「能看图」。链式用：`ChannelSpec { ..Default::default() }.with_vision("auto")`
+    /// 标一个模型名「能看图」。链式用：`ChannelSpec { ..Default::default() }.with_vision("mock-chat")`
     fn with_vision(mut self, model: &str) -> Self {
         self.vision.push(model.into());
         self
@@ -573,18 +591,18 @@ async fn v1_needs_the_gateway_key() {
     let m = start_mock(Reply::Ok).await;
     f.with_key();
     let channel = f.add_channel("mock", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     // 没带 key
-    let (s, _, _) = post(&f, CHAT, None, json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, None, json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED, "没 key 不许转发");
 
     // key 不对
-    let (s, _, _) = post(&f, CHAT, Some("wrong"), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some("wrong"), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 
     // 带上就通
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(m.count(), 1, "只应该真发出去一次");
 }
@@ -595,9 +613,9 @@ async fn without_any_configured_key_everything_is_refused() {
     let f = fixture();
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("mock", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     assert_eq!(m.count(), 0, "没配 key 就一个字节都不该发出去");
 }
@@ -610,13 +628,13 @@ async fn a_plain_chat_request_is_forwarded_and_accounted() {
     f.with_key();
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("mock", &m.base, ChannelSpec { secret: Some("sk-mock".into()), ..Default::default() });
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     let (s, body, ctype) = post(
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "你好"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "你好"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -627,7 +645,7 @@ async fn a_plain_chat_request_is_forwarded_and_accounted() {
     // 上游确实收到了：路径对、正文里的 model 是 auto、带上了这条渠道的 key
     let seen = m.seen();
     assert_eq!(seen[0].path, "/v1/chat/completions");
-    assert_eq!(seen[0].model, "auto");
+    assert_eq!(seen[0].model, "mock-chat");
     assert_eq!(seen[0].auth.as_deref(), Some("Bearer sk-mock"));
 
     // 记账：一条请求 + 一条尝试，token 记上了
@@ -654,15 +672,15 @@ async fn per_channel_model_names_and_custom_headers_reach_the_upstream() {
                 ("x-opencode-client".into(), "cli".into()),
                 ("x-opencode-session".into(), "{{uuid}}".into()),
             ],
-            models: vec![("auto".into(), Some("deepseek/deepseek-v4.1-flash".into()))],
+            models: vec![("mock-chat".into(), Some("deepseek/deepseek-v4.1-flash".into()))],
             vision: vec![],
             ..Default::default()
         },
     );
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     for _ in 0..2 {
-        let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+        let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
         assert_eq!(s, StatusCode::OK);
     }
 
@@ -696,9 +714,9 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
     let m = start_mock(Reply::Ok).await;
     let dead = f.add_channel("坏渠道", "http://127.0.0.1:59999/v1", ChannelSpec::default());
     let good = f.add_channel("好渠道", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[dead, good]);
+    f.serve("mock-chat", &[dead, good]);
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK, "客户端必须拿到成功响应");
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["choices"][0]["message"]["content"], "你好");
@@ -711,7 +729,7 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
     assert_eq!(m.count(), 1);
 
     // 路由状态：切到第二条渠道、检查点 +10 分钟、切换次数 1
-    let st = f.routing("auto");
+    let st = f.routing("mock-chat");
     assert_eq!(st.active, Some(good), "当前渠道应该是第二条");
     assert_eq!(st.switch_count, 1);
     let now = tokengo_server::db::now_ms();
@@ -723,7 +741,7 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
     );
 
     // 第二个请求应该直接用第二条渠道，不再去戳坏渠道
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(m.count(), 2);
     assert_eq!(f.attempts().len(), 6, "第二个请求只该有 1 次尝试");
@@ -736,9 +754,9 @@ async fn everything_down_returns_a_clear_502() {
     f.with_key();
     let a = f.add_channel("坏渠道A", "http://127.0.0.1:59998/v1", ChannelSpec::default());
     let b = f.add_channel("坏渠道B", "http://127.0.0.1:59997/v1", ChannelSpec::default());
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::BAD_GATEWAY);
     let v: Value = serde_json::from_slice(&body).unwrap();
     let msg = v["error"]["message"].as_str().unwrap();
@@ -759,13 +777,13 @@ async fn upstream_5xx_is_a_channel_fault_and_triggers_a_switch() {
     let good = start_mock(Reply::Ok).await;
     let a = f.add_channel("会500的渠道", &bad.base, ChannelSpec::default());
     let b = f.add_channel("好渠道", &good.base, ChannelSpec::default());
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(bad.count(), 4, "5xx 要重试满 4 次");
     assert_eq!(good.count(), 1);
-    assert_eq!(f.routing("auto").active, Some(b));
+    assert_eq!(f.routing("mock-chat").active, Some(b));
 }
 
 // ───────────────────────── 验收点 5：反证 ─────────────────────────
@@ -780,10 +798,10 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
     let good = start_mock(Reply::Ok).await;
     let a = f.add_channel("首选", &bad.base, ChannelSpec::default());
     let b = f.add_channel("备选", &good.base, ChannelSpec::default());
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
     for _ in 0..6 {
-        let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+        let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "上游的 400 要原样传给客户端");
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert!(v["error"]["message"].as_str().unwrap().contains("model not found"));
@@ -797,7 +815,7 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
         "要记成 client_fault，不能算渠道的毛病"
     );
 
-    let st = f.routing("auto");
+    let st = f.routing("mock-chat");
     assert_eq!(st.active, Some(a), "渠道必须原地不动");
     assert_eq!(st.switch_count, 0);
     assert_eq!(st.next_probe_at_ms, None);
@@ -814,16 +832,16 @@ async fn an_unknown_model_is_404_without_touching_any_channel() {
     f.with_key();
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("mock", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "no-such", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let v: Value = serde_json::from_slice(&body).unwrap();
     let msg = v["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("没有配置"));
+    assert!(msg.contains("这里没有") && msg.contains("勾上"), "文案要说清去哪儿勾上：{msg}");
     // **别在报错里点名某个具体模型名**（老文案写着「或者打 auto」）：线上不一定有那个名字，
     // 用户照着打反而又撞一个 404。
-    assert!(!msg.contains("auto"), "报错不该点名某个模型名：{msg}");
+    assert!(!msg.contains("mock-chat"), "报错不该点名别的模型名：{msg}");
     assert_eq!(m.count(), 0);
     // 账上**要有一条**，记成 client_error（客户端写错名字），带上 HTTP 状态与原因。
     // 为什么改主意（2026-10-18）：面板「请求」页是用户排障的第一站，
@@ -835,26 +853,37 @@ async fn an_unknown_model_is_404_without_touching_any_channel() {
     assert_eq!(status, "client_error");
     assert_eq!(*http, Some(404));
     assert_eq!(*channel, None, "没打过任何渠道，别挂渠道号");
-    assert!(err.as_deref().unwrap_or("").contains("没有配置"), "{err:?}");
+    assert!(err.as_deref().unwrap_or("").contains("这里没有"), "{err:?}");
     assert!(f.attempts().is_empty(), "一次上游都没打过，不该有 attempt 行");
 }
 
-/// 组里的渠道都没勾这个组名（v0.9.0 严格白名单）→ 404，而且账上要看得见。
+/// 名字勾了、但渠道停用了 → 404 说清是哪条渠道，而且**要留一条账**
+/// （面板「请求」页是用户排障的第一站）。
 #[tokio::test]
-async fn a_group_with_no_scoped_channel_is_404_and_recorded() {
+async fn a_name_whose_channels_are_all_off_is_404_and_recorded() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
-    // 渠道一个模型名都不勾（no_declare），严格白名单下它谁也不认
-    let channel = f.add_channel("没勾名字的渠道", &m.base, ChannelSpec { no_declare: true, ..Default::default() });
-    f.set_group("auto", &[channel]);
+    let channel = f.add_channel(
+        "停用的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("mock-chat".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.serve("mock-chat", &[channel]);
+    tokengo_server::db::channels::set_enabled(&f.state.conn(), channel, false).unwrap();
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let v: Value = serde_json::from_slice(&body).unwrap();
     let msg = v["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("没有可用的渠道"), "要说清是「没有可用的渠道」：{msg}");
-    assert_eq!(m.count(), 0, "跳过的渠道一个字节都不许发出去");
+    assert!(
+        msg.contains("一条可用渠道都没有") && msg.contains("停用的渠道"),
+        "要说清是哪条渠道停了：{msg}"
+    );
+    assert_eq!(m.count(), 0, "停用的渠道一个字节都不许发出去");
 
     let rows = f.ledger();
     assert_eq!(rows.len(), 1, "要留一条账：{rows:?}");
@@ -864,50 +893,58 @@ async fn a_group_with_no_scoped_channel_is_404_and_recorded() {
 
 /// 组里全是停用的渠道 = 对外不该暴露，打了要 404 而不是 500。
 #[tokio::test]
-async fn a_group_with_only_disabled_channels_is_404() {
+async fn a_name_whose_channels_are_all_disabled_is_404() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("停用的渠道", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
     tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false, 0).unwrap();
 
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_eq!(m.count(), 0, "停用的渠道一个字节都不许发出去");
 }
 
-/// 勾选就是白名单：勾了别的名字的渠道，**不会收到这个名字的请求**，
-/// 而且一条都发不出去时要 404 说清是「没勾这个名字」，不是含糊的「没有可用渠道」。
+/// 勾了别的名字的渠道，**不会收到这个名字的请求** —— 哪怕它排在这条链的最前面。
 #[tokio::test]
-async fn a_channel_that_declared_other_names_is_skipped_and_says_so() {
+async fn a_channel_that_declared_other_names_never_receives_this_name() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
-    // 这条渠道勾过名字（别的名字），所以它只认勾上的那些 —— auto 不在里面
-    let a = f.add_channel(
+    // 排在前面、base_url 也是坏的：它要是被选中，账上一定看得见
+    let other = f.add_channel(
         "勾了别的名字的渠道",
-        &m.base,
+        "http://127.0.0.1:1/v1",
         ChannelSpec {
             models: vec![("别的名字".into(), None)],
             ..Default::default()
         },
     );
-    f.set_group("auto", &[a]);
+    let mine = f.add_channel(
+        "勾了这个名字的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("mock-chat".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.serve("mock-chat", &[other, mine]);
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
-    let v: Value = serde_json::from_slice(&body).unwrap();
-    let msg = v["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("没勾"), "文案要说清是没勾这个名字：{msg}");
-    assert!(msg.contains("勾了别的名字的渠道"), "点出是哪条渠道：{msg}");
-    assert_eq!(m.count(), 0, "没认这个名字，一个字节都不许发出去");
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(m.count(), 1, "只发了一发");
+    let att = f.attempts();
+    assert_eq!(att.len(), 1, "一次就成，说明坏的那条没被碰过：{att:?}");
+    assert_eq!(att[0].0, mine.0, "发给的是勾了这个名字的那条：{att:?}");
 }
 
-/// 严格白名单（v0.9.0）：同组里**一个名字都没勾**的渠道也不服务 ——
-/// 只有勾上这个名字的渠道才收得到请求。
+/// 一个名字没人勾 → 404，文案指向「去哪儿勾上」；勾上之后立刻能打。
+///
+/// 这就是「勾选就是白名单」在路由上的落点（v0.9.0 起是严格版；v0.11.0 起模型组那一层
+/// 拿掉了，渠道直接服务它勾选的那些名字）。
 #[tokio::test]
-async fn a_channel_that_declared_nothing_serves_nothing() {
+async fn a_name_nobody_declares_is_404_and_says_where_to_go() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
@@ -927,17 +964,16 @@ async fn a_channel_that_declared_nothing_serves_nothing() {
             ..Default::default()
         },
     );
-    f.set_group("auto", &[picky, blank]);
+    f.serve("mock-chat", &[picky, blank]);
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "谁都没勾 → 404");
     let v: Value = serde_json::from_slice(&body).unwrap();
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(
-        msg.contains("一个模型名都没勾"),
-        "文案要分开说清「一个都没勾」：{msg}"
+        msg.contains("这里没有") && msg.contains("勾上"),
+        "文案要指向「去面板把这个名字勾上」：{msg}"
     );
-    assert!(msg.contains("一个都没勾的渠道"), "点出是哪一条：{msg}");
     assert_eq!(m.count(), 0, "一个字节都不许发出去");
 
     // 勾上这个名字之后，请求就发给它了（勾了才有放行）。
@@ -945,15 +981,15 @@ async fn a_channel_that_declared_nothing_serves_nothing() {
         &f.state.conn(),
         blank,
         &[tokengo_server::db::channels::ModelMapping::new(
-            "auto", None, false,
+            "mock-chat", None, false,
         )],
     )
     .unwrap();
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(m.count(), 1, "勾上之后只发一发（挑名字那条仍被跳过）");
     let seen = m.seen();
-    assert_eq!(seen[0].model.as_str(), "auto", "没配别名就是原名透传");
+    assert_eq!(seen[0].model.as_str(), "mock-chat", "没配别名就是原名透传");
 }
 
 /// 请求体不是 JSON / 缺 model：这是客户端自己的错，400，且不碰渠道。
@@ -963,7 +999,7 @@ async fn a_malformed_body_is_a_400() {
     f.with_key();
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("mock", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     let req = axum::http::Request::builder()
         .method("POST")
@@ -988,13 +1024,13 @@ async fn streaming_is_passed_through_and_usage_is_scraped() {
     let m = start_mock(Reply::Ok).await;
     m.inner.replies.lock().unwrap().push_back(Reply::Sse);
     let channel = f.add_channel("mock", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     let (s, body, ctype) = post(
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "stream": true, "messages": []}),
+        json!({"model": "mock-chat", "stream": true, "messages": []}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1022,14 +1058,14 @@ async fn a_client_that_hangs_up_is_recorded_as_canceled() {
     let m = start_mock(Reply::Ok).await;
     m.inner.replies.lock().unwrap().push_back(Reply::Slow(1500));
     let channel = f.add_channel("慢渠道", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
     let req = axum::http::Request::builder()
         .method("POST")
         .uri(CHAT)
         .header("authorization", format!("Bearer {KEY}"))
         .body(axum::body::Body::from(
-            json!({"model": "auto", "messages": []}).to_string(),
+            json!({"model": "mock-chat", "messages": []}).to_string(),
         ))
         .unwrap();
     let state = f.state.clone();
@@ -1070,25 +1106,25 @@ async fn the_prober_switches_back_once_the_primary_recovers() {
         "首选",
         "http://127.0.0.1:59996/v1",
         ChannelSpec {
-            models: vec![("auto".into(), Some("real-model".into()))],
+            models: vec![("mock-chat".into(), Some("real-model".into()))],
             ..Default::default()
         },
     );
     let second = f.add_channel("备选", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[first, second]);
+    f.serve("mock-chat", &[first, second]);
 
     // 先让首选真坏一次，制造一次切换
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(f.routing("auto").active, Some(second));
+    assert_eq!(f.routing("mock-chat").active, Some(second));
 
     // 首选修好了 + 把检查点提前到点
     f.fix_channel(first, &m.base);
     {
         let now = tokengo_server::db::now_ms();
-        let mut st = f.routing("auto");
+        let mut st = f.routing("mock-chat");
         st.next_probe_at_ms = Some(now - 1);
-        f.state.routing().restore("auto", st);
+        f.state.routing().restore("mock-chat", st);
     }
 
     let out = tokengo_server::prober::tick(&f.state, tokengo_server::db::now_ms()).await;
@@ -1098,7 +1134,7 @@ async fn the_prober_switches_back_once_the_primary_recovers() {
         tokengo_server::prober::ProbeOutcome::SwitchedBack
     );
 
-    let st = f.routing("auto");
+    let st = f.routing("mock-chat");
     assert_eq!(st.active, Some(first), "首选活了就该切回来");
     assert_eq!(st.next_probe_at_ms, None, "回切后清掉检查点");
     assert_eq!(st.switch_count, 2, "切走一次、切回来一次");
@@ -1116,26 +1152,26 @@ async fn an_inconclusive_probe_changes_nothing() {
         "首选",
         &m.base,
         ChannelSpec {
-            models: vec![("auto".into(), Some("real-model".into()))],
+            models: vec![("mock-chat".into(), Some("real-model".into()))],
             ..Default::default()
         },
     );
     let second = f.add_channel("备选", "http://127.0.0.1:59995/v1", ChannelSpec::default());
-    f.set_group("auto", &[first, second]);
+    f.serve("mock-chat", &[first, second]);
 
     // 手工把状态摆成"切到了备选、检查点到点"
     let now = tokengo_server::db::now_ms();
     {
         let ids = [first, second];
         let mut r = f.state.routing();
-        r.attempt_order("auto", &ids, now);
-        r.on_channel_exhausted("auto", first, &ids, now);
+        r.attempt_order("mock-chat", &ids, now);
+        r.on_channel_exhausted("mock-chat", first, &ids, now);
     }
-    let before = f.routing("auto");
+    let before = f.routing("mock-chat");
     {
         let mut st = before.clone();
         st.next_probe_at_ms = Some(now - 1);
-        f.state.routing().restore("auto", st);
+        f.state.routing().restore("mock-chat", st);
     }
 
     let out = tokengo_server::prober::tick(&f.state, now).await;
@@ -1147,7 +1183,7 @@ async fn an_inconclusive_probe_changes_nothing() {
         ),
         "400 只能得出「没结论」：{out:?}"
     );
-    let after = f.routing("auto");
+    let after = f.routing("mock-chat");
     assert_eq!(after.active, Some(second), "当前渠道不许变");
     assert_eq!(after.switch_count, before.switch_count, "切换次数不许变");
 }
@@ -1162,30 +1198,30 @@ async fn a_failing_probe_pushes_the_checkpoint_forward() {
         "首选",
         "http://127.0.0.1:59994/v1",
         ChannelSpec {
-            models: vec![("auto".into(), Some("real-model".into()))],
+            models: vec![("mock-chat".into(), Some("real-model".into()))],
             ..Default::default()
         },
     );
     let second = f.add_channel("备选", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[first, second]);
+    f.serve("mock-chat", &[first, second]);
 
     let now = tokengo_server::db::now_ms();
     {
         let ids = [first, second];
         let mut r = f.state.routing();
-        r.attempt_order("auto", &ids, now);
-        r.on_channel_exhausted("auto", first, &ids, now);
+        r.attempt_order("mock-chat", &ids, now);
+        r.on_channel_exhausted("mock-chat", first, &ids, now);
     }
     {
-        let mut st = f.routing("auto");
+        let mut st = f.routing("mock-chat");
         st.next_probe_at_ms = Some(now - 1);
-        f.state.routing().restore("auto", st);
+        f.state.routing().restore("mock-chat", st);
     }
 
     let out = tokengo_server::prober::tick(&f.state, now).await;
     assert_eq!(out[0].outcome, tokengo_server::prober::ProbeOutcome::StillDown);
 
-    let st = f.routing("auto");
+    let st = f.routing("mock-chat");
     assert_eq!(st.active, Some(second));
     let probe = st.next_probe_at_ms.unwrap();
     assert!(probe > now + 9 * 60 * 1000, "检查点要往后推，实际 {probe}");
@@ -1205,12 +1241,12 @@ async fn probing_skips_a_channel_without_any_model_name() {
             ..Default::default()
         },
     );
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
     {
         let mut r = f.state.routing();
         r.restore(
-            "auto",
-            tokengo_shared::routing::GroupState {
+            "mock-chat",
+            tokengo_shared::routing::RouteState {
                 active: Some(channel),
                 next_probe_at_ms: Some(tokengo_server::db::now_ms() - 1),
                 switch_count: 0,
@@ -1232,6 +1268,7 @@ async fn probing_skips_a_channel_without_any_model_name() {
 
 // ───────────────────────── /v1/models ─────────────────────────
 
+/// `/v1/models` 只列真能用的名字；勾选过模型时**多一条保留名 auto**。
 #[tokio::test]
 async fn models_lists_only_what_really_works() {
     let f = fixture();
@@ -1241,14 +1278,14 @@ async fn models_lists_only_what_really_works() {
         "a",
         &m.base,
         ChannelSpec {
-            models: vec![("auto".into(), None), ("bge-m3".into(), None)],
+            models: vec![("mock-chat".into(), None), ("bge-m3".into(), None)],
             ..Default::default()
         },
     );
     let b = f.add_channel("b", "http://127.0.0.1:59993/v1", ChannelSpec::default());
-    f.set_group("auto", &[a]);
-    f.set_group("bge-m3", &[a, b]);
-    f.set_group("坏组", &[b]);
+    f.serve("mock-chat", &[a]);
+    f.serve("bge-m3", &[a, b]);
+    f.serve("只剩停用渠道的名字", &[b]);
     tokengo_server::db::channels::update(&f.state.conn(), b, "b", "http://127.0.0.1:59993/v1", false, false, 0)
         .unwrap();
 
@@ -1260,7 +1297,12 @@ async fn models_lists_only_what_really_works() {
         .iter()
         .map(|m| m["id"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(ids, vec!["auto".to_string(), "bge-m3".to_string()]);
+    // auto 排在最前（它不是某一个模型名），其余按名字排；
+    // 「只剩停用渠道的名字」不该出现 —— 一条能用的渠道都没有。
+    assert_eq!(
+        ids,
+        vec!["auto".to_string(), "bge-m3".to_string(), "mock-chat".to_string()]
+    );
 
     // 没 key 不给看
     let (s, _) = get(&f, "/v1/models", None).await;
@@ -1277,8 +1319,8 @@ async fn embeddings_go_to_their_own_group() {
     let vec_mock = start_mock(Reply::Ok).await;
     let chat_channel = f.add_channel("对话渠道", &chat_mock.base, ChannelSpec::default());
     let vec_channel = f.add_channel("向量渠道", &vec_mock.base, ChannelSpec::default());
-    f.set_group("auto", &[chat_channel]);
-    f.set_group("bge-m3", &[vec_channel]);
+    f.serve("mock-chat", &[chat_channel]);
+    f.serve("bge-m3", &[vec_channel]);
 
     let (s, _, _) = post(&f, "/v1/embeddings", Some(KEY), json!({"model": "bge-m3", "input": "你好"})).await;
     assert_eq!(s, StatusCode::OK);
@@ -1298,10 +1340,10 @@ async fn failed_before_any_attempt_records_the_request_but_no_attempt() {
     f.with_key();
     let m = start_mock(Reply::Ok).await;
     let channel = f.add_channel("停用的渠道", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
     tokengo_server::db::channels::update(&f.state.conn(), channel, "停用的渠道", &m.base, false, false, 0).unwrap();
 
-    let _ = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    let _ = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     let rows = f.ledger();
     assert_eq!(rows.len(), 1, "要留一条请求级账：{rows:?}");
     assert_eq!(rows[0].0, "client_error");
@@ -1320,7 +1362,7 @@ async fn the_panel_probe_really_calls_the_channel() {
         &m.base,
         ChannelSpec {
             secret: Some("sk-mock".into()),
-            models: vec![("auto".into(), Some("real-model".into()))],
+            models: vec![("mock-chat".into(), Some("real-model".into()))],
             ..Default::default()
         },
     );
@@ -1340,7 +1382,7 @@ async fn the_panel_probe_really_calls_the_channel() {
         "死渠道",
         "http://127.0.0.1:59992/v1",
         ChannelSpec {
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             ..Default::default()
         },
     );
@@ -1588,7 +1630,7 @@ async fn an_image_request_only_goes_to_a_channel_marked_as_seeing() {
         &text_only.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         },
@@ -1598,15 +1640,15 @@ async fn an_image_request_only_goes_to_a_channel_marked_as_seeing() {
         &can_see.base,
         ChannelSpec {
             secret: Some("sk-b".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         }
-        .with_vision("auto"),
+        .with_vision("mock-chat"),
     );
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("auto")).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("mock-chat")).await;
     assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
     let seen = can_see.seen();
@@ -1639,7 +1681,7 @@ async fn a_text_request_ignores_the_vision_marker() {
         &text_only.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         },
@@ -1649,15 +1691,15 @@ async fn a_text_request_ignores_the_vision_marker() {
         &can_see.base,
         ChannelSpec {
             secret: Some("sk-b".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         }
-        .with_vision("auto"),
+        .with_vision("mock-chat"),
     );
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
-    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": [{"role":"user","content":"你好"}]})).await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": [{"role":"user","content":"你好"}]})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(text_only.count(), 1, "普通请求还是走首选渠道");
     assert_eq!(can_see.count(), 0);
@@ -1681,7 +1723,7 @@ async fn an_image_request_does_not_reroute_the_plain_traffic() {
         &text_only.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         },
@@ -1691,20 +1733,20 @@ async fn an_image_request_does_not_reroute_the_plain_traffic() {
         &can_see.base,
         ChannelSpec {
             secret: Some("sk-b".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         }
-        .with_vision("auto"),
+        .with_vision("mock-chat"),
     );
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
-    let plain = json!({"model": "auto", "messages": [{"role": "user", "content": "你好"}]});
+    let plain = json!({"model": "mock-chat", "messages": [{"role": "user", "content": "你好"}]});
     let (s, _, _) = post(&f, CHAT, Some(KEY), plain.clone()).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!((text_only.count(), can_see.count()), (1, 0), "纯文字：走首选");
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("auto")).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("mock-chat")).await;
     assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     assert_eq!(
         (text_only.count(), can_see.count()),
@@ -1739,14 +1781,14 @@ async fn an_image_request_without_a_seeing_channel_is_refused_up_front() {
         &m.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         },
     );
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
 
-    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("auto")).await;
+    let (s, body, _) = post(&f, CHAT, Some(KEY), image_chat_body("mock-chat")).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{}", String::from_utf8_lossy(&body));
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["error"]["code"], "no_vision_model", "{v}");
@@ -1776,7 +1818,7 @@ async fn the_model_list_says_which_names_can_see_images() {
         &m.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into())), ("BAAI/bge-m3".into(), None)],
+            models: vec![("mock-chat".into(), Some("m".into())), ("BAAI/bge-m3".into(), None)],
             vision: vec![],
             ..Default::default()
         },
@@ -1786,19 +1828,19 @@ async fn the_model_list_says_which_names_can_see_images() {
         &m.base,
         ChannelSpec {
             secret: Some("sk-b".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         }
-        .with_vision("auto"),
+        .with_vision("mock-chat"),
     );
-    f.set_group("auto", &[text, see]);
-    f.set_group("BAAI/bge-m3", &[text]);
+    f.serve("mock-chat", &[text, see]);
+    f.serve("BAAI/bge-m3", &[text]);
 
     let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
     assert_eq!(s, StatusCode::OK);
     let data = v["data"].as_array().unwrap();
-    let auto = data.iter().find(|x| x["id"] == "auto").unwrap();
+    let auto = data.iter().find(|x| x["id"] == "mock-chat").unwrap();
     let vecm = data.iter().find(|x| x["id"] == "BAAI/bge-m3").unwrap();
     assert_eq!(auto["vision"], true, "{v}");
     assert_eq!(vecm["vision"], false, "{v}");
@@ -1824,7 +1866,7 @@ async fn the_panel_can_mark_a_model_as_seeing_and_reads_it_back() {
             "key": "sk-x",
             "headers": [],
             "models": [
-                {"model": "auto", "upstream": "glm-4v-flash", "vision": true},
+                {"model": "mock-chat", "upstream": "glm-4v-flash", "vision": true},
                 {"model": "BAAI/bge-m3", "upstream": null, "vision": false}
             ]
         }),
@@ -1832,7 +1874,7 @@ async fn the_panel_can_mark_a_model_as_seeing_and_reads_it_back() {
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["vision_count"], 1, "这条渠道上有一个能看图的模型名：{v}");
-    let auto = v["models"].as_array().unwrap().iter().find(|m| m["model"] == "auto").unwrap();
+    let auto = v["models"].as_array().unwrap().iter().find(|m| m["model"] == "mock-chat").unwrap();
     assert_eq!(auto["vision"], true, "{v}");
     let vecm = v["models"].as_array().unwrap().iter().find(|m| m["model"] == "BAAI/bge-m3").unwrap();
     assert_eq!(vecm["vision"], false, "{v}");
@@ -1843,12 +1885,13 @@ async fn the_panel_can_mark_a_model_as_seeing_and_reads_it_back() {
     let channel = v["channels"].as_array().unwrap().iter().find(|l| l["id"] == 1).unwrap();
     assert_eq!(channel["vision_count"], 1, "{v}");
 
-    // 模型组列表要带 can_see：这条渠道在这一组里是能看图的
-    f.set_group("auto", &[ChannelId(1)]);
-    let (s, v) = get_with_token(&f, "/api/groups", &token).await;
+    // 模型行要带 can_see：这条渠道上的这个模型名标了能看图
+    f.serve("mock-chat", &[ChannelId(1)]);
+    let (s, v) = get_with_token(&f, "/api/model-routes", &token).await;
     assert_eq!(s, StatusCode::OK);
-    let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "auto").unwrap();
-    assert_eq!(g["can_see"], true, "{v}");
+    let row = v["models"].as_array().unwrap().iter().find(|m| m["name"] == "mock-chat").unwrap();
+    assert_eq!(row["can_see"], true, "{v}");
+    assert_eq!(row["routed"], true, "有启用的渠道勾了它：{v}");
 }
 
 /// 「测视觉」：真发一张带图的请求，看上游答的是什么。
@@ -1866,12 +1909,12 @@ async fn vision_test_says_what_the_model_actually_answered() {
         &m.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             vision: vec![],
             ..Default::default()
         },
     );
-    f.set_group("auto", &[channel]);
+    f.serve("mock-chat", &[channel]);
     let token = {
         let conn = f.state.conn();
         tokengo_server::db::sessions::create_session(&conn, None).unwrap()
@@ -1881,7 +1924,7 @@ async fn vision_test_says_what_the_model_actually_answered() {
         &f,
         &format!("/api/channels/{}/vision-test", channel.0),
         &token,
-        json!({"model": "auto", "upstream": "m"}),
+        json!({"model": "mock-chat", "upstream": "m"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -1904,7 +1947,7 @@ async fn vision_test_says_what_the_model_actually_answered() {
     // 一次人工测试不许污染统计、不许动路由状态
     assert!(f.request_rows().is_empty(), "「测视觉」不该写记账");
     assert!(f.attempts().is_empty());
-    assert_eq!(f.routing("auto").switch_count, 0);
+    assert_eq!(f.routing("mock-chat").switch_count, 0);
 
     // 反证：上游不收图（400）→ 不标绿，也不给一句含糊的"通了"
     m.inner
@@ -1916,7 +1959,7 @@ async fn vision_test_says_what_the_model_actually_answered() {
         &f,
         &format!("/api/channels/{}/vision-test", channel.0),
         &token,
-        json!({"model": "auto", "upstream": "m"}),
+        json!({"model": "mock-chat", "upstream": "m"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -1926,9 +1969,9 @@ async fn vision_test_says_what_the_model_actually_answered() {
     assert!(f.request_rows().is_empty());
 
     // 渠道不存在是 404，没有面板会话是 401
-    let (s, _) = post_with_token(&f, "/api/channels/9999/vision-test", &token, json!({"model": "auto"})).await;
+    let (s, _) = post_with_token(&f, "/api/channels/9999/vision-test", &token, json!({"model": "mock-chat"})).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
-    let (s, _) = post_with_token(&f, &format!("/api/channels/{}/vision-test", channel.0), "bad", json!({"model": "auto"})).await;
+    let (s, _) = post_with_token(&f, &format!("/api/channels/{}/vision-test", channel.0), "bad", json!({"model": "mock-chat"})).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }
 
@@ -1954,7 +1997,7 @@ async fn an_unwanted_field_is_dropped_only_where_the_channel_declares_it() {
         }
         .with_drop_fields("beam-free", &["reasoning_effort"]),
     );
-    f.set_group("beam-free", &[a]);
+    f.serve("beam-free", &[a]);
     // 乙渠道：同一个上游，一个字都没声明
     let b = f.add_channel(
         "没声明任何字段的渠道",
@@ -1964,7 +2007,7 @@ async fn an_unwanted_field_is_dropped_only_where_the_channel_declares_it() {
             ..Default::default()
         },
     );
-    f.set_group("deepseek-v4.1-flash", &[b]);
+    f.serve("deepseek-v4.1-flash", &[b]);
 
     let body = json!({
         "model": "beam-free",
@@ -2007,7 +2050,7 @@ async fn the_session_header_is_stable_within_one_conversation_and_new_for_anothe
         "要会话头的渠道",
         &m.base,
         ChannelSpec {
-            models: vec![("auto".into(), None)],
+            models: vec![("mock-chat".into(), None)],
             headers: vec![
                 ("x-opencode-session".into(), "{{session_id}}".into()),
                 ("x-opencode-request".into(), "{{uuid}}".into()),
@@ -2015,9 +2058,9 @@ async fn the_session_header_is_stable_within_one_conversation_and_new_for_anothe
             ..Default::default()
         },
     );
-    f.set_group("auto", &[a]);
+    f.serve("mock-chat", &[a]);
 
-    let turn1 = json!({"model": "auto", "messages": [{"role": "user", "content": "帮我看下这段代码"}]});
+    let turn1 = json!({"model": "mock-chat", "messages": [{"role": "user", "content": "帮我看下这段代码"}]});
     let (s, _, _) = post(&f, CHAT, Some(KEY), turn1).await;
     assert_eq!(s, StatusCode::OK);
     // 同一段对话的下一轮：第一条 user 消息没变，后面接了更多轮
@@ -2025,7 +2068,7 @@ async fn the_session_header_is_stable_within_one_conversation_and_new_for_anothe
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [
+        json!({"model": "mock-chat", "messages": [
             {"role": "user", "content": "帮我看下这段代码"},
             {"role": "assistant", "content": "好的"},
             {"role": "user", "content": "再改一下"}
@@ -2038,7 +2081,7 @@ async fn the_session_header_is_stable_within_one_conversation_and_new_for_anothe
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "换个问题"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "换个问题"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -2073,12 +2116,12 @@ async fn the_envelope_is_unwrapped_only_when_the_channel_says_so() {
         "套壳上游（勾了解包）",
         &m.base,
         ChannelSpec {
-            models: vec![("auto".into(), None)],
+            models: vec![("mock-chat".into(), None)],
             unwrap_envelope: true,
             ..Default::default()
         },
     );
-    f.set_group("auto", &[a]);
+    f.serve("mock-chat", &[a]);
     let b = f.add_channel(
         "同一个套壳上游（没勾解包）",
         &m.base,
@@ -2087,14 +2130,14 @@ async fn the_envelope_is_unwrapped_only_when_the_channel_says_so() {
             ..Default::default()
         },
     );
-    f.set_group("raw", &[b]);
+    f.serve("raw", &[b]);
 
     // 勾了的：客户端拿到标准形状，token 账也照样记
     let (s, body, _) = post(
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "你好"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "你好"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -2122,8 +2165,7 @@ async fn the_envelope_is_unwrapped_only_when_the_channel_says_so() {
 
 // ───────── 模型按类型分开（对话 / 向量 / 重排）+ 顺手补的两条可靠性 ─────────
 
-/// 类型是**实测学来的**：真有向量请求进来一次，这组的类型就记成向量，
-/// 面板与 `/v1/models` 都读得到。人手动定过之后，实测不许再改。
+/// 用途挂在**名字**上（v0.10.0 起）：先「还没定」→ 实测学到 → 人手动定过之后流量不许覆盖。
 #[tokio::test]
 async fn the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_choice() {
     let f = fixture();
@@ -2133,26 +2175,36 @@ async fn the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_
         "载荷渠道",
         &m.base,
         ChannelSpec {
-            models: vec![("BAAI/bge-m3".into(), None), ("auto".into(), None)],
+            models: vec![("BAAI/bge-m3".into(), None), ("mock-chat".into(), None)],
             ..Default::default()
         },
     );
-    f.set_group("BAAI/bge-m3", &[a]);
-    f.set_group("auto", &[a]);
+    f.serve("BAAI/bge-m3", &[a]);
+    f.serve("mock-chat", &[a]);
     let token = {
         let conn = f.state.conn();
         tokengo_server::db::sessions::create_session(&conn, None).unwrap()
     };
 
-    // 一开始：两组都「还没定」，谁也不许按名字猜
-    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
-    for name in ["BAAI/bge-m3", "auto"] {
-        let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == name).unwrap();
-        assert_eq!(g["kind"], "", "{name} 不该凭空有个类型：{g}");
-        assert_eq!(g["kind_source"], "");
+    let find = |v: &Value, name: &str| -> Value {
+        v["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == name)
+            .unwrap()
+            .clone()
+    };
+
+    // 一开始：两个名字都「还没定」，谁也不许按名字猜
+    let (_, v) = get_with_token(&f, "/api/model-routes", &token).await;
+    for name in ["BAAI/bge-m3", "mock-chat"] {
+        let row = find(&v, name);
+        assert_eq!(row["kind"], "", "{name} 不该凭空有个用途：{row}");
+        assert_eq!(row["kind_source"], "");
     }
 
-    // 真打一发向量请求 → 只有那一组被记成向量
+    // 真打一发向量请求 → 只有那一个名字被记成向量
     let (s, _, _) = post(
         &f,
         "/v1/embeddings",
@@ -2161,15 +2213,14 @@ async fn the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
-    let vec_g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "BAAI/bge-m3").unwrap();
-    let chat_g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "auto").unwrap();
-    assert_eq!(vec_g["kind"], "embeddings", "实测验到的类型要落库：{vec_g}");
-    assert_eq!(vec_g["kind_source"], "auto");
-    assert_eq!(vec_g["kind_label"], "向量");
-    assert_eq!(chat_g["kind"], "", "没被碰过的组不许跟着变：{chat_g}");
+    let (_, v) = get_with_token(&f, "/api/model-routes", &token).await;
+    let vec_row = find(&v, "BAAI/bge-m3");
+    assert_eq!(vec_row["kind"], "embeddings", "实测验到的用途要落库：{vec_row}");
+    assert_eq!(vec_row["kind_source"], "auto");
+    assert_eq!(vec_row["kind_label"], "向量");
+    assert_eq!(find(&v, "mock-chat")["kind"], "", "没被碰过的名字不许跟着变");
 
-    // /v1/models 也要如实说类型（客户端据此挑端点）
+    // /v1/models 也要如实说用途（客户端据此挑端点）
     let (_, v) = get(&f, "/v1/models", Some(KEY)).await;
     let m_ = v["data"].as_array().unwrap().iter().find(|x| x["id"] == "BAAI/bge-m3").unwrap();
     assert_eq!(m_["kind"], "embeddings", "{v}");
@@ -2178,7 +2229,7 @@ async fn the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_
     // 人手动改成「对话」→ 来源变 manual，再来向量流量也不许把它改回去
     let (s, v) = put_with_token(
         &f,
-        "/api/groups/BAAI%2Fbge-m3/kind",
+        "/api/models/BAAI%2Fbge-m3/kind",
         &token,
         json!({"kind": "chat"}),
     )
@@ -2194,22 +2245,19 @@ async fn the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
-    let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "BAAI/bge-m3").unwrap();
-    assert_eq!(g["kind"], "chat", "手动定过的类型不许被实测改掉：{g}");
-    assert_eq!(g["kind_source"], "manual");
+    let (_, v) = get_with_token(&f, "/api/model-routes", &token).await;
+    let row = find(&v, "BAAI/bge-m3");
+    assert_eq!(row["kind"], "chat", "手动定过的用途不许被实测改掉：{row}");
+    assert_eq!(row["kind_source"], "manual");
 
-    // 交还给实测 → 清空
-    let (s, v) = put_with_token(&f, "/api/groups/auto/kind", &token, json!({"kind": "auto"})).await;
+    // 交还给实测（kind=auto）→ 清空
+    let (s, v) = put_with_token(&f, "/api/models/mock-chat/kind", &token, json!({"kind": "auto"})).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["kind"], "");
 
-    // 乱写的类型要 400，不许悄悄当成交给实测
-    let (s, _) = put_with_token(&f, "/api/groups/auto/kind", &token, json!({"kind": "随便"})).await;
+    // 乱写的用途要 400，不许悄悄当成交给实测
+    let (s, _) = put_with_token(&f, "/api/models/mock-chat/kind", &token, json!({"kind": "随便"})).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    // 不存在的组是 404（不是 200 假成功）
-    let (s, _) = put_with_token(&f, "/api/groups/没有这个组/kind", &token, json!({"kind": "chat"})).await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
 /// 空回复（200 但一句话没说）当**渠道的毛病**处理：立刻重试，不再把空泡泡丢给客户端。
@@ -2221,13 +2269,13 @@ async fn an_empty_reply_is_retried_instead_of_being_passed_through() {
     // （假上游的队列「先排的先回、排空了才用默认值」：默认给正常的，把空的那发排在最前）
     let m = start_mock(Reply::Ok).await;
     let a = f.add_channel("偶尔发呆的渠道", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[a]);
+    f.serve("mock-chat", &[a]);
     m.inner.replies.lock().unwrap().push_back(Reply::Empty);
     let (s, body, _) = post(
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "在吗"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "空回复之后重试成功，客户端不该看到错误");
@@ -2244,12 +2292,12 @@ async fn an_empty_reply_is_retried_instead_of_being_passed_through() {
     f2.with_key();
     let m2 = start_mock(Reply::Empty).await;
     let b = f2.add_channel("一直发呆的渠道", &m2.base, ChannelSpec::default());
-    f2.set_group("auto", &[b]);
+    f2.serve("mock-chat", &[b]);
     let (s, body, _) = post(
         &f2,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "在吗"}]}),
     )
     .await;
     assert_ne!(s, StatusCode::OK, "整条链路都只回空，绝不能当成功");
@@ -2278,13 +2326,13 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
     let a = f.add_channel("配额没了的渠道", &m.base, ChannelSpec::default());
     let good = start_mock(Reply::Ok).await;
     let b = f.add_channel("好好的渠道", &good.base, ChannelSpec::default());
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
 
     let (s, body, _) = post(
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "在吗"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "第一条要等 300 秒 → 直接换下一条，客户端照样拿到回复");
@@ -2302,12 +2350,12 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
     f2.with_key();
     let m2 = start_mock(Reply::RateLimited(0)).await;
     let c = f2.add_channel("很快就好的渠道", &m2.base, ChannelSpec::default());
-    f2.set_group("auto", &[c]);
+    f2.serve("mock-chat", &[c]);
     let (s, _, _) = post(
         &f2,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "在吗"}]}),
     )
     .await;
     assert_ne!(s, StatusCode::OK);
@@ -2316,85 +2364,53 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
 
 // ───────── 面板上那个「一键启用/停用」开关 ─────────
 
-/// 点一下开关就能停用一组：客户端立刻打不通（404），`/v1/models` 里也没了；
-/// 再点一下又能用。**只改这一列** —— 渠道顺序与类型都不许被顺手改掉。
+/// 渠道顺序：面板上移/下移一位，路由立刻按新顺序试。
+///
+/// 模型组那一层拿掉之后（v0.11.0），「同一个模型名下先试哪条渠道」全由这一处决定 ——
+/// 所以这条顺序必须是真能改的，而且改了立刻生效。
 #[tokio::test]
-async fn the_panel_switch_disables_and_enables_a_group_in_one_call() {
+async fn the_channel_order_can_be_moved_and_the_route_follows() {
     let f = fixture();
     f.with_key();
-    let m = start_mock(Reply::Ok).await;
-    let a = f.add_channel(
-        "开关渠道",
-        &m.base,
-        ChannelSpec { models: vec![("auto".into(), None)], ..Default::default() },
-    );
-    f.set_group("auto", &[a]);
-    // 顺手手动定个类型：开关不该把这列改掉
+    // 第一条回的 429 要求等 300 秒 → 网关不在这条上耗，直接换下一条
+    let slow = start_mock(Reply::RateLimited(300)).await;
+    let good = start_mock(Reply::Ok).await;
+    let a = f.add_channel("排前面的渠道", &slow.base, ChannelSpec::default());
+    let b = f.add_channel("排后面的渠道", &good.base, ChannelSpec::default());
+    f.serve("mock-chat", &[a, b]);
     let token = {
         let conn = f.state.conn();
         tokengo_server::db::sessions::create_session(&conn, None).unwrap()
     };
-    let (s, _) = put_with_token(&f, "/api/groups/auto/kind", &token, json!({"kind": "chat"})).await;
+    // 顺手手动定个用途：挪顺序不该把这一列改掉
+    let (s, _) = put_with_token(&f, "/api/models/mock-chat/kind", &token, json!({"kind": "chat"})).await;
     assert_eq!(s, StatusCode::OK);
 
-    // 启用着：能打，清单里有
-    let (s, _, _) = post(
-        &f,
-        CHAT,
-        Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
-    )
-    .await;
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
-    let (_, v) = get(&f, "/v1/models", Some(KEY)).await;
-    assert!(v["data"].as_array().unwrap().iter().any(|m| m["id"] == "auto"), "{v}");
+    let att = f.attempts();
+    assert_eq!(att[0].0, a.0, "先试的是排前面那条：{att:?}");
 
-    // 点开关 → 停用
-    let before = m.count();
-    let (s, v) = put_with_token(&f, "/api/groups/auto/enabled", &token, json!({"enabled": false})).await;
+    // 面板上把 b 往上挪一位 → 顺序变成 [b, a]
+    let (s, v) = post_with_token(&f, &format!("/api/channels/{}/move", b.0), &token, json!({"up": true})).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["enabled"], false);
+    assert_eq!(v["order"], json!([b.0, a.0]), "回给面板的新顺序：{v}");
 
-    // 停用后：客户端拿到 404（不是 500，也不是假装成功），清单里也没了
-    let (s, body, _) = post(
-        &f,
-        CHAT,
-        Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
-    )
-    .await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "停用的名字要像不存在一样：{body:?}");
-    let (_, v) = get(&f, "/v1/models", Some(KEY)).await;
-    assert!(
-        !v["data"].as_array().unwrap().iter().any(|m| m["id"] == "auto"),
-        "停用的组不该出现在客户端清单里：{v}"
-    );
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
+    assert_eq!(s, StatusCode::OK);
+    let att = f.attempts();
+    assert_eq!(att[att.len() - 1].0, b.0, "挪完之后先试 b：{att:?}");
 
-    // 停用期间上游一次都没被打（不是「还发请求只是不回话」）
-    assert_eq!(m.count(), before, "停用后不许再往这家上游发请求");
+    // 到顶/到底再点没反应，也不报错
+    let (s, _) = post_with_token(&f, &format!("/api/channels/{}/move", b.0), &token, json!({"up": true})).await;
+    assert_eq!(s, StatusCode::OK);
 
-    // 再点一下 → 启用，立刻恢复
-    let (s, v) = put_with_token(&f, "/api/groups/auto/enabled", &token, json!({"enabled": true})).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let (s, _, _) = post(
-        &f,
-        CHAT,
-        Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "回来了吗"}]}),
-    )
-    .await;
-    assert_eq!(s, StatusCode::OK, "启用后要立刻能打");
-
-    // 只动了 enabled 这一列：类型还是刚才手动定的
-    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
-    let g = v["groups"].as_array().unwrap().iter().find(|g| g["name"] == "auto").unwrap();
-    assert_eq!(g["enabled"], true);
-    assert_eq!(g["kind"], "chat", "开关不许把类型改掉：{g}");
-    assert_eq!(g["kind_source"], "manual");
-
-    // 不存在的组 → 404（不许假装成功）
-    let (s, _) = put_with_token(&f, "/api/groups/没有这个组/enabled", &token, json!({"enabled": false})).await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
+    // 只动了顺序：用途还是刚才手动定的那个
+    let (_, v) = get_with_token(&f, "/api/model-routes", &token).await;
+    let row = v["models"].as_array().unwrap().iter().find(|m| m["name"] == "mock-chat").unwrap();
+    assert_eq!(row["kind"], "chat", "挪顺序不许把用途改掉：{row}");
+    assert_eq!(row["kind_source"], "manual");
+    assert_eq!(row["channels"], json!([b.0, a.0]), "行里给的顺序就是先试顺序：{row}");
 }
 
 /// 渠道卡片上那个开关：停用一条渠道之后，流量只走还启用的那条；
@@ -2408,14 +2424,14 @@ async fn the_panel_switch_disables_a_channel_and_traffic_moves_off_it() {
     let a = f.add_channel(
         "一号",
         &first.base,
-        ChannelSpec { models: vec![("auto".into(), None)], ..Default::default() },
+        ChannelSpec { models: vec![("mock-chat".into(), None)], ..Default::default() },
     );
     let b = f.add_channel(
         "二号",
         &second.base,
-        ChannelSpec { models: vec![("auto".into(), None)], ..Default::default() },
+        ChannelSpec { models: vec![("mock-chat".into(), None)], ..Default::default() },
     );
-    f.set_group("auto", &[a, b]);
+    f.serve("mock-chat", &[a, b]);
     let token = {
         let conn = f.state.conn();
         tokengo_server::db::sessions::create_session(&conn, None).unwrap()
@@ -2449,7 +2465,7 @@ async fn the_panel_switch_disables_a_channel_and_traffic_moves_off_it() {
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "走哪条"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "走哪条"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{body:?}");
@@ -2477,7 +2493,7 @@ async fn the_panel_switch_disables_a_channel_and_traffic_moves_off_it() {
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "都没了"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "都没了"}]}),
     )
     .await;
     assert_ne!(s, StatusCode::OK, "两条渠道都停用，不许回 200：{body:?}");
@@ -2504,7 +2520,7 @@ async fn vision_test_gives_enough_room_and_retries_when_truncated() {
         &roomy.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             ..Default::default()
         },
     );
@@ -2516,7 +2532,7 @@ async fn vision_test_gives_enough_room_and_retries_when_truncated() {
         &f,
         &format!("/api/channels/{}/vision-test", a.0),
         &token,
-        json!({"model": "auto", "upstream": "m"}),
+        json!({"model": "mock-chat", "upstream": "m"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -2532,7 +2548,7 @@ async fn vision_test_gives_enough_room_and_retries_when_truncated() {
         &tight.base,
         ChannelSpec {
             secret: Some("sk-b".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             ..Default::default()
         },
     );
@@ -2540,7 +2556,7 @@ async fn vision_test_gives_enough_room_and_retries_when_truncated() {
         &f,
         &format!("/api/channels/{}/vision-test", b.0),
         &token,
-        json!({"model": "auto", "upstream": "m"}),
+        json!({"model": "mock-chat", "upstream": "m"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -2567,7 +2583,7 @@ async fn a_reply_that_stays_truncated_is_not_a_yes_and_says_so() {
         &m.base,
         ChannelSpec {
             secret: Some("sk-a".into()),
-            models: vec![("auto".into(), Some("m".into()))],
+            models: vec![("mock-chat".into(), Some("m".into()))],
             ..Default::default()
         },
     );
@@ -2579,7 +2595,7 @@ async fn a_reply_that_stays_truncated_is_not_a_yes_and_says_so() {
         &f,
         &format!("/api/channels/{}/vision-test", ch.0),
         &token,
-        json!({"model": "auto", "upstream": "m"}),
+        json!({"model": "mock-chat", "upstream": "m"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -2595,13 +2611,9 @@ async fn a_reply_that_stays_truncated_is_not_a_yes_and_says_so() {
     assert_eq!(l["vision_count"], 0, "{v}");
 }
 
-/// 组名里带斜杠（`BAAI/bge-m3` 这种）时，面板必须把它转义了再进 URL ——
-/// 不转义就是用户报的「删除模型 → 删除失败 HTTP404」。
-///
-/// 这条钉两件事：① 服务端认 `%2F` 这种写法（转义之后能匹配上路由）；
-/// ② 不转义的写法确实是 404（所以面板那边必须转义，不能手拼）。
+/// 名字里带 `/`（`BAAI/bge-m3`）时，面板接口的路径参数**必须转义**才匹配得上。
 #[tokio::test]
-async fn a_group_name_with_a_slash_can_be_deleted_when_it_is_escaped() {
+async fn a_model_name_with_a_slash_works_in_the_panel_api() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
@@ -2613,45 +2625,43 @@ async fn a_group_name_with_a_slash_can_be_deleted_when_it_is_escaped() {
             ..Default::default()
         },
     );
-    f.set_group("BAAI/bge-m3", &[a]);
+    f.serve("BAAI/bge-m3", &[a]);
     let token = {
         let conn = f.state.conn();
         tokengo_server::db::sessions::create_session(&conn, None).unwrap()
     };
 
-    // 不转义：路由匹配不上（这就是那个 404 的来源）
-    let req = axum::http::Request::builder()
-        .method("DELETE")
-        .uri("/api/groups/BAAI/bge-m3")
-        .header("authorization", format!("Bearer {token}"))
-        .body(axum::body::Body::empty())
-        .unwrap();
-    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "不转义就该匹配不上");
+    // 不转义：路径被当成三段，路由匹配不上（这就是那个 404 的来源）
+    let (s, _) = put_with_token(
+        &f,
+        "/api/models/BAAI/bge-m3/kind",
+        &token,
+        json!({"kind": "embeddings"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "不转义就该匹配不上");
 
-    // 转义之后：删得掉，而且真从库里没了
-    let req = axum::http::Request::builder()
-        .method("DELETE")
-        .uri("/api/groups/BAAI%2Fbge-m3")
-        .header("authorization", format!("Bearer {token}"))
-        .body(axum::body::Body::empty())
-        .unwrap();
-    let resp = app(f.state.clone()).oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "转义之后要删得掉");
-    let (_, v) = get_with_token(&f, "/api/groups", &token).await;
-    assert!(
-        !v["groups"].as_array().unwrap().iter().any(|g| g["name"] == "BAAI/bge-m3"),
-        "删完就不该还在：{v}"
-    );
+    // 转义之后：定得掉，也读得回来
+    let (s, v) = put_with_token(
+        &f,
+        "/api/models/BAAI%2Fbge-m3/kind",
+        &token,
+        json!({"kind": "embeddings"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["kind"], "embeddings");
+    assert_eq!(v["kind_source"], "manual");
 
-    // 同理，回切检查点那一条也得转义（面板上「立刻试首选」用的就是它）
-    f.set_group("BAAI/bge-m3", &[a]);
+    // 「立刻试首选」（回切检查点归零）那条也一样要转义
     let (s, _) = post_with_token(&f, "/api/routing/BAAI%2Fbge-m3/reprobe", &token, json!({})).await;
-    assert_eq!(s, StatusCode::OK, "转义的组名也要能回切");
+    assert_eq!(s, StatusCode::OK, "转义的名字也要能回切");
+    // 不存在的名字是 404（不许假装成功）
+    let (s, _) = post_with_token(&f, "/api/routing/没这个名字/reprobe", &token, json!({})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
-/// 删一个已经不在的东西：要老实回 404（以前渠道那条漏了检查，回的是 500「内部错误」；
-/// 组那条更糟 —— 假装成功回 200）。面板上「删除失败」的文案就靠这个状态码分辨。
+/// 删/挪一个不存在的东西 → 404，不许 500、也不许假装成功。
 #[tokio::test]
 async fn deleting_something_that_is_not_there_says_404_not_500() {
     let f = fixture();
@@ -2683,12 +2693,9 @@ async fn deleting_something_that_is_not_there_says_404_not_500() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND, "删第二下要 404，不许 500");
 
-    // 组：建了再删（200），删第二下要 404（不许假装成功）
-    f.set_group("auto", &[]);
-    let resp = app(f.state.clone()).oneshot(req("/api/groups/auto")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let resp = app(f.state.clone()).oneshot(req("/api/groups/auto")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "删第二下要 404");
+    // 改一个不存在的渠道的顺序：也 404（不是 500，也不是悄悄什么都没做还回 200）
+    let (s, _) = post_with_token(&f, "/api/channels/99987/move", &token, json!({"up": true})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
 /// 「这条请求到底带没带图」要记进账：用户报「模型识别不了图片」时，先看这一列就能分清
@@ -2705,12 +2712,12 @@ async fn the_request_log_says_whether_an_image_came_in() {
         "看不见的渠道",
         &m.base,
         ChannelSpec {
-            models: vec![("auto".into(), None)],
+            models: vec![("mock-chat".into(), None)],
             vision: vec![],
             ..Default::default()
         },
     );
-    f.set_group("auto", &[plain]);
+    f.serve("mock-chat", &[plain]);
     let token = {
         let conn = f.state.conn();
         tokengo_server::db::sessions::create_session(&conn, None).unwrap()
@@ -2722,7 +2729,7 @@ async fn the_request_log_says_whether_an_image_came_in() {
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": "在吗"}]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -2732,7 +2739,7 @@ async fn the_request_log_says_whether_an_image_came_in() {
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": [
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": [
             {"type": "text", "text": "这是什么"},
             img.clone(),
         ]}]}),
@@ -2743,13 +2750,13 @@ async fn the_request_log_says_whether_an_image_came_in() {
     // ③ 把渠道标成能看图 → 同样带图的一发应当成功
     {
         let conn = f.state.conn();
-        tokengo_server::db::channels::set_model_vision(&conn, plain, "auto", true).unwrap();
+        tokengo_server::db::channels::set_model_vision(&conn, plain, "mock-chat", true).unwrap();
     }
     let (s, _, _) = post(
         &f,
         CHAT,
         Some(KEY),
-        json!({"model": "auto", "messages": [{"role": "user", "content": [
+        json!({"model": "mock-chat", "messages": [{"role": "user", "content": [
             {"type": "text", "text": "这是什么"},
             img.clone(),
         ]}]}),
@@ -2793,7 +2800,7 @@ async fn a_channel_cap_queues_instead_of_stampeding_the_upstream() {
         &m.base,
         ChannelSpec { cap: 2, ..Default::default() },
     );
-    f.set_group("auto", &[ch]);
+    f.serve("mock-chat", &[ch]);
 
     let futures: Vec<_> = (0..4)
         .map(|i| {
@@ -2803,7 +2810,7 @@ async fn a_channel_cap_queues_instead_of_stampeding_the_upstream() {
                     f,
                     CHAT,
                     Some(KEY),
-                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                    json!({"model": "mock-chat", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
                 )
                 .await
             }
@@ -2830,7 +2837,7 @@ async fn without_a_cap_requests_are_not_gated() {
     f.with_key();
     let m = start_mock(Reply::SlowOk(120)).await;
     let ch = f.add_channel("不限", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[ch]);
+    f.serve("mock-chat", &[ch]);
 
     let futures: Vec<_> = (0..4)
         .map(|i| {
@@ -2840,7 +2847,7 @@ async fn without_a_cap_requests_are_not_gated() {
                     f,
                     CHAT,
                     Some(KEY),
-                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                    json!({"model": "mock-chat", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
                 )
                 .await
             }
@@ -2863,7 +2870,7 @@ async fn a_saturated_channel_makes_the_request_try_the_other_one() {
     let b = start_mock(Reply::SlowOk(120)).await;
     let ca = f.add_channel("甲", &a.base, ChannelSpec { cap: 1, ..Default::default() });
     let cb = f.add_channel("乙", &b.base, ChannelSpec { cap: 1, ..Default::default() });
-    f.set_group("auto", &[ca, cb]);
+    f.serve("mock-chat", &[ca, cb]);
 
     let futures: Vec<_> = (0..2)
         .map(|i| {
@@ -2873,7 +2880,7 @@ async fn a_saturated_channel_makes_the_request_try_the_other_one() {
                     f,
                     CHAT,
                     Some(KEY),
-                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                    json!({"model": "mock-chat", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
                 )
                 .await
             }
@@ -2902,7 +2909,7 @@ async fn high_concurrency_never_turns_a_good_request_into_a_500() {
     f.with_key();
     let m = start_mock(Reply::SlowOk(20)).await;
     let ch = f.add_channel("mock", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[ch]);
+    f.serve("mock-chat", &[ch]);
 
     let futures: Vec<_> = (0..N)
         .map(|i| {
@@ -2912,7 +2919,7 @@ async fn high_concurrency_never_turns_a_good_request_into_a_500() {
                     f,
                     CHAT,
                     Some(KEY),
-                    json!({"model": "auto", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
+                    json!({"model": "mock-chat", "messages": [{"role": "user", "content": format!("第{i}发")}]}),
                 )
                 .await
             }
@@ -2939,4 +2946,176 @@ async fn high_concurrency_never_turns_a_good_request_into_a_500() {
         )
         .unwrap();
     assert_eq!(n_ok as usize, N, "每一发都要记成成功");
+}
+
+// ───────────────────────── 保留名 auto ─────────────────────────
+
+/// `auto`：在**用户勾选过的模型**里挑一个现在最优的现场发出去。
+///
+/// 排序看实测（最近在失败的排后面），所以这条用例先把 cand-a 打成一败涂地，
+/// 再打 auto —— 它该绕开 cand-a，直接落到 cand-b。
+#[tokio::test]
+async fn the_reserved_auto_picks_among_the_checked_models() {
+    let f = fixture();
+    f.with_key();
+    let a = f.add_channel(
+        "挂了的那条",
+        "http://127.0.0.1:1/v1", // 连不上
+        ChannelSpec::default(),
+    );
+    let good = start_mock(Reply::Ok).await;
+    let b = f.add_channel("好好的那条", &good.base, ChannelSpec::default());
+    f.serve("cand-a", &[a]);
+    f.serve("cand-b", &[b]);
+
+    // 先把 cand-a 打出毛病（4 次尝试全记成渠道的毛病）
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "cand-a", "messages": []})).await;
+    assert_ne!(s, StatusCode::OK, "这条渠道本来就是坏的");
+    let before = good.count();
+
+    // 再打 auto：cand-a 刚失败过 → 该先挑 cand-b
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]})).await;
+    assert_eq!(s, StatusCode::OK, "{body:?}");
+    assert_eq!(good.count(), before + 1, "上游真被打了");
+    let seen = good.seen();
+    assert_eq!(
+        seen.last().unwrap().model.as_str(),
+        "cand-b",
+        "发给上游的必须是它挑中的那个模型名（不是 auto）"
+    );
+
+    // 账上写清「真正被叫的是谁」
+    let served: Vec<String> = {
+        let conn = f.state.conn();
+        let mut stmt = conn.prepare("SELECT served_model FROM requests ORDER BY id").unwrap();
+        let v = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        v
+    };
+    assert_eq!(served.len(), 2);
+    assert_eq!(served[1], "cand-b", "auto 那一发要记下它挑中了谁：{served:?}");
+}
+
+/// `auto` 只挑**能走这个端点**的模型：对话请求不会去挑向量模型。
+#[tokio::test]
+async fn auto_only_picks_models_of_the_same_kind() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let ch = f.add_channel(
+        "什么都能发的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("向量那个".into(), None), ("对话那个".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.serve("向量那个", &[ch]);
+    f.serve("对话那个", &[ch]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+    // 把「向量那个」定成向量模型（自动挑要按用途分家）
+    let (s, _) = put_with_token(&f, "/api/models/向量那个/kind", &token, json!({"kind": "embeddings"})).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // 对话请求打 auto：候选里只该有「对话那个」
+    let (_, v) = get_with_token(&f, "/api/model-routes", &token).await;
+    assert_eq!(v["auto"]["chat"], json!(["对话那个"]), "{v}");
+    assert_eq!(v["auto"]["embeddings"], json!(["向量那个"]), "{v}");
+
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::OK);
+    let seen = m.seen();
+    assert_eq!(seen[0].model.as_str(), "对话那个", "别拿对话请求去打听向量模型");
+}
+
+/// `auto` 的候选链会**挨个往下试**：第一个候选整条都挂了，就落到下一个候选，
+/// 全程只碰用户勾选过的名字。
+#[tokio::test]
+async fn auto_falls_over_to_the_next_candidate() {
+    let f = fixture();
+    f.with_key();
+    let bad = start_mock(Reply::Status(500, "boom")).await;
+    let good = start_mock(Reply::Ok).await;
+    let a = f.add_channel("会 500 的渠道", &bad.base, ChannelSpec::default());
+    let b = f.add_channel("好好的渠道", &good.base, ChannelSpec::default());
+    // 名字排序：a-先试 在前，所以 auto 第一个挑它
+    f.serve("a-先试", &[a]);
+    f.serve("b-后试", &[b]);
+
+    let (s, body, _) = post(
+        &f,
+        "/v1/chat/completions",
+        Some(KEY),
+        json!({"model": "auto", "messages": [{"role": "user", "content": "在吗"}]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "第一个候选挂了，要落到第二个：{body:?}");
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["message"]["content"], "你好");
+
+    let att = f.attempts();
+    assert!(att.iter().any(|x| x.0 == a.0), "先试过第一个候选：{att:?}");
+    assert_eq!(att.last().unwrap().0, b.0, "最后落到第二个候选：{att:?}");
+}
+
+/// 用户口径：**勾选（指定）使用的模型为 0 时，客户端不显示 auto** —— 打了也要 404 说清。
+///
+/// 反证（现网那种情况）：一条渠道只勾了 `auto` 自己，等于一个模型都没指定 ——
+/// auto 不是兜底，它挑不出任何东西。
+#[tokio::test]
+async fn the_auto_row_is_hidden_when_nothing_is_checked() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    // 一条渠道都不建：清单是空的，连 auto 都没有
+    let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["data"], json!([]), "一个模型都没勾，清单就该是空的：{v}");
+
+    // 只勾了 auto 自己（上游中继常见）：仍然等于一个都没指定
+    let only_auto = f.add_channel(
+        "只勾了 auto 的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("auto".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.serve("别的名字", &[only_auto]);
+    let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["data"], json!([]), "只勾了 auto 自己 = 一个都没指定：{v}");
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "挑不出东西就 404，不做兜底");
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("没有可挑的模型"), "要说清 auto 挑不出模型：{msg}");
+    assert_eq!(m.count(), 0, "一条渠道都不许碰");
+
+    // 勾上一个真模型名 → auto 立刻出现，也真能挑到它
+    tokengo_server::db::channels::set_models(
+        &f.state.conn(),
+        only_auto,
+        &[tokengo_server::db::channels::ModelMapping::new("真模型", None, false)],
+    )
+    .unwrap();
+    let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(s, StatusCode::OK);
+    let ids: Vec<String> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, vec!["auto".to_string(), "真模型".to_string()], "{v}");
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::OK);
+    let seen = m.seen();
+    assert_eq!(seen.last().unwrap().model.as_str(), "真模型");
 }

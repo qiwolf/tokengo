@@ -4,9 +4,8 @@
 //! 而用途原先只挂在模型组上（迁移 v5）—— 没建组的名字就没地方标用途，图像 / 视频 / 音频
 //! 这类网关暂时不转发、只能手标的名字永远归不了档。所以用途改成挂在**名字**上。
 //!
-//! 组上那份仍然写：路由与对外清单（`groups::list_servable` 的视觉判断）要用它。
-//! 两个写入点（人手动定 / 实测学到的）都在 `db::groups` 里成对维护，别只写一边 ——
-//! 只写一边会出现「界面上是图像、对外清单还当对话」这种看不出来的错。
+//! 模型组那一层已经拿掉（v0.11.0），所以**只有这一份**了：路由（该挑哪一类候选）、
+//! 对外清单（`db::model_routes` 的视觉判断）、探活（该打哪个端点）读的都是它。
 
 use rusqlite::{params, Connection};
 
@@ -68,7 +67,7 @@ pub fn set(conn: &Connection, name: &str, kind: ModelKind) -> Result<()> {
 
 /// 实测学到的类型：**只在还没定过、也没被人定过时**写进去（返回是否真写了）。
 ///
-/// 与 `groups::learn_kind` 同一口径：已经有结论就一个字都不动 ——
+/// 与手工定过的那份同一口径：已经有结论就一个字都不动 ——
 /// 用户拍过的板不被流量改掉。
 pub fn learn(conn: &Connection, name: &str, kind: ModelKind) -> Result<bool> {
     if !kind.is_set() {
@@ -152,7 +151,7 @@ mod tests {
         assert_eq!(k.source, KindSource::Manual);
         assert!(
             get(&conn, "auto").unwrap().is_none(),
-            "组上没定过类型的名字不许凭空编一条出来"
+            "没定过用途的名字不许凭空编一条出来"
         );
         // 幂等：再跑一遍迁移不改数据
         crate::db::migrate(&conn).unwrap();

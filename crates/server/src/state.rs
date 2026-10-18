@@ -20,9 +20,9 @@ use crate::gateway::EndpointKind;
 use crate::gateway_key::GatewayKeyCache;
 use crate::upstream::Upstream;
 
-/// 模型组类型 → 探活该打哪个端点。**还没定的返回 None**（那就按对话探，
+/// 模型类型 → 探活该打哪个端点。**还没定的返回 None**（那就按对话探，
 /// 探活那边把 400 当「没结论」，不会乱改路由状态）。
-fn group_kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKind> {
+fn kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKind> {
     match kind {
         tokengo_shared::ModelKind::Chat => Some(EndpointKind::Chat),
         tokengo_shared::ModelKind::Embeddings => Some(EndpointKind::Embeddings),
@@ -45,8 +45,8 @@ pub struct AppState {
     pub upstream: Upstream,
     /// 对外 key 的校验快路径。argon2 太慢，不能每请求跑一遍。
     key_cache: GatewayKeyCache,
-    /// 每个模型组平时走哪个端点 —— 后台探活要知道，否则给向量组发对话探活必 400。
-    group_endpoints: Mutex<HashMap<String, EndpointKind>>,
+    /// 每个模型名平时走哪个端点 —— 后台探活要知道，否则给向量模型发对话探活必 400。
+    model_endpoints: Mutex<HashMap<String, EndpointKind>>,
     /// 请求路径上抢不到库锁的活先丢这儿，由后台落账员补写（见 `WriteJob`）。
     writer: WriteQueue,
     /// 每条渠道的「门口闸机」：同时最多几发（渠道 id → 闸机 + 当前配置的上限）。
@@ -77,7 +77,7 @@ pub enum WriteJob {
     Finish(crate::db::requests::FinishArgs),
     /// 一次渠道尝试。
     Attempt(crate::db::requests::AttemptArgs),
-    /// 落某个模型组的路由状态（当前渠道、回切检查点）。
+    /// 落某个模型名的路由状态（当前渠道、回切检查点）。
     State(String),
 }
 
@@ -163,7 +163,7 @@ impl AppState {
         let mut router = RoutingRouter::new(rcfg);
         let restored = db::routing::load_all_into(&conn, &mut router)?;
         if restored > 0 {
-            tracing::info!("已恢复 {restored} 个模型组的路由状态");
+            tracing::info!("已恢复 {restored} 个模型名的路由状态");
         }
         if let Ok(n) = db::sessions::purge_expired(&conn) {
             if n > 0 {
@@ -171,17 +171,17 @@ impl AppState {
             }
         }
 
-        // 把库里记下来的「各组是哪种模型」装进内存：探活要知道该打哪个端点。
-        // **不装的话重启后一律按对话探** —— 拿对话请求去探向量组必然 400，
-        // 表现就是「重启后向量组一直探不通、回切永远不成功」。
+        // 把库里记下来的「每个名字是哪种模型」装进内存：探活要知道该打哪个端点。
+        // **不装的话重启后一律按对话探** —— 拿对话请求去探向量模型必然 400，
+        // 表现就是「重启后向量模型一直探不通、回切永远不成功」。
         let mut endpoints = HashMap::new();
-        for g in db::groups::list(&conn).unwrap_or_default() {
-            if let Some(kind) = group_kind_to_endpoint(g.kind) {
-                endpoints.insert(g.name.clone(), kind);
+        for k in db::kinds::all(&conn).unwrap_or_default() {
+            if let Some(endpoint) = kind_to_endpoint(k.kind) {
+                endpoints.insert(k.name.clone(), endpoint);
             }
         }
         if !endpoints.is_empty() {
-            tracing::info!("已恢复 {} 个模型组的类型（{}）",
+            tracing::info!("已恢复 {} 个模型名的用途（{}）",
                 endpoints.len(),
                 endpoints.iter().map(|(n, k)| format!("{n}={}", k.as_model_kind().label())).collect::<Vec<_>>().join(" "));
         }
@@ -193,7 +193,7 @@ impl AppState {
             cfg,
             upstream: Upstream::new()?,
             key_cache: GatewayKeyCache::new(),
-            group_endpoints: Mutex::new(endpoints),
+            model_endpoints: Mutex::new(endpoints),
             writer: WriteQueue::default(),
             channel_gates: Mutex::new(HashMap::new()),
             logs: OnceLock::new(),
@@ -229,17 +229,17 @@ impl AppState {
         self.key_cache.forget();
     }
 
-    /// 记下这个模型组平时走哪个端点（转发时顺手调，探活用），并**第一次就落库**。
+    /// 记下这个模型名平时走哪个端点（转发时顺手调，探活用），并**第一次就落库**。
     ///
     /// 落库是给重启后的探活用的（内存那份一重启就没了）；只在「还没定」时写，
-    /// 人手动定过或早就学过的一律不动。
+    /// 人手动定过或早就学过的一律不动（`db::kinds::learn` 里那条规矩）。
     ///
     /// **两把锁不许嵌套**：先放掉内存那把，再去拿库那把 —— 反过来的顺序在别处存在，
     /// 嵌套就是经典的双锁死锁。
-    pub fn note_group_endpoint(&self, group: &str, kind: EndpointKind) {
+    pub fn note_model_endpoint(&self, model: &str, kind: EndpointKind) {
         let changed = {
-            let mut g = self.group_endpoints.lock().unwrap_or_else(|e| e.into_inner());
-            g.insert(group.to_string(), kind) != Some(kind)
+            let mut m = self.model_endpoints.lock().unwrap_or_else(|e| e.into_inner());
+            m.insert(model.to_string(), kind) != Some(kind)
         };
         if !changed {
             return;
@@ -247,20 +247,20 @@ impl AppState {
         let mk = kind.as_model_kind();
         let learned = {
             let conn = self.conn();
-            db::groups::learn_kind(&conn, group, mk).unwrap_or(false)
+            db::kinds::learn(&conn, model, mk).unwrap_or(false)
         };
         if learned {
-            tracing::info!("模型组 {group} 的类型按实测记下来了：{}", mk.label());
+            tracing::info!("模型名 {model} 的用途按实测记下来了：{}", mk.label());
         }
     }
 
-    /// 这个模型组的探活该打哪个端点。没见过流量就按对话探（对话探活对向量组会 400，
+    /// 这个模型名的探活该打哪个端点。没见过流量就按对话探（对话探活对向量模型会 400，
     /// 探活那边把它当"没结论"，不会乱改路由状态）。
-    pub fn group_endpoint(&self, group: &str) -> EndpointKind {
-        self.group_endpoints
+    pub fn model_endpoint(&self, model: &str) -> EndpointKind {
+        self.model_endpoints
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get(group)
+            .get(model)
             .copied()
             .unwrap_or(EndpointKind::Chat)
     }
@@ -278,18 +278,18 @@ impl AppState {
 
     /// 改了路由状态就落库 —— 不然重启会丢掉"当前渠道"和"回切检查点"。
     ///
-    /// **它永远不会失败请求**（2026-10-18 定）：抢不到锁就把这一组标成「待落账」丢给
+    /// **它永远不会失败请求**（2026-10-18 定）：抢不到锁就把这个模型名标成「待落账」丢给
     /// 后台落账员，自己照样返回 Ok。
     ///
     /// 以前这里用 `try_lock` 失败就报错，本意是「调用方自己握着锁 = 写错了，别死等」；
     /// 可 `try_lock` 分不清「别人正握着」和「我自己握着」—— 并发一高，前者天天发生，
     /// 于是**把一次成功的请求当成内部错误回 500**（压测实测 3%~4%）。
     /// 现在两种情形都不再报错：交给后台补写，既不会死锁也不会丢账。
-    pub fn persist_state(&self, group: &str) -> db::Result<()> {
+    pub fn persist_state(&self, model: &str) -> db::Result<()> {
         let st = match self.routing.try_lock() {
-            Ok(router) => router.state(group).cloned(),
+            Ok(router) => router.state(model).cloned(),
             Err(_) => {
-                self.writer.push(WriteJob::State(group.to_string()));
+                self.writer.push(WriteJob::State(model.to_string()));
                 return Ok(());
             }
         };
@@ -298,14 +298,14 @@ impl AppState {
         };
         match self.db.try_lock() {
             Ok(conn) => {
-                if let Err(e) = db::routing::save_state(&conn, group, &st) {
-                    tracing::warn!("落路由状态失败（{group}）：{e}；交给后台补写");
-                    self.writer.push(WriteJob::State(group.to_string()));
+                if let Err(e) = db::routing::save_state(&conn, model, &st) {
+                    tracing::warn!("落路由状态失败（{model}）：{e}；交给后台补写");
+                    self.writer.push(WriteJob::State(model.to_string()));
                 }
                 Ok(())
             }
             Err(_) => {
-                self.writer.push(WriteJob::State(group.to_string()));
+                self.writer.push(WriteJob::State(model.to_string()));
                 Ok(())
             }
         }
@@ -324,7 +324,7 @@ impl AppState {
     /// 把待落账的活补写进库，返回写成了几件。
     ///
     /// **只 try_lock**：抢不到就留到下一轮 —— 落账员自己绝不等待，所以它既不会
-    /// 卡住自己，也不会卡住请求路径。同一个模型组的多条状态只写最后一条
+    /// 卡住自己，也不会卡住请求路径。同一个模型名的多条状态只写最后一条
     /// （先写中间态没意义）。
     pub fn drain_writes(&self) -> usize {
         let taken: Vec<WriteJob> = {
@@ -334,7 +334,7 @@ impl AppState {
         if taken.is_empty() {
             return 0;
         }
-        // 同一个组的状态倒着看，只留最新那条，再翻回原顺序。
+        // 同一个模型名的状态倒着看，只留最新那条，再翻回原顺序。
         let mut keep: Vec<WriteJob> = Vec::with_capacity(taken.len());
         let mut seen: HashSet<String> = HashSet::new();
         for job in taken.into_iter().rev() {
@@ -367,7 +367,7 @@ impl AppState {
                                 false
                             }
                         },
-                        // 组已经不在状态机里了（删了组）：不算失败，直接放过
+                        // 这个名字已经不在状态机里了（名字撤了）：不算失败，直接放过
                         None => true,
                     }
                 }
