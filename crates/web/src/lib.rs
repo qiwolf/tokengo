@@ -478,7 +478,6 @@ fn Shell(ctx: Ctx) -> impl IntoView {
                                                                 on:click=move |_| ctx.go(p)
                                                             >
                                                                 {p.title()}
-                                                                <span class="muted small">{p.blurb()}</span>
                                                             </button>
                                                         }
                                                     })
