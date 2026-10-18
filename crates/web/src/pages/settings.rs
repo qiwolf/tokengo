@@ -1,4 +1,4 @@
-//! 设置：对外 key、面板口令、在线会话、退出。
+//! 设置：对外 key、面板口令、退出。
 //!
 //! 对外 key 是**客户端的凭证**，改了要同步改客户端 —— 保存按钮旁边把这句话写明，
 //! 不然会有人手一滑把在跑的客户端全打 401。
@@ -196,7 +196,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
             ><button class="ghost" on:click=move |_| reload()>"刷新"</button></PageHead>
             <div class="toolbar">
                 <span class="muted small">
-                    {move || format!("面板 v{} · 在线会话 {} 个", tokengo_shared::VERSION, info.get().active_sessions)}
+                    {move || format!("面板 v{}", tokengo_shared::VERSION)}
                 </span>
             </div>
 
