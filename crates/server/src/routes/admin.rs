@@ -1033,7 +1033,8 @@ async fn model_routes_list(
                 "name": r.name,
                 "kind": r.kind.as_str(),
                 "kind_label": r.kind.label(),
-                "kind_source": r.kind_source.as_str(),
+                "kind_source": r.kind_origin,
+                "kind_conflict": r.kind_conflict,
                 // 有启用的渠道勾了它并标了能看图（只对对话类有意义）
                 "can_see": r.can_see(),
                 // 现在有没有渠道能用（没有 = 客户端打这个名字会 404）

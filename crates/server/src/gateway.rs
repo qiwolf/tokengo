@@ -332,11 +332,6 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         return Ok(no_vision_model_response(msg));
     }
 
-    // 这个模型名平时走哪个端点，后台探活要知道（否则给向量模型发对话探活必然 400）。
-    // `auto` 不记：它每次现场挑，没有固定的端点。
-    if !plan.auto {
-        state.note_model_endpoint(&plan.route, req.endpoint);
-    }
 
     // 顺序：
     // · 普通模型名 → 问状态机（首选 / 回切 / 上一条走的谁），带图时再按能看图筛一遍；
@@ -511,6 +506,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             started_ms,
                             channel.id.0,
                             permit,
+                            req.endpoint,
                         ));
                     }
 
@@ -547,6 +543,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         continue;
                     }
                     record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
+                    state.note_model_endpoint(name, req.endpoint);
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
                         let mut r = state.routing();
@@ -920,12 +917,14 @@ fn stream_passthrough(
     started_ms: i64,
     channel_id: i64,
     gate: Option<tokio::sync::OwnedSemaphorePermit>,
+    endpoint: EndpointKind,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
     let st = StreamState {
         resp,
         scanner: SseScanner::default(),
+        endpoint,
         guard: Some(guard),
         started_ms,
         channel_id,
@@ -963,6 +962,7 @@ fn stream_passthrough(
 }
 
 struct StreamState {
+    endpoint: EndpointKind,
     resp: reqwest::Response,
     scanner: SseScanner,
     guard: Option<RequestGuard>,
@@ -993,6 +993,11 @@ impl StreamState {
         } else {
             None
         };
+        if complete && !empty {
+            if let Some(name) = &guard.served_model {
+                self.state.note_model_endpoint(name, self.endpoint);
+            }
+        }
         guard.finish(
             &self.state,
             if complete && !empty { Status::Ok } else { Status::Failed },

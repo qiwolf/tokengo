@@ -310,4 +310,5 @@ UPDATE channels SET priority = COALESCE(
 ALTER TABLE requests ADD COLUMN served_model TEXT NOT NULL DEFAULT '';
 "#,
     ),
+    (11, r#"ALTER TABLE channel_catalog ADD COLUMN kind_claim TEXT;"#),
 ];

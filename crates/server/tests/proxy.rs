@@ -3168,3 +3168,30 @@ async fn the_auto_row_looks_like_a_plain_model_and_says_what_it_can_do() {
     let auto = v["data"].as_array().unwrap().iter().find(|x| x["id"] == "auto").unwrap();
     assert_eq!(auto["kind"], "embeddings", "{auto}");
 }
+
+#[tokio::test]
+async fn failed_requests_never_teach_a_model_type() {
+    for reply in [Reply::Status(400,"bad request"), Reply::Empty] {
+        let f = fixture(); f.with_key();
+        let mock = start_mock(reply).await;
+        let ch = f.add_channel("failed", &mock.base, ChannelSpec::default());
+        f.serve("untouched", &[ch]);
+        let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"untouched","messages":[]})).await;
+        assert_ne!(status,StatusCode::OK);
+        assert!(tokengo_server::db::kinds::get(&f.state.conn(),"untouched").unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn completed_stream_teaches_the_served_model_type() {
+    let f = fixture(); f.with_key();
+    let mock = start_mock(Reply::Sse).await;
+    let ch = f.add_channel("stream", &mock.base, ChannelSpec::default());
+    f.serve("stream-model", &[ch]);
+    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[],"stream":true})).await;
+    assert_eq!(status,StatusCode::OK);
+    let conn = f.state.conn();
+    let kind = tokengo_server::db::kinds::get(&conn,"stream-model").unwrap().unwrap();
+    assert_eq!(kind.kind,tokengo_shared::ModelKind::Chat);
+    assert!(tokengo_server::db::kinds::get(&conn,"auto").unwrap().is_none());
+}

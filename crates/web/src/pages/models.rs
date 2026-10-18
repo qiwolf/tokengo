@@ -68,7 +68,7 @@ pub(crate) const KIND_TABS: [KindTab; 6] = [
     // 真被打过一次就会自动落到前面几档里 —— 所以这一档会自己空掉，不是垃圾桶。
     KindTab {
         key: "",
-        title: "还没定",
+        title: "待识别",
         kinds: &[""],
         css: "kind-unknown",
     },
@@ -186,6 +186,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
     let open = RwSignal::new(None::<String>);
     // 只看能看图的
     let only_vision = RwSignal::new(false);
+    let search = RwSignal::new(String::new());
     // 现在看哪一档。默认「对话模型」：绝大多数人在找的就是它
     let tab = RwSignal::new("chat".to_string());
 
@@ -254,27 +255,6 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
             .unwrap_or(false)
     };
 
-    // 改一个**模型名**的用途：`auto` = 跟着实测走（清空，下次真有请求再学）。
-    // **手动定过就不再被实测覆盖** —— 面板上要让人放心按。
-    let set_kind = move |name: String, kind: &'static str| {
-        wasm_bindgen_futures::spawn_local(async move {
-            match api::set_model_kind(&name, kind).await {
-                Ok(()) => {
-                    ctx.say(if kind == "auto" {
-                        "已经交还给实测：下次真有请求进来时按端点重新认一次"
-                    } else {
-                        "用途已定，之后不会实测再把它改掉"
-                    });
-                    reload();
-                }
-                Err(e) => {
-                    ctx.note_err(&e);
-                    ctx.say(format!("改用途没成功：{}", e.message));
-                }
-            }
-        });
-    };
-
     // 不想等回切间隔时用：把这个模型名的回切检查点归零。
     let do_reprobe = move |name: String| {
         wasm_bindgen_futures::spawn_local(async move {
@@ -327,123 +307,31 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
             // ———————— 保留名 auto ————————
-            <section class="card">
-                <header class="card-head">
-                    <h2>"auto"</h2>
-                    <span class="tag">"保留名"</span>
-                    <span class="spacer"></span>
-                    <span class="muted small">
-                        "客户端打 auto（或压根不写模型名）时用它：在你勾选过的模型里挑一个最好的发出去。"
-                    </span>
-                </header>
+            <section class="card auto-summary">
+                <header class="card-head"><h2>"自动选择"</h2><span class="tag">"auto"</span></header>
                 <div class="card-body">
                     {move || {
                         let a = auto.get();
-                        if !a.available {
-                            return view! {
-                                <div class="muted small">
-                                    "现在一个模型都没勾选，所以客户端清单里不会出现 auto —— 去「渠道」页勾上要用的名字，它就会出现。"
-                                </div>
-                            }
-                                .into_any();
-                        }
-                        let tabs = [("chat", "对话"), ("embeddings", "嵌入"), ("rerank", "重排")];
+                        if !a.available { return view! { <span class="muted small">"暂无候选模型"</span> }.into_any(); }
                         view! {
-                            <div class="member-list">
-                                {tabs
-                                    .into_iter()
-                                    .map(|(key, label)| {
-                                        let pick = auto_pick(&a, key).map(str::to_string);
-                                        let rest = auto_list(&a, key).len().saturating_sub(1);
-                                        view! {
-                                            <span class="member">
-                                                <b>{label}</b>
-                                                {match pick {
-                                                    Some(n) => {
-                                                        view! {
-                                                            <>
-                                                                <span class="muted small">"这一刻会挑中"</span>
-                                                                <code class="chip code">{n}</code>
-                                                                {(rest > 0)
-                                                                    .then(|| {
-                                                                        view! {
-                                                                            <span class="muted small">
-                                                                                {format!("它不通就换后面 {rest} 条")}
-                                                                            </span>
-                                                                        }
-                                                                    })}
-                                                            </>
-                                                        }
-                                                            .into_any()
-                                                    }
-                                                    None => {
-                                                        view! {
-                                                            <span
-                                                                class="tag warn"
-                                                                title="这一档里你没有勾选过模型名 —— 这类请求打 auto 会拿到 404"
-                                                            >
-                                                                "没得挑"
-                                                            </span>
-                                                        }
-                                                            .into_any()
-                                                    }
-                                                }}
-                                            </span>
-                                        }
-                                    })
-                                    .collect_view()}
+                            <div class="auto-current">
+                                {[("chat", "对话"), ("embeddings", "嵌入"), ("rerank", "重排")].into_iter().filter_map(|(k,label)| {
+                                    auto_pick(&a,k).map(|name| view! { <span><small>{label}</small><b>{name.to_string()}</b></span> })
+                                }).collect_view()}
                             </div>
-                            <details class="fold">
-                                <summary>
-                                    "自动挑的候选顺序（排在前面的最近没出过岔、平均也更快）"
-                                </summary>
-                                <div class="panel">
-                                    {tabs
-                                        .into_iter()
-                                        .map(|(key, label)| {
-                                            let list = auto_list(&a, key);
-                                            view! {
-                                                <div class="detail-block">
-                                                    <span class="detail-label">{label}</span>
-                                                    {if list.is_empty() {
-                                                        view! { <span class="muted small">"一个都没有"</span> }
-                                                            .into_any()
-                                                    } else {
-                                                        view! {
-                                                            <div class="chips">
-                                                                {list
-                                                                    .iter()
-                                                                    .enumerate()
-                                                                    .map(|(i, n)| {
-                                                                        view! {
-                                                                            <code class="chip code">
-                                                                                {format!("{}. {n}", i + 1)}
-                                                                            </code>
-                                                                        }
-                                                                    })
-                                                                    .collect_view()}
-                                                            </div>
-                                                        }
-                                                            .into_any()
-                                                    }}
-                                                </div>
-                                            }
-                                        })
-                                        .collect_view()}
-                                    <div class="muted small" style="margin-top:8px">
-                                        "全都不通就把最后一次的错误原样回给客户端 —— 不做额外的兜底。"
-                                    </div>
-                                </div>
-                            </details>
-                        }
-                            .into_any()
+                            <details class="fold"><summary>"候选顺序"</summary><div class="panel">
+                                {[("chat", "对话"), ("embeddings", "嵌入"), ("rerank", "重排")].into_iter().map(|(k,label)| {
+                                    view! { <div class="detail-block"><span class="detail-label">{label}</span><span>{auto_list(&a,k).join(" → ")}</span></div> }
+                                }).collect_view()}
+                            </div></details>
+                        }.into_any()
                     }}
                 </div>
             </section>
 
             <section class="card">
                 <header class="card-head">
-                    <h2>"按用途分档"</h2>
+                    <h2>"模型目录"</h2>
                     <span class="spacer"></span>
                     <label class="pick" title="只看有启用的渠道标了「能看图」的模型名">
                         <input
@@ -483,16 +371,22 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                             .collect_view()}
                     </div>
 
+                    <input class="model-search" type="search" placeholder="搜索模型名称" aria-label="搜索模型名称"
+                        prop:value=search on:input=move |ev| search.set(event_target_value(&ev)) />
                     <div class="model-list">
                         {move || {
                             let all = build_rows(&routes.get());
                             let cur = tab.get();
                             let mut list = rows_in_tab(&all, &cur);
+                            let needle = search.get().to_lowercase();
+                            list.retain(|r| r.name.to_lowercase().contains(&needle));
                             if only_vision.get() {
                                 list.retain(|r| r.can_see);
                             }
                             if list.is_empty() {
-                                let msg = if all.is_empty() {
+                                let msg = if !needle.is_empty() {
+                                    "没有匹配的模型。"
+                                } else if all.is_empty() {
                                     "渠道里还没勾过任何模型名 —— 先去「渠道」页勾上要用的名字。"
                                 } else if only_vision.get() {
                                     "这一档里没有标了「能看图」的模型名。"
@@ -505,15 +399,16 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                 .into_iter()
                                 .map(|r| {
                                     let name = r.name.clone();
-                                    let name_kind = r.name.clone();
+
                                     let name_open = r.name.clone();
                                     let is_open = open.get().as_deref() == Some(r.name.as_str());
-                                    let kind_is_auto = r.kind.is_empty();
-                                    let kind = r.kind.clone();
+
+
                                     let kind_hint = match r.kind_source.as_str() {
                                         "auto" => "实测认的",
-                                        "manual" => "你定的",
-                                        _ => "还没人来打过",
+                                        "manual" => "已有人工设置",
+                                        "upstream" => "上游声明",
+                                        _ => "待识别",
                                     };
                                     let active = r
                                         .active
@@ -524,21 +419,12 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                         .next_probe_at
                                         .map(|t| fmt::ago(now_ms.get(), t))
                                         .unwrap_or_else(|| "—".to_string());
-                                    // 第三行那句小字在这里拼好：用途来源 + 几个数字，能省的（没有回切时间）就省掉
-                                    let mut bits = vec![
-                                        format!("用途{kind_hint}"),
-                                        format!("勾它的渠道 {} 条", r.declared_by.len()),
-                                        format!("换过 {} 次", r.switches),
-                                    ];
-                                    if r.next_probe_at.is_some() {
-                                        bits.push(format!("下次回头试首选 {next}"));
-                                    }
-                                    let meta_line = bits.join(" · ");
                                     let declare = r.declared_by.clone();
                                     let chain = r.channels.clone();
                                     let routed = r.routed;
                                     let vision = r.can_see;
                                     let switches = r.switches;
+                                    let conflict = routes.get().iter().find(|x| x.name == r.name).map(|x| x.kind_conflict).unwrap_or(false);
                                     let open_id = r.active;
                                     let css = KIND_TABS[kind_tab(&r.kind)].css;
                                     // 卡片上标用途只用两个字：卡片一行就那么宽，
@@ -550,45 +436,13 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                         "image" => "图像",
                                         "video" => "Video",
                                         "audio" => "音频",
-                                        _ => "还没定",
+                                        _ => "待识别",
                                     };
                                     let name_title = r.name.clone();
                                     view! {
                                         <div class="model-card" class:open=is_open>
                                             <div class="mline">
-                                                {if routed {
-                                                    view! {
-                                                        <span
-                                                            class="tag ok"
-                                                            title="有渠道能用 —— 客户端打这个名字能打通"
-                                                        >
-                                                            "能打"
-                                                        </span>
-                                                    }
-                                                        .into_any()
-                                                } else {
-                                                    view! {
-                                                        <span
-                                                            class="tag warn"
-                                                            title="勾它的渠道全停用了 —— 客户端打这个名字会拿到 404。去「渠道」页把其中一条启用。"
-                                                        >
-                                                            "打不了"
-                                                        </span>
-                                                    }
-                                                        .into_any()
-                                                }}
                                                 <b class="mname" title=name_title>{name.clone()}</b>
-                                                {vision
-                                                    .then(|| {
-                                                        view! {
-                                                            <span
-                                                                class="tag vision"
-                                                                title="有启用的渠道把它标了「能看图」，带图的请求会发给那条渠道"
-                                                            >
-                                                                "能看图"
-                                                            </span>
-                                                        }
-                                                    })}
                                                 <span class="spacer"></span>
                                                 <button
                                                     class="ghost"
@@ -607,43 +461,44 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                     {if is_open { "收起" } else { "详情" }}
                                                 </button>
                                             </div>
-                                            <div class="mline">
-                                                <select
-                                                    class="kind-pick"
-                                                    title="这个模型是干什么用的。默认「跟着实测走」：第一次真有请求进来时按走的端点认一次；你手动定了之后就不会再被实测改掉。"
-                                                    on:change=move |ev| {
-                                                        let v = event_target_value(&ev);
-                                                        let k: &'static str = match v.as_str() {
-                                                            "chat" => "chat",
-                                                            "embeddings" => "embeddings",
-                                                            "rerank" => "rerank",
-                                                            "image" => "image",
-                                                            "video" => "video",
-                                                            "audio" => "audio",
-                                                            _ => "auto",
-                                                        };
-                                                        set_kind(name_kind.clone(), k);
-                                                    }
-                                                >
-                                                    <option value="auto" selected=kind_is_auto>
-                                                        "跟着实测走"
-                                                    </option>
-                                                    <option value="chat" selected=kind == "chat">"对话"</option>
-                                                    <option value="embeddings" selected=kind == "embeddings">
-                                                        "嵌入"
-                                                    </option>
-                                                    <option value="rerank" selected=kind == "rerank">"重排"</option>
-                                                    <option value="image" selected=kind == "image">"图像"</option>
-                                                    <option value="video" selected=kind == "video">"Video"</option>
-                                                    <option value="audio" selected=kind == "audio">"音频"</option>
-                                                </select>
+                                            <div class="model-badges">
+                                                {vision
+                                                    .then(|| {
+                                                        view! {
+                                                            <span
+                                                                class="tag vision"
+                                                                title="有启用的渠道把它标了「能看图」，带图的请求会发给那条渠道"
+                                                            >
+                                                                "视觉已标记"
+                                                            </span>
+                                                        }
+                                                    })}
+
                                                 <span class=format!("tag {css}")>{kind_tag}</span>
-                                                <span class="spacer"></span>
-                                                <span class="muted small">"现在走 "{active}</span>
-                                                {on_backup
-                                                    .then(|| view! { <span class="tag warn">"没走首选"</span> })}
+                                                {if routed {
+                                                    view! {
+                                                        <span
+                                                            class="tag ok"
+                                                            title="有启用的渠道，不代表调用已经测试通过"
+                                                        >
+                                                            "已配置"
+                                                        </span>
+                                                    }
+                                                        .into_any()
+                                                } else {
+                                                    view! {
+                                                        <span
+                                                            class="tag warn"
+                                                            title="勾它的渠道全停用了 —— 客户端打这个名字会拿到 404。去「渠道」页把其中一条启用。"
+                                                        >
+                                                            "无可用渠道"
+                                                        </span>
+                                                    }
+                                                        .into_any()
+                                                }}
+                                                {conflict.then(|| view! { <span class="tag warn">"类型有冲突"</span> })}
                                             </div>
-                                            <div class="mmeta muted small">{meta_line}</div>
+                                            <div class="model-channel">{format!("{} · {} 条可用渠道", active, chain.len())}</div>
                                             {is_open
                                                 .then(move || {
                                                     let declare_v = declare.clone();
@@ -651,6 +506,12 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                     let name_v = r.name.clone();
                                                     view! {
                                                         <div class="model-detail">
+                                                            <div class="model-facts">
+                                                                <span>{format!("类型来源：{kind_hint}")}</span>
+                                                                <span>{format!("切换：{switches} 次")}</span>
+                                                                {r.next_probe_at.map(|_| view! { <span>{format!("回试首选：{next}")}</span> })}
+                                                                {on_backup.then(|| view! { <span class="tag warn">"当前使用备用渠道"</span> })}
+                                                            </div>
                                                             {(!routed)
                                                                 .then(|| {
                                                                     view! {
@@ -962,7 +823,7 @@ mod tests {
         let titles: Vec<&str> = KIND_TABS.iter().map(|t| t.title).collect();
         assert_eq!(
             titles,
-            vec!["对话模型", "嵌入模型", "图像", "Video", "音频", "还没定"]
+            vec!["对话模型", "嵌入模型", "图像", "Video", "音频", "待识别"]
         );
         for i in 0..KIND_TABS.len() {
             for j in (i + 1)..KIND_TABS.len() {

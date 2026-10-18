@@ -38,6 +38,8 @@ pub struct NameRoute {
     pub name: String,
     pub kind: ModelKind,
     pub kind_source: KindSource,
+    pub kind_conflict: bool,
+    pub kind_origin: String,
     /// 勾了它的渠道，按渠道顺序（含停用、没填 base_url 的）。
     pub declared_by: Vec<ChannelId>,
     /// 现在真能用的渠道（启用 + 填了 base_url），按渠道顺序 —— 路由就按这个顺序试。
@@ -86,6 +88,8 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
                         name: raw.to_string(),
                         kind: k.map(|k| k.kind).unwrap_or_default(),
                         kind_source: k.map(|k| k.source).unwrap_or_default(),
+                        kind_conflict: false,
+                        kind_origin: k.map(|k| k.source.as_str()).unwrap_or("").to_string(),
                         declared_by: Vec::new(),
                         channels: Vec::new(),
                         vision_channels: false,
@@ -105,6 +109,34 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
                     r.vision_channels = true;
                 }
             }
+        }
+    }
+    let catalogs = chans.iter().map(|ch| {
+        super::catalog::list(conn, ch.id).map(|entries| (ch.id, entries))
+    }).collect::<Result<HashMap<_, _>>>()?;
+    for r in &mut out {
+        let mut claims = Vec::new();
+        for ch in &chans {
+            if !r.declared_by.contains(&ch.id) { continue; }
+            let catalog = &catalogs[&ch.id];
+            for m in &ch.models {
+                if !same_model_name(&m.model, &r.name) { continue; }
+                let upstream = m.upstream.as_deref().unwrap_or(&m.model);
+                for entry in catalog {
+                    if same_model_name(&entry.model, upstream) {
+                        if let Some(raw) = &entry.kind {
+                            let k = ModelKind::parse(raw);
+                            if k.is_set() && !claims.contains(&k) { claims.push(k); }
+                        }
+                    }
+                }
+            }
+        }
+        r.kind_conflict = claims.len() > 1 || (r.kind.is_set() && claims.iter().any(|k| *k != r.kind));
+        if !r.kind.is_set() && claims.len() == 1 {
+            r.kind = claims[0];
+            r.kind_source = KindSource::Auto;
+            r.kind_origin = "upstream".to_string();
         }
     }
     out.sort_by_key(|r| r.name.to_lowercase());
@@ -319,6 +351,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![c, a, b]
         );
+    }
+
+    #[test]
+    fn catalog_types_follow_aliases_preserve_manual_and_report_conflicts() {
+        let conn = open_in_memory().unwrap();
+        let a = channel(&conn, "A");
+        let b = channel(&conn, "B");
+        declare(&conn, a, &[ModelMapping::new("public", Some("real".into()), false)]);
+        let cat = crate::upstream::parse_model_catalog(r#"{"data":[{"id":"real","kind":"embeddings"}]}"#);
+        super::super::catalog::replace(&conn,a,&cat,1).unwrap();
+        let row = routes_for(&conn,"public").unwrap().unwrap();
+        assert_eq!(row.kind, ModelKind::Embeddings);
+        assert_eq!(row.kind_origin, "upstream");
+        assert!(!row.kind_conflict);
+        assert!(kinds::get(&conn,"public").unwrap().is_none(), "read must not write");
+        kinds::set(&conn,"public",ModelKind::Chat).unwrap();
+        let row = routes_for(&conn,"public").unwrap().unwrap();
+        assert_eq!(row.kind,ModelKind::Chat);
+        assert!(row.kind_conflict);
+        kinds::set(&conn,"public",ModelKind::Unknown).unwrap();
+        declare(&conn,b,&[ModelMapping::new("public",None,false)]);
+        let cat = crate::upstream::parse_model_catalog(r#"{"data":[{"id":"public","kind":"chat"}]}"#);
+        super::super::catalog::replace(&conn,b,&cat,2).unwrap();
+        let row = routes_for(&conn,"public").unwrap().unwrap();
+        assert_eq!(row.kind,ModelKind::Unknown);
+        assert!(row.kind_conflict);
+        assert!(channels_for(&conn,"public").unwrap().len() == 2);
     }
 
     /// 归一之后同名的写法只留一行，展示拼写取渠道顺序上第一次出现的那个。
