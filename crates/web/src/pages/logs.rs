@@ -60,12 +60,13 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
     };
     reload();
 
-    // 自动刷新：日志是"正在发生"的东西，默认开着；关掉页面就停
+    // 自动刷新：日志是"正在发生"的东西，默认开着；关掉页面就停。
+    // 5 秒一次（2026-10-18 用户：3 秒太频繁）。
     let toggle_auto = move |on: bool| {
         auto.set(on);
         let id = timer.get_untracked();
         if on {
-            let handle = crate::every(3000, move || reload());
+            let handle = crate::every(5000, move || reload());
             timer.set(handle);
         } else if id != 0 {
             crate::stop_timer(id);

@@ -1,6 +1,8 @@
 //! 页面清单与页面之间的公共约定。
 //!
-//! 面板只做本机真正用得上的 6 页：总览 · 渠道 · 模型 · 请求 · 日志 · 设置。
+//! 面板只做本机真正用得上的 5 页：总览 · 渠道 · 模型 · 日志 · 设置。
+//!
+//! 「请求」那一页 2026-10-18 撤掉了：它列的东西「总览」里都有（用户口径：内容重复）。
 //!
 //! 「日志」是给排障用的（用户 2026-10-18 要求）：出问题时不用 SSH，面板里就能看现场。
 //! 原先「模型组」和「路由状态」是分开的两页、还各有一套数据；v0.11.0 起没有「模型组」
@@ -10,7 +12,6 @@ pub mod channels;
 pub mod models;
 pub mod logs;
 pub mod overview;
-pub mod requests;
 pub mod settings;
 
 use leptos::prelude::*;
@@ -21,7 +22,6 @@ pub enum Page {
     Overview,
     Channels,
     Models,
-    Requests,
     Logs,
     Settings,
 }
@@ -31,7 +31,6 @@ impl Page {
         Page::Overview,
         Page::Channels,
         Page::Models,
-        Page::Requests,
         Page::Logs,
         Page::Settings,
     ];
@@ -42,7 +41,6 @@ impl Page {
             Page::Overview => "overview",
             Page::Channels => "channels",
             Page::Models => "models",
-            Page::Requests => "requests",
             Page::Logs => "logs",
             Page::Settings => "settings",
         }
@@ -54,7 +52,6 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
-            Page::Requests => "请求",
             Page::Logs => "日志",
             Page::Settings => "设置",
         }
@@ -66,7 +63,6 @@ impl Page {
             Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
-            Page::Requests => "每个请求走了哪条渠道、成没成、花了多久、错在哪。",
             Page::Logs => "网关自己记的日志：按级别和关键词筛，关键词可以直接填请求号。",
             Page::Settings => "对外 key、面板口令、登录着的设备。",
         }
@@ -131,7 +127,7 @@ mod tests {
         assert_eq!(slugs.len(), before, "slug 必须唯一");
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
-        // 六页：总览 · 渠道 · 模型 · 请求 · 日志 · 设置
-        assert_eq!(Page::ALL.len(), 6);
+        // 五页：总览 · 渠道 · 模型 · 日志 · 设置（「请求」撤了）
+        assert_eq!(Page::ALL.len(), 5);
     }
 }
