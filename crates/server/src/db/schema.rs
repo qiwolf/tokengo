@@ -327,4 +327,10 @@ ALTER TABLE attempts ADD COLUMN upstream_model TEXT;
 ALTER TABLE attempts ADD COLUMN first_byte_ms INTEGER;
 ALTER TABLE requests ADD COLUMN error_code TEXT;
 CREATE INDEX idx_attempts_model ON attempts(model_name,channel_id,request_id);"#),
+    (15,r#"CREATE TABLE model_cooldowns (
+channel_id INTEGER NOT NULL,model_name TEXT NOT NULL,upstream_model TEXT NOT NULL,
+failures INTEGER NOT NULL DEFAULT 0,until_ms INTEGER NOT NULL DEFAULT 0,
+reason TEXT NOT NULL DEFAULT '',generation INTEGER NOT NULL DEFAULT 0,lease_until INTEGER NOT NULL DEFAULT 0,
+PRIMARY KEY(channel_id,model_name,upstream_model));
+ALTER TABLE requests ADD COLUMN explored INTEGER NOT NULL DEFAULT 0;"#),
 ];
