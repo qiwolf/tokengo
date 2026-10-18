@@ -22,6 +22,64 @@ pub(crate) fn filter_servable(all: &[Servable], only_vision: bool) -> Vec<Servab
         .collect()
 }
 
+/// 一种用途的模型该怎么说给用户听。
+///
+/// 用户的原话：「怎么区分重排模型，嵌入模型，对话模型，视觉模型，不好区分，你们排版好」。
+/// 所以每一类都要说清三件事：**叫什么**、**客户端打哪个端点**、**拿它干什么**，
+/// 再给一个固定的配色（颜色是给人做「一眼归类」用的，不是装饰）。
+pub(crate) struct KindMeta {
+    pub kind: &'static str,
+    /// 界面上那句中文名（带用途，不用行话）。
+    pub title: &'static str,
+    /// 客户端该打哪个端点。
+    pub endpoint: &'static str,
+    /// 一句话：拿它干什么 / 什么情况下用。
+    pub blurb: &'static str,
+    /// 配色用的类名。
+    pub css: &'static str,
+}
+
+/// 四类模型的固定说法与顺序：对话 → 向量 → 重排 → 还没定。
+pub(crate) const KIND_META: [KindMeta; 4] = [
+    KindMeta {
+        kind: "chat",
+        title: "对话模型",
+        endpoint: "POST /v1/chat/completions",
+        blurb: "问答、写作、写代码都走它。名字旁边标了「视觉」的还能读图；没标的收到图片请求会回 422。",
+        css: "kind-chat",
+    },
+    KindMeta {
+        kind: "embeddings",
+        title: "向量模型（嵌入）",
+        endpoint: "POST /v1/embeddings",
+        blurb: "把一段文字变成一串数字，给检索/记忆库算相似度用。它不会「回话」，别拿去聊天。",
+        css: "kind-emb",
+    },
+    KindMeta {
+        kind: "rerank",
+        title: "重排模型",
+        endpoint: "POST /v1/rerank",
+        blurb: "给「一个问题 + 一堆候选」打分排序，挑出最相关的几条。搜索/记忆召回的第二道筛子。",
+        css: "kind-rerank",
+    },
+    KindMeta {
+        kind: "",
+        title: "还没定用途",
+        endpoint: "打一次就自动认出来",
+        blurb: "第一次被真实请求打到时，网关按端点自动认类型；也可以在这里手动定死。",
+        css: "kind-unknown",
+    },
+];
+
+/// 这一类的说法。**认不出来的类型落到「还没定」那一档**，不能冒充对话模型
+/// （那会让界面把重排模型说成对话模型，比不显示更糟）。
+pub(crate) fn kind_meta(kind: &str) -> &'static KindMeta {
+    KIND_META
+        .iter()
+        .find(|m| m.kind == kind)
+        .unwrap_or(&KIND_META[KIND_META.len() - 1])
+}
+
 /// 把能打的模型名按类型分堆，顺序固定：对话 → 向量 → 重排 → 还没定。
 ///
 /// 为什么要分：同一个网关后面挂着三种用途完全不同的模型（现网 86% 的量是向量），
@@ -29,18 +87,12 @@ pub(crate) fn filter_servable(all: &[Servable], only_vision: bool) -> Vec<Servab
 /// `cline-pass/deepseek-v4.1-flash`）一个特征都没有。
 ///
 /// 空的那几堆不返回（不给界面上留几个空标题）。纯函数，好测。
-pub(crate) fn group_servable_by_kind(all: &[Servable]) -> Vec<(&'static str, Vec<Servable>)> {
-    const ORDER: [(&str, &str); 4] = [
-        ("chat", "对话"),
-        ("embeddings", "向量"),
-        ("rerank", "重排"),
-        ("", "还没定"),
-    ];
-    ORDER
+pub(crate) fn group_servable_by_kind(all: &[Servable]) -> Vec<(&'static KindMeta, Vec<Servable>)> {
+    KIND_META
         .iter()
-        .filter_map(|(kind, label)| {
-            let v: Vec<Servable> = all.iter().filter(|m| m.kind == *kind).cloned().collect();
-            (!v.is_empty()).then_some((*label, v))
+        .filter_map(|m| {
+            let v: Vec<Servable> = all.iter().filter(|x| x.kind == m.kind).cloned().collect();
+            (!v.is_empty()).then_some((m, v))
         })
         .collect()
 }
@@ -489,58 +541,80 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
-            <div class="toolbar">
-                <span class="muted small">"客户端能打的模型名："</span>
-                {move || {
-                    let v = filter_servable(&servable.get(), only_vision.get());
-                    if v.is_empty() {
-                        return view! { <span class="muted small">"（一个都没有）"</span> }.into_any();
-                    }
-                    // 按类型分堆显示：向量模型和对话模型用法完全不同，混着列等于让人猜
-                    group_servable_by_kind(&v)
-                        .into_iter()
-                        .map(|(label, list)| {
-                            view! {
-                                <span class="kind-group">
-                                    <span class="muted small">{label}</span>
-                                    {list
-                                        .into_iter()
-                                        .map(|m| {
-                                            view! {
-                                                <code
-                                                    class="chip code"
-                                                    title=if m.kind == "embeddings" {
-                                                        "向量模型：客户端用 /v1/embeddings 调它"
-                                                    } else if m.kind == "rerank" {
-                                                        "重排模型：客户端用 /v1/rerank 调它"
-                                                    } else if m.vision {
-                                                        "对话模型，收得下图片输入"
-                                                    } else {
-                                                        "对话模型；带图的请求会被回 422"
-                                                    }
-                                                >
-                                                    {m.name}
-                                                    {m.vision.then(|| view! { <span class="tag vision">"视觉"</span> })}
-                                                </code>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </span>
+            <section class="card">
+                <header class="card-head">
+                    <h2>"客户端能打的模型（按用途分）"</h2>
+                    <p class="muted small">
+                        "四种用途各占一块，颜色固定：蓝=对话、绿=向量、橙=重排、灰=还没定。"
+                        "同一块里的名字可以随便挑，但**别拿错端点** —— 拿对话的写法去调向量模型，上游只会回 400。"
+                    </p>
+                    <span class="spacer"></span>
+                    <label class="pick" title="只看后面有「能看图」渠道的模型名">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || only_vision.get()
+                            on:change=move |ev| only_vision.set(event_target_checked(&ev))
+                        />
+                        "只看能看图的"
+                    </label>
+                </header>
+                <div class="card-body">
+                    <div class="kind-cards">
+                        {move || {
+                            let v = filter_servable(&servable.get(), only_vision.get());
+                            if v.is_empty() {
+                                return view! {
+                                    <div class="muted small">"（一个都没有：先去「渠道」页声明模型名）"</div>
+                                }
+                                    .into_any();
                             }
-                        })
-                        .collect_view()
-                        .into_any()
-                }}
-                <span class="spacer"></span>
-                <label class="pick" title="只看后面有「能看图」渠道的模型名">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || only_vision.get()
-                        on:change=move |ev| only_vision.set(event_target_checked(&ev))
-                    />
-                    "只看含视觉的"
-                </label>
-            </div>
+                            group_servable_by_kind(&v)
+                                .into_iter()
+                                .map(|(meta, list)| {
+                                    let n = list.len();
+                                    view! {
+                                        <div class=format!("kind-card {}", meta.css)>
+                                            <div class="kind-card-head">
+                                                <span class="kind-dot"></span>
+                                                <strong>{meta.title}</strong>
+                                                <span class="tag count">{format!("{n} 个")}</span>
+                                                <span class="spacer"></span>
+                                                <code class="small">{meta.endpoint}</code>
+                                            </div>
+                                            <div class="muted small">{meta.blurb}</div>
+                                            <div class="kind-names">
+                                                {list
+                                                    .into_iter()
+                                                    .map(|m| {
+                                                        view! {
+                                                            <code
+                                                                class="chip code"
+                                                                title=if m.kind == "embeddings" {
+                                                                    "向量模型：客户端用 /v1/embeddings 调它"
+                                                                } else if m.kind == "rerank" {
+                                                                    "重排模型：客户端用 /v1/rerank 调它"
+                                                                } else if m.vision {
+                                                                    "对话模型，收得下图片输入"
+                                                                } else {
+                                                                    "对话模型；带图的请求会被回 422"
+                                                                }
+                                                            >
+                                                                {m.name}
+                                                                {m.vision.then(|| view! { <span class="tag vision">"能看图"</span> })}
+                                                            </code>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </div>
+                                        </div>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    </div>
+                </div>
+            </section>
 
             // 渠道里声明了、却还没有同名模型组：客户端打这些名字会 404。给个一键补建。
             {move || {
@@ -669,6 +743,17 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                     <option value="rerank" selected=kind_is_rerank>"重排"</option>
                                                 </select>
                                                 <span class="muted small">{kind_hint}</span>
+                                                // 同一套说法与配色，和上面「按用途分」那四块对得上：
+                                                // 用户要的是「一眼看出这组是哪种」，光一个下拉框看不出来。
+                                                {
+                                                    let meta = kind_meta(if g.kind.is_empty() { "" } else { g.kind.as_str() });
+                                                    view! {
+                                                        <div>
+                                                            <span class=format!("tag {}", meta.css)>{meta.title}</span>
+                                                            <code class="small">{meta.endpoint}</code>
+                                                        </div>
+                                                    }
+                                                }
                                             </td>
                                             <td data-label="状态">
                                                 // 这里是**能点的开关**，不是标签：点一下当场启用/停用，
@@ -1119,8 +1204,12 @@ mod tests {
             s("deepseek-v4.1-flash", "chat"),
         ];
         let got = group_servable_by_kind(&all);
-        let labels: Vec<&str> = got.iter().map(|(l, _)| *l).collect();
-        assert_eq!(labels, vec!["对话", "向量", "重排", "还没定"], "顺序固定，空的堆不出现");
+        let labels: Vec<&str> = got.iter().map(|(m, _)| m.title).collect();
+        assert_eq!(
+            labels,
+            vec!["对话模型", "向量模型（嵌入）", "重排模型", "还没定用途"],
+            "顺序固定，空的堆不出现（标题换成带用途的说法，v0.7.2）"
+        );
         assert_eq!(got[0].1.len(), 2, "两个对话模型在同一堆里");
         assert_eq!(got[1].1[0].name, "BAAI/bge-m3");
         assert_eq!(got[3].1[0].name, "v4.1flash");
@@ -1128,7 +1217,7 @@ mod tests {
         // 反证：只有一个类型时，别的堆不许留空标题
         let only_vec = group_servable_by_kind(&[s("m", "embeddings")]);
         assert_eq!(only_vec.len(), 1);
-        assert_eq!(only_vec[0].0, "向量");
+        assert_eq!(only_vec[0].0.title, "向量模型（嵌入）");
         assert!(group_servable_by_kind(&[]).is_empty());
     }
 
@@ -1319,6 +1408,70 @@ mod drop_tests {
         assert!(
             rows_to_drop_for_missing_names(&channels, &[group("auto", &[1])]).is_empty(),
             "什么都对的时候按钮必须是空操作"
+        );
+    }
+}
+
+// ─────────── 四种用途的说法与配色（v0.7.2，用户要求「一眼分得清」） ───────────
+
+#[cfg(test)]
+mod kind_meta_tests {
+    use super::*;
+
+    /// 四类各有一套互不相同的说法、端点与配色；端点必须点对（对话别写成向量）。
+    ///
+    /// 反证：把 `kind_meta` 的兜底从「还没定」改回 `KIND_META[0]`（对话）→
+    /// `an_unknown_kind_falls_back_to_undecided` 立刻变红。
+    #[test]
+    fn each_kind_has_its_own_words_endpoint_and_colour() {
+        let chat = kind_meta("chat");
+        let emb = kind_meta("embeddings");
+        let rerank = kind_meta("rerank");
+        let unknown = kind_meta("");
+
+        assert_eq!(chat.endpoint, "POST /v1/chat/completions");
+        assert_eq!(emb.endpoint, "POST /v1/embeddings");
+        assert_eq!(rerank.endpoint, "POST /v1/rerank");
+        assert!(
+            unknown.endpoint.contains("自动认"),
+            "还没定的那一档要说清是「打一次自动认」"
+        );
+
+        let titles = [chat.title, emb.title, rerank.title, unknown.title];
+        let css = [chat.css, emb.css, rerank.css, unknown.css];
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                assert_ne!(titles[i], titles[j], "四个标题不能重样");
+                assert_ne!(css[i], css[j], "四套配色不能重样（重了就看不出区别）");
+            }
+        }
+        assert!(emb.title.contains("向量"), "向量模型要说清是向量");
+        assert!(rerank.title.contains("重排"), "重排模型要说清是重排");
+    }
+
+    /// 认不出来的类型落「还没定」，不能冒充对话模型。
+    #[test]
+    fn an_unknown_kind_falls_back_to_undecided() {
+        assert_eq!(kind_meta("banana").kind, "");
+        assert!(!kind_meta("banana").title.contains("对话"));
+    }
+
+    /// 分堆只用已知的四类，顺序固定；空的不出现。
+    #[test]
+    fn buckets_follow_the_fixed_order_and_skip_empty_ones() {
+        let s = |name: &str, kind: &str| Servable {
+            name: name.into(),
+            kind: kind.into(),
+            vision: false,
+            kind_label: String::new(),
+            kind_source: String::new(),
+        };
+        let got = group_servable_by_kind(&[s("r", "rerank"), s("c", "chat"), s("e", "embeddings")]);
+        let titles: Vec<&str> = got.iter().map(|(m, _)| m.title).collect::<Vec<&str>>();
+        assert_eq!(
+            titles,
+            vec!["对话模型", "向量模型（嵌入）", "重排模型"],
+            "顺序固定、空的（还没定）不出现"
         );
     }
 }
