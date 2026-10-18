@@ -4,11 +4,13 @@
 //! 状态机的读写（微秒级），**绝不能把网络请求圈进去** —— 否则一条渠道卡住，
 //! 整个网关的所有请求都跟着排队。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::Connection;
+use tokio::sync::{Notify, Semaphore};
 use tokengo_shared::routing::Router as RoutingRouter;
 
 use crate::config::Config;
@@ -40,6 +42,62 @@ pub struct AppState {
     key_cache: GatewayKeyCache,
     /// 每个模型组平时走哪个端点 —— 后台探活要知道，否则给向量组发对话探活必 400。
     group_endpoints: Mutex<HashMap<String, EndpointKind>>,
+    /// 请求路径上抢不到库锁的活先丢这儿，由后台落账员补写（见 `WriteJob`）。
+    writer: WriteQueue,
+    /// 每条渠道的「门口闸机」：同时最多几发（渠道 id → 闸机 + 当前配置的上限）。
+    leg_gates: Mutex<HashMap<i64, (Arc<Semaphore>, u32)>>,
+}
+
+/// 一件「待落账」的活。
+///
+/// **为什么要有它**：2026-10-18 压测（并发 64 打 1024 发）发现，并发一上来
+/// 有 3%~4% 的请求拿到 HTTP 500，正文是「persist_state 被重入调用 —— 调用方正持有
+/// 数据库锁」。真实情况是：那发请求**上游已经答好了**（尝试账全是 success），
+/// 只是记账那一步用 `try_lock` 抢不到库锁 —— 而 `try_lock` 分不清「别人正握着」
+/// 和「我自己握着」，于是把一次成功的请求当成内部错误丢掉。
+///
+/// 定下来的规矩：**记账绝不允许影响请求结果**。抢不到锁就把活丢进这个队列，
+/// 由后台落账员（`spawn_writer`）补写；请求该成功就成功。
+#[derive(Debug)]
+pub enum WriteJob {
+    /// 请求收尾。
+    Finish(crate::db::requests::FinishArgs),
+    /// 一次渠道尝试。
+    Attempt(crate::db::requests::AttemptArgs),
+    /// 落某个模型组的路由状态（当前渠道、回切检查点）。
+    State(String),
+}
+
+/// 待落账队列：一把短锁 + 一个唤醒信号。
+#[derive(Default)]
+struct WriteQueue {
+    jobs: Mutex<Vec<WriteJob>>,
+    notify: Notify,
+    /// 已经丢过多少件（只为观测/测试用）。
+    queued: std::sync::atomic::AtomicUsize,
+}
+
+impl WriteQueue {
+    fn push(&self, job: WriteJob) {
+        {
+            let mut q = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            // 上限只是防失控：正常几百件就落完了，真堆到这个数说明库一直抢不到，
+            // 宁可丢账也不能把内存吃光。
+            if q.len() >= 20_000 {
+                tracing::warn!("待落账队列已满 2 万件，丢掉最老的一件");
+                q.remove(0);
+            }
+            q.push(job);
+        }
+        self.queued
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.notify.notify_one();
+    }
+
+    /// 队列里现在还压着多少件。
+    pub fn len(&self) -> usize {
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
 }
 
 impl AppState {
@@ -92,6 +150,8 @@ impl AppState {
             upstream: Upstream::new()?,
             key_cache: GatewayKeyCache::new(),
             group_endpoints: Mutex::new(endpoints),
+            writer: WriteQueue::default(),
+            leg_gates: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -169,30 +229,157 @@ impl AppState {
         self.routing.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// 改了路由状态就立刻落库 —— 不然重启会丢掉"当前渠道"和"回切检查点"。
+    /// 改了路由状态就落库 —— 不然重启会丢掉"当前渠道"和"回切检查点"。
     ///
-    /// **用 `try_lock` 而不是死等**：这个方法内部要同时拿路由锁和数据库锁。
-    /// 如果调用方自己已经握着其中一把（比如函数开头 `let conn = state.conn();`
-    /// 一直没放），死等就会把整个服务卡死 —— 而且日志里什么都看不到，只表现为
-    /// "服务没反应"。改成立刻返回错误，至少能在日志里看见是哪调错了。
+    /// **它永远不会失败请求**（2026-10-18 定）：抢不到锁就把这一组标成「待落账」丢给
+    /// 后台落账员，自己照样返回 Ok。
+    ///
+    /// 以前这里用 `try_lock` 失败就报错，本意是「调用方自己握着锁 = 写错了，别死等」；
+    /// 可 `try_lock` 分不清「别人正握着」和「我自己握着」—— 并发一高，前者天天发生，
+    /// 于是**把一次成功的请求当成内部错误回 500**（压测实测 3%~4%）。
+    /// 现在两种情形都不再报错：交给后台补写，既不会死锁也不会丢账。
     pub fn persist_state(&self, group: &str) -> db::Result<()> {
-        let st = {
-            let router = self.routing.try_lock().map_err(|_| {
-                db::DbError::Other(format!(
-                    "内部错误：persist_state({group}) 被重入调用 —— 调用方正持有路由锁"
-                ))
-            })?;
-            router.state(group).cloned()
+        let st = match self.routing.try_lock() {
+            Ok(router) => router.state(group).cloned(),
+            Err(_) => {
+                self.writer.push(WriteJob::State(group.to_string()));
+                return Ok(());
+            }
         };
         let Some(st) = st else {
             return Ok(());
         };
-        let conn = self.db.try_lock().map_err(|_| {
-            db::DbError::Other(format!(
-                "内部错误：persist_state({group}) 被重入调用 —— 调用方正持有数据库锁"
-            ))
-        })?;
-        db::routing::save_state(&conn, group, &st)
+        match self.db.try_lock() {
+            Ok(conn) => {
+                if let Err(e) = db::routing::save_state(&conn, group, &st) {
+                    tracing::warn!("落路由状态失败（{group}）：{e}；交给后台补写");
+                    self.writer.push(WriteJob::State(group.to_string()));
+                }
+                Ok(())
+            }
+            Err(_) => {
+                self.writer.push(WriteJob::State(group.to_string()));
+                Ok(())
+            }
+        }
+    }
+
+    /// 往待落账队列里丢一件活（请求路径抢不到库锁时用）。
+    pub fn enqueue_write(&self, job: WriteJob) {
+        self.writer.push(job);
+    }
+
+    /// 队列里还压着多少件待落账的活（面板/测试用）。
+    pub fn pending_writes(&self) -> usize {
+        self.writer.len()
+    }
+
+    /// 把待落账的活补写进库，返回写成了几件。
+    ///
+    /// **只 try_lock**：抢不到就留到下一轮 —— 落账员自己绝不等待，所以它既不会
+    /// 卡住自己，也不会卡住请求路径。同一个模型组的多条状态只写最后一条
+    /// （先写中间态没意义）。
+    pub fn drain_writes(&self) -> usize {
+        let taken: Vec<WriteJob> = {
+            let mut q = self.writer.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *q)
+        };
+        if taken.is_empty() {
+            return 0;
+        }
+        // 同一个组的状态倒着看，只留最新那条，再翻回原顺序。
+        let mut keep: Vec<WriteJob> = Vec::with_capacity(taken.len());
+        let mut seen: HashSet<String> = HashSet::new();
+        for job in taken.into_iter().rev() {
+            if let WriteJob::State(g) = &job {
+                if !seen.insert(g.clone()) {
+                    continue;
+                }
+            }
+            keep.push(job);
+        }
+        keep.reverse();
+
+        let mut done = 0usize;
+        let mut retry: Vec<WriteJob> = Vec::new();
+        for job in keep {
+            let Ok(conn) = self.db.try_lock() else {
+                retry.push(job);
+                continue;
+            };
+            let ok = match &job {
+                WriteJob::Finish(a) => crate::db::requests::finish_args(&conn, a).is_ok(),
+                WriteJob::Attempt(a) => crate::db::requests::add_attempt_args(&conn, a).is_ok(),
+                WriteJob::State(g) => {
+                    let st = self.routing.try_lock().ok().and_then(|r| r.state(g).cloned());
+                    match st {
+                        Some(st) => match db::routing::save_state(&conn, g, &st) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                tracing::warn!("落路由状态失败（{g}）：{e}");
+                                false
+                            }
+                        },
+                        // 组已经不在状态机里了（删了组）：不算失败，直接放过
+                        None => true,
+                    }
+                }
+            };
+            drop(conn);
+            if ok {
+                done += 1;
+            } else {
+                retry.push(job);
+            }
+        }
+        if !retry.is_empty() {
+            let mut q = self.writer.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            // 插回队头，别让新活插到它们前面（顺序对同一个请求的账有意义）
+            let mut rest = std::mem::take(&mut *q);
+            retry.append(&mut rest);
+            *q = retry;
+            self.writer.notify.notify_one();
+        }
+        done
+    }
+
+    /// 起后台落账员：队列里一有活就补写，平时每 500ms 看一眼。
+    pub fn spawn_writer(self: &Arc<Self>) {
+        let st = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = st.writer.notify.notified() => {}
+                    _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                }
+                // 让出一轮，别把唤醒当忙等
+                tokio::task::yield_now().await;
+                st.drain_writes();
+            }
+        });
+    }
+
+    /// 这条渠道的「门口闸机」。`limit == 0` 表示不限，返回 `None`（不拦）。
+    ///
+    /// 每个渠道一把闸机、上限按渠道配：上游免费额度多数是**按凭据**限并发的，
+    /// 同一把 key 上同时压太多发，上游直接 429/503（现网 4 天 503「bridge busy」151 次）。
+    /// 面板上改上限时：调大立刻补名额；调小不强夺已经在跑的名额（等它们自己还回来），
+    /// 所以刚调小的一瞬间可能略微超出新上限，之后自然收敛。
+    pub fn leg_gate(&self, id: i64, limit: u32) -> Option<Arc<Semaphore>> {
+        if limit == 0 {
+            return None;
+        }
+        let mut gates = self.leg_gates.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = gates
+            .entry(id)
+            .or_insert_with(|| (Arc::new(Semaphore::new(limit as usize)), limit));
+        if entry.1 < limit {
+            // 名额是守恒的（跑着的 + 空着的 = 当前上限），所以补「差值」就够，
+            // 不能按空位补 —— 那样跑得越满、补得越多，上限直接被顶穿。
+            entry.0.add_permits((limit - entry.1) as usize);
+        }
+        entry.1 = limit;
+        Some(entry.0.clone())
     }
 }
 
@@ -232,6 +419,7 @@ mod tests {
                 base_url: "http://x/v1".into(),
                 enabled: true,
                 unwrap_envelope: false,
+                max_concurrent: 0,
             },
         )
         .unwrap();
@@ -306,45 +494,117 @@ mod tests {
         assert_eq!(sb.open(&n, &c).unwrap(), "x");
     }
 
-    /// 反证（真踩过，表现为"服务卡死、日志空白"）：调用方已经握着数据库锁时
-    /// 再调 `persist_state`，必须立刻报错，**不能死等**。
+    /// 反证（真踩过，表现为并发下 3%~4% 的请求拿到 500）：**库被别人占着时调
+    /// `persist_state` 绝不能失败** —— 它要把活丢给后台落账员，然后照样返回 Ok。
+    ///
+    /// 旧行为：这里返回 `Err(重入调用)`，请求路径上的 `?` 把它变成 HTTP 500。
     #[test]
-    fn persist_state_reports_reentrancy_instead_of_deadlocking() {
+    fn a_busy_db_never_fails_persist_state_it_queues_instead() {
         std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
         let dir = std::env::temp_dir().join(format!("tokengo-state-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let st = AppState::init(test_cfg(&dir)).unwrap();
 
+        let channels = [tokengo_shared::ChannelId(1), tokengo_shared::ChannelId(2)];
         {
             let mut r = st.routing();
-            r.attempt_order(
-                "auto",
-                &[tokengo_shared::ChannelId(1), tokengo_shared::ChannelId(2)],
-                1_800_000_000_000,
-            );
+            r.attempt_order("auto", &channels, 1_800_000_000_000);
+            r.on_channel_exhausted("auto", channels[0], &channels, 1_800_000_000_000);
         }
 
-        // 握着数据库锁不放，然后再调
-        let _held = st.conn();
+        // 别人（另一个任务）正握着数据库锁，这时候来落状态
+        let held = st.conn();
         let r = st.persist_state("auto");
-        assert!(r.is_err(), "重入必须报错");
-        let msg = r.unwrap_err().to_string();
-        assert!(msg.contains("重入"), "报错信息要说清原因: {msg}");
+        assert!(r.is_ok(), "库被别人占着也不许失败：{r:?}");
+        assert_eq!(st.pending_writes(), 1, "这一组要进待落账队列");
+        assert!(
+            db::routing::load_state(&held, "auto").unwrap().is_none(),
+            "这会儿还没落库（库被别人占着），库里不该有这一组"
+        );
+        drop(held);
+
+        // 后台落账员跑一轮，账就补上了
+        assert!(st.drain_writes() >= 1);
+        assert_eq!(st.pending_writes(), 0, "补写完队列要空");
+        assert_eq!(
+            db::routing::load_state(&st.conn(), "auto").unwrap().unwrap().active,
+            Some(channels[1]),
+            "补写后库里必须是新的当前渠道"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// 反证：握着路由锁时调 persist_state 同样要报错而不是卡死。
+    /// 反证：握着路由锁时同样不许失败、不许死等 —— 排队，回头补。
     #[test]
-    fn persist_state_reports_reentrancy_on_the_routing_lock_too() {
+    fn persist_state_queues_when_the_routing_lock_is_held() {
         std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
         let dir = std::env::temp_dir().join(format!("tokengo-state-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let st = AppState::init(test_cfg(&dir)).unwrap();
 
-        let _held = st.routing();
+        let held = st.routing();
         let r = st.persist_state("auto");
-        assert!(r.is_err());
+        assert!(r.is_ok(), "握着路由锁也不许失败，更不许死等");
+        assert_eq!(st.pending_writes(), 1);
+        drop(held);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 同一组的多条待落状态只写最后一条（先写中间态没意义），且顺序不乱。
+    #[test]
+    fn only_the_newest_state_per_group_is_written_back() {
+        std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
+        let dir = std::env::temp_dir().join(format!("tokengo-state-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = AppState::init(test_cfg(&dir)).unwrap();
+
+        let channels = [tokengo_shared::ChannelId(1), tokengo_shared::ChannelId(2)];
+        {
+            let mut r = st.routing();
+            r.attempt_order("auto", &channels, 1_800_000_000_000);
+            r.on_channel_exhausted("auto", channels[0], &channels, 1_800_000_000_000);
+        }
+        // 连丢三条，只有最后一条（也就是当前状态）需要落
+        st.enqueue_write(WriteJob::State("auto".into()));
+        st.enqueue_write(WriteJob::State("auto".into()));
+        st.enqueue_write(WriteJob::State("auto".into()));
+        assert_eq!(st.pending_writes(), 3);
+        assert_eq!(st.drain_writes(), 1, "三次只该写一次");
+        assert_eq!(st.pending_writes(), 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 闸机：上限 0 = 不拦；配了上限就最多放那么多个名额过去，还回来才放新的。
+    #[test]
+    fn the_leg_gate_limits_how_many_requests_run_at_once() {
+        std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
+        let dir = std::env::temp_dir().join(format!("tokengo-state-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = AppState::init(test_cfg(&dir)).unwrap();
+
+        assert!(st.leg_gate(1, 0).is_none(), "0 = 不限，不拦");
+
+        let gate = st.leg_gate(2, 2).unwrap();
+        let a = gate.clone().try_acquire_owned().unwrap();
+        let b = gate.clone().try_acquire_owned().unwrap();
+        assert!(
+            gate.clone().try_acquire_owned().is_err(),
+            "上限 2，第三个必须拿不到名额"
+        );
+        drop(a);
+        assert!(gate.clone().try_acquire_owned().is_ok(), "还回来一个就该放进一个");
+        drop(b);
+
+        // 同一个渠道再问一次：还是那把闸机，不会翻倍放行
+        let same = st.leg_gate(2, 2).unwrap();
+        assert_eq!(same.available_permits(), 2);
+
+        // 上限调大 → 立刻补名额
+        let bigger = st.leg_gate(2, 5).unwrap();
+        assert_eq!(bigger.available_permits(), 5);
 
         std::fs::remove_dir_all(&dir).ok();
     }

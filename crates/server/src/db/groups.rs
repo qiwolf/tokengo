@@ -204,6 +204,7 @@ pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Chann
             base_url: l.base_url,
             enabled: l.enabled,
             priority: ord as i32,
+            max_concurrent: l.max_concurrent,
             model_alias: alias,
             vision,
             drop_fields,
@@ -267,6 +268,7 @@ mod tests {
             conn,
             &NewChannel {
                 name: name.into(),
+                max_concurrent: 0,
                 base_url: format!("http://127.0.0.1/{}", name),
                 enabled: true,
                 unwrap_envelope: false,
@@ -418,7 +420,7 @@ mod tests {
         upsert(&conn, "auto", true, &[text, see]).unwrap();
         assert!(group_can_see(&conn, "auto").unwrap());
 
-        channels::update(&conn, see, "能看图", "http://127.0.0.1/see", false, false).unwrap();
+        channels::update(&conn, see, "能看图", "http://127.0.0.1/see", false, false, 0).unwrap();
         assert!(!group_can_see(&conn, "auto").unwrap(), "停用的渠道不算数");
 
         upsert(&conn, "空的", true, &[text]).unwrap();
@@ -469,7 +471,7 @@ mod tests {
             }]
         );
 
-        channels::update(&conn, a, "a", "http://x", false, false).unwrap();
+        channels::update(&conn, a, "a", "http://x", false, false, 0).unwrap();
         assert!(
             list_servable(&conn).unwrap().is_empty(),
             "组里全是停用的渠道，就不该再对外暴露这个模型名"

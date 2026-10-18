@@ -134,6 +134,12 @@ pub(crate) fn duplicate_client_names(rows: &[ModelPair]) -> Vec<String> {
     dup
 }
 
+/// 面板上「同时最多几发」那一格：填了数字就用它，填了乱七八糟的东西就当 0（不限），
+/// 不能因为一格填错让整张表单存不下去。
+fn parse_cap(text: &str) -> u32 {
+    text.trim().parse::<u32>().unwrap_or(0)
+}
+
 /// 表单 → 要提交的映射表：两头空白去掉、空名字的行丢掉，并如实回报丢了几条。
 pub(crate) fn mappings_to_save(rows: &[ModelPair]) -> (Vec<ModelPair>, usize) {
     let mut out: Vec<ModelPair> = Vec::new();
@@ -210,6 +216,11 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
     // 这条渠道的非流式响应要不要剥壳（cline.bot 那种 `{"data": {…}, "success": true}`）
     let f_unwrap = RwSignal::new(false);
+    // 这条渠道「同时最多几发」：0 = 不限。填了就在网关门口排队/换腿，
+    // 免得一次铺开几十发把上游那把 key 打成 429（上游多数是按凭据限并发的）。
+    let f_cap = RwSignal::new(0u32);
+    // 输入框是文本，提交时再解析成数字（RwSignal<String> 免得打字时被反复 parse 打断）
+    let f_cap_text = RwSignal::new("0".to_string());
     // 表单行的重绘开关：只有加/删行才 +1。**打字时不重绘**，否则输入框会丢焦点。
     let form_ver = RwSignal::new(0u32);
 
@@ -250,6 +261,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
         f_unwrap.set(false);
+        f_cap.set(0);
+        f_cap_text.set("0".to_string());
         reset_pull();
         form_ver.update(|v| *v += 1);
         tab.set(TAB_BASIC.to_string());
@@ -269,6 +282,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
         f_unwrap.set(l.unwrap_envelope);
+        f_cap.set(l.max_concurrent);
+        f_cap_text.set(l.max_concurrent.to_string());
         reset_pull();
         form_ver.update(|v| *v += 1);
         tab.set(TAB_BASIC.to_string());
@@ -299,11 +314,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let (models, skipped) = mappings_to_save(&f_models.get_untracked());
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
+        let cap = parse_cap(&f_cap_text.get_untracked());
         // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
         let key_arg = if key.trim().is_empty() { None } else { Some(key) };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_channel(id, &name, &url, enabled, unwrap, key_arg.as_deref(), &headers, &models)
+            match api::save_channel(id, &name, &url, enabled, unwrap, cap, key_arg.as_deref(), &headers, &models)
                 .await
             {
                 Ok(new_id) => {
@@ -345,11 +361,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let url = f_url.get_untracked();
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
+        let cap = parse_cap(&f_cap_text.get_untracked());
         let headers = f_headers.get_untracked();
         let (models, _) = mappings_to_save(&f_models.get_untracked());
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
-            match api::save_channel(Some(id), &name, &url, enabled, unwrap, Some(""), &headers, &models).await {
+            match api::save_channel(Some(id), &name, &url, enabled, unwrap, cap, Some(""), &headers, &models).await {
                 Ok(_) => {
                     f_key_note.set("已清空这条渠道的密钥。");
                     ctx.say("密钥已清空");
@@ -744,6 +761,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         {l.unwrap_envelope.then(|| view! {
                                             <span class="tag">"响应解包"</span>
                                         })}
+                                        {(l.max_concurrent > 0).then(|| view! {
+                                            <span class="tag">{format!("同时最多 {} 发", l.max_concurrent)}</span>
+                                        })}
                                     </div>
                                     <div class="chan-actions">
                                         <button class="ghost" on:click=move |_| open_edit(l2.clone())>
@@ -852,6 +872,16 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     <code>"{\"data\": {…}, \"success\": true}"</code>
                                                     "）。只有认得出那种形状才会剥，认不出就原样回给你。"
                                                     "正常的上游不用勾。"
+                                                </span>
+                                            </div>
+                                            <div class="field">
+                                                <label>"同时最多几发"</label>
+                                                <input type="text" inputmode="numeric" prop:value=f_cap_text
+                                                    on:input=move |ev| f_cap_text.set(event_target_value(&ev)) />
+                                                <span class="muted small">
+                                                    "0 = 不限。填了就在门口排队：这条渠道同时最多跑这么多发，"
+                                                    "多出来的先去别的渠道，全满才排队 —— "
+                                                    "上游按 key 限并发时（免费额度多数如此）填它防 429。"
                                                 </span>
                                             </div>
                                         </div>

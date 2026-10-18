@@ -19,6 +19,10 @@ async fn main() -> anyhow::Result<()> {
     // 开库、跑迁移、恢复路由状态、准备主密钥。任何一步失败都不要带着半残状态起服务。
     let state = AppState::init(cfg)?;
 
+    // 后台落账员：请求路径抢不到库锁的账（收尾/尝试/路由状态）由它补写。
+    // 没有它的话，那部分账就丢了 —— 而请求本身绝不能因为记账抢不到锁而失败。
+    state.spawn_writer();
+
     // 后台探活：无流量时也要按时回头试首选渠道，否则 10 分钟回切机制在夜里等于没有
     tokengo_server::prober::spawn(state.clone());
 

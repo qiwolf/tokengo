@@ -50,6 +50,67 @@ pub fn start(
     Ok(conn.last_insert_rowid())
 }
 
+/// 一次「请求结束」的落账参数。
+///
+/// 存在的理由：这个写操作**不能失败请求**。抢不到库锁时请求路径会把它整包丢给
+/// 后台落账员（`state::WriteJob`），所以参数得是自持有（owned）的，不能借用请求里的东西。
+#[derive(Debug, Clone)]
+pub struct FinishArgs {
+    pub request_id: i64,
+    pub status: Status,
+    pub http_status: Option<u16>,
+    pub channel_id: Option<i64>,
+    pub latency_ms: i64,
+    pub first_byte_ms: Option<i64>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub streamed: bool,
+    pub error: Option<String>,
+}
+
+/// 一次「渠道尝试」的落账参数。同上：要能被丢进后台队列。
+#[derive(Debug, Clone)]
+pub struct AttemptArgs {
+    pub request_id: i64,
+    pub ordinal: u32,
+    pub channel_id: i64,
+    pub outcome: String,
+    pub http_status: Option<u16>,
+    pub duration_ms: i64,
+    pub error: Option<String>,
+}
+
+/// `FinishArgs` 的落库入口（参数化版本，供后台落账员调用）。
+pub fn finish_args(conn: &Connection, a: &FinishArgs) -> Result<()> {
+    finish(
+        conn,
+        a.request_id,
+        a.status,
+        a.http_status,
+        a.channel_id,
+        a.latency_ms,
+        a.first_byte_ms,
+        a.input_tokens,
+        a.output_tokens,
+        a.streamed,
+        a.error.as_deref(),
+    )
+}
+
+/// `AttemptArgs` 的落库入口（参数化版本）。
+pub fn add_attempt_args(conn: &Connection, a: &AttemptArgs) -> Result<()> {
+    add_attempt(
+        conn,
+        a.request_id,
+        a.ordinal,
+        a.channel_id,
+        &a.outcome,
+        a.http_status,
+        a.duration_ms,
+        a.error.as_deref(),
+    )
+}
+
 /// 一条请求收尾。
 #[allow(clippy::too_many_arguments)]
 pub fn finish(

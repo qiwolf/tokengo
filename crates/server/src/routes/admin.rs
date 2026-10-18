@@ -228,6 +228,7 @@ fn channel_json(l: &channels::ChannelRow) -> serde_json::Value {
         "enabled": l.enabled,
         "has_secret": l.has_secret,
         "unwrap_envelope": l.unwrap_envelope,
+        "max_concurrent": l.max_concurrent,
         "headers": l.headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect::<Vec<_>>(),
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
@@ -278,6 +279,9 @@ struct ChannelBody {
     /// 非流式响应外面套了一层壳时自动剥掉（面板上的「响应解包」勾选）。
     #[serde(default)]
     unwrap_envelope: bool,
+    /// 这条渠道「同时最多几发」（面板上的「同时最多几发」）。0 = 不限。
+    #[serde(default)]
+    max_concurrent: u32,
     /// 明文密钥。留空表示不改动已存的（新建时留空 = 没密钥）。
     key: Option<String>,
     #[serde(default)]
@@ -333,6 +337,7 @@ async fn channels_create(
                 base_url: body.base_url.clone(),
                 enabled: body.enabled,
                 unwrap_envelope: body.unwrap_envelope,
+                max_concurrent: body.max_concurrent,
             },
         )?;
         if let Some(k) = body.key.as_deref().filter(|k| !k.trim().is_empty()) {
@@ -364,6 +369,7 @@ async fn channels_update(
             &body.base_url,
             body.enabled,
             body.unwrap_envelope,
+            body.max_concurrent,
         )?;
         // 密钥：传了才改；传空串 = 明确要清掉
         match body.key.as_deref() {
@@ -432,6 +438,7 @@ fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<O
             drop_fields: vec![],
             unwrap_envelope: false,
             headers: row.headers.clone(),
+            max_concurrent: 0,
         },
         secret,
         has_secret: row.has_secret,
