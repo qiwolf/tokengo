@@ -18,6 +18,7 @@ use crate::upstream::UpstreamModel;
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogEntry {
     pub model: String,
+    pub kind: Option<String>,
     pub owned_by: Option<String>,
     pub context_window: Option<i64>,
     pub price_note: Option<String>,
@@ -31,6 +32,7 @@ impl From<&UpstreamModel> for CatalogEntry {
     fn from(m: &UpstreamModel) -> Self {
         Self {
             model: m.id.clone(),
+            kind: m.kind.clone(),
             owned_by: m.owned_by.clone(),
             context_window: m.context_window,
             price_note: m.price_note.clone(),
@@ -78,8 +80,8 @@ pub fn replace(
         let e = CatalogEntry::from(m);
         conn.execute(
             "INSERT INTO channel_catalog
-               (channel_id, model_id, owned_by, context_window, price_note, is_free, vision_claim)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+               (channel_id, model_id, owned_by, context_window, price_note, is_free, vision_claim, kind_claim)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id.0,
                 e.model,
@@ -87,7 +89,8 @@ pub fn replace(
                 e.context_window,
                 e.price_note,
                 e.is_free.map(|b| b as i64),
-                e.vision.map(|b| b as i64)
+                e.vision.map(|b| b as i64),
+                e.kind
             ],
         )?;
         n += 1;
@@ -102,12 +105,13 @@ pub fn replace(
 /// 读回上次记住的目录（按上游报的顺序排，同一次问答里的顺序别乱）。
 pub fn list(conn: &Connection, id: ChannelId) -> Result<Vec<CatalogEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT model_id, owned_by, context_window, price_note, is_free, vision_claim
+        "SELECT model_id, owned_by, context_window, price_note, is_free, vision_claim, kind_claim
            FROM channel_catalog WHERE channel_id = ?1 ORDER BY rowid",
     )?;
     let rows = stmt.query_map([id.0], |r| {
         Ok(CatalogEntry {
             model: r.get(0)?,
+            kind: r.get(6)?,
             owned_by: r.get(1)?,
             context_window: r.get(2)?,
             price_note: r.get(3)?,
@@ -139,6 +143,7 @@ mod tests {
     fn up(id: &str, owned: Option<&str>, ctx: Option<i64>) -> UpstreamModel {
         UpstreamModel {
             id: id.to_string(),
+            kind: None,
             owned_by: owned.map(|s| s.to_string()),
             context_window: ctx,
             price_note: None,
@@ -159,6 +164,16 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn explicit_type_claims_survive_catalog_round_trip() {
+        let conn = open_in_memory().unwrap(); let id = a_channel(&conn);
+        let mut entry = up("real",None,None); entry.kind = Some("audio".into());
+        replace(&conn,id,&[entry],123).unwrap();
+        assert_eq!(list(&conn,id).unwrap()[0].kind.as_deref(),Some("audio"));
+        crate::db::migrate(&conn).unwrap();
+        assert_eq!(list(&conn,id).unwrap()[0].kind.as_deref(),Some("audio"));
     }
 
     #[test]

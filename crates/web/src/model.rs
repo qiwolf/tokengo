@@ -84,6 +84,8 @@ pub struct ChannelsResp {
 /// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
+    #[serde(default)]
+    pub kind_conflict: bool,
     pub name: String,
     /// `""` / `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
     #[serde(default)]

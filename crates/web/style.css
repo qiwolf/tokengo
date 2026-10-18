@@ -1377,72 +1377,23 @@ td[data-label="类型"] code {
 .logview .muted { font-size: 0.8125rem; padding: 6px 2px; }
 
 
-/* ── 「模型」页的列表卡片（v0.11.3）：一个模型名一张卡、三行说清 ──
-   以前这里是 8 列的表格：手机上每列各占一行，一张卡 260px 高（用户：「卡片高度缩短
-   原来的一半、卡片内容重构、紧凑些」）。现在改成专门的列表排版，桌面手机同一套：
-     第一行 = 状态徽章 + 模型名 + 能看图 + 「详情」
-     第二行 = 用途下拉 + 类型标签 +（实测认的/你定的）+ 「现在走 X」
-     第三行 = 一行小字：勾它的渠道 4 条 · 换过 2 次 · 下次回头试首选 3 分钟后
-   展开的详情接在卡里（.model-detail），不再是表格里的一行。── */
-.model-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.model-card {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-}
-.model-card.open {
-  border-color: var(--line-strong);
-  background: var(--surface-2);
-}
-.model-card .mline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  /* 行内不折行：折行会让一张卡凭空高一倍。名字（唯一可缩的）超了就省略号截断，
-     完整名字在 .mname 的 title 里；两边的徽章与按钮各自不缩。 */
-  flex-wrap: nowrap;
-  min-width: 0;
-}
-.model-card .mline > .tag,
-.model-card .mline > button,
-.model-card .mline > .kind-pick { flex: 0 0 auto; }
-.model-card .mline > .spacer { flex: 1 1 auto; }
-.model-card .mname {
-  font-size: 0.9375rem;
-  /* 名字长了不截断（手机上没 hover，截了就看不全）：让它自己折行，
-     右边的徽章与「详情」按钮仍留在这一行（行本身不折）。 */
-  flex: 0 1 auto;
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.model-card .mline .kind-pick {
-  /* 全局给 select 定了 width:100%，那会让它独占一行、把这一行撑成两行 */
-  width: auto;
-  flex: 0 0 auto;
-  height: 26px;
-}
-.model-card .mline > .muted.small {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.model-card .mline > button {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 0.75rem;
-}
-.model-card .mmeta { line-height: 1.5; overflow-wrap: anywhere; }
-.model-card .model-detail {
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
-}
-.model-empty { padding: 26px 4px; text-align: center; color: var(--fg-3); }
+
+/* Model catalog: identity, capability tags, then channel provenance. */
+.model-search { margin-bottom: 12px; font-size: 16px; }
+.model-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.model-card { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; align-self: start; }
+.model-card.open { border-color: var(--line-strong); }
+.model-card .mline { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.model-card .mname { min-width: 0; overflow-wrap: anywhere; font-size: 15px; line-height: 1.5; }
+.model-card .mline > button { flex: 0 0 auto; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; font-size: 12px; }
+.model-badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.model-channel { color: var(--fg-2); font-size: 12px; overflow-wrap: anywhere; }
+.model-facts { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--fg-2); }
+.model-card .model-detail { border-top: 1px solid var(--line); padding-top: 12px; }
+.model-empty { grid-column: 1/-1; padding: 24px; color: var(--fg-3); text-align: center; }
+@media(max-width:46rem) { .model-list { grid-template-columns: minmax(0,1fr); gap: 8px; } .model-card { padding: 12px; gap: 8px; } }
+
+.auto-current { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+.auto-current > span { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.auto-current small { color: var(--fg-3); white-space: nowrap; }
+.auto-current b { font-size: 13px; overflow-wrap: anywhere; }

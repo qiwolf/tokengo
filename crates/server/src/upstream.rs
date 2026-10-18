@@ -179,6 +179,8 @@ fn clamp_body(text: String) -> String {
 /// 已经在视觉能力上栽过一次（deepseek 的 flash 能读图，有的 vision 名字反倒不能）。
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct UpstreamModel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     /// 上游认的名字（客户端要发的就是它）。
     pub id: String,
     /// 归属方（`owned_by` / `organization` / `publisher` …）。
@@ -405,6 +407,30 @@ fn vision_of(o: &serde_json::Map<String, serde_json::Value>) -> Option<bool> {
         .and_then(modality_vision)
 }
 
+/// Only explicit type/endpoint declarations count; model names and input modalities do not.
+fn declared_kind(o: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let mut found = Vec::new();
+    for key in ["kind", "type", "model_type", "task", "supported_endpoints", "endpoints"] {
+        if let Some(v) = o.get(key) {
+            let values: Vec<&str> = if let Some(s) = v.as_str() { vec![s] }
+                else { v.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default() };
+            for raw in values {
+                let k = match raw.trim().trim_start_matches('/').trim_start_matches("v1/") {
+                    "chat" | "chat/completions" | "text-generation" => "chat",
+                    "embedding" | "embeddings" | "feature-extraction" => "embeddings",
+                    "rerank" | "reranking" | "text-ranking" => "rerank",
+                    "image" | "images/generations" | "text-to-image" => "image",
+                    "video" | "text-to-video" => "video",
+                    "audio" | "audio/speech" | "audio/transcriptions" => "audio",
+                    _ => continue,
+                };
+                if !found.contains(&k) { found.push(k); }
+            }
+        }
+    }
+    if found.len() == 1 { Some(found[0].to_string()) } else { None }
+}
+
 /// 一条上游条目 → 一条说明。认不出名字就整条丢掉（不编）。
 fn to_upstream_model(entry: &serde_json::Value) -> Option<UpstreamModel> {
     if let Some(s) = entry.as_str() {
@@ -427,6 +453,7 @@ fn to_upstream_model(entry: &serde_json::Value) -> Option<UpstreamModel> {
         m.price_note = Some(note);
         m.is_free = free;
     }
+    m.kind = declared_kind(o);
     m.vision = vision_of(o);
     Some(m)
 }
@@ -693,6 +720,20 @@ mod tests {
     #[test]
     fn uuid_is_a_fresh_one_each_time() {
         assert_ne!(new_uuid(), new_uuid());
+    }
+
+    #[test]
+    fn explicit_catalog_types_are_parsed_without_guessing() {
+        let cat = parse_model_catalog(r#"{"data":[
+            {"id":"unknown","kind":"embeddings"},
+            {"id":"another","supported_endpoints":["/v1/rerank"]},
+            {"id":"image-vision-embedding"},
+            {"id":"ambiguous","kind":"chat","type":"image"},
+            {"id":"multi","endpoints":["chat/completions","embeddings"]}
+        ]}"#);
+        assert_eq!(cat[0].kind.as_deref(), Some("embeddings"));
+        assert_eq!(cat[1].kind.as_deref(), Some("rerank"));
+        assert!(cat[2..].iter().all(|m| m.kind.is_none()));
     }
 
     #[test]
