@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 rust-version = "1.98"
 license = "MIT"
@@ -55,3 +55,8 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# 面板（wasm）单独调成「优先体积」：服务端继续用 opt-level = 3（性能要紧），
+# 两边互不影响。面板是管理页，跑快跑慢看不出来，但每一次首次打开都要下它。
+[profile.release.package.tokengo-web]
+opt-level = "z"
