@@ -1284,3 +1284,29 @@ td[data-label="类型"] code {
   white-space: nowrap;
   color: var(--fg-3);
 }
+
+/* ---------- 15. 日志视图（面板「日志」页） ---------- */
+/* 日志是给人读现场的：等宽字体、允许选中复制、长行自动折行（不要横向滚动条 ——
+   手机上横滚等于看不了），软换行而不是截断，错误与警告各自带一点颜色。 */
+.logview {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  padding: 8px 10px;
+}
+.logline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-2);
+  padding: 1px 0;
+  border-bottom: 1px solid transparent;
+}
+.logline + .logline { border-top: 1px solid var(--line); }
+.logline.warn { color: var(--warn); }
+.logline.error { color: var(--bad); }
+.logview .muted { font-size: 0.8125rem; padding: 6px 2px; }

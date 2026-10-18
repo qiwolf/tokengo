@@ -42,6 +42,9 @@ pub fn router() -> Router<SharedState> {
         .route("/routing/{group}/reprobe", post(routing_reprobe))
         .route("/stats", get(stats))
         .route("/logs", get(logs))
+        // 面板「日志」页：看运行日志（内存里最近那些）+ 临时开 debug
+        .route("/logs/live", get(logs_live))
+        .route("/logs/level", get(logs_level_get).put(logs_level_set))
         .route("/timeline", get(|| async { unbuilt(5, "GET /api/timeline") }))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/settings/generate-gateway-key", post(generate_gateway_key))
@@ -1251,6 +1254,93 @@ async fn logs(
     let conn = state.conn();
     let rows = requests::recent(&conn, limit)?;
     Ok(Json(serde_json::json!({ "logs": rows })))
+}
+
+/// 面板「日志」页：最近的运行日志。`level`=error/warn/info 是门槛，`q` 是关键词（也当请求号用）。
+async fn logs_live(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Query(q): Query<LogsLiveQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let limit = q.limit.unwrap_or(200).clamp(1, 1000);
+    let lines = state.logs().query(q.level.as_deref(), q.q.as_deref(), limit);
+    let ctl = state.log_control();
+    Ok(Json(serde_json::json!({
+        "lines": lines,
+        "kept": state.logs().len(),
+        "limit": limit,
+        "level": ctl.level(),
+        "revert_at_ms": ctl.revert_at_ms(),
+        "file": state.log_file().map(|p| p.display().to_string()),
+    })))
+}
+
+/// 当前日志级别（面板上显示 + 限时 debug 的倒计时）。
+async fn logs_level_get(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ctl = state.log_control();
+    Ok(Json(serde_json::json!({
+        "level": ctl.level(),
+        "revert_at_ms": ctl.revert_at_ms(),
+    })))
+}
+
+/// 改日志级别。`minutes > 0` = 只开这么久，到点自动收回（防着开完 debug 忘了关、
+/// 日志把磁盘刷满 —— 这台机器上吃过不设上限的亏）。
+async fn logs_level_set(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Json(body): Json<LogLevelBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ctl = state.log_control();
+    ctl.set_level(&body.level)
+        .map_err(ApiError::bad_request)?;
+    let revert = match body.minutes.filter(|m| *m > 0) {
+        Some(m) => {
+            let at = now_ms() + i64::from(m) * 60_000;
+            ctl.set_revert_at(Some(at));
+            Some((m, at))
+        }
+        None => {
+            ctl.clear_revert();
+            None
+        }
+    };
+    tracing::info!("日志级别改成「{}」（{}）", body.level,
+        match revert { Some((m, _)) => format!("{m} 分钟后自动收回"), None => "长期生效".into() });
+    if let Some((m, _)) = revert {
+        // 到点收回：改成 info（默认档）
+        let ctl2 = ctl.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(u64::from(m) * 60)).await;
+            if let Err(e) = ctl2.set_level("info") {
+                tracing::warn!("自动收回日志级别失败：{e}");
+            } else {
+                ctl2.clear_revert();
+                tracing::info!("限时到期，日志级别已自动收回 info");
+            }
+        });
+    }
+    Ok(Json(serde_json::json!({
+        "level": ctl.level(),
+        "revert_at_ms": ctl.revert_at_ms(),
+    })))
+}
+
+#[derive(serde::Deserialize)]
+struct LogsLiveQuery {
+    level: Option<String>,
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct LogLevelBody {
+    level: String,
+    /// 多少分钟后自动收回（不填或 0 = 长期生效）。
+    minutes: Option<u32>,
 }
 
 // ───────────────────────── 设置 ─────────────────────────

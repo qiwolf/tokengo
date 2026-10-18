@@ -193,7 +193,8 @@ mod tests {
             db_path: dir.join("t.db"),
             master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
             web_dir: Some(dir.clone()),
-        };
+           log_dir: None,
+ };
         let st = crate::AppState::init(cfg).unwrap();
         let app = crate::app(st);
 

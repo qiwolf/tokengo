@@ -403,3 +403,41 @@ mod tests {
         assert_eq!(group_path("gpt-4o_mini.v2~x"), "/api/groups/gpt-4o_mini.v2~x");
     }
 }
+
+/// 拉最近的运行日志（面板「日志」页）。`level` 是门槛（warn = 警告与错误），`q` 是关键词。
+pub async fn logs_live(
+    level: Option<String>,
+    q: Option<String>,
+    limit: u32,
+) -> Result<crate::model::LiveLogs, ApiErr> {
+    let mut url = format!("/api/logs/live?limit={limit}");
+    if let Some(l) = level {
+        url.push_str(&format!("&level={}", urlencode(&l)));
+    }
+    if let Some(q) = q {
+        url.push_str(&format!("&q={}", urlencode(&q)));
+    }
+    let v = call("GET", &url, None).await?;
+    serde_json::from_value(v).map_err(|e| ApiErr {
+        message: format!("日志格式不对：{e}"),
+        status: 0,
+    })
+}
+
+/// 改日志级别（「临时开 debug」走它）。`minutes > 0` = 到点自动收回。
+pub async fn set_log_level(
+    level: &str,
+    minutes: Option<u32>,
+) -> Result<crate::model::LogLevel, ApiErr> {
+    let v = call(
+        "PUT",
+        "/api/logs/level",
+        Some(serde_json::json!({ "level": level, "minutes": minutes })),
+    )
+    .await?;
+    serde_json::from_value(v).map_err(|e| ApiErr {
+        message: format!("回包格式不对：{e}"),
+        status: 0,
+    })
+}
+

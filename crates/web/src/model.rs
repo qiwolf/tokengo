@@ -522,3 +522,30 @@ mod tests {
         assert_eq!(c.reprobe_minutes(), 10);
     }
 }
+
+/// 面板「日志」页：一次拉回来的运行日志 + 当前级别。
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct LiveLogs {
+    pub lines: Vec<String>,
+    /// 内存里一共留了多少行（让用户知道"再往上就没啦"）
+    #[serde(default)]
+    pub kept: usize,
+    #[serde(default)]
+    pub limit: usize,
+    #[serde(default)]
+    pub level: String,
+    /// 限时 debug 的到期时间（毫秒时间戳）
+    #[serde(default)]
+    pub revert_at_ms: Option<i64>,
+    #[serde(default)]
+    pub file: Option<String>,
+}
+
+/// 日志级别（改完之后服务端回这个）。
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct LogLevel {
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub revert_at_ms: Option<i64>,
+}

@@ -12,6 +12,8 @@ pub struct Config {
     /// 面板构建产物目录（`trunk build --release` 的输出：index.html + pkg/）。
     /// `None` = 没找到 —— 这时面板路径**如实说没构建**，而不是回一个空壳页面。
     pub web_dir: Option<PathBuf>,
+    /// 日志目录。`None` = 只进内存缓冲与 journald，不落文件（测试环境）。
+    pub log_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -21,6 +23,7 @@ impl Default for Config {
             db_path: PathBuf::from("tokengo.db"),
             master_key_path: crate::crypto::MASTER_KEY_PATH.into(),
             web_dir: None,
+            log_dir: None,
         }
     }
 }
@@ -42,6 +45,12 @@ impl Config {
             master_key_path: std::env::var("TOKENGO_MASTER_KEY_FILE")
                 .unwrap_or(d.master_key_path),
             web_dir,
+            // 日志目录：默认 ./logs（部署时给绝对路径，别跟着工作目录跑）
+            log_dir: std::env::var("TOKENGO_LOG_DIR")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .map(PathBuf::from)
+                .or(d.log_dir),
         })
     }
 

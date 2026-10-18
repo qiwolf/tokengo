@@ -42,7 +42,8 @@ impl Fixture {
             db_path: dir.join("t.db"),
             master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
             web_dir,
-        };
+           log_dir: None,
+ };
         Self {
             state: AppState::init(cfg).unwrap(),
             dir,

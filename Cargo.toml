@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.4"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.98"
 license = "MIT"
@@ -23,7 +23,7 @@ sha2 = "0.10"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
 # HTTP 服务端
 axum = { version = "0.8", features = ["macros", "multipart"] }

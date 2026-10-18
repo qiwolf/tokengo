@@ -5,7 +5,7 @@
 //! 整个网关的所有请求都跟着排队。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::path::Path;
 use std::time::Duration;
 
@@ -46,6 +46,14 @@ pub struct AppState {
     writer: WriteQueue,
     /// 每条渠道的「门口闸机」：同时最多几发（渠道 id → 闸机 + 当前配置的上限）。
     channel_gates: Mutex<HashMap<i64, (Arc<Semaphore>, u32)>>,
+    /// 最近的运行日志（内存里那份，面板「日志」页读它）。
+    /// 用 OnceLock：服务启动时先建 state、再装订阅者，装完把这一格填上；
+    /// 测试里不装，取值时就地造一个空的 —— 两边都不用改代码。
+    logs: OnceLock<Arc<crate::logging::LogBuffer>>,
+    /// 日志文件在哪（面板上显示给用户看）。
+    log_file: OnceLock<Option<std::path::PathBuf>>,
+    /// 运行时改日志级别（面板上「临时开 debug」走它）。
+    log_control: OnceLock<Arc<crate::logging::LogControl>>,
 }
 
 /// 一件「待落账」的活。
@@ -102,6 +110,37 @@ impl WriteQueue {
 
 impl AppState {
     /// 起进程时调一次：开库、跑迁移、恢复路由状态、准备主密钥。
+    /// 把真正的日志缓冲与级别控制装进来（`main` 里调；测试不调，取用时兜底为空缓冲）。
+    pub fn attach_logs(
+        &self,
+        logs: Arc<crate::logging::LogBuffer>,
+        control: Arc<crate::logging::LogControl>,
+        file: Option<std::path::PathBuf>,
+    ) {
+        let _ = self.logs.set(logs);
+        let _ = self.log_control.set(control);
+        let _ = self.log_file.set(file);
+    }
+
+    /// 最近的运行日志。没装订阅者（测试）就地造一个空的，行为一致、不会崩。
+    pub fn logs(&self) -> Arc<crate::logging::LogBuffer> {
+        self.logs
+            .get_or_init(|| crate::logging::LogBuffer::new(crate::logging::BUFFER_LINES))
+            .clone()
+    }
+
+    /// 日志文件路径（没落文件时为 None）。
+    pub fn log_file(&self) -> Option<std::path::PathBuf> {
+        self.log_file.get().cloned().flatten()
+    }
+
+    /// 日志级别控制。没装订阅者时是空操作（改级别只记账，不影响任何东西）。
+    pub fn log_control(&self) -> Arc<crate::logging::LogControl> {
+        self.log_control
+            .get_or_init(crate::logging::LogControl::detached)
+            .clone()
+    }
+
     pub fn init(cfg: Config) -> anyhow::Result<Arc<Self>> {
         let conn = db::open(&cfg.db_path)?;
         tracing::info!("数据库 {} 就绪", cfg.db_path.display());
@@ -152,6 +191,9 @@ impl AppState {
             group_endpoints: Mutex::new(endpoints),
             writer: WriteQueue::default(),
             channel_gates: Mutex::new(HashMap::new()),
+            logs: OnceLock::new(),
+            log_file: OnceLock::new(),
+            log_control: OnceLock::new(),
         }))
     }
 
@@ -396,7 +438,8 @@ mod tests {
             db_path: dir.join("t.db"),
             master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
             web_dir: None,
-        }
+           log_dir: None,
+ }
     }
 
     #[test]
