@@ -37,6 +37,7 @@ fn kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKind> {
 }
 
 pub struct AppState {
+    pub auto_sequence: std::sync::atomic::AtomicU64,
     pub db: Mutex<Connection>,
     pub routing: Mutex<RoutingRouter>,
     pub secrets: SecretBox,
@@ -187,6 +188,7 @@ impl AppState {
         }
 
         Ok(Arc::new(Self {
+            auto_sequence: std::sync::atomic::AtomicU64::new(0),
             db: Mutex::new(conn),
             routing: Mutex::new(router),
             secrets,

@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod kinds;
 pub mod channels;
 pub mod model_routes;
+pub mod scores;
 pub mod maintenance;
 pub mod requests;
 pub mod routing;
