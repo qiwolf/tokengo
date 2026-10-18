@@ -20,6 +20,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let sessions = RwSignal::new(0i64);
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    let category = RwSignal::new(0usize);
+    let metric_open = RwSignal::new(None::<String>);
 
     let reload = move || {
         if busy.get_untracked() { return; }
@@ -43,9 +45,10 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 }
                 Err(e) => ctx.note_err(&e),
             }
-            match api::logs(12).await {
+            if category.get_untracked()==0 { match api::logs(12).await {
                 Ok(v) => recent.set(v),
                 Err(e) => ctx.note_err(&e),
+            }
             }
             match api::channels().await {
                 Ok(v) => channels.set(v),
@@ -62,17 +65,21 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
 
     let recent_busy = RwSignal::new(false);
     let expanded = RwSignal::new(None::<i64>);
-    let refresh_timer = crate::every(5000, move || {
+    let refresh_active = move || {
         if busy.get_untracked() || recent_busy.get_untracked() { return; }
         recent_busy.set(true);
+        let selected=category.get_untracked();
+        let window=hours.get_untracked();
         wasm_bindgen_futures::spawn_local(async move {
-            match api::logs(12).await {
-                Ok(v) => recent.set(v),
-                Err(e) => ctx.note_err(&e),
+            if selected==0 {
+                match api::logs(12).await { Ok(v)=>recent.set(v),Err(e)=>ctx.note_err(&e) }
+            } else {
+                match api::stats(window).await { Ok(v)=>stats.set(v),Err(e)=>ctx.note_err(&e) }
             }
             recent_busy.set(false);
         });
-    });
+    };
+    let refresh_timer = crate::every(5000, refresh_active);
     on_cleanup(move || crate::stop_timer(refresh_timer));
 
     let pick = move |h: i64| {
@@ -175,6 +182,12 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </div>
             </div>
 
+            <nav class="overview-tabs" aria-label="总览分类">
+                {["最近调用","按类型","按渠道","按模型","按客户端","错误分布"].into_iter().enumerate().map(|(i,label)| view! {
+                    <button class:active=move || category.get()==i aria-pressed=move || category.get()==i on:click=move |_| {category.set(i); refresh_active();}>{label}</button>
+                }).collect_view()}
+            </nav>
+            <Show when=move || category.get()==0>
             <section class="card recent-calls">
                 <header class="card-head"><h2>"最近调用"</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
                 <div class="recent-list">
@@ -224,326 +237,34 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </div>
             </section>
 
-            <section class="card">
+            </Show>
+            <Show when=move || category.get()!=0>
+                <section class="card overview-breakdown">
+                    <header class="card-head"><h2>{move || ["最近调用","按类型","按渠道","按模型","按客户端","错误分布"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
+                    <div class="metric-list">
+                    {move || {
+                        let st=stats.get().stats;
+                        let items:Vec<(String,String,String,String)>=match category.get() {
+                            1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.requests)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},fmt::num(k.input_tokens+k.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
+                            2=>st.by_channel.into_iter().map(|c| (channel_name(Some(c.channel_id)),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {}",fmt::dur(c.avg_ms)),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
+                            3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.requests)),format!("Token {}",fmt::num(m.input_tokens+m.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
+                            4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.requests)),format!("Token {}",fmt::num(c.input_tokens+c.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
+                            5=>st.errors.into_iter().map(|e| (e.error.lines().next().unwrap_or("未记录原因").chars().take(90).collect(),format!("{} 次",e.count),String::new(),e.error)).collect(),
+                            _=>Vec::new(),
+                        };
+                        if items.is_empty(){return view!{<div class="empty">"当前时间窗口暂无记录"</div>}.into_any();}
+                        items.into_iter().enumerate().map(|(i,(title,primary,secondary,detail))|{
+                            let key=format!("{}:{i}:{title}",category.get());let opened=metric_open.get().as_deref()==Some(&key);let clickkey=key.clone();
+                            view!{<article class="metric-card"><div class="metric-head"><b>{title}</b><button class="ghost" aria-expanded=opened on:click=move |_| metric_open.update(|v|*v=if v.as_ref()==Some(&clickkey){None}else{Some(clickkey.clone())})>{if opened {"收起"} else {"详情"}}</button></div><div class="metric-primary">{primary}</div>{(!secondary.is_empty()).then(||view!{<div class="metric-secondary">{secondary}</div>})}{opened.then(||view!{<div class="metric-detail">{detail}</div>})}</article>}
+                        }).collect_view().into_any()
+                    }}
+                    </div>
+                </section>
+            </Show>
+            <details class="fold callable-models">
+                <summary>"能被调用的模型名"</summary>
                 <header class="card-head">
-            <h2>"按类型"</h2>
-            <p class="muted small">
-                "对话 / 向量 / 重排分开看 —— 三条路各有各的用法，混在一起看不出哪条不稳。"
-                "归类看的是这条请求当时实际打的端点，不是这个名字现在的用途（用途随时能改，"
-                "改了不该让历史账跟着变）。耗时只算成功的那些。"
-            </p>
-                </header>
-                <div class="card-body flush">
-            <div class="table-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th>"类型"</th>
-                            <th class="num">"请求数"</th>
-                            <th class="num">"成功率"</th>
-                            <th class="num">"成功"</th>
-                            <th class="num">"失败"</th>
-                            <th class="num">"客户端错"</th>
-                            <th class="num">"平均耗时"</th>
-                            <th class="num">"Token"</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {move || {
-                            let rows = stats.get().stats.by_kind;
-                            if rows.is_empty() {
-                                return view! {
-                                    <tr class="empty-row">
-                                        <td colspan="8" class="muted empty-cell">
-                                            "这个窗口里还没有账（没流量）"
-                                        </td>
-                                    </tr>
-                                }
-                                .into_any();
-                            }
-                            rows.into_iter()
-                                .map(|k| {
-                                    let rate = k.success_rate();
-                                    view! {
-                                        <tr>
-                                            <td data-label="类型">{k.label.clone()}</td>
-                                            <td data-label="请求数" class="num">{fmt::num(k.requests)}</td>
-                                            <td data-label="成功率" class="num">
-                                                {if k.requests > 0 {
-                                                    format!("{rate:.1}%")
-                                                } else {
-                                                    "—".to_string()
-                                                }}
-                                            </td>
-                                            <td data-label="成功" class="num">{fmt::num(k.ok)}</td>
-                                            <td data-label="失败" class="num">
-                                                {if k.failed > 0 {
-                                                    view! { <span class="bad-text">{fmt::num(k.failed)}</span> }.into_any()
-                                                } else {
-                                                    view! { <span class="muted">"0"</span> }.into_any()
-                                                }}
-                                            </td>
-                                            <td data-label="客户端错" class="num">{fmt::num(k.client_errors)}</td>
-                                            <td data-label="平均耗时" class="num">
-                                                {if k.ok > 0 { fmt::dur(k.avg_ms) } else { "—".to_string() }}
-                                            </td>
-                                            <td data-label="Token" class="num">{fmt::num(k.input_tokens + k.output_tokens)}</td>
-                                        </tr>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
-                    </tbody>
-                </table>
-            </div>
-                </div>
-            </section>
 
-            <section class="card">
-                <header class="card-head">
-            <h2>"各条渠道的账"</h2>
-            <p class="muted small">
-                "分母是「被叫了几次」，不是「成功了几次」—— 判断一条渠道值不值得留就看这个。"
-            </p>
-                </header>
-                <div class="card-body flush">
-            <div class="table-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th>"渠道"</th>
-                            <th class="num">"被叫"</th>
-                            <th class="num">"成功"</th>
-                            <th class="num">"成功率"</th>
-                            <th class="num">"渠道故障"</th>
-                            <th class="num">"平均耗时"</th>
-                            <th class="num">"Token"</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {move || {
-                            let rows = stats.get().stats.by_channel;
-                            if rows.is_empty() {
-                                return view! {
-                                    <tr class="empty-row">
-                                        <td colspan="7" class="muted empty-cell">
-                                            "这个窗口里还没有账（没流量）"
-                                        </td>
-                                    </tr>
-                                }
-                                .into_any();
-                            }
-                            rows.into_iter()
-                                .map(|l| {
-                                    let name = l.channel_name.clone().unwrap_or_else(|| format!("#{}", l.channel_id));
-                                    view! {
-                                        <tr>
-                                            <td data-label="渠道">{name}</td>
-                                            <td data-label="被叫" class="num">{fmt::num(l.attempts)}</td>
-                                            <td data-label="成功" class="num">{fmt::num(l.successes)}</td>
-                                            <td data-label="成功率" class="num">
-                                                {l.success_rate.map(|r| format!("{r:.1}%")).unwrap_or_else(|| "—".into())}
-                                            </td>
-                                            <td data-label="渠道故障" class="num">
-                                                {if l.channel_faults > 0 {
-                                                    view! { <span class="bad-text">{fmt::num(l.channel_faults)}</span> }.into_any()
-                                                } else {
-                                                    view! { <span class="muted">"0"</span> }.into_any()
-                                                }}
-                                            </td>
-                                            <td data-label="平均耗时" class="num">{fmt::dur(l.avg_ms)}</td>
-                                            <td data-label="Token" class="num">{fmt::num(l.input_tokens + l.output_tokens)}</td>
-                                        </tr>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
-                    </tbody>
-                </table>
-            </div>
-                </div>
-            </section>
-
-            <section class="card">
-                <header class="card-head">
-            <h2>"按模型名"</h2>
-            <p class="muted small">
-                "看的是别人请求了哪个名字 —— 哪个名字最常被用、哪个在报错，一眼能看出来。"
-            </p>
-                </header>
-                <div class="card-body flush">
-            <div class="table-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th>"模型名"</th>
-                            <th class="num">"请求数"</th>
-                            <th class="num">"成功"</th>
-                            <th class="num">"失败"</th>
-                            <th class="num">"客户端错"</th>
-                            <th class="num">"Token"</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {move || {
-                            let rows = stats.get().stats.by_model;
-                            if rows.is_empty() {
-                                return view! {
-                                    <tr class="empty-row">
-                                        <td colspan="6" class="muted empty-cell">"这个窗口里还没有账"</td>
-                                    </tr>
-                                }
-                                .into_any();
-                            }
-                            rows.into_iter()
-                                .map(|m| {
-                                    view! {
-                                        <tr>
-                                            <td data-label="模型名"><code>{m.model}</code></td>
-                                            <td data-label="请求" class="num">{fmt::num(m.requests)}</td>
-                                            <td data-label="成功" class="num">{fmt::num(m.ok)}</td>
-                                            <td data-label="失败" class="num">
-                                                {if m.failed > 0 {
-                                                    view! { <span class="bad-text">{fmt::num(m.failed)}</span> }.into_any()
-                                                } else {
-                                                    view! { <span class="muted">"0"</span> }.into_any()
-                                                }}
-                                            </td>
-                                            <td data-label="客户端错" class="num">{fmt::num(m.client_errors)}</td>
-                                            <td data-label="Token" class="num">{fmt::num(m.input_tokens + m.output_tokens)}</td>
-                                        </tr>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
-                    </tbody>
-                </table>
-            </div>
-                </div>
-            </section>
-
-            <section class="card">
-                <header class="card-head">
-            <h2>"按客户端"</h2>
-            <p class="muted small">
-                "谁在调这个网关、各自多少请求。没取到来源地址的单独占一行（显示「未知」），不藏起来。"
-            </p>
-                </header>
-                <div class="card-body flush">
-            <div class="table-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th>"来源"</th>
-                            <th class="num">"请求数"</th>
-                            <th class="num">"成功"</th>
-                            <th class="num">"失败"</th>
-                            <th class="num">"客户端错"</th>
-                            <th class="num">"Token"</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {move || {
-                            let rows = stats.get().stats.by_client;
-                            if rows.is_empty() {
-                                return view! {
-                                    <tr class="empty-row">
-                                        <td colspan="6" class="muted empty-cell">"这个窗口里还没有账"</td>
-                                    </tr>
-                                }
-                                .into_any();
-                            }
-                            rows.into_iter()
-                                .map(|c| {
-                                    view! {
-                                        <tr>
-                                            <td data-label="来源">
-                                                <code>{c.client_ip.unwrap_or_else(|| "未知".into())}</code>
-                                            </td>
-                                            <td data-label="请求" class="num">{fmt::num(c.requests)}</td>
-                                            <td data-label="成功" class="num">{fmt::num(c.ok)}</td>
-                                            <td data-label="失败" class="num">
-                                                {if c.failed > 0 {
-                                                    view! { <span class="bad-text">{fmt::num(c.failed)}</span> }.into_any()
-                                                } else {
-                                                    view! { <span class="muted">"0"</span> }.into_any()
-                                                }}
-                                            </td>
-                                            <td data-label="客户端错" class="num">{fmt::num(c.client_errors)}</td>
-                                            <td data-label="Token" class="num">{fmt::num(c.input_tokens + c.output_tokens)}</td>
-                                        </tr>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
-                    </tbody>
-                </table>
-            </div>
-                </div>
-            </section>
-
-            <section class="card">
-                <header class="card-head">
-            <h2>"错误分布"</h2>
-            <p class="muted small">
-                "失败和客户端错各自是什么原因、各多少次。没记原因的也占一行，免得「一堆失败却看不到原因」。"
-            </p>
-                </header>
-                <div class="card-body flush">
-            <div class="table-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th>"原因"</th>
-                            <th class="num">"次数"</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {move || {
-                            let rows = stats.get().stats.errors;
-                            if rows.is_empty() {
-                                return view! {
-                                    <tr class="empty-row">
-                                        <td colspan="2" class="muted empty-cell">"这个窗口里没有失败"</td>
-                                    </tr>
-                                }
-                                .into_any();
-                            }
-                            rows.into_iter()
-                                .map(|e| {
-                                    view! {
-                                        <tr>
-                                            <td data-label="原因" class="small">{e.error}</td>
-                                            <td data-label="次数" class="num">{fmt::num(e.count)}</td>
-                                        </tr>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
-                    </tbody>
-                </table>
-            </div>
-                </div>
-            </section>
-
-            <section class="card">
-                <header class="card-head">
-            <h2>"能被调用的模型名"</h2>
-            <p class="muted small">
-                "客户端填这些名字才打得通（和 "
-                <code>"/v1/models"</code>
-                " 用的是同一份判断：渠道里勾过它、并且至少有一条启用的渠道在服务它）。"
-                "标了"
-                <span class="tag vision">"视觉"</span>
-                "的名字后面有能看图的渠道 —— 带图请求要打这类名字，"
-                "打到没标的会回 422（说清楚，不悄悄丢图）。"
-                "名字不用在这儿建：在「渠道」页勾上就出现。"
-            </p>
                 </header>
                 <div class="card-body">
             <div class="chips">
@@ -606,7 +327,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 }}
             </div>
                 </div>
-            </section>
+            </details>
         </div>
     }
 }

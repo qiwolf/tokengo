@@ -412,10 +412,10 @@ fn Shell(ctx: Ctx) -> impl IntoView {
         <div class="shell">
             <header class="topbar">
                 <div class="topbar-inner">
-                    <span class="brand">
-                        {tokengo_shared::BRAND}
+                    <button class="brand brand-home" title="返回总览" on:click=move |_| ctx.go(Page::Overview)>
+                        "Token-Go"
                         <span class="muted small">"v" {tokengo_shared::VERSION}</span>
-                    </span>
+                    </button>
                     // 桌面端：五个页面横排（手机上这排会藏起来，走右上角菜单）
                     <nav class="topnav">
                         {Page::ALL
