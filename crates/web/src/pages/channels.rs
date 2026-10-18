@@ -1150,10 +1150,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 mver.get();
                                                 let catalog = pulled.get();
                                                 let filter = pull_filter.get();
-                                                // 这份清单只放**上游报回来的名字**
-                                                // （用户 2026-10-18：上游没有的名字不许混进来 —— 虚拟组名
-                                                // auto 这类会让人以为上游真有这个模型）。这条渠道自己认、
-                                                // 上游没报的名字另起一块显示，见 m-list 下面那个 .m-own。
+                                                // 这份清单只放**上游报回来的名字**（用户 2026-10-18：
+                                                // 上游没有的名字不许混进来 —— 虚拟组名 auto 这类会让人
+                                                // 以为上游真有这个模型）。自己认的名字不在这一列显示。
                                                 let names: Vec<String> =
                                                     filter_catalog(&catalog, &filter, SHOW_LIMIT)
                                                         .into_iter()
@@ -1482,38 +1481,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     .into_any()
                                             }}
                                         </div>
-
-                                        {move || {
-                                            // 上游没报、但这条渠道自己认的名字（虚拟组名 auto 这类）。
-                                            // 单独一条、写清来路 —— 不混进上面那份上游清单，也不再给
-                                            // 「一键建同名模型组」那种按钮（用户：不应该有这东西）。
-                                            mver.get();
-                                            let up: Vec<String> = pulled
-                                                .get_untracked()
-                                                .into_iter()
-                                                .map(|m| m.id.trim().to_string())
-                                                .collect();
-                                            let mine: Vec<String> = f_models
-                                                .get_untracked()
-                                                .into_iter()
-                                                .map(|m| m.model.trim().to_string())
-                                                .filter(|n| {
-                                                    !n.is_empty() && !up.iter().any(|x| x == n)
-                                                })
-                                                .collect();
-                                            if mine.is_empty() {
-                                                return ().into_any();
-                                            }
-                                            view! {
-                                                <div class="m-own">
-                                                    <span class="muted small">
-                                                        "这条渠道自己认、上游没报的名字（不在这份清单里）："
-                                                    </span>
-                                                    <code>{mine.join("、")}</code>
-                                                </div>
-                                            }
-                                                .into_any()
-                                        }}
 
                                         <div class="pull-bar">
                                             <input
