@@ -991,8 +991,14 @@ impl StreamState {
             return;
         };
         let (input, output) = self.scanner.totals();
+        let ended = self.scanner.terminal();
+        let complete = complete && ended && !self.scanner.error;
         let empty = complete && !self.scanner.saw_payload();
-        let note = if !complete {
+        let note = if self.scanner.error {
+            Some("上游流式返回错误事件，已发出去的内容收不回来")
+        } else if !ended {
+            Some("上游流式缺少结束标记，回答可能未完成；已输出内容不重试")
+        } else if !complete {
             Some("上游流式中途断了，已发出去的内容收不回来")
         } else if empty {
             Some("上游流里一个字都没说（没 content、没 tool_calls、没推理内容）")
@@ -1081,6 +1087,10 @@ pub struct SseScanner {
     /// 整条流里到底有没有真内容（正文 / 工具调用 / 推理内容）——
     /// 流式不能等读完再判断（字节早发出去了），只能边转边记。
     payload: bool,
+    done_event: bool,
+    finished_choices: std::collections::HashSet<u64>,
+    seen_choices: std::collections::HashSet<u64>,
+    error: bool,
 }
 
 /// 一行都解析不出来的东西不该把内存吃光（上游万一不回 SSE）。
@@ -1105,10 +1115,31 @@ impl SseScanner {
             return;
         };
         let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
+        if data == "[DONE]" {
+            self.done_event = true;
+            return;
+        }
+        if data.is_empty() {
             return;
         }
         if let Ok(v) = serde_json::from_str::<Value>(data) {
+            if v.get("error").is_some_and(|e| !e.is_null()) {
+                self.error = true;
+            }
+            if let Some(choices) = v.get("choices").and_then(Value::as_array) {
+                for choice in choices {
+                    let index = choice.get("index").and_then(Value::as_u64).unwrap_or(0);
+                    // Bound metadata even for malformed upstreams with ever-changing indices.
+                    if self.seen_choices.len() < 128 || self.seen_choices.contains(&index) {
+                        self.seen_choices.insert(index);
+                        if choice.get("finish_reason").and_then(Value::as_str).is_some_and(|r| !r.is_empty()) {
+                            self.finished_choices.insert(index);
+                        }
+                    } else {
+                        self.error = true;
+                    }
+                }
+            }
             if tokengo_shared::chunk_has_payload(&v) {
                 self.payload = true;
             }
@@ -1118,6 +1149,11 @@ impl SseScanner {
                 self.output = o;
             }
         }
+    }
+
+    fn terminal(&self) -> bool {
+        self.done_event || (!self.seen_choices.is_empty()
+            && self.seen_choices.is_subset(&self.finished_choices))
     }
 
     pub fn totals(&self) -> (i64, i64) {
@@ -1343,6 +1379,23 @@ mod tests {
         s.feed(b"data: {\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n");
         s.feed(b"data: [DONE]\n");
         assert_eq!(s.totals(), (9, 4));
+    }
+
+    #[test]
+    fn sse_completion_requires_done_or_all_choices_finished_and_no_error() {
+        let mut s = SseScanner::default();
+        s.feed(b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"half\"}},{\"index\":1,\"delta\":{\"content\":\"half\"}}]}\n\n");
+        assert!(!s.terminal());
+        s.feed(b"data: {\"choices\":[{\"index\":0,\"finish_reason\":\"stop\"}]}\n\n");
+        assert!(!s.terminal(), "another choice is still incomplete");
+        s.feed(b"data: {\"choices\":[{\"index\":1,\"finish_reason\":\"tool_calls\"}]}\n\n");
+        assert!(s.terminal(), "explicit finish reasons work without DONE");
+        let mut done = SseScanner::default();
+        done.feed(b"data: [DO");
+        done.feed(b"NE]\r\n\r\n");
+        assert!(done.terminal());
+        done.feed(b"data: {\"error\":{\"message\":\"broken\"}}\n\n");
+        assert!(done.error, "DONE must not hide an upstream error event");
     }
 
     #[test]

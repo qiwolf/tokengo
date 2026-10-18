@@ -4,7 +4,7 @@
 //! 看不到"这条渠道被叫了几次、几次是它自己坏的"。要判断某条渠道是不是真在干活、
 //! 值不值得留在列表里，必须把失败也算进分母。
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::{now_ms, Result};
@@ -209,6 +209,67 @@ pub struct RequestRow {
     pub error: Option<String>,
 }
 
+fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
+    Ok(RequestRow {
+        served_model: r.get(12)?,
+        first_byte_ms:r.get(13)?,
+        client_ip:r.get(14)?,
+        user_agent:r.get(15)?,
+        streamed:r.get::<_,i64>(16)?!=0,
+        id: r.get(0)?,
+        ts_ms: r.get(1)?,
+        endpoint: r.get(2)?,
+        model: r.get(3)?,
+        status: r.get(4)?,
+        http_status: r.get(5)?,
+        channel_id: r.get(6)?,
+        latency_ms: r.get(7)?,
+        input_tokens: r.get(8)?,
+        output_tokens: r.get(9)?,
+        has_image: r.get::<_, i64>(10)? != 0,
+        error: r.get(11)?,
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AttemptRow {
+    pub ordinal: i64,
+    pub channel_id: i64,
+    pub channel_name: Option<String>,
+    pub outcome: String,
+    pub http_status: Option<i64>,
+    pub duration_ms: i64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestDetail {
+    pub request: RequestRow,
+    pub attempts: Vec<AttemptRow>,
+}
+
+/// Exact lookup is independent of the recent-list limit and retention window.
+pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
+    let request = conn.query_row(
+        "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms,
+                client_ip, user_agent, streamed FROM requests WHERE id = ?1",
+        [id], request_row,
+    ).optional()?;
+    let Some(request) = request else { return Ok(None); };
+    // LEFT JOIN keeps history readable after a channel has been deleted.
+    let mut stmt = conn.prepare(
+        "SELECT a.ordinal, a.channel_id, c.name, a.outcome, a.http_status, a.duration_ms, a.error
+         FROM attempts a LEFT JOIN channels c ON c.id = a.channel_id
+         WHERE a.request_id = ?1 ORDER BY a.ordinal ASC, a.id ASC",
+    )?;
+    let attempts = stmt.query_map([id], |r| Ok(AttemptRow {
+        ordinal: r.get(0)?, channel_id: r.get(1)?, channel_name: r.get(2)?,
+        outcome: r.get(3)?, http_status: r.get(4)?, duration_ms: r.get(5)?, error: r.get(6)?,
+    }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(Some(RequestDetail { request, attempts }))
+}
+
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
@@ -217,25 +278,7 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     )?;
     let rows = stmt
         .query_map([limit], |r| {
-            Ok(RequestRow {
-                served_model: r.get(12)?,
-                first_byte_ms:r.get(13)?,
-                client_ip:r.get(14)?,
-                user_agent:r.get(15)?,
-                streamed:r.get::<_,i64>(16)?!=0,
-                id: r.get(0)?,
-                ts_ms: r.get(1)?,
-                endpoint: r.get(2)?,
-                model: r.get(3)?,
-                status: r.get(4)?,
-                http_status: r.get(5)?,
-                channel_id: r.get(6)?,
-                latency_ms: r.get(7)?,
-                input_tokens: r.get(8)?,
-                output_tokens: r.get(9)?,
-                has_image: r.get::<_, i64>(10)? != 0,
-                error: r.get(11)?,
-            })
+            request_row(r)
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)

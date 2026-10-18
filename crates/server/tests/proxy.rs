@@ -1049,6 +1049,23 @@ async fn streaming_is_passed_through_and_usage_is_scraped() {
     assert_eq!((rows[0].2, rows[0].3), (21, 13), "SSE 里的 usage 要抠出来记账");
 }
 
+#[tokio::test]
+async fn a_clean_eof_without_a_terminal_event_is_not_a_success_or_retried() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Status(200,
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\"}}]}}]}\n\n")).await;
+    let channel = f.add_channel("partial", &m.base, ChannelSpec::default());
+    f.serve("partial", &[channel]);
+    let (_, body, _) = post(&f, CHAT, Some(KEY),
+        json!({"model":"partial","stream":true,"messages":[]})).await;
+    assert!(String::from_utf8_lossy(&body).contains("tool_calls"));
+    let rows = f.request_rows();
+    assert_eq!(rows[0].0, "failed", "clean HTTP EOF is not proof of a complete answer");
+    assert!(rows[0].5.as_deref().unwrap_or("").contains("结束标记"));
+    assert_eq!(m.count(), 1, "never retry an already delivered tool call");
+}
+
 // ───────────────────────── 验收点 6：客户端断开 ─────────────────────────
 
 /// 反证：客户端中途断开，**不算渠道的账**，请求记成 canceled。

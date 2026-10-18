@@ -1446,3 +1446,15 @@ td[data-label="类型"] code {
 .overview-metrics .stat-value { font-size:19px; line-height:1.2; text-align:right; overflow-wrap:anywhere; letter-spacing:-.3px; }
 .overview-metrics .stat-sub { grid-column:1/-1; font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
 @media(max-width:46rem) { .overview-metrics {grid-template-columns:repeat(2,minmax(0,1fr));} .overview-metrics .stat {padding:8px 10px;} .overview-metrics .stat:nth-child(2){border-right:0;} .overview-metrics .stat:nth-child(-n+2){border-bottom:1px solid var(--line);} }
+
+/* On-demand request inspection shares the overview's compact visual language. */
+.request-lookup { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:0 16px 12px; }
+.request-lookup input { flex:1; min-width:100px; max-width:240px; }
+.request-inspector { margin:0 16px 14px; padding:12px; border:1px solid var(--line); border-radius:9px; min-width:0; overflow-wrap:anywhere; }
+.request-inspector header,.attempt-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.request-inspector h3,.request-inspector h4 { margin:0; }
+.request-inspector h4 { margin-top:16px; }
+.request-attempts { list-style:none; padding:0; margin:8px 0 0; }
+.request-attempt { padding:10px 0; border-top:1px solid var(--line); font-size:12px; font-variant-numeric:tabular-nums; }
+.request-attempt p { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+@media(max-width:46rem) { .request-lookup { padding:0 12px 12px; } .request-inspector { margin:0 12px 12px; } }

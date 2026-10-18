@@ -4,7 +4,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{LogRow, NameRoute, StatsResp, status_label};
+use crate::model::{LogRow, NameRoute, RequestDetail, StatsResp, status_label};
 use crate::pages::PageHead;
 use crate::Ctx;
 
@@ -65,6 +65,28 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
 
     let recent_busy = RwSignal::new(false);
     let expanded = RwSignal::new(None::<i64>);
+    let detail = RwSignal::new(None::<RequestDetail>);
+    let detail_error = RwSignal::new(None::<String>);
+    let detail_busy = RwSignal::new(false);
+    let lookup = RwSignal::new(String::new());
+    let detail_generation = RwSignal::new(0u64);
+    let open_detail = move |id: i64| {
+        detail_generation.update(|v| *v += 1);
+        let generation = detail_generation.get_untracked();
+        expanded.set(Some(id));
+        detail.set(None);
+        detail_error.set(None);
+        detail_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = api::request_detail(id).await;
+            if expanded.get_untracked() != Some(id) || detail_generation.get_untracked() != generation { return; }
+            match result {
+                Ok(v) => detail.set(Some(v)),
+                Err(e) => { ctx.note_err(&e); detail_error.set(Some(e.message)); }
+            }
+            detail_busy.set(false);
+        });
+    };
     let refresh_active = move || {
         if busy.get_untracked() || recent_busy.get_untracked() { return; }
         recent_busy.set(true);
@@ -190,6 +212,25 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <Show when=move || category.get()==0>
             <section class="card recent-calls">
                 <header class="card-head"><h2>"最近调用"</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
+                <form class="request-lookup" on:submit=move |ev| {
+                    ev.prevent_default();
+                    match lookup.get_untracked().trim().parse::<i64>() {
+                        Ok(id) if id > 0 => open_detail(id),
+                        _ => { detail_error.set(Some("请输入正整数请求号".into())); expanded.set(None); }
+                    }
+                }>
+                    <label for="request-id">"按请求号查找"</label>
+                    <input id="request-id" inputmode="numeric" placeholder="完整请求 ID" prop:value=move || lookup.get() on:input=move |ev| lookup.set(event_target_value(&ev))/>
+                    <button class="ghost" type="submit">"查找"</button>
+                </form>
+                {move || detail_error.get().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
+                <Show when=move || expanded.get().is_some()>
+                    <section class="request-inspector" aria-label="请求详情" aria-live="polite">
+                        <header><h3>{move || format!("请求 #{}", expanded.get().unwrap_or_default())}</h3><button class="ghost" on:click=move |_| expanded.set(None)>"关闭详情"</button></header>
+                        <Show when=move || detail_busy.get()><p class="muted">"正在读取尝试记录…"</p></Show>
+                        {move || detail.get().map(|d| view! { <RequestDetailView detail=d/> })}
+                    </section>
+                </Show>
                 <div class="recent-list">
                     {move || {
                         let rows = recent.get();
@@ -201,7 +242,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                             let channel=channel_name(r.channel_id);
                             let time=fmt::ts(r.ts_ms);
                             let clock=time.get(11..).unwrap_or(&time).to_string();
-                            let served=r.served_model.clone();
+
                             view! {
                                 <article class="recent-call">
                                     <div class="recent-main">
@@ -212,24 +253,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     <div class="recent-meta">
                                         <time title=time>{clock}</time><span class="recent-channel">{channel.clone()}</span>
                                         {r.has_image.then(||view! { <span class="tag vision">"带图"</span> })}
-                                        <button class="ghost" aria-expanded=opened on:click=move |_| expanded.update(|v| *v=if *v==Some(id) {None} else {Some(id)})>{if opened {"收起"} else {"详情"}}</button>
+                                        <button class="ghost" aria-expanded=opened on:click=move |_| { if expanded.get_untracked()==Some(id) { expanded.set(None); } else { open_detail(id); } }>{if opened {"收起"} else {"详情"}}</button>
                                     </div>
-                                    {opened.then(||view! {
-                                        <div class="recent-detail">
-                                            <span>{format!("请求 #{} · {}",id,r.endpoint)}</span>
-                                            <span>{format!("时间：{}",fmt::ts(r.ts_ms))}</span>
-                                            <span>{format!("渠道：{channel}")}</span>
-                                            <span>{format!("首字节延迟：{}",r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span>
-                                            <span>{format!("总耗时：{}",fmt::dur(r.latency_ms))}</span>
-                                            <span>{format!("请求应用（User-Agent）：{}",r.user_agent.as_deref().unwrap_or("未提供"))}</span>
-                                            <span>{format!("来源 IP：{}",r.client_ip.as_deref().unwrap_or("未提供"))}</span>
-                                            <span>{if r.streamed {"输出方式：流式"} else {"输出方式：非流式"}}</span>
-                                            {(!served.is_empty()).then(||view! { <span>{format!("实际模型：{served}")}</span> })}
-                                            <span>{format!("Token 入 {} / 出 {}",fmt::num(r.input_tokens),fmt::num(r.output_tokens))}</span>
-                                            {r.http_status.map(|h|view! { <span>{format!("HTTP {h}")}</span> })}
-                                            {r.error.filter(|e| !e.is_empty()).map(|e|view! { <p class="bad-text">{e}</p> })}
-                                        </div>
-                                    })}
+
                                 </article>
                             }
                         }).collect_view().into_any()
@@ -332,6 +358,57 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     }
 }
 
+fn attempt_action(previous: Option<i64>, current: i64) -> &'static str {
+    match previous {
+        None => "首次尝试",
+        Some(id) if id == current => "同渠道重试",
+        Some(_) => "切换渠道",
+    }
+}
+
+#[component]
+fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
+    let r = detail.request;
+    let empty = detail.attempts.is_empty();
+    let mut previous = None;
+    let attempts = detail.attempts.into_iter().enumerate().map(|(i, a)| {
+        let action = attempt_action(previous, a.channel_id);
+        previous = Some(a.channel_id);
+        let (outcome, css) = match a.outcome.as_str() {
+            "success" => ("成功", "good"),
+            "channel_fault" => ("渠道失败", "bad"),
+            "client_error" => ("客户端错误", "warn"),
+            "canceled" => ("已取消", "warn"),
+            other => (other, ""),
+        };
+        view! {
+            <li class="request-attempt">
+                <div class="attempt-head"><b>{format!("第 {} 次 · {action}", i + 1)}</b><span class=format!("tag {css}")>{outcome.to_string()}</span></div>
+                <div>{format!("{} · 渠道 #{} · {} · {}", a.channel_name.unwrap_or_else(|| "已删除的渠道".into()), a.channel_id, a.http_status.map(|h| format!("HTTP {h}")).unwrap_or_else(|| "未收到 HTTP 状态".into()), fmt::dur(a.duration_ms))}</div>
+                {a.error.filter(|e| !e.is_empty()).map(|e| view! { <p class="bad-text">{e}</p> })}
+            </li>
+        }
+    }).collect_view();
+    view! {
+        <div class="recent-detail">
+            <span>{format!("{} · {} · {}", fmt::ts(r.ts_ms), r.endpoint, r.model)}</span>
+            <span>{format!("结果：{} · HTTP {}", status_label(&r.status).0, r.http_status.map(|h| h.to_string()).unwrap_or_else(|| "未记录".into()))}</span>
+            <span>{format!("总耗时：{} · 首字节：{}", fmt::dur(r.latency_ms), r.first_byte_ms.map(fmt::dur).unwrap_or_else(|| "未记录".into()))}</span>
+            <span>{format!("最终渠道：{}", r.channel_id.map(|id| format!("#{id}")).unwrap_or_else(|| "未进入渠道".into()))}</span>
+            <span>{format!("来源 IP：{}", r.client_ip.as_deref().unwrap_or("未提供"))}</span>
+            <span>{format!("请求应用（User-Agent）：{}", r.user_agent.as_deref().unwrap_or("未提供"))}</span>
+            <span>{if r.streamed { "输出方式：流式" } else { "输出方式：非流式" }}</span>
+            {r.has_image.then(|| view! { <span>"带图"</span> })}
+            {(!r.served_model.is_empty()).then(|| view! { <span>{format!("实际模型：{}", r.served_model)}</span> })}
+            <span>{format!("Token 入 {} / 出 {}", fmt::num(r.input_tokens), fmt::num(r.output_tokens))}</span>
+            {r.error.filter(|e| !e.is_empty()).map(|e| view! { <p class="bad-text">{e}</p> })}
+        </div>
+        <h4>"渠道尝试顺序"</h4>
+        <p class="muted small">"连续使用同一渠道表示重试；换到另一渠道表示切换。这里只展示已记录的实际尝试，不代表当前路由配置。耗时不含尝试之间的等待；渠道名称为当前名称。"</p>
+        {if empty { view! { <p class="muted">"没有渠道尝试记录：请求可能在路由前被拒绝，或尚未完成记账。"</p> }.into_any() } else { view! { <ol class="request-attempts">{attempts}</ol> }.into_any() }}
+    }
+}
+
 /// 流水页也用得到的「状态」小标签在这里定义一次。
 #[component]
 pub fn StatusTag(status: String) -> impl IntoView {
@@ -342,6 +419,14 @@ pub fn StatusTag(status: String) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use crate::model::KindStat;
+
+    #[test]
+    fn attempt_labels_explain_retry_and_channel_switch() {
+        assert_eq!(super::attempt_action(None, 7), "首次尝试");
+        assert_eq!(super::attempt_action(Some(7), 7), "同渠道重试");
+        assert_eq!(super::attempt_action(Some(7), 9), "切换渠道");
+    }
+
 
     /// 成功率的分子分母要跟总览四张卡一个口径：分母是「打进来几次」，不是「试了几次」。
     #[test]

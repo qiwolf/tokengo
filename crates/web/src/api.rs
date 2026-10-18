@@ -317,6 +317,10 @@ pub async fn stats(hours: i64) -> Result<StatsResp, ApiErr> {
     typed("GET", &format!("/api/stats?hours={hours}"), None).await
 }
 
+pub async fn request_detail(id: i64) -> Result<RequestDetail, ApiErr> {
+    typed("GET", &format!("/api/requests/{id}"), None).await
+}
+
 pub async fn logs(limit: u32) -> Result<Vec<LogRow>, ApiErr> {
     let r: LogsResp = typed("GET", &format!("/api/logs?limit={limit}"), None).await?;
     Ok(r.logs)

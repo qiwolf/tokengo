@@ -325,6 +325,23 @@ pub struct LogsResp {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct AttemptRow {
+    pub ordinal: i64,
+    pub channel_id: i64,
+    pub channel_name: Option<String>,
+    pub outcome: String,
+    pub http_status: Option<i64>,
+    pub duration_ms: i64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct RequestDetail {
+    pub request: LogRow,
+    pub attempts: Vec<AttemptRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ProbeResp {
     pub ok: bool,
     pub channel_id: i64,
