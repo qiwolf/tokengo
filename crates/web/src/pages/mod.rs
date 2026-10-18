@@ -104,11 +104,11 @@ pub fn PageHead(
 ) -> impl IntoView {
     view! {
         <div class="page-head">
-            <div class="page-head-text">
+            <div class="page-title-row">
                 <h1>{title}</h1>
-                <p class="muted">{desc}</p>
+                {children.map(|c| view! { <div class="page-head-actions">{c()}</div> })}
             </div>
-            {children.map(|c| view! { <div class="page-head-actions">{c()}</div> })}
+            <p class="muted small">{desc}</p>
         </div>
     }
 }

@@ -192,9 +192,8 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
             <PageHead
                 title="设置"
                 desc="对外 key、面板口令、登录着的设备。"
-            />
+            ><button class="ghost" on:click=move |_| reload()>"刷新"</button></PageHead>
             <div class="toolbar">
-                <button class="ghost" on:click=move |_| reload()>"刷新"</button>
                 <span class="muted small">
                     {move || format!("面板 v{} · 在线会话 {} 个", tokengo_shared::VERSION, info.get().active_sessions)}
                 </span>

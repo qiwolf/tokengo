@@ -129,7 +129,7 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
                     class:active=move || auto.get()
                     on:click=move |_| toggle_auto(!auto.get_untracked())
                 >
-                    {move || if auto.get() { "自动刷新：开（3 秒）" } else { "自动刷新：关" }}
+                    {move || if auto.get() { "自动刷新：开（5 秒）" } else { "自动刷新：关" }}
                 </button>
             </PageHead>
 
