@@ -77,6 +77,21 @@ pub fn num(v: i64) -> String {
     }
 }
 
+/// 上下文长度的人话刻度：`8,192` → `8K`、`163840` → `164K`、`1_000_000` → `1M`。
+///
+/// 上游报的是 token 数（有的写得很大），面板上是一行小标签，别塞六个数字进去。
+pub fn ctx(n: i64) -> String {
+    if n < 1000 {
+        return n.to_string();
+    }
+    if n >= 1_000_000 {
+        let m = n as f64 / 1_000_000.0;
+        let s = format!("{m:.1}");
+        return format!("{}M", s.trim_end_matches(".0"));
+    }
+    format!("{}K", (n + 500) / 1000)
+}
+
 /// 百分数，一位小数；分母是 0 时回 `—`（不假装 0%）。
 pub fn pct(part: i64, whole: i64) -> String {
     if whole <= 0 {
@@ -147,5 +162,14 @@ mod tests {
         assert_eq!(num(1000), "1,000");
         assert_eq!(num(1234567), "1,234,567");
         assert_eq!(num(-1234), "-1,234");
+    }
+
+    #[test]
+    fn context_lengths_read_as_a_short_badge() {
+        assert_eq!(ctx(512), "512");
+        assert_eq!(ctx(8192), "8K");
+        assert_eq!(ctx(163_840), "164K");
+        assert_eq!(ctx(1_000_000), "1M");
+        assert_eq!(ctx(1_048_576), "1M", "一位小数，整数不留 .0");
     }
 }
