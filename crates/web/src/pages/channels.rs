@@ -216,7 +216,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
     // 这条渠道的非流式响应要不要剥壳（cline.bot 那种 `{"data": {…}, "success": true}`）
     let f_unwrap = RwSignal::new(false);
-    // 这条渠道「同时最多几发」：0 = 不限。填了就在网关门口排队/换腿，
+    // 这条渠道「同时最多几发」：0 = 不限。填了就在网关门口排队/换渠道，
     // 免得一次铺开几十发把上游那把 key 打成 429（上游多数是按凭据限并发的）。
     let f_cap = RwSignal::new(0u32);
     // 输入框是文本，提交时再解析成数字（RwSignal<String> 免得打字时被反复 parse 打断）

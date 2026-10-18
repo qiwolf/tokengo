@@ -176,6 +176,52 @@ mod tests {
         );
     }
 
+    /// 面板资源要**压着发**：wasm 1.52 MB 不压就是在公网上白下 1 MB（用户报「太大了」）。
+    /// 反证：把 `CompressionLayer` 从 `app()` 里去掉 → 这条用例变红。
+    #[tokio::test]
+    async fn the_panel_assets_go_out_compressed_and_cached() {
+        let dir = std::env::temp_dir().join(format!("tokengo-web-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 一段够长、够重复的假 wasm（真 wasm 也是这种「压得动」的文本型字节）
+        let blob = "abcdefgh".repeat(20_000);
+        std::fs::write(dir.join("index.html"), "<html>面板</html>").unwrap();
+        std::fs::write(dir.join("tokengo-web-x.wasm"), &blob).unwrap();
+
+        std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
+        let cfg = crate::config::Config {
+            listen: "127.0.0.1:0".into(),
+            db_path: dir.join("t.db"),
+            master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
+            web_dir: Some(dir.clone()),
+        };
+        let st = crate::AppState::init(cfg).unwrap();
+        let app = crate::app(st);
+
+        let req = axum::http::Request::builder()
+            .uri("/ui/tokengo-web-x.wasm")
+            .header("accept-encoding", "gzip")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = tower::ServiceExt::oneshot(app, req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-encoding").map(|v| v.to_str().unwrap()),
+            Some("gzip"),
+            "wasm 必须压着发，否则白下 1 MB"
+        );
+        assert_eq!(
+            resp.headers().get("cache-control").map(|v| v.to_str().unwrap()),
+            Some("public, max-age=31536000, immutable"),
+            "带内容哈希的产物要能长缓存"
+        );
+        assert_eq!(
+            resp.headers().get("content-type").and_then(|v| v.to_str().ok()),
+            Some("application/wasm")
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn content_types_cover_what_trunk_emits() {
         assert!(content_type(Path::new("a/index.html")).starts_with("text/html"));

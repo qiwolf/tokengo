@@ -517,7 +517,7 @@ pub fn cap_chars(s: &str, max: usize) -> String {
 ///
 /// 为什么要它：上游回 429 时它自己会说「等多久再来」。现网实测里 429 有 13 次，
 /// 其中「Go usage limit exceeded」和「周额度用完」这两种等 1 秒重试是毫无意义的
-/// —— 额度的恢复时间以小时计。照着它说的等，或者干脆别在这条腿上耗，更省时间。
+/// —— 额度的恢复时间以小时计。照着它说的等，或者干脆别在这条渠道上耗，更省时间。
 pub fn retry_after_ms(value: &str) -> Option<u64> {
     let v = value.trim();
     if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit()) {

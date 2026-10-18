@@ -299,7 +299,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
         let permit = match pre_permits.remove(&channel.id.0) {
             Some(p) => Some(p),
-            None => match state.leg_gate(channel.id.0, plan.cap(channel.id)) {
+            None => match state.channel_gate(channel.id.0, plan.cap(channel.id)) {
                 None => None,
                 Some(sem) => match sem.clone().try_acquire_owned() {
                     Ok(p) => Some(p),
@@ -377,7 +377,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let dur = now_ms() - t0;
             match classify_status(status) {
                 AttemptOutcome::Success => {
-                    // 流式：第一个字节发出去之后就不能换腿了，所以先记账、更新路由状态，
+                    // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
                     // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
                     if req.stream {
                         record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
@@ -399,8 +399,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     }
 
                     // 非流式：**先把正文读下来再算成功**。有的上游回 200 却一句话不说
-                    // （现网 4 天 9 次），那种必须当这条腿的毛病去重试/换腿 —— 不能先把
-                    // 路由状态记成「这条腿好了」，更不能把空泡泡原样丢给用户。
+                    // （现网 4 天 9 次），那种必须当这条渠道的毛病去重试/换渠道 —— 不能先把
+                    // 路由状态记成「这条渠道好了」，更不能把空泡泡原样丢给用户。
                     let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
                     let (resp, input, output, empty) = if req.endpoint == EndpointKind::Rerank {
                         let (r, i, o) = buffer_rerank_passthrough(resp, http, &req.body).await;
@@ -426,7 +426,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             Some(&note),
                         );
                         ordinal += 1;
-                        tracing::warn!("渠道 {} 回了 200 但一句话没说，按这条腿的毛病处理", channel.name);
+                        tracing::warn!("渠道 {} 回了 200 但一句话没说，按这条渠道的毛病处理", channel.name);
                         last_fault = Some(format!("{}：{note}", channel.name));
                         continue;
                     }
@@ -498,7 +498,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     last_http = Some(err);
                     if let Some(ms) = after {
                         // 上游自己说了「过多久再来」：
-                        // · 说得很久（>2 秒）→ **别在这条腿上耗**，剩下的尝试直接放弃、换下一条；
+                        // · 说得很久（>2 秒）→ **别在这条渠道上耗**，剩下的尝试直接放弃、换下一条；
                         //   现网那两种 429（Go 用量 / 周额度）等 1 秒重试纯属白等。
                         // · 说得不久 → 就按它说的等，比我们的固定节拍更贴合。
                         if ms > LONG_RETRY_AFTER_MS {
@@ -694,7 +694,7 @@ pub fn usage_from_value(v: &Value) -> (i64, i64) {
 /// `choices` 只能读到空）。**只在真认出那种形状时才剥**，其余一律原样透传。
 ///
 /// `check_empty`：对话端点要顺手看一眼「它到底说没说话」。回了 200 但一句话没有的，
-/// 第四个返回值给出说明 —— 调用方拿它当**这条渠道的毛病**去重试/换腿，而不是把空泡泡
+/// 第四个返回值给出说明 —— 调用方拿它当**这条渠道的毛病**去重试/换渠道，而不是把空泡泡
 /// 原样丢给用户。
 #[allow(clippy::type_complexity)]
 async fn buffer_passthrough(

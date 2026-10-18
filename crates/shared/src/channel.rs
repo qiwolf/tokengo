@@ -144,7 +144,7 @@ pub struct Channel {
     ///
     /// 上游免费额度多数是按凭据限并发的：同一把 key 上同时压几十发，上游直接回
     /// 429/503（现网 4 天 503「bridge busy」151 次、502「上游不可用」168 次就是这类）。
-    /// 由 `db::groups::resolve_channels` 从渠道行带上来，网关按它在门口排队/换腿。
+    /// 由 `db::groups::resolve_channels` 从渠道行带上来，网关按它在门口排队/换渠道。
     #[serde(default)]
     pub max_concurrent: u32,
     /// **非流式响应外面套了一层壳时自动剥掉**（面板上勾「响应解包」）。
@@ -367,9 +367,9 @@ pub fn unwrap_envelope(body: &mut Value) -> bool {
 
 /// 上游回了 200，但**一句话都没说**：既没有正文，也没有工具调用，也没有推理内容。
 ///
-/// 为什么要认出它：现网 4 天里有 9 次这种回复（cline 那条腿自己都说约 3% 的上游 500
+/// 为什么要认出它：现网 4 天里有 9 次这种回复（cline 那条渠道自己都说约 3% 的上游 500
 /// 是「empty response content」），客户端拿到的是一个空泡泡 —— 用户以为模型发呆，
-/// 其实换一条腿重发就好了。判据对齐现网老网关的说法（`stream produced no content and
+/// 其实换一条渠道重发就好了。判据对齐现网老网关的说法（`stream produced no content and
 /// no tool calls`），另加 `reasoning_content`：有些推理模型把答案全放在推理字段里、
 /// content 是空的，那**不是**空回复（判错了会把好好的回答重发一遍）。
 ///

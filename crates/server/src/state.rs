@@ -45,7 +45,7 @@ pub struct AppState {
     /// 请求路径上抢不到库锁的活先丢这儿，由后台落账员补写（见 `WriteJob`）。
     writer: WriteQueue,
     /// 每条渠道的「门口闸机」：同时最多几发（渠道 id → 闸机 + 当前配置的上限）。
-    leg_gates: Mutex<HashMap<i64, (Arc<Semaphore>, u32)>>,
+    channel_gates: Mutex<HashMap<i64, (Arc<Semaphore>, u32)>>,
 }
 
 /// 一件「待落账」的活。
@@ -151,7 +151,7 @@ impl AppState {
             key_cache: GatewayKeyCache::new(),
             group_endpoints: Mutex::new(endpoints),
             writer: WriteQueue::default(),
-            leg_gates: Mutex::new(HashMap::new()),
+            channel_gates: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -365,11 +365,11 @@ impl AppState {
     /// 同一把 key 上同时压太多发，上游直接 429/503（现网 4 天 503「bridge busy」151 次）。
     /// 面板上改上限时：调大立刻补名额；调小不强夺已经在跑的名额（等它们自己还回来），
     /// 所以刚调小的一瞬间可能略微超出新上限，之后自然收敛。
-    pub fn leg_gate(&self, id: i64, limit: u32) -> Option<Arc<Semaphore>> {
+    pub fn channel_gate(&self, id: i64, limit: u32) -> Option<Arc<Semaphore>> {
         if limit == 0 {
             return None;
         }
-        let mut gates = self.leg_gates.lock().unwrap_or_else(|e| e.into_inner());
+        let mut gates = self.channel_gates.lock().unwrap_or_else(|e| e.into_inner());
         let entry = gates
             .entry(id)
             .or_insert_with(|| (Arc::new(Semaphore::new(limit as usize)), limit));
@@ -579,15 +579,15 @@ mod tests {
 
     /// 闸机：上限 0 = 不拦；配了上限就最多放那么多个名额过去，还回来才放新的。
     #[test]
-    fn the_leg_gate_limits_how_many_requests_run_at_once() {
+    fn the_channel_gate_limits_how_many_requests_run_at_once() {
         std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
         let dir = std::env::temp_dir().join(format!("tokengo-state-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let st = AppState::init(test_cfg(&dir)).unwrap();
 
-        assert!(st.leg_gate(1, 0).is_none(), "0 = 不限，不拦");
+        assert!(st.channel_gate(1, 0).is_none(), "0 = 不限，不拦");
 
-        let gate = st.leg_gate(2, 2).unwrap();
+        let gate = st.channel_gate(2, 2).unwrap();
         let a = gate.clone().try_acquire_owned().unwrap();
         let b = gate.clone().try_acquire_owned().unwrap();
         assert!(
@@ -599,11 +599,11 @@ mod tests {
         drop(b);
 
         // 同一个渠道再问一次：还是那把闸机，不会翻倍放行
-        let same = st.leg_gate(2, 2).unwrap();
+        let same = st.channel_gate(2, 2).unwrap();
         assert_eq!(same.available_permits(), 2);
 
         // 上限调大 → 立刻补名额
-        let bigger = st.leg_gate(2, 5).unwrap();
+        let bigger = st.channel_gate(2, 5).unwrap();
         assert_eq!(bigger.available_permits(), 5);
 
         std::fs::remove_dir_all(&dir).ok();

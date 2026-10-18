@@ -251,7 +251,7 @@ mod tests {
             .unwrap();
         }
 
-        // 按旧名字塞进数据：一条腿 + 一个组 + 一条请求 + 一次尝试 + 一条路由状态
+        // 按旧名字塞进数据：一条渠道 + 一个组 + 一条请求 + 一次尝试 + 一条路由状态
         conn.execute(
             "INSERT INTO legs (id, name, base_url) VALUES (1, '硅基流动', 'https://api.siliconflow.cn/v1')",
             [],

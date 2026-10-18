@@ -16,6 +16,7 @@ pub use config::Config;
 pub use state::{AppState, SharedState};
 
 use axum::Router;
+use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 
 /// 组装完整网关。
@@ -33,6 +34,10 @@ pub fn app(state: SharedState) -> Router {
         .nest("/api", routes::admin::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())
+        // 面板资源压缩：wasm 1.52 MB → gzip 后约 0.52 MB（首次打开少下一兆）。
+        // 只压文本类（wasm/js/css/html），图片之类本来就压过的会被自动跳过；
+        // 浏览器第二次打开走 immutable 缓存，不会再下一遍。
+        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
