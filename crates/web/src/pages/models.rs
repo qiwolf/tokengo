@@ -9,7 +9,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{Channel, Group, RoutingCfg, RoutingGroup, Servable};
+use crate::model::{Channel, Group, RoutingCfg, RoutingGroup, Servable, ModelPair};
 use crate::pages::PageHead;
 use crate::Ctx;
 
@@ -79,6 +79,46 @@ pub(crate) fn groups_missing_for_channel_models(
         }
     }
     want.into_iter().collect()
+}
+
+/// 提示条上「删掉这些名字」要动哪些渠道的哪些行：`渠道 id → 要删的名字`。
+///
+/// 为什么要这个动作（2026-10-18 踩到的循环）：保存渠道时会把勾选的上游名并进模型表
+/// （用户要的便利），于是**上游的内部名字**也变成了「渠道声明的客户端名字」；
+/// 提示条又如实喊「没有同名模型组，客户端打它会 404」。这时候有两条正当出路：
+/// 建同名模型组（用户真想让客户端打这个名字），或者把这些多余的声明删掉（本来就是上游名）。
+/// 这个按钮就是第二条路，省得一条一条去渠道里删。
+///
+/// 只认「启用中的渠道」；同一个名字可能在多条渠道上声明过，全都要删。
+pub(crate) fn rows_to_drop_for_missing_names(
+    channels: &[Channel],
+    groups: &[Group],
+) -> Vec<(i64, Vec<String>)> {
+    let miss = groups_missing_for_channel_models(channels, groups);
+    if miss.is_empty() {
+        return Vec::new();
+    }
+    let mut wanted: std::collections::BTreeMap<String, ()> = std::collections::BTreeMap::new();
+    for (name, _) in &miss {
+        wanted.insert(name.clone(), ());
+    }
+    let mut out: Vec<(i64, Vec<String>)> = Vec::new();
+    let mut sorted: Vec<&Channel> = channels.iter().filter(|c| c.enabled).collect();
+    sorted.sort_by_key(|c| c.id);
+    for c in sorted {
+        let mut drop: Vec<String> = c
+            .models
+            .iter()
+            .map(|m| m.model.trim().to_string())
+            .filter(|n| !n.is_empty() && wanted.contains_key(n))
+            .collect();
+        drop.sort();
+        drop.dedup();
+        if !drop.is_empty() {
+            out.push((c.id, drop));
+        }
+    }
+    out
 }
 
 #[component]
@@ -205,6 +245,57 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                 format!("补建了 {} 个模型组：{}", done.len(), done.join("、"))
             } else {
                 format!("补建了 {} 个，另有 {} 个没成（看红字）", done.len(), failed)
+            });
+            reload();
+        });
+    };
+
+    // 提示条的第二个出路：把这些「声明了却没有同名组」的名字从渠道上删掉。
+    // 走既有的「改渠道」接口（整份模型表提交），名称/地址/密钥/请求头/上限都原样带回，
+    // 只少掉那几个多余的名字。
+    let drop_missing = move |_: leptos::ev::MouseEvent| {
+        let plan = rows_to_drop_for_missing_names(&channels.get_untracked(), &groups.get_untracked());
+        if plan.is_empty() {
+            ctx.say("没有要删的：渠道里声明的名字都已经有模型组了");
+            return;
+        }
+        let snapshot = channels.get_untracked();
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut removed = 0usize;
+            let mut failed = 0usize;
+            for (id, names) in plan {
+                let Some(c) = snapshot.iter().find(|c| c.id == id) else { continue };
+                let kept: Vec<ModelPair> = c
+                    .models
+                    .iter()
+                    .filter(|m| !names.contains(&m.model.trim().to_string()))
+                    .cloned()
+                    .collect();
+                removed += names.len();
+                match api::save_channel(
+                    Some(id),
+                    &c.name,
+                    &c.base_url,
+                    c.enabled,
+                    c.unwrap_envelope,
+                    c.max_concurrent,
+                    None, // 密钥不动
+                    &c.headers,
+                    &kept,
+                )
+                .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        failed += 1;
+                        ctx.note_err(&e);
+                    }
+                }
+            }
+            ctx.say(if failed == 0 {
+                format!("删掉了 {removed} 个多余的模型名声明（客户端能打的名字没变）")
+            } else {
+                format!("删了 {removed} 个，有 {failed} 条渠道没改成（看红字）")
             });
             reload();
         });
@@ -427,14 +518,16 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                 }
                 let names = miss.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join("、");
                 let fill = fill_groups.clone();
+                let drop_names = drop_missing.clone();
                 view! {
                     <div class="banner warn">
                         <span>
                             "渠道里声明了这些名字，但还没有同名模型组："
                             <code>{names}</code>
-                            " —— 客户端现在打它们会 404。"
+                            " —— 客户端现在打它们会 404。" "想让它能打就建组；这些只是上游的内部名字，就用右边「删掉这些名字」。"
                         </span>
                         <span class="spacer"></span>
+                        <button class="ghost" on:click=drop_names.clone()>"删掉这些名字"</button>
                         <button class="primary" on:click=fill>"一键补建模型组"</button>
                     </div>
                 }
@@ -978,3 +1071,82 @@ mod tests {
     }
 }
 
+
+// ─────────── 提示条第二个出路：把多余的声明删掉（2026-10-18） ───────────
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+    use crate::model::{Group, ModelPair};
+
+    fn ch(id: i64, enabled: bool, models: &[&str]) -> Channel {
+        Channel {
+            id,
+            name: format!("渠道{id}"),
+            base_url: format!("http://127.0.0.1/{id}/v1"),
+            enabled,
+            has_secret: true,
+            unwrap_envelope: false,
+            max_concurrent: 0,
+            headers: Vec::new(),
+            models: models
+                .iter()
+                .map(|m| ModelPair {
+                    model: (*m).to_string(),
+                    upstream: Some((*m).to_string()),
+                    vision: false,
+                    drop_fields: String::new(),
+                })
+                .collect(),
+            vision_count: 0,
+        }
+    }
+
+    fn group(name: &str, channels: &[i64]) -> Group {
+        Group {
+            name: name.into(),
+            enabled: true,
+            kind: "chat".into(),
+            kind_source: "auto".into(),
+            channels: channels.to_vec(),
+            can_see: false,
+            kind_label: "对话".into(),
+        }
+    }
+
+    /// 提示条说「这些名字没有同名模型组」时，「删掉这些名字」要动的正是**声明了它们的那些启用渠道**，
+    /// 一个不多一个不少，且绝不碰已经能用（有同名组）的名字。
+    ///
+    /// 反证：把 `rows_to_drop_for_missing_names` 里的 `wanted.contains_key(n)` 去掉
+    /// （变成「删掉渠道上所有名字」）→ 这条用例立刻变红（auto 也会被删掉）。
+    #[test]
+    fn the_drop_list_names_exactly_the_channels_that_declared_the_missing_names() {
+        let channels = vec![
+            ch(1, true, &["auto", "deepseek-v4.1-flash"]),
+            ch(2, true, &["auto", "cline-pass/deepseek-v4.1-flash"]),
+            // 停用的渠道不算数：它就算声明了也不该被这个按钮动
+            ch(3, false, &["v4.1flash"]),
+        ];
+        let groups = vec![group("auto", &[1, 2])];
+
+        let got = rows_to_drop_for_missing_names(&channels, &groups);
+        assert_eq!(
+            got,
+            vec![
+                (1, vec!["deepseek-v4.1-flash".to_string()]),
+                (2, vec!["cline-pass/deepseek-v4.1-flash".to_string()]),
+            ],
+            "只删声明了这些名字的启用渠道，且不碰 auto"
+        );
+    }
+
+    /// 名字都有同名模型组时，这个按钮什么都不该删。
+    #[test]
+    fn nothing_is_dropped_when_every_declared_name_has_a_group() {
+        let channels = vec![ch(1, true, &["auto"])];
+        assert!(
+            rows_to_drop_for_missing_names(&channels, &[group("auto", &[1])]).is_empty(),
+            "什么都对的时候按钮必须是空操作"
+        );
+    }
+}
