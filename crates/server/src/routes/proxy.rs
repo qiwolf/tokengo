@@ -27,6 +27,7 @@ use super::{client_ip, ApiError};
 use crate::db::model_routes;
 use crate::gateway::{self, EndpointKind, ForwardRequest};
 use crate::SharedState;
+use tokengo_shared::ModelKind;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -191,35 +192,46 @@ async fn rerank(
 /// 老客户端忽略它就行，行为不变。
 ///
 /// 保留名 `auto`：**只有用户勾选过至少一个模型时才列它**（用户口径：勾选使用的模型
-/// 为 0 时，客户端则不显示 auto）。它每次现场挑一个最优的模型发出去，所以 kind 不写
-/// 具体类型，`picks` 里是这一刻的候选顺序（面板「模型」页看的就是同一份）。
+/// 为 0 时，客户端则不显示 auto）。它随请求的端点自己挑（对话 / 嵌入 / 重排），
+/// 清单里就给它标**这一刻最能干的那一类**（对话 > 嵌入 > 重排）—— 客户端普遍按类型
+/// 过滤清单，标成「没有类型」会被整条滤掉（2026-10-18 实测：某客户端只留 `kind=chat` 的行）。
+///
+/// 这一条只写标准字段 + `vision` / `kind` 两个增项：客户端各写各的解析，多出来的
+/// 自定义字段（早先这里塞过 `auto` / `picks`）会让整条被丢掉。候选顺序改从
+/// `GET /api/model-routes` 的 `auto` 对象读，面板「模型」页看的就是它。
 async fn models(
     _key: GatewayKey,
     State(state): State<SharedState>,
 ) -> Result<Json<Value>, ApiError> {
+    // OpenAI 这条清单里 created 是「这个模型什么时候有的」；我们现取，客户端普遍只拿它排序。
+    let created = crate::db::now_ms() / 1000;
     let (servable, auto_rows) = {
         let conn = state.conn();
         let servable = model_routes::servable(&conn)?;
         let auto_rows = if model_routes::auto_available(&conn)? {
             let now = crate::db::now_ms();
-            let chat = model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Chat, false, now)?;
+            let chat = !model_routes::auto_candidates(&conn, ModelKind::Chat, false, now)?.is_empty();
             let embeddings =
-                model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Embeddings, false, now)?;
-            let rerank =
-                model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Rerank, false, now)?;
-            let vision = !model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Chat, true, now)?
-                .is_empty();
+                !model_routes::auto_candidates(&conn, ModelKind::Embeddings, false, now)?.is_empty();
+            let rerank = !model_routes::auto_candidates(&conn, ModelKind::Rerank, false, now)?.is_empty();
+            let vision = !model_routes::auto_candidates(&conn, ModelKind::Chat, true, now)?.is_empty();
+            let kind = if chat {
+                ModelKind::Chat
+            } else if embeddings {
+                ModelKind::Embeddings
+            } else if rerank {
+                ModelKind::Rerank
+            } else {
+                ModelKind::Unknown
+            };
             vec![serde_json::json!({
                 "id": model_routes::AUTO_NAME,
                 "object": "model",
-                "created": 0,
+                "created": created,
                 "owned_by": tokengo_shared::BRAND,
                 // 带图的请求打 auto 只有在这时候才走得通
                 "vision": vision,
-                // 它不是某一个类型：它随请求的端点自己挑（对话 / 嵌入 / 重排）
-                "kind": "",
-                "auto": true,
-                "picks": { "chat": chat, "embeddings": embeddings, "rerank": rerank },
+                "kind": kind.as_str(),
             })]
         } else {
             Vec::new()
@@ -231,7 +243,7 @@ async fn models(
         serde_json::json!({
             "id": m.name,
             "object": "model",
-            "created": 0,
+            "created": created,
             "owned_by": tokengo_shared::BRAND,
             "vision": m.can_see(),
             // 这是向量模型还是对话模型 —— 客户端（Hermes 这类）可以据此挑端点，

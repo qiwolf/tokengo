@@ -3119,3 +3119,52 @@ async fn the_auto_row_is_hidden_when_nothing_is_checked() {
     let seen = m.seen();
     assert_eq!(seen.last().unwrap().model.as_str(), "真模型");
 }
+
+/// 清单里 `auto` 那一条要**只带标准字段 + vision/kind**，而且带上它这一刻真能干的那一类。
+///
+/// 缘由（2026-10-18 现网）：某客户端把清单读了以后按类型过滤，`kind` 是空的行整条不显示 ——
+/// 于是 auto 在客户端里凭空消失。以前这条还塞过 `auto` / `picks` 两个自定义字段，
+/// 客户端各写各的解析，多出来的字段会让整条被丢掉，所以一并去掉。
+#[tokio::test]
+async fn the_auto_row_looks_like_a_plain_model_and_says_what_it_can_do() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let ch = f.add_channel(
+        "什么都能发的渠道",
+        &m.base,
+        ChannelSpec {
+            models: vec![("对话那个".into(), None), ("向量那个".into(), None)],
+            ..Default::default()
+        },
+    );
+    f.serve("对话那个", &[ch]);
+    f.serve("向量那个", &[ch]);
+    let token = {
+        let conn = f.state.conn();
+        tokengo_server::db::sessions::create_session(&conn, None).unwrap()
+    };
+    let (s, _) = put_with_token(&f, "/api/models/向量那个/kind", &token, json!({"kind": "embeddings"})).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(s, StatusCode::OK);
+    let auto = v["data"].as_array().unwrap().iter().find(|x| x["id"] == "auto").unwrap();
+    let keys: Vec<String> = auto.as_object().unwrap().keys().cloned().collect();
+    assert_eq!(
+        keys,
+        vec!["created", "id", "kind", "object", "owned_by", "vision"],
+        "多一个自定义字段就可能让客户端整条丢掉：{auto}"
+    );
+    assert_eq!(auto["kind"], "chat", "能干对话就得说自己能干对话：{auto}");
+    assert_eq!(auto["vision"], false, "{auto}");
+    assert!(auto["created"].as_i64().unwrap() > 0, "created 得像个真时间：{auto}");
+
+    // 只有向量模型可用时，auto 说的是「我能干向量」——这样按类型过滤的客户端才留得住它
+    let (s, _) = put_with_token(&f, "/api/models/对话那个/kind", &token, json!({"kind": "embeddings"})).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, v) = get(&f, "/v1/models", Some(KEY)).await;
+    assert_eq!(s, StatusCode::OK);
+    let auto = v["data"].as_array().unwrap().iter().find(|x| x["id"] == "auto").unwrap();
+    assert_eq!(auto["kind"], "embeddings", "{auto}");
+}
