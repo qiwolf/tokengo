@@ -189,6 +189,7 @@ pub fn add_attempt(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRow {
+    pub served_model: String,
     pub id: i64,
     pub ts_ms: i64,
     pub endpoint: String,
@@ -207,12 +208,13 @@ pub struct RequestRow {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error
+                input_tokens, output_tokens, has_image, error, served_model
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt
         .query_map([limit], |r| {
             Ok(RequestRow {
+                served_model: r.get(12)?,
                 id: r.get(0)?,
                 ts_ms: r.get(1)?,
                 endpoint: r.get(2)?,
