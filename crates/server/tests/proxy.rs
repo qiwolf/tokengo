@@ -3357,3 +3357,45 @@ async fn recent_calls_keep_user_agent_and_stream_first_byte_latency() {
     assert_eq!(row.client_ip.as_deref(),Some("192.0.2.45"));
     assert!(row.first_byte_ms.is_some()); assert!(row.streamed);
 }
+
+#[tokio::test]
+async fn auto_scores_same_channel_models_separately_and_scope_changes_apply_immediately() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+    let ch=f.add_channel("same upstream",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),Some("real-b".into()))],..Default::default()});
+    let conn=f.state.conn();
+    let rid=tokengo_server::db::requests::start(&conn,CHAT,"auto",None,false).unwrap();
+    conn.execute("UPDATE requests SET status='ok' WHERE id=?1",[rid]).unwrap();
+    for (name,outcome,duration) in [("a","channel_fault",100),("b","success",20)] {
+        conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms,model_name) VALUES(?1,0,?2,?3,?4,?5)",rusqlite::params![rid,ch.0,outcome,duration,name]).unwrap();
+    }
+    drop(conn);
+    let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);
+    assert_eq!(m.seen().last().unwrap().model,"real-b");
+    let conn=f.state.conn();
+    let row:(String,String)=conn.query_row("SELECT model_name,upstream_model FROM attempts ORDER BY id DESC LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(row,("b".into(),"real-b".into()));drop(conn);
+    tokengo_server::db::channels::set_models(&f.state.conn(),ch,&[tokengo_server::db::channels::ModelMapping::new("a",None,false)]).unwrap();
+    let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);
+    assert_eq!(m.seen().last().unwrap().model,"a");
+}
+#[tokio::test]
+async fn scoring_keeps_failed_candidate_identity_after_auto_fallback() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+    let ch=f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
+    // Four attempts on a fail, then b succeeds on the same upstream.
+    for _ in 0..4 {m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"broken-a"));}
+    let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);
+    let conn=f.state.conn();let scores=tokengo_server::db::scores::all(&conn,tokengo_server::db::now_ms()).unwrap();
+    assert_eq!(scores["a"].faults,4);assert_eq!(scores["b"].successes,1);
+    assert!(scores["b"].value()>scores["a"].value());
+    let _=ch;
+}
+#[tokio::test]
+async fn unknown_model_refusal_has_explicit_code_and_never_calls_upstream() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+    f.add_channel("upstream",&m.base,ChannelSpec::default());
+    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"absent","messages":[]})).await;
+    assert_eq!(status,StatusCode::NOT_FOUND);assert_eq!(m.count(),0);
+    let c=f.state.conn();let row=tokengo_server::db::requests::recent(&c,1).unwrap().remove(0);
+    assert_eq!(row.error_code.as_deref(),Some("model_not_configured"));assert!(row.channel_id.is_none());
+}

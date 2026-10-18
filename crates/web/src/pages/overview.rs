@@ -236,7 +236,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         let rows = recent.get();
                         if rows.is_empty() { return view! { <div class="empty">"暂无调用"</div> }.into_any(); }
                         rows.into_iter().map(|r| {
-                            let (label,css) = status_label(&r.status);
+                            let (base_label,css) = status_label(&r.status);
+                            let label=match r.error_code.as_deref() {Some("model_not_configured")=>"模型未配置",Some("auto_no_candidate")=>"无可用候选",Some("vision_not_ready")=>"视觉未就绪",Some("request_invalid")=>"请求参数错误",_=>base_label};
                             let id=r.id;
                             let opened=expanded.get()==Some(id);
                             let channel=channel_name(r.channel_id);

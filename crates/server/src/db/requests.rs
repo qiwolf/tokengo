@@ -69,11 +69,15 @@ pub struct FinishArgs {
     /// 这次真正被叫的模型名。普通模型名时与 `model` 一样；`auto` 时是它挑中的那个
     /// —— 不然面板上只能看到一条「auto 成功了」，看不出到底走了谁。
     pub served_model: Option<String>,
+    pub error_code: Option<String>,
 }
 
 /// 一次「渠道尝试」的落账参数。同上：要能被丢进后台队列。
 #[derive(Debug, Clone)]
 pub struct AttemptArgs {
+    pub model_name: String,
+    pub upstream_model: String,
+    pub first_byte_ms: Option<i64>,
     pub request_id: i64,
     pub ordinal: u32,
     pub channel_id: i64,
@@ -98,6 +102,7 @@ pub fn finish_args(conn: &Connection, a: &FinishArgs) -> Result<()> {
         a.streamed,
         a.error.as_deref(),
     )?;
+    if let Some(code)=&a.error_code {conn.execute("UPDATE requests SET error_code=?2 WHERE id=?1",params![a.request_id,code])?;}
     // served_model 只在「真正被叫的名字与客户端打的名字不一样」时才有值（auto）。
     // 单独一条小 UPDATE：既不用给 finish 加第 12 个参数（把一圈调用点全改了），
     // 也让「没值」时连这一句都不发。
@@ -112,16 +117,8 @@ pub fn finish_args(conn: &Connection, a: &FinishArgs) -> Result<()> {
 
 /// `AttemptArgs` 的落库入口（参数化版本）。
 pub fn add_attempt_args(conn: &Connection, a: &AttemptArgs) -> Result<()> {
-    add_attempt(
-        conn,
-        a.request_id,
-        a.ordinal,
-        a.channel_id,
-        &a.outcome,
-        a.http_status,
-        a.duration_ms,
-        a.error.as_deref(),
-    )
+    conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,http_status,duration_ms,error,model_name,upstream_model,first_byte_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![a.request_id,a.ordinal,a.channel_id,a.outcome,a.http_status,a.duration_ms,a.error,a.model_name,a.upstream_model,a.first_byte_ms])?;
+    Ok(())
 }
 
 /// 一条请求收尾。
@@ -189,6 +186,7 @@ pub fn add_attempt(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRow {
+    pub error_code: Option<String>,
     pub first_byte_ms: Option<i64>,
     pub client_ip: Option<String>,
     pub user_agent: Option<String>,
@@ -211,6 +209,7 @@ pub struct RequestRow {
 
 fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
     Ok(RequestRow {
+        error_code:r.get(17)?,
         served_model: r.get(12)?,
         first_byte_ms:r.get(13)?,
         client_ip:r.get(14)?,
@@ -253,7 +252,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let request = conn.query_row(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
                 input_tokens, output_tokens, has_image, error, served_model, first_byte_ms,
-                client_ip, user_agent, streamed FROM requests WHERE id = ?1",
+                client_ip, user_agent, streamed, error_code FROM requests WHERE id = ?1",
         [id], request_row,
     ).optional()?;
     let Some(request) = request else { return Ok(None); };
@@ -273,7 +272,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt
