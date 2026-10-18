@@ -914,3 +914,60 @@ async fn a_malformed_panel_body_gets_the_standard_error_envelope() {
     );
     assert!(v["error"]["type"].is_string(), "信封要有 type 字段：{v}");
 }
+
+#[tokio::test]
+async fn request_detail_is_authenticated_exact_and_orders_attempts() {
+    use tokengo_server::db::requests::{self, Status};
+    let f = fixture();
+    let token = panel_token(&f).await;
+    let id = {
+        let conn = f.state.conn();
+        let id = requests::start(&conn, "/v1/chat/completions", "auto", Some("127.0.0.9"), true).unwrap();
+        conn.execute("UPDATE requests SET ts_ms=1, user_agent='detail-test', served_model='actual' WHERE id=?1", [id]).unwrap();
+        requests::add_attempt(&conn, id, 2, 77, "success", Some(200), 31, None).unwrap();
+        requests::add_attempt(&conn, id, 0, 66, "channel_fault", Some(429), 13, Some("rate limited")).unwrap();
+        requests::add_attempt(&conn, id, 1, 66, "channel_fault", None, 17, Some("connection closed")).unwrap();
+        requests::finish(&conn, id, Status::Ok, Some(200), Some(77), 80, Some(40), 9, 5, true, None).unwrap();
+        for _ in 0..13 { requests::start(&conn, "/v1/embeddings", "newer", None, false).unwrap(); }
+        id
+    };
+    let uri = format!("/api/requests/{id}");
+    for auth in [None, Some("invented-token")] {
+        assert_eq!(send(test_app(&f), "GET", &uri, auth, None).await.0, StatusCode::UNAUTHORIZED);
+    }
+    let (status, value) = send(test_app(&f), "GET", &uri, Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let r = &value["request"];
+    assert_eq!(r["id"], id);
+    assert_eq!(r["served_model"], "actual");
+    assert_eq!(r["user_agent"], "detail-test");
+    assert_eq!(r["client_ip"], "127.0.0.9");
+    assert_eq!(r["has_image"], true);
+    assert_eq!(r["streamed"], true);
+    assert_eq!(r["first_byte_ms"], 40);
+    assert_eq!(r["latency_ms"], 80);
+    let attempts = value["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 3);
+    assert_eq!(attempts.iter().map(|a| a["ordinal"].as_i64().unwrap()).collect::<Vec<_>>(), vec![0, 1, 2]);
+    assert_eq!(attempts[0]["channel_id"], 66);
+    assert_eq!(attempts[0]["channel_name"], Value::Null);
+    assert_eq!(attempts[0]["error"], "rate limited");
+    assert_eq!(attempts[1]["http_status"], Value::Null);
+    assert_eq!(attempts[1]["duration_ms"], 17);
+    assert_eq!(attempts[2]["outcome"], "success");
+    for forbidden in ["api_key", "key", "headers", "base_url", "request_body", "response_body"] {
+        assert!(r.get(forbidden).is_none());
+        assert!(attempts.iter().all(|a| a.get(forbidden).is_none()));
+    }
+    assert_eq!(send(test_app(&f), "GET", "/api/requests/999999", Some(&token), None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(send(test_app(&f), "GET", "/api/requests/0", Some(&token), None).await.0, StatusCode::BAD_REQUEST);
+    let empty_id = {
+        let conn = f.state.conn();
+        let id = requests::start(&conn, "/v1/chat/completions", "missing", None, false).unwrap();
+        requests::finish(&conn, id, Status::ClientError, Some(404), None, 0, None, 0, 0, false, Some("model not configured")).unwrap();
+        id
+    };
+    let (_, empty) = send(test_app(&f), "GET", &format!("/api/requests/{empty_id}"), Some(&token), None).await;
+    assert_eq!(empty["attempts"], json!([]));
+    assert_eq!(empty["request"]["error"], "model not configured");
+}

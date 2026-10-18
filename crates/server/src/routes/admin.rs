@@ -86,6 +86,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/routing/{model}/reprobe", post(routing_reprobe))
         .route("/stats", get(stats))
         .route("/logs", get(logs))
+        .route("/requests/{id}", get(request_detail))
         // 面板「日志」页：看运行日志（内存里最近那些）+ 临时开 debug
         .route("/logs/live", get(logs_live))
         .route("/logs/level", get(logs_level_get).put(logs_level_set))
@@ -1324,6 +1325,18 @@ async fn logs(
     let conn = state.conn();
     let rows = requests::recent(&conn, limit)?;
     Ok(Json(serde_json::json!({ "logs": rows })))
+}
+
+async fn request_detail(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<requests::RequestDetail>, ApiError> {
+    if id <= 0 { return Err(ApiError::bad_request("请求号必须是正整数")); }
+    let conn = state.conn();
+    let detail = requests::detail(&conn, id)?
+        .ok_or_else(|| ApiError::not_found("请求不存在或已按保留期限清理"))?;
+    Ok(Json(detail))
 }
 
 /// 面板「日志」页：最近的运行日志。`level`=error/warn/info 是门槛，`q` 是关键词（也当请求号用）。
