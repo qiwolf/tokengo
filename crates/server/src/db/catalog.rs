@@ -24,7 +24,7 @@ pub struct CatalogEntry {
     pub price_note: Option<String>,
     /// 上游说这档价格是 0 / free。`None` = 上游没说价格。
     pub is_free: Option<bool>,
-    /// **上游自称**能不能收图（不是我们的「能看图」标记，那个只认面板实测）。
+    /// Explicit upstream image-input claim; true can enable matching channel mappings.
     pub vision: Option<bool>,
 }
 
@@ -99,7 +99,25 @@ pub fn replace(
         "UPDATE channels SET catalog_at = ?2 WHERE id = ?1",
         params![id.0, now_ms],
     )?;
+    adopt_vision(conn, id)?;
     Ok(n)
+}
+
+/// Only positive, explicit claims can promote mappings; unknown/false never revoke them.
+pub(super) fn adopt_vision(conn: &Connection, id: ChannelId) -> Result<()> {
+    let entries = list(conn, id)?;
+    let Some(channel) = super::channels::get(conn, id)? else {
+        return Ok(());
+    };
+    for mapping in channel.models.iter().filter(|m| !m.vision) {
+        let upstream = mapping.upstream.as_deref()
+            .filter(|u| !u.trim().is_empty()).unwrap_or(&mapping.model);
+        if entries.iter().any(|e| e.vision == Some(true)
+            && tokengo_shared::same_model_name(&e.model, upstream)) {
+            super::channels::set_model_vision(conn, id, &mapping.model, true)?;
+        }
+    }
+    Ok(())
 }
 
 /// 读回上次记住的目录（按上游报的顺序排，同一次问答里的顺序别乱）。
@@ -164,6 +182,46 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn vision_claims_are_adopted_on_refresh_and_save() {
+        let conn = open_in_memory().unwrap();
+        let id = a_channel(&conn);
+        let other = a_channel(&conn);
+        let models = vec![
+            channels::ModelMapping::new("alias", Some("real-model".into()), false),
+            channels::ModelMapping::new("real-model", None, false),
+            channels::ModelMapping::new("wrong-target", Some("text-only".into()), false),
+            channels::ModelMapping::new("manual", None, true),
+            channels::ModelMapping::new("vision-vl-name-only", None, false),
+        ];
+        channels::set_models(&conn, id, &models).unwrap();
+        channels::set_models(&conn, other, &models).unwrap();
+        let entries = crate::upstream::parse_model_catalog(r#"{"data":[
+            {"id":"real-model","architecture":{"input_modalities":["text","image"]}},
+            {"id":"wrong-target","vision":true},
+            {"id":"text-only","vision":false},
+            {"id":"manual","vision":false},
+            {"id":"vision-vl-name-only","output_modalities":["image"]}
+        ]}"#);
+        replace(&conn, id, &entries, 123).unwrap();
+        let flags = |id| channels::get(&conn, id).unwrap().unwrap().models
+            .into_iter().map(|m| (m.model, m.vision)).collect::<std::collections::HashMap<_, _>>();
+        let got = flags(id);
+        assert!(got["alias"], "refresh must adopt the mapped upstream's image-input claim");
+        assert!(got["real-model"]);
+        assert!(!got["wrong-target"], "match the upstream mapping, not the public alias");
+        assert!(got["manual"], "negative claims must not clear existing true");
+        assert!(!got["vision-vl-name-only"], "names and image output are not image input");
+        assert!(!flags(other)["alias"], "catalog claims are channel-local");
+
+        channels::set_models(&conn, id, &[
+            channels::ModelMapping::new("new-alias", Some("real-model".into()), false),
+        ]).unwrap();
+        assert!(flags(id)["new-alias"], "save must use the cached upstream catalog");
+        replace(&conn, id, &[up("real-model", None, None)], 124).unwrap();
+        assert!(flags(id)["new-alias"], "unknown claims must not clear existing true");
     }
 
     #[test]

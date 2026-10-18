@@ -698,7 +698,7 @@ async fn channels_models(
         let now = now_ms();
         {
             let conn = state.conn();
-            catalog::replace(&conn, channel.id, &catalog, now)?;
+            crate::db::in_tx(&conn, |c| catalog::replace(c, channel.id, &catalog, now))?;
         }
         fetched_at = now;
         tracing::info!(
