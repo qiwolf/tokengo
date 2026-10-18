@@ -453,7 +453,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
 
     // ── 按模型名 ──
     let mut stmt = conn.prepare(
-        "SELECT model,
+        "SELECT CASE WHEN TRIM(served_model)<>'' AND LOWER(TRIM(served_model))<>'auto' THEN served_model WHEN channel_id IS NULL THEN '未调用上游' WHEN LOWER(TRIM(model))='auto' THEN '实际模型未记录' ELSE model END AS actual_model,
                 COUNT(*),
                 COALESCE(SUM(status = 'ok'), 0),
                 COALESCE(SUM(status = 'failed'), 0),
@@ -461,7 +461,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
                 COALESCE(SUM(input_tokens), 0),
                 COALESCE(SUM(output_tokens), 0)
            FROM requests WHERE ts_ms >= ?1
-          GROUP BY model ORDER BY COUNT(*) DESC LIMIT 50",
+          GROUP BY actual_model ORDER BY COUNT(*) DESC LIMIT 50",
     )?;
     let by_model: Vec<ModelStat> = stmt
         .query_map([since_ms], |r| {
@@ -674,6 +674,12 @@ mod tests {
     }
 
     #[test]
+    fn model_statistics_attribute_auto_to_actual_model(){
+        let c=open_in_memory().unwrap();let id=start(&c,"chat","auto",None,false).unwrap();
+        c.execute("UPDATE requests SET served_model='real',status='ok',input_tokens=12 WHERE id=?1",[id]).unwrap();
+        let v=stats_since(&c,0).unwrap();assert_eq!(v.by_model[0].model,"real");assert_eq!(v.by_model[0].input_tokens,12);
+    }
+    #[test]
     fn recent_calls_expose_actual_model_without_changing_request_name() {
         let conn=open_in_memory().unwrap();
         let id=start(&conn,"/v1/chat/completions","auto",None,false).unwrap();
@@ -818,7 +824,7 @@ mod tests {
 
         // 按模型：auto 3 次（2 成 1 败）、bge-m3 1 次、写错的模型 1 次
         assert_eq!(s.by_model.len(), 3);
-        let auto = s.by_model.iter().find(|m| m.model == "auto").unwrap();
+        let auto = s.by_model.iter().find(|m| m.model == "实际模型未记录").unwrap();
         assert_eq!((auto.requests, auto.ok, auto.failed), (3, 2, 1));
         let bad = s.by_model.iter().find(|m| m.model == "写错的模型").unwrap();
         assert_eq!(bad.client_errors, 1, "客户端写错要单独列出来，不算渠道的锅");

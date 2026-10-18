@@ -84,6 +84,7 @@ pub struct ChannelsResp {
 /// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
+    #[serde(default)]pub total_calls:i64,
     #[serde(default)]pub exploration_count:i64,
     #[serde(default)] pub cooldowns:Vec<ModelCooldown>,
     #[serde(default)]
