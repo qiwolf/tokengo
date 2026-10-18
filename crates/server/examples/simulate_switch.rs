@@ -22,6 +22,7 @@ fn main() -> anyhow::Result<()> {
         master_key_path: std::env::var("TOKENGO_MASTER_KEY_FILE")
             .unwrap_or_else(|_| "/etc/tokengo/master.key".into()),
         web_dir: None,
+        log_dir: None,
     };
     let state = AppState::init(cfg)?;
 

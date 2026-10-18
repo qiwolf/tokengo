@@ -1,11 +1,14 @@
 //! 页面清单与页面之间的公共约定。
 //!
-//! 面板只做本机真正用得上的 5 页：总览 · 渠道 · 模型 · 请求 · 设置。
+//! 面板只做本机真正用得上的 6 页：总览 · 渠道 · 模型 · 请求 · 日志 · 设置。
+//!
+//! 「日志」是给排障用的（用户 2026-10-18 要求）：出问题时不用 SSH，面板里就能看现场。
 //! 原先把「模型组」和「路由状态」拆成两页，看的人得来回翻才知道
 //! 「这个模型名现在到底在走哪条渠道」—— 现在并成一页。
 
 pub mod channels;
 pub mod models;
+pub mod logs;
 pub mod overview;
 pub mod requests;
 pub mod settings;
@@ -19,6 +22,7 @@ pub enum Page {
     Channels,
     Models,
     Requests,
+    Logs,
     Settings,
 }
 
@@ -28,6 +32,7 @@ impl Page {
         Page::Channels,
         Page::Models,
         Page::Requests,
+        Page::Logs,
         Page::Settings,
     ];
 
@@ -38,6 +43,7 @@ impl Page {
             Page::Channels => "channels",
             Page::Models => "models",
             Page::Requests => "requests",
+            Page::Logs => "logs",
             Page::Settings => "settings",
         }
     }
@@ -49,6 +55,7 @@ impl Page {
             Page::Channels => "渠道",
             Page::Models => "模型",
             Page::Requests => "请求",
+            Page::Logs => "日志",
             Page::Settings => "设置",
         }
     }
@@ -60,6 +67,7 @@ impl Page {
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
             Page::Requests => "每个请求走了哪条渠道、成没成、花了多久、错在哪。",
+            Page::Logs => "网关自己记的日志：按级别和关键词筛，关键词可以直接填请求号。",
             Page::Settings => "对外 key、面板口令、登录着的设备。",
         }
     }
@@ -123,7 +131,7 @@ mod tests {
         assert_eq!(slugs.len(), before, "slug 必须唯一");
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
-        // 五页：总览 · 渠道 · 模型 · 请求 · 设置
-        assert_eq!(Page::ALL.len(), 5);
+        // 六页：总览 · 渠道 · 模型 · 请求 · 日志 · 设置
+        assert_eq!(Page::ALL.len(), 6);
     }
 }

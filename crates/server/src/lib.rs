@@ -7,6 +7,7 @@ pub mod db;
 pub mod gateway;
 pub mod gateway_key;
 pub mod janitor;
+pub mod logging;
 pub mod prober;
 pub mod routes;
 pub mod state;

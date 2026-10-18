@@ -37,7 +37,8 @@ fn fixture() -> Fixture {
         db_path: dir.join("t.db"),
         master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
         web_dir: None,
-    };
+           log_dir: None,
+ };
     Fixture {
         state: AppState::init(cfg).unwrap(),
         dir,
@@ -71,6 +72,20 @@ async fn send(
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
     let v = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, v)
+}
+
+/// 开面板会话并拿 token（测试里第一次调 setup 就是开户）。
+async fn panel_token(f: &Fixture) -> String {
+    let (s, v) = send(
+        test_app(f),
+        "POST",
+        "/api/auth/setup",
+        None,
+        Some(serde_json::json!({"password": "test-password"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "开面板会话失败：{v}");
+    v["token"].as_str().unwrap().to_string()
 }
 
 async fn status_of(app: axum::Router, method: &str, uri: &str) -> StatusCode {
@@ -803,4 +818,59 @@ async fn channel_probe_exists_and_needs_a_session() {
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "渠道不存在就 404，不许假绿点");
+}
+
+/// 面板「日志」页的两个接口：看日志、改级别。
+///
+/// 反证：把 `normalize_filter` 里对非法级别的拒绝去掉 → 最后一步会红（200 而不是 400）。
+#[tokio::test]
+async fn the_logs_page_can_read_lines_and_change_the_level() {
+    let f = fixture();
+    let token = panel_token(&f).await;
+
+    // 先往内存缓冲里塞几行（读的就是订阅者往里写的那一份）
+    let logs = f.state.logs();
+    logs.push("2026-10-18T00:00:00Z INFO tokengo_server::a: 正常一行".into());
+    logs.push("2026-10-18T00:00:01Z WARN tokengo_server::a: 渠道慢".into());
+    logs.push("2026-10-18T00:00:02Z ERROR tokengo_server::gateway: 上游 500 请求 98765".into());
+
+    // ① 全都要
+    let (s, body) = send(test_app(&f), "GET", "/api/logs/live?limit=50", Some(&token), None).await;
+    assert_eq!(s, StatusCode::OK, "看日志不该失败：{body}");
+    assert_eq!(body["lines"].as_array().unwrap().len(), 3, "三条都要能看到：{body}");
+    assert!(body["kept"].as_u64().unwrap() >= 3, "要告诉用户内存里留了多少行");
+
+    // ② 只看警告以上
+    let (s, body) = send(test_app(&f), "GET", "/api/logs/live?level=warn&limit=50", Some(&token), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["lines"].as_array().unwrap().len(), 2, "warn 门槛含 warn 与 error：{body}");
+
+    // ③ 按请求号找现场
+    let (s, body) = send(test_app(&f), "GET", "/api/logs/live?q=98765", Some(&token), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["lines"].as_array().unwrap().len(), 1, "请求号要能定位到那一行");
+
+    // ④ 改级别：合法 → 200，且回包里带新级别与到期时间
+    let (s, body) = send(
+        test_app(&f),
+        "PUT",
+        "/api/logs/level",
+        Some(&token),
+        Some(serde_json::json!({"level": "debug", "minutes": 15})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "改级别该成功：{body}");
+    assert!(body["level"].as_str().unwrap().contains("debug"));
+    assert!(body["revert_at_ms"].as_i64().unwrap() > 0, "限时 debug 要有到期时间");
+
+    // ⑤ 非法级别 → 400（不能让人往过滤表达式里塞东西）
+    let (s, _) = send(
+        test_app(&f),
+        "PUT",
+        "/api/logs/level",
+        Some(&token),
+        Some(serde_json::json!({"level": "乱填"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "非法级别必须拒");
 }

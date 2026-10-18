@@ -335,7 +335,8 @@ fn fixture() -> Fixture {
         db_path: dir.join("t.db"),
         master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
         web_dir: None,
-    };
+       log_dir: None,
+ };
     Fixture {
         state: AppState::init(cfg).unwrap(),
         dir,

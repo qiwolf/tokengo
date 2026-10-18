@@ -62,6 +62,17 @@ impl FromRequestParts<SharedState> for GatewayKey {
                 ApiError::unauthorized("缺少 Authorization: Bearer <对外 key>（面板「设置」里配）")
             })?;
         if !state.check_gateway_key(key) {
+            // 记一条：客户端连不上时最常就是这个原因（key 复制少了、还是 FreeLLMAPI 那把）。
+            // 只记来源与掩码，**不记 key 本身** —— 日志会被下载/贴给人看。
+            let hint: String = {
+                let k: String = key.chars().take(4).collect();
+                format!("{k}…（{} 位）", key.chars().count())
+            };
+            tracing::warn!(
+                "有请求拿着不对的对外 key 打进来了：{}，来自 {}",
+                hint,
+                client_ip(&parts.headers).unwrap_or_else(|| "未知来源".into())
+            );
             return Err(ApiError::unauthorized("对外 key 不对"));
         }
         Ok(GatewayKey)
@@ -77,17 +88,31 @@ async fn chat_completions(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Chat)?;
-    gateway::forward(
+    let ip_raw = client_ip(&headers);
+    let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
+    // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
+    // 失败的会走下面的 warn —— 用户排查时最常问的就是"这一发为什么没成"。
+    tracing::debug!("收到对话请求：模型「{model}」流式={stream} 来自 {ip}");
+    let out = gateway::forward(
         state,
         ForwardRequest {
             endpoint: EndpointKind::Chat,
-            model,
+            model: model.clone(),
             body: value,
             stream,
-            client_ip: client_ip(&headers),
+            client_ip: ip_raw.clone(),
         },
     )
-    .await
+    .await;
+    if let Err(e) = &out {
+        tracing::warn!(
+            "对话请求没成：模型「{model}」→ HTTP {} {}（来自 {ip}）：{}",
+            e.status.as_u16(),
+            e.kind,
+            e.message
+        );
+    }
+    out
 }
 
 async fn embeddings(
@@ -96,19 +121,32 @@ async fn embeddings(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
-    let (model, value, _) = parse_body(&body, EndpointKind::Embeddings)?;
-    gateway::forward(
+    let (model, value, stream) = parse_body(&body, EndpointKind::Embeddings)?;
+    let ip_raw = client_ip(&headers);
+    let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
+    // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
+    // 失败的会走下面的 warn —— 用户排查时最常问的就是"这一发为什么没成"。
+    tracing::debug!("收到向量请求：模型「{model}」流式={stream} 来自 {ip}");
+    let out = gateway::forward(
         state,
         ForwardRequest {
             endpoint: EndpointKind::Embeddings,
-            model,
+            model: model.clone(),
             body: value,
-            // 向量端点没有流式
-            stream: false,
-            client_ip: client_ip(&headers),
+            stream,
+            client_ip: ip_raw.clone(),
         },
     )
-    .await
+    .await;
+    if let Err(e) = &out {
+        tracing::warn!(
+            "向量请求没成：模型「{model}」→ HTTP {} {}（来自 {ip}）：{}",
+            e.status.as_u16(),
+            e.kind,
+            e.message
+        );
+    }
+    out
 }
 
 async fn rerank(
@@ -117,18 +155,32 @@ async fn rerank(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
-    let (model, value, _) = parse_body(&body, EndpointKind::Rerank)?;
-    gateway::forward(
+    let (model, value, stream) = parse_body(&body, EndpointKind::Rerank)?;
+    let ip_raw = client_ip(&headers);
+    let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
+    // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
+    // 失败的会走下面的 warn —— 用户排查时最常问的就是"这一发为什么没成"。
+    tracing::debug!("收到重排请求：模型「{model}」流式={stream} 来自 {ip}");
+    let out = gateway::forward(
         state,
         ForwardRequest {
             endpoint: EndpointKind::Rerank,
-            model,
+            model: model.clone(),
             body: value,
-            stream: false,
-            client_ip: client_ip(&headers),
+            stream,
+            client_ip: ip_raw.clone(),
         },
     )
-    .await
+    .await;
+    if let Err(e) = &out {
+        tracing::warn!(
+            "重排请求没成：模型「{model}」→ HTTP {} {}（来自 {ip}）：{}",
+            e.status.as_u16(),
+            e.kind,
+            e.message
+        );
+    }
+    out
 }
 /// 模型清单。**只列真的能用的**：组是开着的、组里至少有一条可用渠道。
 /// 面板与客户端看同一份判断（`groups::list_servable`），不会出现"清单里有、打了 404"。
