@@ -129,28 +129,6 @@ pub(crate) fn duplicate_client_names(rows: &[ModelPair]) -> Vec<String> {
     dup
 }
 
-/// 这条渠道保存后，哪些「客户端名字」还没有同名模型组 —— 要顺手建出来。
-///
-/// 用户的原话：「重排模型和嵌入模型为什么增加在模型那边，不应该是在渠道那边增加吗」。
-/// 他说的对：一条渠道声明了某个客户端名字，客户端就应该能打它；「模型组」只是第二层
-/// （决定顺序与启停），不该让人在两个页面之间来回跑。所以保存渠道时把缺的组建出来。
-///
-/// 只比名字，不猜上游：建出来的组只挂这一条渠道，顺序与类型交给「模型」页以后调。
-pub(crate) fn groups_to_create_for_models(models: &[ModelPair], have: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for m in models {
-        let name = m.model.trim();
-        if name.is_empty() {
-            continue;
-        }
-        if have.iter().any(|g| g == name) || out.iter().any(|g| g == name) {
-            continue;
-        }
-        out.push(name.to_string());
-    }
-    out
-}
-
 /// 面板上「同时最多几发」那一格：填了数字就用它，填了乱七八糟的东西就当 0（不限），
 /// 不能因为一格填错让整张表单存不下去。
 fn parse_cap(text: &str) -> u32 {
@@ -373,29 +351,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     } else {
                         String::new()
                     };
-                    // 声明了客户端名字却没有同名模型组 → 顺手建出来（用户要求：在渠道这边加就够）。
-                    // 拿不到组清单就不建（下面照旧提示），别因为这一步失败而挡住保存成功的提示。
-                    let chan_id = match new_id {
-                        Some(i) => Some(i),
-                        None => id,
-                    };
-                    let mut made: Vec<String> = Vec::new();
-                    if let Some(cid) = chan_id {
-                        if let Ok(resp) = api::groups().await {
-                            let have: Vec<String> =
-                                resp.groups.iter().map(|g| g.name.clone()).collect();
-                            for name in groups_to_create_for_models(&models, &have) {
-                                if api::save_group(&name, true, &[cid]).await.is_ok() {
-                                    made.push(name);
-                                }
-                            }
-                        }
-                    }
-                    let made_note = if made.is_empty() {
-                        String::new()
-                    } else {
-                        format!("；顺手建了 {} 个模型组（客户端马上就能打）：{}", made.len(), made.join("、"))
-                    };
+                    // v0.11.0 起「勾上就能用」：勾了就出现在「模型」页、客户端马上能打这个名字。
+                    // 没有第二层（模型组）要建，所以这里保存完就完事。
+                    let made_note = String::new();
                     match new_id {
                         // 新建：**表单不关**，直接切成"编辑这条新渠道"并跳到「模型」那一段 ——
                         // 这样能马上用它的 URL/密钥去问上游有哪些模型，不用先关再点编辑
@@ -443,6 +401,20 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                 Err(e) => {
                     ctx.note_err(&e);
                     ctx.say(format!("清空失败：{}", e.message));
+                }
+            }
+        });
+    };
+
+    // 上移 / 下移一位。顺序全站只有一份（`channels.priority`）：一个模型名下先试哪条、
+    // 「模型」页上显示的顺序，都跟着它走 —— 所以只在「渠道」页调。
+    let move_one = move |l: Channel, up: bool| {
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::move_channel(l.id, up).await {
+                Ok(()) => reload(),
+                Err(e) => {
+                    ctx.note_err(&e);
+                    ctx.say(format!("挪不动：{}", e.message));
                 }
             }
         });
@@ -790,11 +762,17 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             </div>
                         }.into_any();
                     }
+                    let total = v.len();
                     v.into_iter()
-                        .map(|l| {
+                        .enumerate()
+                        .map(|(idx, l)| {
                             let l2 = l.clone();
                             let l3 = l.clone();
                             let l4 = l.clone();
+                            let l_up = l.clone();
+                            let l_down = l.clone();
+                            let first_one = idx == 0;
+                            let last_one = idx + 1 == total;
                             let (pid, pmsg, pok) = probe_msg
                                 .get()
                                 .map(|(i, m, ok)| (Some(i), m, ok))
@@ -812,7 +790,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             view! {
                                 <div class="chan-card">
                                     <div class="chan-head">
-                                        <span class="chan-id">"#" {l.id}</span>
+                                        <span class="chan-id">
+                                            "第 " {idx + 1} " 位"
+                                        </span>
                                         <b class="chan-name">{l.name.clone()}</b>
                                         <span class="spacer"></span>
                                         {
@@ -855,6 +835,22 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         })}
                                     </div>
                                     <div class="chan-actions">
+                                        <button
+                                            class="ghost"
+                                            disabled=first_one
+                                            title="往上挪一位：请求会更早试它"
+                                            on:click=move |_| move_one(l_up.clone(), true)
+                                        >
+                                            "↑"
+                                        </button>
+                                        <button
+                                            class="ghost"
+                                            disabled=last_one
+                                            title="往下挪一位：请求会更晚试它"
+                                            on:click=move |_| move_one(l_down.clone(), false)
+                                        >
+                                            "↓"
+                                        </button>
                                         <button class="ghost" on:click=move |_| open_edit(l2.clone())>
                                             "编辑"
                                         </button>
@@ -1650,47 +1646,3 @@ mod tests {
 }
 
 // ─────────── 渠道页加模型 = 顺手建组（2026-10-18，按用户要求改） ───────────
-
-#[cfg(test)]
-mod autogroup_tests {
-    use super::*;
-
-    fn row(name: &str) -> ModelPair {
-        ModelPair {
-            model: name.into(),
-            upstream: None,
-            vision: false,
-            drop_fields: String::new(),
-        }
-    }
-
-    /// 声明了客户端名字却没有同名模型组 → 要建；已经有组的不重复建；空白名字跳过；
-    /// 同一条渠道里重复写的名字只建一次。
-    ///
-    /// 反证：把 `have.iter().any(|g| g == name)` 那行删掉 → 已有组的名字也会被「建」一次
-    /// （服务端会覆盖成只挂这一条渠道），用例立刻变红。
-    #[test]
-    fn only_the_client_names_without_a_group_are_created() {
-        let models = vec![
-            row("auto"),
-            row("BAAI/bge-reranker-v2-m3"),
-            row("  "),
-            row("BAAI/bge-m3"),
-            row("BAAI/bge-m3"),
-        ];
-        let have = vec!["auto".to_string(), "BAAI/bge-m3".to_string()];
-        assert_eq!(
-            groups_to_create_for_models(&models, &have),
-            vec!["BAAI/bge-reranker-v2-m3".to_string()],
-            "只建缺的那个，且不重复、不建空名"
-        );
-    }
-
-    /// 什么组都有的时候，这一步必须是空操作（不能拿空清单去调保存接口）。
-    #[test]
-    fn nothing_is_created_when_every_name_already_has_a_group() {
-        let models = vec![row("auto")];
-        let have = vec!["auto".to_string()];
-        assert!(groups_to_create_for_models(&models, &have).is_empty());
-    }
-}

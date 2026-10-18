@@ -3,8 +3,9 @@
 //! 一段请求的一生（严格按 `docs/03-路由策略.md`）：
 //!
 //! ```text
-//!   取模型组 → 过滤出可用渠道 →（带图的请求：再筛出标了「能看图」的渠道）
-//!   → 问路由状态机「这次按什么顺序试」
+//!   名字 → 勾了它的渠道（auto 时先现场挑一串模型名）→（带图的请求：再筛出标了
+//!   「能看图」的候选）
+//!   → 普通模型名问路由状态机「这次按什么顺序试」；auto 用现场算出来的顺序
 //!   → 开一条记账（请求级）
 //!   → 逐条渠道、每条渠道最多 1+retry_times 次尝试
 //!        渠道的毛病（网络/5xx/429/401/403）→ 重试；重试耗尽 → 切换下一条渠道
@@ -37,7 +38,7 @@ use tokengo_shared::routing::{classify_status, retry_delay_ms, AttemptOutcome};
 use tokengo_shared::ChannelId;
 
 use crate::db::requests::Status;
-use crate::db::{groups, channels, requests, now_ms};
+use crate::db::{model_routes, channels, requests, now_ms};
 use crate::routes::ApiError;
 use crate::SharedState;
 
@@ -94,10 +95,22 @@ pub struct ForwardRequest {
     pub client_ip: Option<String>,
 }
 
-/// 本次请求要用的渠道（已按组内优先级排好，且都是可用渠道）+ 各自的密钥。
+/// 一次请求要试的一个候选：**用哪个模型名** + 走哪条渠道。
+///
+/// 普通模型名下，所有候选共用一个名字；`auto` 时每个候选是它现场挑中的一个模型名 ——
+/// 别名 / 能看图 / 丢字段都是按**这个候选名**在这条渠道上查的。
+struct Candidate {
+    name: String,
+    channel: Channel,
+}
+
+/// 这次请求要试的候选链（已按顺序排好）+ 各自的密钥。
 struct Plan {
-    group: String,
-    channels: Vec<Channel>,
+    /// 这一链挂在哪个名字下（普通模型名 = 归一后的那个名字；auto 时是保留名）。
+    route: String,
+    /// 是不是保留名 `auto`：auto 现场挑、不写路由状态、不做回切。
+    auto: bool,
+    entries: Vec<Candidate>,
     secrets: HashMap<i64, String>,
     /// 每条渠道「同时最多几发」（渠道 id → 上限；0 或缺席 = 不限）。
     caps: HashMap<i64, u32>,
@@ -105,11 +118,7 @@ struct Plan {
 
 impl Plan {
     fn ids(&self) -> Vec<ChannelId> {
-        self.channels.iter().map(|l| l.id).collect()
-    }
-
-    fn channel(&self, id: ChannelId) -> Option<&Channel> {
-        self.channels.iter().find(|l| l.id == id)
+        self.entries.iter().map(|e| e.channel.id).collect()
     }
 
     fn secret(&self, id: ChannelId) -> Option<&str> {
@@ -122,84 +131,123 @@ impl Plan {
     }
 }
 
-/// 从库里把这次请求需要的东西一次捞齐（同步、短暂持锁；返回后就不许再碰库守卫）。
-fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
+/// 把一条候选挂进链子（顺手把它的密钥与并发上限捞出来）。
+fn push_entry(
+    state: &SharedState,
+    conn: &rusqlite::Connection,
+    plan: &mut Plan,
+    name: String,
+    channel: Channel,
+) -> Result<(), ApiError> {
+    if let Some(s) = channels::secret(conn, &state.secrets, channel.id)? {
+        plan.secrets.insert(channel.id.0, s);
+    }
+    if channel.max_concurrent > 0 {
+        plan.caps.insert(channel.id.0, channel.max_concurrent);
+    }
+    plan.entries.push(Candidate { name, channel });
+    Ok(())
+}
+
+/// 从库里把这次请求要用的候选链一次捞齐（同步、短暂持锁；返回后就不许再碰库守卫）。
+///
+/// 两种情形：
+/// - **普通模型名**：勾了它的渠道，按渠道顺序（面板「渠道」页从上到下 = 先试）。
+/// - **保留名 `auto`**：现场挑一串最优的模型名（见 `db::model_routes::auto_candidates`），
+///   逐个摊成链 —— 每条候选都带着「这一发要发给上游的名字」。
+fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind) -> Result<Plan, ApiError> {
     let conn = state.conn();
-    let group_name = model;
-    // 名字是否存在、有没有被停用，**先看组这一行**：停用的组对外要像不存在一样。
-    // （面板上那个开关点完，客户端立刻打不通 —— 靠的就是这里。）
-    let Some(g) = groups::get(&conn, group_name)? else {
-        // 别在报错里点名某个具体模型名（比如 auto）—— 线上不一定有那个名字，
-        // 提示要指向「去面板建组」这件事本身。
+    if model_routes::is_auto(model) {
+        return load_auto_plan(state, &conn, model, endpoint);
+    }
+    let Some(route) = model_routes::routes_for(&conn, model)? else {
+        // 报错别教训人，说清「去哪儿勾上」就够了。
         return Err(ApiError::not_found(format!(
-            "模型 {model} 没有配置：去面板「模型」页给它建一个模型组，或者改用你面板里已有的模型名"
+            "模型「{model}」这里没有：去面板「渠道」页把这个模型名勾上 —— 勾上才认（勾选就是白名单）"
         )));
     };
-    if !g.enabled {
-        return Err(ApiError::not_found(format!(
-            "模型 {model} 已经在面板里停用了：要用就把它打开"
-        )));
-    }
-    let channels_all = groups::resolve_channels(&conn, group_name)?;
-    let mut routable = Vec::new();
-    let mut secrets = HashMap::new();
-    let mut caps = HashMap::new();
-    for channel in channels_all {
+    let mut plan = Plan {
+        route: route.name.clone(),
+        auto: false,
+        entries: Vec::new(),
+        secrets: HashMap::new(),
+        caps: HashMap::new(),
+    };
+    for channel in model_routes::channels_for(&conn, &route.name)? {
         if !channel.routable() {
             continue;
         }
-        if let Some(s) = channels::secret(&conn, &state.secrets, channel.id)? {
-            secrets.insert(channel.id.0, s);
-        }
-        if channel.max_concurrent > 0 {
-            caps.insert(channel.id.0, channel.max_concurrent);
-        }
-        routable.push(channel);
+        push_entry(state, &conn, &mut plan, route.name.clone(), channel)?;
     }
-    if routable.is_empty() {
-        // 一条都没有时先说最可能的原因：组里挂着渠道，但它们没勾这个名字。
-        // （严格白名单 v0.9.0：一个都没勾的渠道也在这里 —— 修法不一样，分两句话说。）
-        let skipped = groups::channels_skipped_by_scope(&conn, group_name)?;
-        if !skipped.is_empty() {
-            let never: Vec<&str> = skipped
-                .iter()
-                .filter(|(_, declared)| !declared)
-                .map(|(n, _)| n.as_str())
-                .collect();
-            let others: Vec<&str> = skipped
-                .iter()
-                .filter(|(_, declared)| *declared)
-                .map(|(n, _)| n.as_str())
-                .collect();
-            let mut why: Vec<String> = Vec::new();
-            if !never.is_empty() {
-                why.push(format!(
-                    "{} 一个模型名都没勾（勾选就是白名单：没勾的模型不会发给它）",
-                    never.join("、")
-                ));
+    if plan.entries.is_empty() {
+        // 有渠道勾过这个名字，但一条都用不了：把原因指明白（停用了 / 没填 base_url）
+        let mut names: Vec<String> = Vec::new();
+        for id in &route.declared_by {
+            if let Some(l) = channels::get(&conn, *id)? {
+                names.push(l.name);
             }
-            if !others.is_empty() {
-                why.push(format!(
-                    "{} 勾的是别的名字，没勾「{model}」",
-                    others.join("、")
-                ));
-            }
-            return Err(ApiError::not_found(format!(
-                "模型 {model} 现在没有可用的渠道：{}。\
-                 去面板「渠道」页把这些名字勾上，或者改用你面板里已有的模型名",
-                why.join("；")
-            )));
         }
         return Err(ApiError::not_found(format!(
-            "模型 {model} 现在没有可用的渠道（组里的渠道要么停用了，要么没填 base_url）"
+            "模型「{model}」现在一条可用渠道都没有：勾它的渠道（{}）要么停用了，要么没填 base_url",
+            if names.is_empty() {
+                "无".to_string()
+            } else {
+                names.join("、")
+            }
         )));
     }
-    Ok(Plan {
-        group: group_name.to_string(),
-        channels: routable,
-        secrets,
-        caps,
-    })
+    Ok(plan)
+}
+
+/// `auto` 的链：在用户勾选过的模型里挑一串（最优在前），逐个摊成候选。
+///
+/// **不做兜底**（用户口径）：候选只来自用户勾选过的模型。一个都没有就 404 说清楚，
+/// 对外清单里也不显示 auto（`/v1/models` 那边用 `auto_available` 判断）。
+fn load_auto_plan(
+    state: &SharedState,
+    conn: &rusqlite::Connection,
+    model: &str,
+    endpoint: EndpointKind,
+) -> Result<Plan, ApiError> {
+    let mut plan = Plan {
+        route: model_routes::AUTO_NAME.to_string(),
+        auto: true,
+        entries: Vec::new(),
+        secrets: HashMap::new(),
+        caps: HashMap::new(),
+    };
+    let candidates =
+        model_routes::auto_candidates(conn, endpoint.as_model_kind(), false, now_ms())?;
+    if candidates.is_empty() {
+        let msg = if model_routes::auto_available(conn)? {
+            format!(
+                "「{model}」现在没有可挑的模型：你勾选过的模型里没有「{}」这一类的。\
+                 去面板「模型」页看看它们的用途定得对不对（用途不对就挑不到），\
+                 或者在「渠道」页勾上合适的模型名",
+                endpoint.as_model_kind().label()
+            )
+        } else {
+            format!(
+                "「{model}」现在没有可挑的模型：你还没有勾选任何模型。\
+                 去面板「渠道」页把要用的模型名勾上 —— 只有你勾选过的模型才会被挑（勾选就是白名单）"
+            )
+        };
+        return Err(ApiError::not_found(msg));
+    }
+    for name in candidates {
+        for channel in model_routes::channels_for(conn, &name)? {
+            if !channel.routable() {
+                continue;
+            }
+            push_entry(state, conn, &mut plan, name.clone(), channel)?;
+        }
+    }
+    if plan.entries.is_empty() {
+        return Err(ApiError::not_found(format!(
+            "「{model}」现在没有可挑的模型：勾过的那几个名字下面的渠道都停用了"
+        )));
+    }
+    Ok(plan)
 }
 
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
@@ -211,7 +259,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 以前这三类 404 在 `load_plan` 里就直接 return 了，一条账都不记 —— 用户看到的是
     // 「客户端报 404、面板上干干净净」，只能靠猜。这与带图被拦（422）的处理也不一致：
     // 那条是记的。**记账绝不能反过来影响请求结果**：这里只记，记账本身错了就吞掉。
-    let plan_all = match load_plan(&state, &req.model) {
+    let plan_all = match load_plan(&state, &req.model, req.endpoint) {
         Ok(p) => p,
         Err(e) => {
             if e.status.is_client_error() {
@@ -220,43 +268,44 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             return Err(e);
         }
     };
-    // 这一组的全量可用渠道（状态机一律看这一份，不看带图筛过的那一份）
+    // 这一链的全量候选（状态机与「记账记的是谁」都看这一份）
     let all_ids = plan_all.ids();
 
     // 这条请求是不是在让模型看图？（只有对话端点会有图）
-    let wants_vision = req.endpoint == EndpointKind::Chat
-        && tokengo_shared::request_has_image(&req.body);
+    let wants_vision =
+        req.endpoint == EndpointKind::Chat && tokengo_shared::request_has_image(&req.body);
 
-    // 带图就只走「标了能看图」的渠道。**没标 = 不敢保证**：把图发给一条纯文本
+    // 带图就只走「标了能看图」的候选。**没标 = 不敢保证**：把图发给一条纯文本
     // 上游，它要么回一个含糊的 400、要么干脆把图忽略掉装没事，两种都让用户
     // 看不出来发生了什么（上游 FreeLLMAPI 也是这个规矩，它连"一个能看图的
     // 模型都没启用"都要单独回一个 422，而不是等上游报错）。
+    // `auto` 的候选在挑的时候就只挑能看图的模型，这里再按渠道筛一遍。
     let plan = if wants_vision {
-        let channels: Vec<Channel> = plan_all
-            .channels
-            .iter()
-            .filter(|l| l.vision)
-            .cloned()
-            .collect();
-        Plan {
-            group: plan_all.group.clone(),
-            channels,
-            secrets: plan_all.secrets.clone(),
-            caps: plan_all.caps.clone(),
-        }
+        let mut p = plan_all;
+        p.entries.retain(|e| e.channel.vision);
+        p
     } else {
         plan_all
     };
 
-    if wants_vision && plan.channels.is_empty() {
+    if wants_vision && plan.entries.is_empty() {
         // 记一条账：面板的「请求流水」里要能看见这次被拦下的带图请求
         // （这不是渠道的毛病，是配置里没有能看图的渠道 → client_error）。
-        let msg = format!(
-            "这条请求带了图片，但模型「{}」后面没有一条渠道标了「能看图」。\
-             去面板『渠道管理』给这条渠道的模型名勾上「能看图」（拿不准就先点它旁边的『测视觉』实测一下），\
-             或者把图片请求改成打一个确实能看图的模型名。",
-            req.model
-        );
+        let msg = if plan.auto {
+            format!(
+                "这条请求带了图片，但你勾选过的模型里没有一条渠道标了「能看图」。\
+                 「{}」不会把图悄悄丢掉 —— 去面板「渠道」页给能看图的模型名勾上「能看图」\
+                 （拿不准就先点它旁边的「测视觉」实测一下）。",
+                req.model
+            )
+        } else {
+            format!(
+                "这条请求带了图片，但模型「{}」后面没有一条渠道标了「能看图」。\
+                 去面板『渠道管理』给这条渠道的模型名勾上「能看图」（拿不准就先点它旁边的『测视觉』实测一下），\
+                 或者把图片请求改成打一个确实能看图的模型名。",
+                req.model
+            )
+        };
         let request_id = {
             let conn = state.conn();
             requests::start(
@@ -283,28 +332,42 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         return Ok(no_vision_model_response(msg));
     }
 
-    // 这一组平时走哪个端点，后台探活要知道（否则给向量组发对话探活必然 400）
-    state.note_group_endpoint(&plan.group, req.endpoint);
+    // 这个模型名平时走哪个端点，后台探活要知道（否则给向量模型发对话探活必然 400）。
+    // `auto` 不记：它每次现场挑，没有固定的端点。
+    if !plan.auto {
+        state.note_model_endpoint(&plan.route, req.endpoint);
+    }
 
-    // 状态机看的一律是**这一组的全量可用渠道**（跟带不带图无关）。带图请求只是在
-    // 它给出的顺序里挑出能看图的渠道 —— 一份被筛过的名单喂进去，宁可回不到首选，
-    // 也绝不能反过来把整组的「当前渠道」改成那条能看图的渠道。
-    let ids = all_ids;
-    let order_all = {
-        // 微秒级的一段锁，里面没有 await
-        state.routing().attempt_order(&plan.group, &ids, started_ms)
-    };
-    let order_all = if order_all.is_empty() { ids.clone() } else { order_all };
-    // plan 带图时已经是筛过的：`plan.channel(id)` 有值就说明这条渠道标了「能看图」
-    let order: Vec<ChannelId> = if wants_vision {
-        order_all.iter().copied().filter(|id| plan.channel(*id).is_some()).collect()
+    // 顺序：
+    // · 普通模型名 → 问状态机（首选 / 回切 / 上一条走的谁），带图时再按能看图筛一遍；
+    // · `auto` → 现场算出来的那条链就是顺序（不读也不写状态机）。
+    let order: Vec<usize> = if plan.auto {
+        (0..plan.entries.len())
+            .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
+            .collect()
     } else {
-        order_all
+        let mut ord = state.routing().attempt_order(&plan.route, &all_ids, started_ms);
+        if ord.is_empty() {
+            ord = all_ids.clone();
+        }
+        let index_of: HashMap<i64, usize> = plan
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.channel.id.0, i))
+            .collect();
+        ord.iter()
+            .filter_map(|id| index_of.get(&id.0).copied())
+            .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
+            .collect()
     };
-    // 带图请求**只读状态机、不写**：它本来就只在「能看图」这个小圈子里挑渠道，
-    // 让它的结果去改整组的口味，等于一条带图请求把后面十分钟的纯文字请求一起改道。
-    // 渠道自身的健康照旧由每分钟探活和纯文字请求看着。
-    let touch_state = !wants_vision;
+    // 带图请求与 `auto` **只读状态机、不写**：
+    // · 带图请求本来就只在「能看图」这个小圈子里挑渠道，让它的结果去改整个模型名的口味，
+    //   等于一条带图请求把后面十分钟的纯文字请求一起改道。
+    // · `auto` 每一发都是现场挑的，没有「首选/回切」可言；让它去写状态，
+    //   那个名字下的账就没人解释得清了。
+    // 渠道自身的健康照旧由每分钟探活和普通请求看着。
+    let touch_state = !wants_vision && !plan.auto;
 
     let request_id = {
         let conn = state.conn();
@@ -341,8 +404,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let mut tried_any = false;
         let mut busy: Vec<(i64, Arc<tokio::sync::Semaphore>)> = Vec::new();
 
-    for channel_id in order.iter().copied() {
-        let Some(channel) = plan.channel(channel_id) else { continue };
+    for entry_idx in order.iter().copied() {
+        let Some(Candidate { name, channel }) = plan.entries.get(entry_idx) else {
+            continue;
+        };
         // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
         let permit = match pre_permits.remove(&channel.id.0) {
             Some(p) => Some(p),
@@ -359,7 +424,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         };
         tried_any = true;
         last_channel = channel.id;
-        let sent_model = channel.upstream_model(&req.model).to_string();
+        // 这一发送给上游的名字：按**这个候选名**在这条渠道上查别名
+        // （auto 时每个候选各不相同 —— auto 挑中的是谁，上游看到的就是谁的名字）
+        let sent_model = channel.upstream_model(name).to_string();
+        // 账上记下「真正被叫的是谁」：面板上看得见 auto 这一发走了哪个模型
+        guard.note_served(name);
         // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
         // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
         // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
@@ -430,9 +499,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
                         if touch_state {
                             let mut r = state.routing();
-                            r.on_success(&plan.group, channel.id, &ids, now_ms());
+                            r.on_success(&plan.route, channel.id, &all_ids, now_ms());
                             drop(r);
-                            state.persist_state(&plan.group)?;
+                            state.persist_state(&plan.route)?;
                         }
                         return Ok(stream_passthrough(
                             state.clone(),
@@ -481,9 +550,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
                         let mut r = state.routing();
-                        r.on_success(&plan.group, channel.id, &ids, now_ms());
+                        r.on_success(&plan.route, channel.id, &all_ids, now_ms());
                         drop(r);
-                        state.persist_state(&plan.group)?;
+                        state.persist_state(&plan.route)?;
                     }
                     guard.finish(
                         &state,
@@ -582,9 +651,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // 这条渠道把重试次数用完了还是不行 → 切换
         if touch_state {
             let mut r = state.routing();
-            r.on_channel_exhausted(&plan.group, channel.id, &ids, now_ms());
+            r.on_channel_exhausted(&plan.route, channel.id, &all_ids, now_ms());
             drop(r);
-            state.persist_state(&plan.group)?;
+            state.persist_state(&plan.route)?;
             tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, cfg.max_attempts());
         } else {
             tracing::warn!(
@@ -650,8 +719,8 @@ fn gateway_timeout(plan: &Plan, model: &str) -> Response {
         StatusCode::GATEWAY_TIMEOUT,
         "upstream_timeout",
         format!(
-            "重试预算用尽（模型组 {}，请求的模型 {model}）",
-            plan.group
+            "重试预算用尽（模型「{}」，请求的模型「{model}」）",
+            plan.route
         ),
     )
     .into_response()
@@ -1104,6 +1173,10 @@ pub struct RequestGuard {
     request_id: i64,
     started_ms: i64,
     done: bool,
+    /// 这一发真正发给上游的模型名（`auto` 时是它挑中的那个）。
+    /// 收尾时落进 `requests.served_model` —— 没有这一列，面板上只能看到
+    /// 一条「auto 成功了」，看不出到底走了谁。
+    served_model: Option<String>,
 }
 
 impl RequestGuard {
@@ -1113,7 +1186,13 @@ impl RequestGuard {
             request_id,
             started_ms,
             done: false,
+            served_model: None,
         }
+    }
+
+    /// 记下这一发真正发给上游的模型名。
+    pub fn note_served(&mut self, name: &str) {
+        self.served_model = Some(name.to_string());
     }
 
     /// 记账收尾。`first_byte_ms` 传 None 时用现在的耗时兜底。
@@ -1147,6 +1226,7 @@ impl RequestGuard {
             output_tokens,
             streamed,
             error: error.map(str::to_string),
+            served_model: self.served_model.clone(),
         };
         match state.db.try_lock() {
             Ok(conn) => {
@@ -1179,6 +1259,7 @@ impl Drop for RequestGuard {
             output_tokens: 0,
             streamed: false,
             error: Some("客户端断开（处理函数被丢弃）".to_string()),
+            served_model: self.served_model.clone(),
         };
         match self.state.db.try_lock() {
             Ok(conn) => {

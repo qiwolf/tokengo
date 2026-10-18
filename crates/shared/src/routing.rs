@@ -86,9 +86,9 @@ pub fn classify_status(status: u16) -> AttemptOutcome {
     }
 }
 
-/// 一个模型组的路由状态。
+/// 一个模型名的路由状态。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct GroupState {
+pub struct RouteState {
     pub active: Option<ChannelId>,
     /// 回切检查时间点；为空表示"首选就绪，无需回切"。
     pub next_probe_at_ms: Option<i64>,
@@ -96,17 +96,17 @@ pub struct GroupState {
     pub last_switch_at_ms: Option<i64>,
 }
 
-impl GroupState {
+impl RouteState {
     pub fn probe_due(&self, now_ms: i64) -> bool {
         matches!(self.next_probe_at_ms, Some(t) if t <= now_ms)
     }
 }
 
-/// 全部模型组的路由状态。
+/// 全部模型名的路由状态。
 #[derive(Debug, Default)]
 pub struct Router {
     pub cfg: RoutingConfig,
-    states: HashMap<String, GroupState>,
+    states: HashMap<String, RouteState>,
 }
 
 impl Router {
@@ -117,22 +117,22 @@ impl Router {
         }
     }
 
-    pub fn state(&self, group: &str) -> Option<&GroupState> {
-        self.states.get(group)
+    pub fn state(&self, model: &str) -> Option<&RouteState> {
+        self.states.get(model)
     }
 
-    pub fn all_states(&self) -> &HashMap<String, GroupState> {
+    pub fn all_states(&self) -> &HashMap<String, RouteState> {
         &self.states
     }
 
     /// 从库里恢复一组的状态。进程启动时按组调一遍，之后每次状态变更都要写回库
     /// —— 否则重启后"当前渠道"和"回切检查点"就丢了，会立刻回戳刚坏掉的首选。
-    pub fn restore(&mut self, group: &str, state: GroupState) {
-        self.states.insert(group.to_owned(), state);
+    pub fn restore(&mut self, model: &str, state: RouteState) {
+        self.states.insert(model.to_owned(), state);
     }
 
-    fn entry(&mut self, group: &str) -> &mut GroupState {
-        self.states.entry(group.to_owned()).or_default()
+    fn entry(&mut self, model: &str) -> &mut RouteState {
+        self.states.entry(model.to_owned()).or_default()
     }
 
     /// 本请求该按什么顺序试哪些渠道。`channels` 必须是**已过滤掉停用/无 base_url**、
@@ -140,17 +140,17 @@ impl Router {
     ///
     /// - 常规：`[active, 其余按优先级]`
     /// - 回切检查点到点：`[primary, active, 其余按优先级]`
-    pub fn attempt_order(&mut self, group: &str, channels: &[ChannelId], now_ms: i64) -> Vec<ChannelId> {
+    pub fn attempt_order(&mut self, model: &str, channels: &[ChannelId], now_ms: i64) -> Vec<ChannelId> {
         let primary = channels.first().copied();
         let probe_due = {
-            let st = self.entry(group);
+            let st = self.entry(model);
             // active 丢了（渠道被删/停用）或从没定过 → 回到首选
             if st.active.is_none_or(|a| !channels.contains(&a)) {
                 st.active = primary;
             }
             st.probe_due(now_ms)
         };
-        let active = self.states.get(group).and_then(|s| s.active);
+        let active = self.states.get(model).and_then(|s| s.active);
 
         let mut order: Vec<ChannelId> = Vec::with_capacity(channels.len() + 1);
         if probe_due {
@@ -176,10 +176,10 @@ impl Router {
     /// - 命中的是首选 → 视为已回切：清掉回切检查点。**这是"10 分钟后重试成功就
     ///   切换回第一个选择的模型"的落点。**
     /// - 命中的不是首选 → 记下它是当前渠道；若与之前不同则计一次切换并重设检查点。
-    pub fn on_success(&mut self, group: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64) {
+    pub fn on_success(&mut self, model: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64) {
         let primary = channels.first().copied();
         let interval = self.cfg.reprobe_interval_ms;
-        let st = self.entry(group);
+        let st = self.entry(model);
         let was = st.active;
         st.active = Some(channel);
 
@@ -200,10 +200,10 @@ impl Router {
     /// - 它正是当前渠道 → 切到下一条可用渠道；没有下一条就原地留着（唯一的渠道没得选）。
     /// - 它正是首选、且此刻是回切检查点 → 把检查点往后推一个间隔。
     ///   （不加这一条会出现"每次请求都去戳已经坏掉的首选"的忙探活。）
-    pub fn on_channel_exhausted(&mut self, group: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64) {
+    pub fn on_channel_exhausted(&mut self, model: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64) {
         let primary = channels.first().copied();
         let interval = self.cfg.reprobe_interval_ms;
-        let st = self.entry(group);
+        let st = self.entry(model);
 
         if st.active == Some(channel) {
             let next = channels
@@ -231,7 +231,7 @@ impl Router {
     }
 
     /// 后台探活要处理哪些组（检查点到点的）。
-    pub fn groups_needing_probe(&self, now_ms: i64) -> Vec<String> {
+    pub fn models_needing_probe(&self, now_ms: i64) -> Vec<String> {
         let mut v: Vec<String> = self
             .states
             .iter()
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(st.active, Some(ChannelId(44)), "回切到第一个选择的模型");
         assert_eq!(st.next_probe_at_ms, None, "回切后清掉检查点");
         assert_eq!(st.switch_count, 2, "切走一次、切回来一次");
-        assert_eq!(r.groups_needing_probe(T0 + TEN_MIN), Vec::<String>::new());
+        assert_eq!(r.models_needing_probe(T0 + TEN_MIN), Vec::<String>::new());
     }
 
     #[test]

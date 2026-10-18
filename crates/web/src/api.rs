@@ -231,14 +231,6 @@ pub async fn vision_test(id: i64, model: &str, upstream: Option<&str>) -> Result
     .await
 }
 
-/// 一键启用/停用一组（面板状态开关）。
-pub async fn set_group_enabled(name: &str, enabled: bool) -> Result<(), ApiErr> {
-    let path = format!("{}/enabled", group_path(name));
-    call("PUT", &path, Some(json!({ "enabled": enabled })))
-        .await
-        .map(|_| ())
-}
-
 /// 一键启用/停用一条渠道（面板状态开关）。
 pub async fn set_channel_enabled(id: i64, enabled: bool) -> Result<(), ApiErr> {
     call(
@@ -248,13 +240,6 @@ pub async fn set_channel_enabled(id: i64, enabled: bool) -> Result<(), ApiErr> {
     )
     .await
     .map(|_| ())
-}
-
-/// 给人手动定一组的类型（`auto` = 交还给实测）。
-pub async fn set_group_kind(name: &str, kind: &str) -> Result<(), ApiErr> {
-    let body = json!({ "kind": kind });
-    let path = format!("{}/kind", group_path(name));
-    call("PUT", &path, Some(body)).await.map(|_| ())
 }
 
 /// 组名可能带斜杠（如 `cline-pass/deepseek-v4.1-flash`），拼进路径前要转义。
@@ -272,46 +257,46 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// 全部「模型名 → 用途」（面板「模型」页一次拿走）。
-pub async fn model_kinds() -> Result<Vec<NameKind>, ApiErr> {
-    let r: ModelKindsResp = typed("GET", "/api/model-kinds", None).await?;
-    Ok(r.kinds)
-}
-
 /// 给人手动定一个**模型名**的用途；`auto` = 交还给实测（清空）。
 ///
 /// 名字可能带斜杠（`BAAI/bge-m3`），进路径前必须转义 —— 否则会被当成两段路径。
 pub async fn set_model_kind(name: &str, kind: &str) -> Result<(), ApiErr> {
     let body = json!({ "kind": kind });
-    let path = format!("/api/models/{}/kind", urlencode(name));
-    call("PUT", &path, Some(body)).await.map(|_| ())
+    call("PUT", &model_path(name), Some(body)).await.map(|_| ())
 }
 
-pub async fn groups() -> Result<GroupsResp, ApiErr> {
-    typed("GET", "/api/groups", None).await
+/// **模型名进 URL 的那一段：必须转义。**
+///
+/// 名字可以带斜杠（`BAAI/bge-m3` 就是这么来的），不转义的话
+/// `/api/models/BAAI/bge-m3/kind` 会被当成三段路径，路由匹配不上 → 404。
+/// 按 UTF-8 字节转义（名字里有中文时整字符转义会拼出无效路径）。
+/// 凡是「名字进 URL」的地方都用这个函数，别手拼。
+pub(crate) fn model_path(name: &str) -> String {
+    format!("/api/models/{}/kind", urlencode(name))
 }
 
-pub async fn save_group(name: &str, enabled: bool, channels: &[i64]) -> Result<(), ApiErr> {
+/// 这个名字的回切检查点归零用的路径（不想等回切间隔时用）。
+pub(crate) fn reprobe_path(name: &str) -> String {
+    format!("/api/routing/{}/reprobe", urlencode(name))
+}
+
+/// 面板「模型」页要的全部事实：一行一个模型名 + 它后面那串渠道 + 路由状态 + auto 的候选。
+pub async fn model_routes() -> Result<ModelRoutesResp, ApiErr> {
+    typed("GET", "/api/model-routes", None).await
+}
+
+/// 把一条渠道上移 / 下移一位。
+///
+/// 顺序全站只有一份（`channels.priority`）：一个模型名下先试哪条也看它，
+/// 所以这个按钮在「渠道」页上。
+pub async fn move_channel(id: i64, up: bool) -> Result<(), ApiErr> {
     call(
         "POST",
-        "/api/groups",
-        Some(json!({ "name": name, "enabled": enabled, "channels": channels })),
+        &format!("/api/channels/{id}/move"),
+        Some(json!({ "up": up })),
     )
     .await
     .map(|_| ())
-}
-
-pub async fn delete_group(name: &str) -> Result<(), ApiErr> {
-    call("DELETE", &group_path(name), None).await.map(|_| ())
-}
-
-/// 模型组名进 URL 的那一段：**必须转义**。
-///
-/// 组名可以带斜杠（`BAAI/bge-m3` 就是这么来的），不转义的话
-/// `/api/groups/BAAI/bge-m3` 会被当成两段路径，路由匹配不上 → 报「删除失败 HTTP404」。
-/// （用户报过这个，2026-10-18 修的。凡是「名字进 URL」的地方都用这个函数，别手拼。）
-pub(crate) fn group_path(name: &str) -> String {
-    format!("/api/groups/{}", urlencode(name))
 }
 
 pub async fn routing() -> Result<RoutingResp, ApiErr> {
@@ -323,9 +308,9 @@ pub async fn save_routing_config(cfg: &RoutingCfg) -> Result<(), ApiErr> {
     call("PUT", "/api/routing/config", Some(v)).await.map(|_| ())
 }
 
-/// 不想等 10 分钟时用：把某组的回切检查点归零。
-pub async fn reprobe(group: &str) -> Result<(), ApiErr> {
-    call("POST", &format!("/api/routing/{}/reprobe", urlencode(group)), None).await.map(|_| ())
+/// 不想等 10 分钟时用：把某个模型名的回切检查点归零。
+pub async fn reprobe(model: &str) -> Result<(), ApiErr> {
+    call("POST", &reprobe_path(model), None).await.map(|_| ())
 }
 
 pub async fn stats(hours: i64) -> Result<StatsResp, ApiErr> {
@@ -403,19 +388,24 @@ pub struct PruneResp {
 mod tests {
     use super::*;
 
-    /// 回归：组名带斜杠时进 URL 必须转义 —— 不转义就是用户报的「删除失败 HTTP404」
-    /// （`/api/groups/BAAI/bge-m3` 被当成两段路径，路由匹配不上）。
+    /// 回归：模型名带斜杠时进 URL 必须转义 —— 不转义就是用户报的「删除失败 HTTP404」
+    /// 的老毛病（`/api/models/BAAI/bge-m3/kind` 被当成三段路径，路由匹配不上）。
     #[test]
-    fn a_slash_in_a_group_name_is_escaped_before_it_goes_into_the_url() {
-        assert_eq!(group_path("BAAI/bge-m3"), "/api/groups/BAAI%2Fbge-m3");
-        assert_eq!(group_path("auto"), "/api/groups/auto", "普通名字不该被改花");
+    fn a_slash_in_a_model_name_is_escaped_before_it_goes_into_the_url() {
+        assert_eq!(model_path("BAAI/bge-m3"), "/api/models/BAAI%2Fbge-m3/kind");
+        assert_eq!(model_path("auto"), "/api/models/auto/kind", "普通名字不该被改花");
         // 中文、空格、问号、井号都得转义：这些字符不转义会被当成路径/查询的一部分
-        assert_eq!(group_path("深度/求索"), "/api/groups/%E6%B7%B1%E5%BA%A6%2F%E6%B1%82%E7%B4%A2");
-        assert_eq!(group_path("a b"), "/api/groups/a%20b");
-        assert_eq!(group_path("a?b"), "/api/groups/a%3Fb");
-        assert_eq!(group_path("a#b"), "/api/groups/a%23b");
+        assert_eq!(
+            model_path("深度/求索"),
+            "/api/models/%E6%B7%B1%E5%BA%A6%2F%E6%B1%82%E7%B4%A2/kind"
+        );
+        assert_eq!(model_path("a b"), "/api/models/a%20b/kind");
+        assert_eq!(model_path("a?b"), "/api/models/a%3Fb/kind");
+        assert_eq!(model_path("a#b"), "/api/models/a%23b/kind");
         // 合法的普通字符保持原样（`-_.~` 与字母数字）
-        assert_eq!(group_path("gpt-4o_mini.v2~x"), "/api/groups/gpt-4o_mini.v2~x");
+        assert_eq!(model_path("gpt-4o_mini.v2~x"), "/api/models/gpt-4o_mini.v2~x/kind");
+        // 回切那条路径同理
+        assert_eq!(reprobe_path("BAAI/bge-m3"), "/api/routing/BAAI%2Fbge-m3/reprobe");
     }
 }
 

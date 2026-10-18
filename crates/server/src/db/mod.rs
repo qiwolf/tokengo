@@ -4,9 +4,9 @@
 //! 将来搬数据和对拍都方便。
 
 pub mod catalog;
-pub mod groups;
 pub mod kinds;
 pub mod channels;
+pub mod model_routes;
 pub mod maintenance;
 pub mod requests;
 pub mod routing;

@@ -4,7 +4,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::fmt;
-use crate::model::{LogRow, Servable, StatsResp, status_label};
+use crate::model::{LogRow, NameRoute, StatsResp, status_label};
 use crate::pages::PageHead;
 use crate::Ctx;
 
@@ -12,7 +12,9 @@ use crate::Ctx;
 pub fn Overview(ctx: Ctx) -> impl IntoView {
     let (hours, set_hours) = signal(24i64);
     let stats = RwSignal::new(StatsResp::default());
-    let servable = RwSignal::new(Vec::<Servable>::new());
+    let callable = RwSignal::new(Vec::<NameRoute>::new());
+    // 客户端清单里有没有 auto（一个模型都没勾选时它不出现）
+    let auto_ready = RwSignal::new(false);
     let recent = RwSignal::new(Vec::<LogRow>::new());
     let channels = RwSignal::new(Vec::<crate::model::Channel>::new());
     let sessions = RwSignal::new(0i64);
@@ -33,8 +35,11 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     err.set(Some(e.message));
                 }
             }
-            match api::groups().await {
-                Ok(g) => servable.set(g.servable),
+            match api::model_routes().await {
+                Ok(r) => {
+                    callable.set(r.models);
+                    auto_ready.set(r.auto.available);
+                }
                 Err(e) => ctx.note_err(&e),
             }
             match api::logs(12).await {
@@ -212,7 +217,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <h2>"按类型"</h2>
             <p class="muted small">
                 "对话 / 向量 / 重排分开看 —— 三条路各有各的用法，混在一起看不出哪条不稳。"
-                "归类看的是这条请求当时实际打的端点，不是模型组现在的类型（组类型随时能改，"
+                "归类看的是这条请求当时实际打的端点，不是这个名字现在的用途（用途随时能改，"
                 "改了不该让历史账跟着变）。耗时只算成功的那些。"
             </p>
                 </header>
@@ -520,37 +525,71 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <p class="muted small">
                 "客户端填这些名字才打得通（和 "
                 <code>"/v1/models"</code>
-                " 用的是同一份判断：组是开着的，且组里至少有一条可用渠道）。"
+                " 用的是同一份判断：渠道里勾过它、并且至少有一条启用的渠道在服务它）。"
                 "标了"
                 <span class="tag vision">"视觉"</span>
                 "的名字后面有能看图的渠道 —— 带图请求要打这类名字，"
                 "打到没标的会回 422（说清楚，不悄悄丢图）。"
+                "名字不用在这儿建：在「渠道」页勾上就出现。"
             </p>
                 </header>
                 <div class="card-body">
             <div class="chips">
                 {move || {
-                    let v = servable.get();
+                    let v: Vec<NameRoute> = callable
+                        .get()
+                        .into_iter()
+                        .filter(|m| m.routed)
+                        .collect();
                     if v.is_empty() {
-                        return view! { <span class="muted">"一个都没有 —— 先去「模型」建一个"</span> }.into_any();
+                        return view! {
+                            <span class="muted">
+                                "一个都没有 —— 先去「渠道」页勾上要用的模型名"
+                            </span>
+                        }
+                            .into_any();
                     }
-                    v.into_iter()
-                        .map(|m| {
-                            view! {
-                                <code
-                                    class="chip code"
-                                    title=if m.vision {
-                                        "收得下图片输入"
-                                    } else {
-                                        "纯文本：带图的请求会被回 422"
+                    // auto 是一个保留名：勾选过的模型一个都没有时它不出现，这里也不列。
+                    let auto_chip = if auto_ready.get() {
+                        view! {
+                            <code
+                                class="chip code"
+                                title="保留名：客户端打它就在你勾选过的模型里挑一个最好的"
+                            >
+                                "auto"
+                                <span class="tag">"自动挑"</span>
+                            </code>
+                        }
+                            .into_any()
+                    } else {
+                        ().into_any()
+                    };
+                    view! {
+                        <>
+                            {auto_chip}
+                            {v
+                                .into_iter()
+                                .map(|m| {
+                                    view! {
+                                        <code
+                                            class="chip code"
+                                            title=if m.can_see {
+                                                "收得下图片输入"
+                                            } else {
+                                                "纯文本：带图的请求会被回 422"
+                                            }
+                                        >
+                                            {m.name}
+                                            {m
+                                                .can_see
+                                                .then(|| view! { <span class="tag vision">"视觉"</span> })}
+                                        </code>
                                     }
-                                >
-                                    {m.name}
-                                    {m.vision.then(|| view! { <span class="tag vision">"视觉"</span> })}
-                                </code>
-                            }
-                        })
-                        .collect_view()
+                                        .into_any()
+                                })
+                                .collect_view()}
+                        </>
+                    }
                         .into_any()
                 }}
             </div>

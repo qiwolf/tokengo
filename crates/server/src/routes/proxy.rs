@@ -24,7 +24,7 @@ use axum::{Json, Router};
 use serde_json::Value;
 
 use super::{client_ip, ApiError};
-use crate::db::groups;
+use crate::db::model_routes;
 use crate::gateway::{self, EndpointKind, ForwardRequest};
 use crate::SharedState;
 
@@ -182,34 +182,64 @@ async fn rerank(
     }
     out
 }
-/// 模型清单。**只列真的能用的**：组是开着的、组里至少有一条可用渠道。
-/// 面板与客户端看同一份判断（`groups::list_servable`），不会出现"清单里有、打了 404"。
+/// 模型清单。**只列真的能用的**（有勾过它、而且是启用的渠道）—— 与面板「模型」页、
+/// 与实际路由看的是**同一份判断**（`db::model_routes`），不会再出现"清单里有、打了 404"。
 ///
 /// 每条多一个 `vision` 字段：这个模型名后面有没有"能看图"的渠道。客户端（Hermes
 /// 之类）可以据此决定要不要把图发过来 —— 带图的请求打到一个没有视觉渠道的模型名
 /// 上会被回 422（`code: no_vision_model`）。这是标准 OpenAI 字段之外的增项，
 /// 老客户端忽略它就行，行为不变。
+///
+/// 保留名 `auto`：**只有用户勾选过至少一个模型时才列它**（用户口径：勾选使用的模型
+/// 为 0 时，客户端则不显示 auto）。它每次现场挑一个最优的模型发出去，所以 kind 不写
+/// 具体类型，`picks` 里是这一刻的候选顺序（面板「模型」页看的就是同一份）。
 async fn models(
     _key: GatewayKey,
     State(state): State<SharedState>,
 ) -> Result<Json<Value>, ApiError> {
-    let servable = {
+    let (servable, auto_rows) = {
         let conn = state.conn();
-        groups::list_servable(&conn)?
+        let servable = model_routes::servable(&conn)?;
+        let auto_rows = if model_routes::auto_available(&conn)? {
+            let now = crate::db::now_ms();
+            let chat = model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Chat, false, now)?;
+            let embeddings =
+                model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Embeddings, false, now)?;
+            let rerank =
+                model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Rerank, false, now)?;
+            let vision = !model_routes::auto_candidates(&conn, tokengo_shared::ModelKind::Chat, true, now)?
+                .is_empty();
+            vec![serde_json::json!({
+                "id": model_routes::AUTO_NAME,
+                "object": "model",
+                "created": 0,
+                "owned_by": tokengo_shared::BRAND,
+                // 带图的请求打 auto 只有在这时候才走得通
+                "vision": vision,
+                // 它不是某一个类型：它随请求的端点自己挑（对话 / 嵌入 / 重排）
+                "kind": "",
+                "auto": true,
+                "picks": { "chat": chat, "embeddings": embeddings, "rerank": rerank },
+            })]
+        } else {
+            Vec::new()
+        };
+        (servable, auto_rows)
     };
-    Ok(Json(serde_json::json!({
-        "object": "list",
-        "data": servable.iter().map(|m| serde_json::json!({
+    let mut data: Vec<Value> = auto_rows;
+    data.extend(servable.iter().map(|m| {
+        serde_json::json!({
             "id": m.name,
             "object": "model",
             "created": 0,
             "owned_by": tokengo_shared::BRAND,
-            "vision": m.vision,
+            "vision": m.can_see(),
             // 这是向量模型还是对话模型 —— 客户端（Hermes 这类）可以据此挑端点，
             // 不用靠名字猜（现网那批自定义名字一个特征都没有）。
             "kind": m.kind.as_str(),
-        })).collect::<Vec<_>>(),
-    })))
+        })
+    }));
+    Ok(Json(serde_json::json!({ "object": "list", "data": data })))
 }
 
 /// 请求体：必须是 JSON 对象且带 model。**模型名写错是客户端的错**，回 400/404，

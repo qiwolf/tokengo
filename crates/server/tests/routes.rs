@@ -187,7 +187,8 @@ async fn admin_surface_exists() {
     let f = fixture();
     for uri in [
         "/api/channels",
-        "/api/groups",
+        "/api/model-routes",
+        "/api/model-kinds",
         "/api/routing",
         "/api/stats",
         "/api/logs",
@@ -206,7 +207,8 @@ async fn admin_surface_is_locked_without_a_session() {
     let f = fixture();
     for uri in [
         "/api/channels",
-        "/api/groups",
+        "/api/model-routes",
+        "/api/model-kinds",
         "/api/routing",
         "/api/stats",
         "/api/logs",
@@ -327,10 +329,13 @@ async fn login_flow_and_wrong_password() {
 
 // ───────────────── 阶段 1：渠道与模型组真的落库 ─────────────────
 
-/// 端到端：建渠道（带自定义请求头和密钥）→ 建模型组 → 查回来。
+/// 端到端：建渠道（带自定义请求头和密钥）→ 名字真的能路由 → 查回来。
 /// 这条覆盖用户四项决议里的第 2、3 条（自定义请求头、全自定义端点和 key）。
+///
+/// v0.11.0 起没有「模型组」这一层了：模型名直接来自渠道里勾的那些名字，
+/// 所以这条用例改成「两条渠道都勾 mock-chat → 顺序就是它们俩的顺序」。
 #[tokio::test]
-async fn create_a_channel_and_a_group_end_to_end() {
+async fn create_a_channel_and_route_a_model_end_to_end() {
     let f = fixture();
     let (_, v) = send(
         test_app(&f),
@@ -352,7 +357,10 @@ async fn create_a_channel_and_a_group_end_to_end() {
             "name": "硅基流动",
             "base_url": "https://api.siliconflow.cn/v1",
             "key": "sk-sf-secret",
-            "models": [{ "model": "bge-m3", "upstream": null }]
+            "models": [
+                { "model": "bge-m3", "upstream": null },
+                { "model": "mock-chat", "upstream": null }
+            ]
         })),
     )
     .await;
@@ -372,7 +380,7 @@ async fn create_a_channel_and_a_group_end_to_end() {
                 { "name": "x-opencode-client", "value": "cli" },
                 { "name": "x-opencode-session", "value": "{{uuid}}" }
             ],
-            "models": [{ "model": "auto", "upstream": "deepseek/deepseek-v4.1-flash" }]
+            "models": [{ "model": "mock-chat", "upstream": "deepseek/deepseek-v4.1-flash" }]
         })),
     )
     .await;
@@ -389,42 +397,36 @@ async fn create_a_channel_and_a_group_end_to_end() {
     let body = sf.to_string() + &cg.to_string();
     assert!(!body.contains("sk-sf-secret"), "接口回显里出现了密钥明文");
 
-    // 建组：顺序即优先级，硅基流动首选
-    let (s, _) = send(
-        test_app(&f),
-        "POST",
-        "/api/groups",
-        Some(&token),
-        Some(json!({ "name": "auto", "channels": [sf_id, cg_id] })),
-    )
-    .await;
+    // 查回来核对：两个名字各一行，渠道顺序就是先试顺序（新建的排最后）
+    let (s, v) = send(test_app(&f), "GET", "/api/model-routes", Some(&token), None).await;
     assert_eq!(s, StatusCode::OK);
+    let row = |name: &str| -> Value {
+        v["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    let chat = row("mock-chat");
+    assert_eq!(chat["channels"], json!([sf_id, cg_id]), "{chat}");
+    assert_eq!(chat["routed"], json!(true));
+    assert_eq!(chat["kind"], json!(""), "刚建的名字还没人来打过，用途是「还没定」");
+    assert_eq!(chat["can_see"], json!(false), "没有渠道标能看图");
+    assert_eq!(row("bge-m3")["channels"], json!([sf_id]));
 
-    // 查回来核对
-    let (s, v) = send(test_app(&f), "GET", "/api/groups", Some(&token), None).await;
-    assert_eq!(s, StatusCode::OK);
-    let g = &v["groups"][0];
-    assert_eq!(g["name"], "auto");
-    assert_eq!(g["channels"], json!([sf_id, cg_id]));
-    assert_eq!(
-        v["servable"],
-        json!([{
-            "name": "auto",
-            "vision": false,
-            "kind": "",
-            "kind_label": "还没定",
-            "kind_source": ""
-        }]),
-        "只列真实能用的模型名，并如实说能不能看图、是哪种模型"
-    );
-    assert_eq!(g["kind"], json!(""), "刚建的组还没人来打过，类型是「还没定」");
-    assert_eq!(g["can_see"], json!(false), "这条组里没有标能看图的渠道");
-
-    // 路由状态：首选是第一条，还没切过
+    // 路由状态：首选是这个名字下的第一条渠道，还没切过
     let (s, v) = send(test_app(&f), "GET", "/api/routing", Some(&token), None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v["groups"][0]["primary_channel_id"], json!(sf_id));
-    assert_eq!(v["groups"][0]["switch_count"], 0);
+    let st = v["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["model"] == "mock-chat")
+        .unwrap();
+    assert_eq!(st["primary_channel_id"], json!(sf_id));
+    assert_eq!(st["switch_count"], 0);
 
     // 密钥在库里是密文：整个库文件的字节里搜不到明文
     let raw = std::fs::read(&f.state.cfg.db_path).unwrap();
@@ -493,9 +495,9 @@ async fn updating_a_channel_replaces_headers_and_can_clear_the_key() {
     assert_eq!(v["has_secret"], false, "传空串要能清掉密钥");
 }
 
-/// 删渠道要连带把它从模型组里摘掉，不能留个悬空引用。
+/// 删掉一条渠道：它勾过的名字下面就不再试它了。
 #[tokio::test]
-async fn deleting_a_channel_removes_it_from_groups() {
+async fn deleting_a_channel_removes_it_from_the_route() {
     let f = fixture();
     let (_, v) = send(
         test_app(&f),
@@ -514,19 +516,15 @@ async fn deleting_a_channel_removes_it_from_groups() {
             "POST",
             "/api/channels",
             Some(&token),
-            Some(json!({ "name": name, "base_url": format!("http://{name}/v1") })),
+            Some(json!({
+                "name": name,
+                "base_url": format!("http://{name}/v1"),
+                "models": [{ "model": "mock-chat", "upstream": null }]
+            })),
         )
         .await;
         ids.push(channel["id"].as_i64().unwrap());
     }
-    send(
-        test_app(&f),
-        "POST",
-        "/api/groups",
-        Some(&token),
-        Some(json!({ "name": "auto", "channels": ids })),
-    )
-    .await;
 
     let (s, _) = send(
         test_app(&f),
@@ -538,8 +536,15 @@ async fn deleting_a_channel_removes_it_from_groups() {
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    let (_, v) = send(test_app(&f), "GET", "/api/groups", Some(&token), None).await;
-    assert_eq!(v["groups"][0]["channels"], json!([ids[1]]));
+    let (_, v) = send(test_app(&f), "GET", "/api/model-routes", Some(&token), None).await;
+    let row = v["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "mock-chat")
+        .unwrap();
+    assert_eq!(row["channels"], json!([ids[1]]), "删掉的那条不该还在链子里：{v}");
+    assert_eq!(row["declared_by"], json!([ids[1]]));
 }
 
 /// 改口令要踢掉所有旧会话。
@@ -666,7 +671,7 @@ async fn stats_and_logs_read_from_the_database() {
         let id = tokengo_server::db::requests::start(
             &conn,
             "/v1/embeddings",
-            "auto",
+            "mock-chat",
             Some("1.1.1.1"),
             false,
         )
@@ -714,7 +719,7 @@ async fn stats_and_logs_read_from_the_database() {
     assert_eq!(v["logs"][0]["input_tokens"], 7);
 }
 
-/// 手动回切：把检查点归零，下次请求先试首选。
+/// 面板「立刻试首选」：把回切检查点归零（不想等 10 分钟时用）。
 #[tokio::test]
 async fn manual_reprobe_resets_the_checkpoint() {
     let f = fixture();
@@ -735,19 +740,15 @@ async fn manual_reprobe_resets_the_checkpoint() {
             "POST",
             "/api/channels",
             Some(&token),
-            Some(json!({ "name": name, "base_url": format!("http://{name}/v1") })),
+            Some(json!({
+                "name": name,
+                "base_url": format!("http://{name}/v1"),
+                "models": [{ "model": "mock-chat", "upstream": null }]
+            })),
         )
         .await;
         ids.push(channel["id"].as_i64().unwrap());
     }
-    send(
-        test_app(&f),
-        "POST",
-        "/api/groups",
-        Some(&token),
-        Some(json!({ "name": "auto", "channels": ids })),
-    )
-    .await;
 
     // 制造一次切换
     {
@@ -756,19 +757,28 @@ async fn manual_reprobe_resets_the_checkpoint() {
             tokengo_shared::ChannelId(ids[1]),
         ];
         let mut r = f.state.routing();
-        r.attempt_order("auto", &channels, 1_800_000_000_000);
-        r.on_channel_exhausted("auto", channels[0], &channels, 1_800_000_000_000);
+        r.attempt_order("mock-chat", &channels, 1_800_000_000_000);
+        r.on_channel_exhausted("mock-chat", channels[0], &channels, 1_800_000_000_000);
     }
-    f.state.persist_state("auto").unwrap();
+    f.state.persist_state("mock-chat").unwrap();
+    let row = |v: &Value| -> Value {
+        v["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["model"] == "mock-chat")
+            .unwrap()
+            .clone()
+    };
     let (_, v) = send(test_app(&f), "GET", "/api/routing", Some(&token), None).await;
-    assert_eq!(v["groups"][0]["switched"], true);
-    assert!(v["groups"][0]["next_probe_at_ms"].is_i64());
+    assert_eq!(row(&v)["switched"], true, "{v}");
+    assert!(row(&v)["next_probe_at_ms"].is_i64());
 
     // 手动回切
     let (s, _) = send(
         test_app(&f),
         "POST",
-        "/api/routing/auto/reprobe",
+        "/api/routing/mock-chat/reprobe",
         Some(&token),
         None,
     )
@@ -776,11 +786,11 @@ async fn manual_reprobe_resets_the_checkpoint() {
     assert_eq!(s, StatusCode::OK);
 
     let (_, v) = send(test_app(&f), "GET", "/api/routing", Some(&token), None).await;
-    let probe_at = v["groups"][0]["next_probe_at_ms"].as_i64().unwrap();
-    let now = v["groups"][0]["now_ms"].as_i64().unwrap();
+    let probe_at = row(&v)["next_probe_at_ms"].as_i64().unwrap();
+    let now = row(&v)["now_ms"].as_i64().unwrap();
     assert!(probe_at <= now, "检查点该归零了，实际 {probe_at} vs {now}");
 
-    // 不存在的组要报 404
+    // 不存在的名字要报 404
     let (s, _) = send(
         test_app(&f),
         "POST",
@@ -891,7 +901,7 @@ async fn a_malformed_panel_body_gets_the_standard_error_envelope() {
         Some(&token),
         Some(serde_json::json!({
             "name": "格式不对", "base_url": "http://127.0.0.1:1/v1", "key": "x",
-            "models": [{"model_name": "auto"}]
+            "models": [{"model_name": "mock-chat"}]
         })),
     )
     .await;

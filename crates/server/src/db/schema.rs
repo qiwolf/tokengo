@@ -262,11 +262,11 @@ ALTER TABLE channels ADD COLUMN catalog_at INTEGER NOT NULL DEFAULT 0;
 -- 「模型名 → 用途」独立成表（2026-10-18，v0.10.0）。
 --
 -- 原来用途只挂在模型组上（迁移 v5）。面板「模型」页改成以「渠道里勾过的名字」为行
--- 之后，没建组的名字就没地方标用途，图像 / 视频 / 音频 这类网关暂不转发、只能手标的
--- 名字永远归不了档。所以用途改成挂在**名字**上；组上那份继续写（路由与对外清单要用），
+-- 之后，没建过同名模型的名字就没地方标用途，图像 / 视频 / 音频 这类网关暂不转发、只能手标的
+-- 名字永远归不了档。所以用途改成挂在**名字**上；那一层（v0.11.0 起已拿掉）那份继续写，
 -- 由 db::groups 的两个写入点成对维护。
 --
--- 这一步只做两件事：建表 + 把组上已有的非空类型搬过来。幂等：重复跑不改数据。
+-- 这一步只做两件事：建表 + 把那一层上已有的非空类型搬过来。幂等：重复跑不改数据。
 -- 不碰任何现有表 —— 回滚就是丢掉这张表，路由数据一个字节不动。
 CREATE TABLE IF NOT EXISTS model_kinds (
     model_name  TEXT PRIMARY KEY,
@@ -276,6 +276,38 @@ CREATE TABLE IF NOT EXISTS model_kinds (
 );
 INSERT OR IGNORE INTO model_kinds (model_name, kind, kind_source, updated_at)
 SELECT name, kind, kind_source, 0 FROM model_groups WHERE kind <> '';
+"#,
+    ),
+    (
+        10,
+        r#"
+-- 把「模型组」这一层拿掉（2026-10-18，v0.11.0。用户：「把模型组这个模式彻底移除」）。
+--
+-- 以前：模型名 → 模型组（有序渠道列表 + 启用开关），渠道里的勾选只是白名单。
+-- 现在：模型名 → 直接就是「勾了它的渠道」，按**渠道自己的全局顺序**试。
+--
+-- 顺序落在 channels.priority 上：小的先试，相同按 id。回填规则 = 取这条渠道在
+-- **成员最多的那个组**里的位次，没进过任何组的排到 1000+id（排在最后）。
+-- 现网只读算过一遍（2026-10-18，v9 库）：auto 组 5 条成员按原顺序落到 0..4
+-- （opencode-go → opencode-go 2 → cline.bot → command-go → gateway.example.com），
+-- 硅基流动只在 `BAAI/bge-m3` 那个单人组里 → 位次 0。**先后按 (priority, id) 排**，
+-- 于是硅基流动排在 opencode-go 前面（它不服务 auto，这个次序今天谁都不受影响：
+-- 迁移后每个真实名字下都只有一条渠道）。
+--
+-- 另一列是给「请求」账用的：auto 挑中了谁，面板上要看得见。客户端打的 model 还是
+-- auto（那是请求级的事实），served_model 记的是真正被叫的那个模型名（路由级的事实）。
+--
+-- **model_groups / model_group_channels 一张都不删**：不用的东西留在原地，
+-- 回滚（换回上一个二进制）时它们还是完整的。只加两列，一行现有数据都不动。
+ALTER TABLE channels ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+UPDATE channels SET priority = COALESCE(
+    (SELECT m.ordinal FROM model_group_channels m
+      WHERE m.channel_id = channels.id
+      ORDER BY (SELECT COUNT(*) FROM model_group_channels x WHERE x.group_name = m.group_name) DESC,
+               m.group_name
+      LIMIT 1),
+    1000 + channels.id);
+ALTER TABLE requests ADD COLUMN served_model TEXT NOT NULL DEFAULT '';
 "#,
     ),
 ];

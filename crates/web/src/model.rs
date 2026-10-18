@@ -78,69 +78,65 @@ pub struct ChannelsResp {
     pub channels: Vec<Channel>,
 }
 
+/// 一个模型名（一行）—— 服务端 `/api/model-routes` 算好的全部事实。
+///
+/// **一个名字 = 渠道里勾了它的那些渠道**（v0.11.0 起没有「模型组」这一层），
+/// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct Group {
-    pub name: String,
-    pub enabled: bool,
-    #[serde(default)]
-    pub channels: Vec<i64>,
-    /// 这一组现在有没有「能看图」的可用渠道。带图的请求能不能走这条组就看它。
-    #[serde(default)]
-    pub can_see: bool,
-    /// 哪种模型：`""`（还没定）/ `chat` / `embeddings` / `rerank`。
-    #[serde(default)]
-    pub kind: String,
-    /// 给人看的中文名（服务端给的，面板不用自己再维护一份对照表）。
-    #[serde(default)]
-    pub kind_label: String,
-    /// 谁定的：`""` / `auto`（实测学的）/ `manual`（人选的）。
-    #[serde(default)]
-    pub kind_source: String,
-}
-
-/// 一个真能被调用的模型名 + 它能不能吃图 + 它是哪种模型。
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct Servable {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub vision: bool,
-    /// `""` / `chat` / `embeddings` / `rerank`。
-    #[serde(default)]
-    pub kind: String,
-    #[serde(default)]
-    pub kind_label: String,
-    #[serde(default)]
-    pub kind_source: String,
-}
-
-/// 一个**模型名**的用途（v0.10.0 起类型挂在名字上，没建模型的名字也能有用途）。
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct NameKind {
+pub struct NameRoute {
     pub name: String,
     /// `""` / `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
     #[serde(default)]
     pub kind: String,
+    /// 服务端给的中文名（面板不自己维护一份对照表）。
     #[serde(default)]
     pub kind_label: String,
     /// 谁定的：`""` / `auto`（实测学的）/ `manual`（人选的）。
     #[serde(default)]
     pub kind_source: String,
+    /// 有没有启用的渠道勾了它、并且标了「能看图」。
+    #[serde(default)]
+    pub can_see: bool,
+    /// 现在有没有渠道能用（`false` = 客户端打这个名字会 404）。
+    #[serde(default)]
+    pub routed: bool,
+    /// 谁勾了它（含**停用**的渠道），按渠道顺序。
+    #[serde(default)]
+    pub declared_by: Vec<i64>,
+    /// 现在真能用的那串渠道，按先试顺序（就是请求的尝试顺序）。
+    #[serde(default)]
+    pub channels: Vec<i64>,
+    /// 现在走的那条（切过就在这上面）。
+    #[serde(default)]
+    pub active_channel_id: Option<i64>,
+    #[serde(default)]
+    pub switch_count: i64,
+    #[serde(default)]
+    pub next_probe_at_ms: Option<i64>,
+}
+
+/// 保留名 `auto` 现在会挑谁 —— 服务端按实测成绩排好序给的。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct AutoRoutes {
+    /// 一个勾选过的模型都没有 → `false`，这时候客户端清单里**不会**出现 auto。
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub chat: Vec<String>,
+    #[serde(default)]
+    pub embeddings: Vec<String>,
+    #[serde(default)]
+    pub rerank: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct ModelKindsResp {
+pub struct ModelRoutesResp {
     #[serde(default)]
-    pub kinds: Vec<NameKind>,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct GroupsResp {
+    pub models: Vec<NameRoute>,
     #[serde(default)]
-    pub groups: Vec<Group>,
-    /// 真能被调用的模型名（组开着、且组里至少有一条可用渠道）。
+    pub auto: AutoRoutes,
     #[serde(default)]
-    pub servable: Vec<Servable>,
+    pub now_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
@@ -159,10 +155,11 @@ impl RoutingCfg {
     }
 }
 
+/// 路由状态里的一个模型名（面板「现在走哪条」「换过几次」用它）。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct RoutingGroup {
-    pub group: String,
-    pub enabled: bool,
+pub struct RouteState {
+    pub model: String,
+    /// 这个名字现在该走的第一条（= 勾它的渠道里排最前的那条）。
     pub primary_channel_id: Option<i64>,
     pub active_channel_id: Option<i64>,
     pub switched: bool,
@@ -178,7 +175,7 @@ pub struct RoutingGroup {
 pub struct RoutingResp {
     pub config: RoutingCfg,
     #[serde(default)]
-    pub groups: Vec<RoutingGroup>,
+    pub models: Vec<RouteState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -523,6 +520,34 @@ mod tests {
         .unwrap();
         assert_eq!(st.stats.by_channel[0].channel_name.as_deref(), Some("硅基流动"));
         assert_eq!(st.stats.by_channel[0].success_rate, Some(66.7));
+    }
+
+    /// 回归：面板「模型」页读的就是这份 JSON —— 字段名对不上会在这里炸。
+    #[test]
+    fn the_model_routes_json_from_the_server_parses() {
+        let r: ModelRoutesResp = serde_json::from_str(
+            r#"{"models":[{"name":"BAAI/bge-m3","kind":"embeddings","kind_label":"嵌入",
+                 "kind_source":"manual","can_see":false,"routed":true,
+                 "declared_by":[44,45],"channels":[44],"active_channel_id":44,
+                 "switch_count":2,"next_probe_at_ms":1800000000000}],
+                "auto":{"available":true,"chat":["v4.1flash"],"embeddings":["BAAI/bge-m3"],
+                 "rerank":["BAAI/bge-reranker-v2-m3"]},
+                "now_ms":1800000000000}"#,
+        )
+        .unwrap();
+        assert_eq!(r.models.len(), 1);
+        assert_eq!(r.models[0].name, "BAAI/bge-m3");
+        assert_eq!(r.models[0].channels, vec![44], "先试的那串");
+        assert_eq!(r.models[0].declared_by, vec![44, 45], "勾过它但停用/不可用的也算");
+        assert!(r.auto.available);
+        assert_eq!(r.auto.chat, vec!["v4.1flash"]);
+        assert_eq!(r.now_ms, r.models[0].next_probe_at_ms.unwrap());
+
+        // auto 不可用时一个候选都没有，客户端清单里也不出现 auto
+        let empty: ModelRoutesResp =
+            serde_json::from_str(r#"{"models":[],"auto":{"available":false},"now_ms":1}"#).unwrap();
+        assert!(!empty.auto.available);
+        assert!(empty.auto.chat.is_empty());
     }
 
     #[test]
