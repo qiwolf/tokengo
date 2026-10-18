@@ -318,6 +318,8 @@ fn next_reply(inner: &Arc<MockInner>) -> Reply {
 struct Fixture {
     dir: std::path::PathBuf,
     state: Arc<AppState>,
+    /// 建的时候声明了「不要替我勾名字」的渠道（见 ChannelSpec::no_declare）。
+    no_declare: std::sync::Mutex<Vec<ChannelId>>,
 }
 
 impl Drop for Fixture {
@@ -340,6 +342,7 @@ fn fixture() -> Fixture {
     Fixture {
         state: AppState::init(cfg).unwrap(),
         dir,
+        no_declare: std::sync::Mutex::new(Vec::new()),
     }
 }
 
@@ -388,11 +391,39 @@ impl Fixture {
             })
             .collect();
         tokengo_server::db::channels::set_models(&conn, id, &models).unwrap();
+        if spec.no_declare {
+            self.no_declare.lock().unwrap().push(id);
+        }
         id
     }
 
+    /// 把这个组挂到这些渠道上。
+    ///
+    /// **夹具约定（v0.9.0 严格白名单之后）**：成员里「一个名字都还没勾」的渠道，默认替它
+    /// 勾上这个组名 —— 否则严格白名单下这些渠道谁也不认，路由/重试/记账那几十条用例会全
+    /// 变成 404（它们本来测的不是白名单）。要专门测「没勾就不放行」的用例，建渠道时加
+    /// `ChannelSpec { no_declare: true, .. }`。
     fn set_group(&self, name: &str, channels: &[ChannelId]) {
-        tokengo_server::db::groups::upsert(&self.state.conn(), name, true, channels).unwrap();
+        let conn = self.state.conn();
+        let pinned = self.no_declare.lock().unwrap().clone();
+        for id in channels {
+            if pinned.contains(id) {
+                continue;
+            }
+            let has_none = tokengo_server::db::channels::get(&conn, *id)
+                .unwrap()
+                .map(|c| c.models.is_empty())
+                .unwrap_or(false);
+            if has_none {
+                tokengo_server::db::channels::set_models(
+                    &conn,
+                    *id,
+                    &[tokengo_server::db::channels::ModelMapping::new(name, None, false)],
+                )
+                .unwrap();
+            }
+        }
+        tokengo_server::db::groups::upsert(&conn, name, true, channels).unwrap();
     }
 
     fn fix_channel(&self, id: ChannelId, base_url: &str) {
@@ -457,6 +488,11 @@ struct ChannelSpec {
     unwrap_envelope: bool,
     /// 这条渠道「同时最多几发」（0 = 不限）。
     cap: u32,
+    /// 认死「一个名字都不勾」：入组时**不要**替我补勾这个组名。
+    ///
+    /// 夹具默认会补勾（见 `set_group`）：严格白名单下「没勾 = 不服务」，而绝大多数用例
+    /// 关心的是路由/重试/记账，不是白名单本身。专门测白名单的用例才用它。
+    no_declare: bool,
 }
 
 impl ChannelSpec {
@@ -820,9 +856,10 @@ async fn a_channel_that_declared_other_names_is_skipped_and_says_so() {
     assert_eq!(m.count(), 0, "没认这个名字，一个字节都不许发出去");
 }
 
-/// 一条渠道勾了别的名字被跳过，同组里**没勾过名字**的渠道照旧服务（老行为不变）。
+/// 严格白名单（v0.9.0）：同组里**一个名字都没勾**的渠道也不服务 ——
+/// 只有勾上这个名字的渠道才收得到请求。
 #[tokio::test]
-async fn a_channel_that_declared_nothing_still_serves_every_name() {
+async fn a_channel_that_declared_nothing_serves_nothing() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
@@ -834,12 +871,39 @@ async fn a_channel_that_declared_nothing_still_serves_every_name() {
             ..Default::default()
         },
     );
-    let easy = f.add_channel("什么都认的渠道", &m.base, ChannelSpec::default());
-    f.set_group("auto", &[picky, easy]);
+    let blank = f.add_channel(
+        "一个都没勾的渠道",
+        &m.base,
+        ChannelSpec {
+            no_declare: true,
+            ..Default::default()
+        },
+    );
+    f.set_group("auto", &[picky, blank]);
 
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "谁都没勾 → 404");
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("一个模型名都没勾"),
+        "文案要分开说清「一个都没勾」：{msg}"
+    );
+    assert!(msg.contains("一个都没勾的渠道"), "点出是哪一条：{msg}");
+    assert_eq!(m.count(), 0, "一个字节都不许发出去");
+
+    // 勾上这个名字之后，请求就发给它了（勾了才有放行）。
+    tokengo_server::db::channels::set_models(
+        &f.state.conn(),
+        blank,
+        &[tokengo_server::db::channels::ModelMapping::new(
+            "auto", None, false,
+        )],
+    )
+    .unwrap();
     let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "auto", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(m.count(), 1, "没勾名字的渠道照旧服务，而且只发了一发");
+    assert_eq!(m.count(), 1, "勾上之后只发一发（挑名字那条仍被跳过）");
     let seen = m.seen();
     assert_eq!(seen[0].model.as_str(), "auto", "没配别名就是原名透传");
 }
@@ -1085,7 +1149,14 @@ async fn probing_skips_a_channel_without_any_model_name() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
-    let channel = f.add_channel("没配模型名的渠道", &m.base, ChannelSpec::default());
+    let channel = f.add_channel(
+        "没配模型名的渠道",
+        &m.base,
+        ChannelSpec {
+            no_declare: true, // 这条渠道就是要「一个名字都没配」
+            ..Default::default()
+        },
+    );
     f.set_group("auto", &[channel]);
     {
         let mut r = f.state.routing();
@@ -1118,7 +1189,14 @@ async fn models_lists_only_what_really_works() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
-    let a = f.add_channel("a", &m.base, ChannelSpec::default());
+    let a = f.add_channel(
+        "a",
+        &m.base,
+        ChannelSpec {
+            models: vec![("auto".into(), None), ("bge-m3".into(), None)],
+            ..Default::default()
+        },
+    );
     let b = f.add_channel("b", "http://127.0.0.1:59993/v1", ChannelSpec::default());
     f.set_group("auto", &[a]);
     f.set_group("bge-m3", &[a, b]);

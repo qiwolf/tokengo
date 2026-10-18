@@ -157,14 +157,37 @@ fn load_plan(state: &SharedState, model: &str) -> Result<Plan, ApiError> {
         routable.push(channel);
     }
     if routable.is_empty() {
-        // 一条都没有时先说最可能的原因：组里挂着渠道，但它们勾的是别的名字。
+        // 一条都没有时先说最可能的原因：组里挂着渠道，但它们没勾这个名字。
+        // （严格白名单 v0.9.0：一个都没勾的渠道也在这里 —— 修法不一样，分两句话说。）
         let skipped = groups::channels_skipped_by_scope(&conn, group_name)?;
         if !skipped.is_empty() {
+            let never: Vec<&str> = skipped
+                .iter()
+                .filter(|(_, declared)| !declared)
+                .map(|(n, _)| n.as_str())
+                .collect();
+            let others: Vec<&str> = skipped
+                .iter()
+                .filter(|(_, declared)| *declared)
+                .map(|(n, _)| n.as_str())
+                .collect();
+            let mut why: Vec<String> = Vec::new();
+            if !never.is_empty() {
+                why.push(format!(
+                    "{} 一个模型名都没勾（勾选就是白名单：没勾的模型不会发给它）",
+                    never.join("、")
+                ));
+            }
+            if !others.is_empty() {
+                why.push(format!(
+                    "{} 勾的是别的名字，没勾「{model}」",
+                    others.join("、")
+                ));
+            }
             return Err(ApiError::not_found(format!(
-                "模型 {model} 现在没有可用的渠道：组里的 {} 都没勾「{model}」这个名字\
-                 （勾选就是白名单 —— 勾了别的名字，请求不会发给它）。\
-                 去面板「渠道」页把它们的这个名字勾上，或者改用你面板里已有的模型名",
-                skipped.join("、")
+                "模型 {model} 现在没有可用的渠道：{}。\
+                 去面板「渠道」页把这些名字勾上，或者改用你面板里已有的模型名",
+                why.join("；")
             )));
         }
         return Err(ApiError::not_found(format!(

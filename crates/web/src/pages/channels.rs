@@ -800,9 +800,10 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                 .map(|(i, m, ok)| (Some(i), m, ok))
                                 .unwrap_or((None, String::new(), false));
                             let show_probe = pid == Some(l.id) && !pmsg.is_empty();
-                            // 摘要要跟路由口径一致：没勾 = 什么都认；勾了就只认勾上的那些。
+                            // 摘要跟路由口径一致（严格白名单）：只认勾上的那些；一个都没勾 =
+                            // 这条渠道现在什么都不能用。
                             let model_txt = if l.models.is_empty() {
-                                "不限定（什么都认）".to_string()
+                                "一个都没勾（现在不能用）".to_string()
                             } else if l.vision_count > 0 {
                                 format!("只认这 {} 个（{} 条能看图）", l.models.len(), l.vision_count)
                             } else {
@@ -1110,13 +1111,21 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                             SHOW_LIMIT,
                                                         )
                                                         .len();
-                                                    let in_use = f_models
-                                                        .get()
+                                                    // 只数**屏幕上这几种行**里勾了几个 —— 以前数的是这条渠道
+                                                    // 所有勾过的名字（含 auto 这类不在清单里的），于是「勾了 2 个」
+                                                    // 会显示成「认 3 个」（用户 2026-10-18 报的）。
+                                                    let shown_names = filter_catalog(
+                                                        &pulled.get_untracked(),
+                                                        &pull_filter.get_untracked(),
+                                                        SHOW_LIMIT,
+                                                    );
+                                                    let checked = shown_names
                                                         .iter()
-                                                        .filter(|m| !m.model.trim().is_empty())
+                                                        .filter(|m| is_in_use(&f_models.get(), &m.id))
                                                         .count();
                                                     if total == 0 {
-                                                        format!("这条渠道认 {in_use} 个名字")
+                                                        // 还没有清单：这行没什么可数的（列表自己会说怎么办）
+                                                        String::new()
                                                     } else {
                                                         // 清单是什么时候拿的：做成行内的一个括注，
                                                         // 不再单起一段说明文字
@@ -1131,11 +1140,11 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         };
                                                         if when.is_empty() {
                                                             format!(
-                                                                "上游报 {total} 个 · 列出 {shown} 个 · 认 {in_use} 个",
+                                                                "上游报 {total} 个 · 列出 {shown} 个 · 勾了 {checked} 个",
                                                             )
                                                         } else {
                                                             format!(
-                                                                "上游报 {total} 个（{when}）· 列出 {shown} 个 · 认 {in_use} 个",
+                                                                "上游报 {total} 个（{when}）· 列出 {shown} 个 · 勾了 {checked} 个",
                                                             )
                                                         }
                                                     }

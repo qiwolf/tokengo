@@ -107,9 +107,9 @@ struct Draft {
     channels: Vec<i64>,
 }
 
-/// 这一组里**请求不会发给它**的成员：勾过名字、却没勾这个组名。
+/// 这一组里**请求不会发给它**的成员：没勾这个组名（含一个都没勾的渠道）。
 ///
-/// v0.7.0 起「勾选就是白名单」：一条渠道只要勾了名字，就只认勾上的那些。
+/// 严格白名单（v0.9.0）：一条渠道只认它勾上的那些名字，一个都没勾则谁也不认。
 /// 这里把它算出来，模型页上直接标出来 —— 不然会出现「组里挂着这条渠道，
 /// 但它一直没被用过」这种看名字看不出来的事。
 pub(crate) fn members_not_declaring(channels: &[Channel], group: &Group) -> Vec<i64> {
@@ -121,11 +121,10 @@ pub(crate) fn members_not_declaring(channels: &[Channel], group: &Group) -> Vec<
                 .iter()
                 .find(|c| c.id == **id)
                 .map(|c| {
-                    !c.models.is_empty()
-                        && !c
-                            .models
-                            .iter()
-                            .any(|m| tokengo_shared::same_model_name(&m.model, &group.name))
+                    !c
+                        .models
+                        .iter()
+                        .any(|m| tokengo_shared::same_model_name(&m.model, &group.name))
                 })
                 .unwrap_or(false)
         })
@@ -1066,16 +1065,16 @@ mod tests {
         }
     }
 
-    /// 「这条渠道会被跳过吗」：一条都没勾 = 什么都认（不跳）；勾了别的名字 = 跳。
+    /// 严格白名单：没勾这个名字的成员都会被跳过 —— 一个都没勾的也一样。
     #[test]
-    fn only_channels_that_declared_other_names_are_flagged_as_skipped() {
+    fn members_without_this_name_are_flagged_as_skipped() {
         let chans = vec![
-            chan(1, true, &[]),          // 什么都没勾：什么都认
-            chan(2, true, &["别的名字"]), // 勾了别的：会被跳过
+            chan(1, true, &[]),          // 什么都没勾：谁也不认
+            chan(2, true, &["别的名字"]), // 勾了别的：跳过
             chan(3, true, &["auto"]),    // 勾了这个：照旧服务
         ];
         let g = group_with("auto", &[1, 2, 3]);
-        assert_eq!(members_not_declaring(&chans, &g), vec![2]);
+        assert_eq!(members_not_declaring(&chans, &g), vec![1, 2]);
     }
 
     /// 名字比对走归一：`Auto` / `auto` 是一个名字，不该被误报成「没勾」。
