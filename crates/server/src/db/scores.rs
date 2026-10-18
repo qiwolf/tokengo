@@ -21,7 +21,7 @@ pub fn for_channel(conn:&Connection,now:i64,channel:Option<i64>)->Result<HashMap
  let mut rows=st.query(rusqlite::params![now-WINDOW_MS,channel])?;
  while let Some(r)=rows.next()? {
   let key=normalize_model_name(&r.get::<_,String>(0)?);let v=out.entry(key.clone()).or_default();
-  if let Some(ms)=r.get::<_,Option<i64>>(5)? {let e=firsts.entry(key.clone()).or_default();e.0+=ms;e.1+=1;}
+  if r.get::<_,String>(1)?=="success" { if let Some(ms)=r.get::<_,Option<i64>>(5)? {let e=firsts.entry(key.clone()).or_default();e.0+=ms;e.1+=1;} }
   v.samples+=1;v.last_at=Some(r.get(3)?);
   if r.get::<_,String>(1)?=="success" {v.successes+=1;*totals.entry(key).or_default()+=r.get::<_,i64>(2)?.max(0);} else {v.faults+=1;v.last_error=r.get(4)?;}
  }

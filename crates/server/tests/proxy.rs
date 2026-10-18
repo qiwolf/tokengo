@@ -3360,7 +3360,7 @@ async fn recent_calls_keep_user_agent_and_stream_first_byte_latency() {
 
 #[tokio::test]
 async fn auto_scores_same_channel_models_separately_and_scope_changes_apply_immediately() {
-    let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+    let f=fixture();f.with_key();tokengo_server::db::policy::save(&f.state.conn(),&tokengo_server::db::policy::Policy{strategy:"stable".into(),explore:false}).unwrap();let m=start_mock(Reply::Ok).await;
     let ch=f.add_channel("same upstream",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),Some("real-b".into()))],..Default::default()});
     let conn=f.state.conn();
     let rid=tokengo_server::db::requests::start(&conn,CHAT,"auto",None,false).unwrap();
@@ -3383,10 +3383,10 @@ async fn scoring_keeps_failed_candidate_identity_after_auto_fallback() {
     let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
     let ch=f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
     // Four attempts on a fail, then b succeeds on the same upstream.
-    for _ in 0..4 {m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"broken-a"));}
+    for _ in 0..1 {m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"broken-a"));}
     let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);
     let conn=f.state.conn();let scores=tokengo_server::db::scores::all(&conn,tokengo_server::db::now_ms()).unwrap();
-    assert_eq!(scores["a"].faults,4);assert_eq!(scores["b"].successes,1);
+    assert_eq!(scores["a"].faults,1);assert_eq!(scores["b"].successes,1);
     assert!(scores["b"].value()>scores["a"].value());
     let _=ch;
 }
@@ -3398,4 +3398,40 @@ async fn unknown_model_refusal_has_explicit_code_and_never_calls_upstream() {
     assert_eq!(status,StatusCode::NOT_FOUND);assert_eq!(m.count(),0);
     let c=f.state.conn();let row=tokengo_server::db::requests::recent(&c,1).unwrap().remove(0);
     assert_eq!(row.error_code.as_deref(),Some("model_not_configured"));assert!(row.channel_id.is_none());
+}
+
+#[tokio::test]
+async fn sequence_keeps_using_a_then_cools_it_and_returns_after_reset() {
+ let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+ let ch=f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
+ for _ in 0..3 {let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"a");}
+ m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"a failed"));
+ let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"b");
+ let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"b");
+ let row=tokengo_server::db::policy::rows(&f.state.conn(),"a").unwrap().remove(0);assert_eq!(row.failures,1);
+ tokengo_server::db::policy::reset(&f.state.conn(),"a",Some(ch.0)).unwrap();
+ let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"a");
+}
+#[tokio::test]
+async fn all_cooling_returns_service_unavailable_not_client_error() {
+ let f=fixture();f.with_key();let m=start_mock(Reply::Status(500,"down")).await;
+ f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None)],..Default::default()});
+ let _=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;
+ let count=m.count();let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;
+ assert_eq!(s,StatusCode::SERVICE_UNAVAILABLE);assert_eq!(m.count(),count);
+ let c=f.state.conn();let r=tokengo_server::db::requests::recent(&c,1).unwrap().remove(0);assert_eq!(r.status,"failed");assert_eq!(r.error_code.as_deref(),Some("models_cooling"));
+}
+
+#[tokio::test]
+async fn admin_can_save_policy_move_order_and_reset_cooldown() {
+ let f=fixture();let m=start_mock(Reply::Ok).await;
+ let ch=f.add_channel("upstream",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
+ let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+ let(s,_)=put_with_token(&f,"/api/auto-policy",&token,json!({"strategy":"fastest","explore":true})).await;assert_eq!(s,StatusCode::OK);
+ let(s,_)=post_with_token(&f,"/api/model-order/move",&token,json!({"model":"b","up":true})).await;assert_eq!(s,StatusCode::OK);
+ let(_,v)=get_with_token(&f,"/api/auto-policy",&token).await;assert_eq!(v["policy"]["explore"],true);assert_eq!(v["order"][0],"b");
+ let(s,_)=put_with_token(&f,"/api/auto-policy",&token,json!({"strategy":"smart","explore":false})).await;assert_eq!(s,StatusCode::BAD_REQUEST);
+ let g=tokengo_server::db::policy::claim(&f.state.conn(),ch.0,"a","a",0).unwrap().unwrap();tokengo_server::db::policy::complete(&f.state.conn(),ch.0,"a","a",g,false,"500",0,0).unwrap();
+ let(s,_)=post_with_token(&f,"/api/model-cooldown/reset",&token,json!({"model":"a","channel_id":ch.0})).await;assert_eq!(s,StatusCode::OK);
+ assert_eq!(tokengo_server::db::policy::rows(&f.state.conn(),"a").unwrap()[0].failures,0);
 }
