@@ -45,6 +45,8 @@ tokengo-shared = { path = "crates/shared" }
 # 改成只留行号级调试信息、第三方依赖不带调试信息，单产物回落到几十兆。
 [profile.dev]
 debug = 1
+# Keep development disk use bounded; dependencies still use Cargo's normal cache.
+incremental = false
 
 [profile.dev.package."*"]
 debug = false
