@@ -1124,7 +1124,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
 name = "itertools"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "synstructure"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
 dependencies = [
@@ -2470,7 +2470,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokengo-cli"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "tokengo-server"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "tokengo-shared"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "tokengo-web"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "console_error_panic_hook",
  "gloo-net",
