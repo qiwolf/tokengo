@@ -237,6 +237,12 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
         });
     };
     reload();
+    let detection_timer = crate::every(5000, move || {
+        if !busy.get_untracked() && routes.get_untracked().iter().any(|r| r.kind.is_empty()) {
+            reload();
+        }
+    });
+    on_cleanup(move || crate::stop_timer(detection_timer));
 
     let channel_name = move |id: i64| {
         channels
@@ -438,6 +444,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                         "audio" => "音频",
                                         _ => "待识别",
                                     };
+                                    let detection_status = routes.get().iter().find(|x| x.name == r.name).map(|x| x.detection_status.clone()).unwrap_or_default();
                                     let name_title = r.name.clone();
                                     view! {
                                         <div class="model-card" class:open=is_open>
@@ -462,6 +469,7 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                 </button>
                                             </div>
                                             <div class="model-badges">
+                                                {(!detection_status.is_empty() && r.kind.is_empty()).then(|| view! { <span class="muted small">{detection_status.clone()}</span> })}
                                                 {vision
                                                     .then(|| {
                                                         view! {
