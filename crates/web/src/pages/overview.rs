@@ -17,7 +17,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let auto_ready = RwSignal::new(false);
     let recent = RwSignal::new(Vec::<LogRow>::new());
     let channels = RwSignal::new(Vec::<crate::model::Channel>::new());
-    let sessions = RwSignal::new(0i64);
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let category = RwSignal::new(0usize);
@@ -52,10 +51,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             }
             match api::channels().await {
                 Ok(v) => channels.set(v),
-                Err(e) => ctx.note_err(&e),
-            }
-            match api::settings().await {
-                Ok(s) => sessions.set(s.active_sessions),
                 Err(e) => ctx.note_err(&e),
             }
             busy.set(false);
@@ -156,7 +151,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     .collect_view()}
                 </span>
                 <span class="spacer"></span>
-                <span class="muted small">"在线会话 " <b>{move || sessions.get()}</b></span>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
