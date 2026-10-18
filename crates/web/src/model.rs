@@ -85,6 +85,8 @@ pub struct ChannelsResp {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
     #[serde(default)]
+    pub detection_status: String,
+    #[serde(default)]
     pub kind_conflict: bool,
     pub name: String,
     /// `""` / `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
