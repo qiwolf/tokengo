@@ -225,13 +225,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     <button class="ghost" type="submit">"查找"</button>
                 </form>
                 {move || (lookup_detail.get()).then(|| detail_error.get()).flatten().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
-                <Show when=move || lookup_detail.get() && expanded.get().is_some()>
-                    <section class="request-inspector" aria-label="请求详情" aria-live="polite">
-                        <header><h3>{move || format!("请求 #{}", expanded.get().unwrap_or_default())}</h3><button class="ghost" on:click=move |_| expanded.set(None)>"关闭详情"</button></header>
-                        <Show when=move || detail_busy.get()><p class="muted">"正在读取尝试记录…"</p></Show>
-                        {move || detail.get().map(|d| view! { <RequestDetailView detail=d/> })}
-                    </section>
-                </Show>
                 <div class="recent-list">
                     <Show when=move || recent.with(|rows| rows.is_empty())>
                         <div class="empty">"暂无调用"</div>
@@ -241,7 +234,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         each=move || {
                             let mut ids = recent.with(|rows| rows.iter().map(|r| r.id).collect::<Vec<_>>());
                             // Keep an inspected request when new calls push it out of the window.
-                            if !lookup_detail.get() {
+                            {
                                 if let Some(id) = expanded.get() {
                                     if !ids.contains(&id) { ids.push(id); }
                                 }
@@ -251,7 +244,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         key=|id| *id
                         children=move |id| {
                             let row = Memo::new(move |_| recent.with(|rows| rows.iter().find(|r| r.id == id).cloned()).or_else(|| detail.get().filter(|d| d.request.id == id).map(|d| d.request)));
-                            let opened = move || !lookup_detail.get() && expanded.get() == Some(id);
+                            let opened = move || expanded.get() == Some(id);
                             view! {
                                 <article class="recent-call" data-request-id=id>
                                     {move || row.get().map(|r| {
@@ -260,7 +253,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                         view! {
                                             <div class="recent-main">
                                                 <span class=format!("tag {css}")>{label}</span>
-                                                <b class="recent-model">{r.model}</b>
+                                                <b class="recent-model">{actual_model(&r)}</b>
                                                 <span class="recent-duration">{fmt::dur(r.latency_ms)}</span>
                                             </div>
                                         }
@@ -282,9 +275,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     <Show when=opened>
                                         <section class="request-inspector" aria-label="请求详情" aria-live="polite">
                                             <header><h3>{format!("请求 #{id}")}</h3></header>
-                                            <Show when=move || detail_busy.get()><p class="muted">"正在读取尝试记录…"</p></Show>
+                                            <Show when=move || detail_busy.get()><p class="muted">"加载详情…"</p></Show>
                                             {move || detail_error.get().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
-                                            {move || detail.get().map(|d| view! { <RequestDetailView detail=d/> })}
+                                            {move || detail.get().filter(|d|d.request.id==id).map(|d| view! { <RequestDetailView detail=d/> })}
                                         </section>
                                     </Show>
                                 </article>
@@ -389,56 +382,33 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     }
 }
 
-fn attempt_action(previous: Option<i64>, current: i64) -> &'static str {
-    match previous {
-        None => "首次尝试",
-        Some(id) if id == current => "同渠道重试",
-        Some(_) => "切换渠道",
-    }
+fn actual_model(r:&LogRow)->String {
+    if !r.served_model.trim().is_empty(){r.served_model.clone()}
+    else if r.channel_id.is_none(){"未调用上游".into()}
+    else if r.model.eq_ignore_ascii_case("auto"){"实际模型未记录".into()}
+    else {r.model.clone()}
 }
 
 #[component]
 fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
-    let r = detail.request;
-    let empty = detail.attempts.is_empty();
-    let mut previous = None;
-    let attempts = detail.attempts.into_iter().enumerate().map(|(i, a)| {
-        let action = attempt_action(previous, a.channel_id);
-        previous = Some(a.channel_id);
-        let (outcome, css) = match a.outcome.as_str() {
-            "success" => ("成功", "good"),
-            "channel_fault" => ("渠道失败", "bad"),
-            "client_error" => ("客户端错误", "warn"),
-            "canceled" => ("已取消", "warn"),
-            other => (other, ""),
-        };
-        view! {
-            <li class="request-attempt">
-                <div class="attempt-head"><b>{format!("第 {} 次 · {action}", i + 1)}</b><span class=format!("tag {css}")>{outcome.to_string()}</span></div>
-                <div>{format!("{} · 渠道 #{} · {} · {}", a.channel_name.unwrap_or_else(|| "已删除的渠道".into()), a.channel_id, a.http_status.map(|h| format!("HTTP {h}")).unwrap_or_else(|| "未收到 HTTP 状态".into()), fmt::dur(a.duration_ms))}</div>
-                {a.model_name.map(|m|view!{<div>{format!("模型：{} → {}",m,a.upstream_model.unwrap_or_else(||"未记录".into()))}</div>})}
-                {a.error.filter(|e| !e.is_empty()).map(|e| view! { <p class="bad-text">{e}</p> })}
-            </li>
-        }
-    }).collect_view();
-    view! {
-        <div class="recent-detail">
-            <span>{format!("{} · {} · {}", fmt::ts(r.ts_ms), r.endpoint, r.model)}</span>
-            <span>{format!("结果：{} · HTTP {}", match r.error_code.as_deref(){Some("model_not_configured")=>"模型未配置",Some("auto_no_candidate")=>"无可用候选",Some("vision_not_ready")=>"视觉未就绪",Some("request_invalid")=>"请求参数错误",Some("models_cooling")=>"模型冷却中",_=>status_label(&r.status).0}, r.http_status.map(|h| h.to_string()).unwrap_or_else(|| "未记录".into()))}</span>
-            <span>{format!("总耗时：{} · 首字节：{}", fmt::dur(r.latency_ms), r.first_byte_ms.map(fmt::dur).unwrap_or_else(|| "未记录".into()))}</span>
-            <span>{format!("最终渠道：{}", r.channel_id.map(|id| format!("#{id}")).unwrap_or_else(|| "未发送上游".into()))}</span>
-            <span>{format!("来源 IP：{}", r.client_ip.as_deref().unwrap_or("未提供"))}</span>
-            <span>{format!("请求应用（User-Agent）：{}", r.user_agent.as_deref().unwrap_or("未提供"))}</span>
-            <span>{if r.streamed { "输出方式：流式" } else { "输出方式：非流式" }}</span>
-            {r.has_image.then(|| view! { <span>"带图"</span> })}
-            {(!r.served_model.is_empty()).then(|| view! { <span>{format!("实际模型：{}", r.served_model)}</span> })}
-            {r.explored.then(||view!{<span class="tag">"模型探索"</span>})}
-            <span>{format!("Token 入 {} / 出 {}", fmt::num(r.input_tokens), fmt::num(r.output_tokens))}</span>
-            {r.error.filter(|e| !e.is_empty()).map(|e| view! { <p class="bad-text">{e}</p> })}
-        </div>
-        <h4>"渠道尝试顺序"</h4>
-        <p class="muted small">"连续使用同一渠道表示重试；换到另一渠道表示切换。这里只展示已记录的实际尝试，不代表当前路由配置。耗时不含尝试之间的等待；渠道名称为当前名称。"</p>
-        {if empty { view! { <p class="muted">"没有渠道尝试记录：请求可能在路由前被拒绝，或尚未完成记账。"</p> }.into_any() } else { view! { <ol class="request-attempts">{attempts}</ol> }.into_any() }}
+    let r=detail.request;
+    let actual=actual_model(&r);
+    let label=match r.error_code.as_deref(){Some("model_not_configured")=>"模型未配置",Some("vision_not_ready")=>"视觉未就绪",Some("models_cooling")=>"模型冷却中",Some("auto_no_candidate")=>"无可用候选",Some("request_invalid")=>"请求参数错误",_=>status_label(&r.status).0};
+    let fields=vec![
+        ("实际模型",actual),("请求入口",r.model.clone()),("结果",label.into()),
+        ("请求时间",fmt::ts(r.ts_ms)),("总耗时",fmt::dur(r.latency_ms)),
+        ("首字节延迟",if r.channel_id.is_none(){"不适用".into()}else{r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}),
+        ("输入 Token",fmt::num(r.input_tokens)),("输出 Token",fmt::num(r.output_tokens)),
+        ("输出方式",if r.streamed{"流式"}else{"非流式"}.into()),
+        ("HTTP 状态",r.http_status.map(|n|n.to_string()).unwrap_or_else(||"未记录".into())),
+        ("来源 IP",r.client_ip.unwrap_or_else(||"未提供".into())),
+        ("请求应用",r.user_agent.unwrap_or_else(||"未提供".into())),
+        ("接口",r.endpoint),
+    ];
+    view!{
+        <dl class="call-facts">{fields.into_iter().map(|(k,v)|view!{<div><dt>{k}</dt><dd>{v}</dd></div>}).collect_view()}</dl>
+        <div class="call-flags">{r.has_image.then(||view!{<span class="tag vision">"图片输入"</span>})}{r.explored.then(||view!{<span class="tag">"模型探索"</span>})}</div>
+        {r.error.filter(|e|!e.trim().is_empty()).map(|e|view!{<div class="call-error"><b>"错误信息"</b><p>{e}</p></div>})}
     }
 }
 
@@ -454,12 +424,12 @@ mod tests {
     use crate::model::KindStat;
 
     #[test]
-    fn attempt_labels_explain_retry_and_channel_switch() {
-        assert_eq!(super::attempt_action(None, 7), "首次尝试");
-        assert_eq!(super::attempt_action(Some(7), 7), "同渠道重试");
-        assert_eq!(super::attempt_action(Some(7), 9), "切换渠道");
+    fn actual_model_never_presents_auto_as_executed_model(){
+        let mut r=crate::model::LogRow::default();r.model="auto".into();
+        assert_eq!(super::actual_model(&r),"未调用上游");
+        r.channel_id=Some(3);assert_eq!(super::actual_model(&r),"实际模型未记录");
+        r.served_model="real-model".into();assert_eq!(super::actual_model(&r),"real-model");
     }
-
 
     /// 成功率的分子分母要跟总览四张卡一个口径：分母是「打进来几次」，不是「试了几次」。
     #[test]
