@@ -1077,7 +1077,7 @@ async fn models_set_kind(
     _auth: PanelAuth,
     State(state): State<SharedState>,
     axum::extract::Path(name): axum::extract::Path<String>,
-    Json(body): Json<GroupKindBody>,
+    Json(body): Json<ModelKindBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let kind = parse_kind(&body.kind)?;
     let conn = state.conn();
@@ -1163,7 +1163,7 @@ async fn channels_set_enabled(
 }
 
 #[derive(Deserialize)]
-struct GroupKindBody {
+struct ModelKindBody {
     /// `auto`（交还给实测）/ `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
     kind: String,
 }
