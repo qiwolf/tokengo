@@ -74,6 +74,8 @@ fn router_inner() -> Router<SharedState> {
         .route("/channels/{id}/probe", post(channels_probe))
         .route("/channels/{id}/models", post(channels_models))
         .route("/channels/{id}/catalog", get(channel_catalog))
+        .route("/channels/{id}/registry", get(registry_get).put(registry_set))
+        .route("/channels/{id}/context", put(context_override_set))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         // 「模型名 → 用途」：面板「模型」页以渠道里勾过的名字为行，用途读这张表
         .route("/channels/{id}/move", post(channels_move))
@@ -741,6 +743,66 @@ async fn channels_models(
     })))
 }
 
+#[derive(Deserialize)]
+struct RegistryQuery { model: String, upstream: String, #[serde(default)] q: String }
+#[derive(Deserialize)]
+struct RegistryWrite { model: String, upstream: String, identity: Option<String> }
+
+fn registry_mapping(conn: &rusqlite::Connection, id: i64, model: &str, upstream: &str) -> Result<channels::ModelMapping, ApiError> {
+    let channel = channels::get(conn, tokengo_shared::ChannelId(id))?
+        .ok_or_else(|| ApiError::not_found("渠道不存在"))?;
+    let mapping = channel.models.into_iter().find(|m| m.model == model)
+        .ok_or_else(|| ApiError::not_found("请先保存渠道中的模型映射"))?;
+    if crate::model_registry::upstream(&mapping) != upstream {
+        return Err(ApiError::bad_request("上游映射已改变，请先保存并重新打开详情"));
+    }
+    Ok(mapping)
+}
+
+#[derive(Deserialize)]
+struct ContextOverrideWrite { model: String, upstream: String, tokens: Option<i64> }
+async fn context_override_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<ContextOverrideWrite>) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn=state.conn();
+    let mapping=registry_mapping(&conn,id,&body.model,&body.upstream)?;
+    if let Some(tokens)=body.tokens {
+        if tokens<=0 { return Err(ApiError::bad_request("用户确认上下文必须为正整数 tokens；清除请传 null")); }
+        conn.execute("INSERT INTO channel_context_overrides(channel_id,upstream_model,context_window) VALUES(?1,?2,?3) ON CONFLICT(channel_id,upstream_model) DO UPDATE SET context_window=excluded.context_window",rusqlite::params![id,crate::model_registry::upstream(&mapping),tokens]).map_err(crate::db::DbError::from)?;
+    } else {
+        conn.execute("DELETE FROM channel_context_overrides WHERE channel_id=?1 AND upstream_model=?2",rusqlite::params![id,crate::model_registry::upstream(&mapping)]).map_err(crate::db::DbError::from)?;
+    }
+    let tokens=crate::model_registry::context_override(&conn,tokengo_shared::ChannelId(id),&mapping)?;
+    Ok(Json(serde_json::json!({"tokens":tokens,"source":tokens.map(|_|"user_confirmed")})))
+}
+
+async fn registry_get(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Query(query): Query<RegistryQuery>) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    let mapping = registry_mapping(&conn, id, &query.model, &query.upstream)?;
+    let channel = tokengo_shared::ChannelId(id);
+    let context = crate::model_registry::mapped(&conn, channel, &mapping)?;
+    let identity = crate::model_registry::associated(&conn, channel, &mapping)?;
+    let verified = crate::capability_detector::mapped_context(&catalog::list(&conn, channel)?, &mapping);
+    let mut stmt = conn.prepare("SELECT model_id,context_window FROM registry_context WHERE instr(lower(model_id),lower(?1))>0 AND context_window>0 ORDER BY model_id LIMIT 100").map_err(crate::db::DbError::from)?;
+    let entries = stmt.query_map([&query.q], |r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"tokens":r.get::<_,i64>(1)?}))).map_err(crate::db::DbError::from)?.collect::<Result<Vec<_>,_>>().map_err(crate::db::DbError::from)?;
+    Ok(Json(serde_json::json!({"identity":identity,"tokens":context.tokens,"reason":context.reason,"upstream_context":verified,"override_tokens":crate::model_registry::context_override(&conn,channel,&mapping)?,"entries":entries})))
+}
+
+async fn registry_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<RegistryWrite>) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    let mapping = registry_mapping(&conn, id, &body.model, &body.upstream)?;
+    if let Some(identity) = &body.identity {
+        let candidate = channels::ModelMapping::new("", Some(identity.clone()), false);
+        let context = crate::model_registry::mapped(&conn, tokengo_shared::ChannelId(-1), &candidate)?;
+        if context.tokens.is_none() {
+            return Err(ApiError::bad_request(format!("不可关联该精确 ID：{}", context.reason)));
+        }
+        conn.execute("INSERT INTO registry_associations(channel_id,model_name,upstream_model,model_id) VALUES(?1,?2,?3,?4) ON CONFLICT(channel_id,model_name,upstream_model) DO UPDATE SET model_id=excluded.model_id",
+            rusqlite::params![id,mapping.model,body.upstream,identity]).map_err(crate::db::DbError::from)?;
+    } else {
+        conn.execute("DELETE FROM registry_associations WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3", rusqlite::params![id,mapping.model,body.upstream]).map_err(crate::db::DbError::from)?;
+    }
+    Ok(Json(serde_json::json!({"ok":true})))
+}
+
 /// 这条渠道**上次**问到的上游模型清单（不联网，读库）。
 ///
 /// 面板打开编辑弹窗先读它，省一次上游请求；要不要刷新由用户按「问一次上游」决定。
@@ -1063,6 +1125,9 @@ async fn model_routes_list(
                 // 有启用的渠道勾了它并标了能看图（只对对话类有意义）
                 "can_see": r.can_see(),
                 "context_window": r.context_window,
+                "nominal_context_window": r.nominal_context_window,
+                "nominal_context_source": r.nominal_context_source,
+                "context_reason": r.context_reason,
                 "context_source": r.context_source.as_deref().unwrap_or_default(),
                 // 现在有没有渠道能用（没有 = 客户端打这个名字会 404）
                 "routed": r.routed(),

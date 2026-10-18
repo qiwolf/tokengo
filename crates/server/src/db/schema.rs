@@ -333,4 +333,19 @@ failures INTEGER NOT NULL DEFAULT 0,until_ms INTEGER NOT NULL DEFAULT 0,
 reason TEXT NOT NULL DEFAULT '',generation INTEGER NOT NULL DEFAULT 0,lease_until INTEGER NOT NULL DEFAULT 0,
 PRIMARY KEY(channel_id,model_name,upstream_model));
 ALTER TABLE requests ADD COLUMN explored INTEGER NOT NULL DEFAULT 0;"#),
+    (16, r#"CREATE TABLE registry_context (
+        model_id TEXT PRIMARY KEY, context_window INTEGER, reason TEXT NOT NULL);
+    CREATE TABLE registry_context_status (
+        id INTEGER PRIMARY KEY CHECK(id=1), fetched_at INTEGER NOT NULL DEFAULT 0,
+        next_at INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0,
+        origin TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '');
+    INSERT INTO registry_context_status(id) VALUES(1);"#),
+    (17, r#"CREATE TABLE registry_associations (
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        model_name TEXT NOT NULL, upstream_model TEXT NOT NULL, model_id TEXT NOT NULL,
+        PRIMARY KEY(channel_id, model_name, upstream_model));
+    CREATE TABLE channel_context_overrides (
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        upstream_model TEXT NOT NULL, context_window INTEGER NOT NULL CHECK(context_window>0),
+        PRIMARY KEY(channel_id,upstream_model));"#),
 ];

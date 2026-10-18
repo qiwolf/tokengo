@@ -37,6 +37,9 @@ pub fn spawn(state: SharedState) -> tokio::task::JoinHandle<()> {
             if let Err(e) = tick(&state).await {
                 tracing::warn!("Capability metadata discovery failed: {e}");
             }
+            if let Err(e) = crate::model_registry::tick(&state).await {
+                tracing::warn!("Model registry refresh failed: {e}");
+            }
         }
     })
 }

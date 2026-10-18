@@ -149,6 +149,10 @@ mod tests {
             "model_vision_checks",
             "model_cooldowns",
             "panel_sessions",
+            "channel_context_overrides",
+            "registry_associations",
+            "registry_context",
+            "registry_context_status",
             "requests",
             "routing_state",
             "schema_migrations",
@@ -156,7 +160,7 @@ mod tests {
         ] {
             assert!(got.contains(&want.to_string()), "缺表 {want}，实际有 {got:?}");
         }
-        assert_eq!(got.len(), 17, "表数与设计不符：{got:?}");
+        assert_eq!(got.len(), 21, "表数与设计不符：{got:?}");
     }
 
     /// 关键反证：**免费模型目录相关的表一张都不该有。**
