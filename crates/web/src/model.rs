@@ -84,6 +84,8 @@ pub struct ChannelsResp {
 /// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
+    #[serde(default)]pub exploration_count:i64,
+    #[serde(default)] pub cooldowns:Vec<ModelCooldown>,
     #[serde(default)]
     pub runtime: RuntimeScore,
     #[serde(default)]
@@ -312,6 +314,7 @@ pub struct StatsResp {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LogRow {
+    #[serde(default)]pub explored:bool,
     #[serde(default)]
     pub error_code:Option<String>,
     #[serde(default)]
@@ -663,3 +666,7 @@ pub struct LogLevel {
     #[serde(default)]
     pub revert_at_ms: Option<i64>,
 }
+
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]pub struct ModelCooldown{pub channel_id:i64,pub upstream:String,pub failures:i64,pub until_ms:i64,pub reason:String,pub lease_until:i64}
+#[derive(Debug,Clone,PartialEq,Default,Deserialize,Serialize)]pub struct AutoPolicy{pub strategy:String,pub explore:bool}
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]pub struct AutoPolicyResp{pub policy:AutoPolicy,pub order:Vec<String>}

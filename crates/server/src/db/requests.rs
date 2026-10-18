@@ -186,6 +186,7 @@ pub fn add_attempt(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRow {
+    pub explored:bool,
     pub error_code: Option<String>,
     pub first_byte_ms: Option<i64>,
     pub client_ip: Option<String>,
@@ -209,6 +210,7 @@ pub struct RequestRow {
 
 fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
     Ok(RequestRow {
+        explored:r.get::<_,i64>(18)?!=0,
         error_code:r.get(17)?,
         served_model: r.get(12)?,
         first_byte_ms:r.get(13)?,
@@ -254,7 +256,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let request = conn.query_row(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
                 input_tokens, output_tokens, has_image, error, served_model, first_byte_ms,
-                client_ip, user_agent, streamed, error_code FROM requests WHERE id = ?1",
+                client_ip, user_agent, streamed, error_code, explored FROM requests WHERE id = ?1",
         [id], request_row,
     ).optional()?;
     let Some(request) = request else { return Ok(None); };
@@ -275,7 +277,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt

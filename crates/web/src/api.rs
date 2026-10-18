@@ -450,3 +450,8 @@ pub async fn set_log_level(
     })
 }
 
+
+pub async fn auto_policy()->Result<crate::model::AutoPolicyResp,ApiErr>{typed("GET","/api/auto-policy",None).await}
+pub async fn save_auto_policy(policy:&crate::model::AutoPolicy)->Result<(),ApiErr>{call("PUT","/api/auto-policy",Some(json!(policy))).await.map(|_|())}
+pub async fn move_model(model:&str,up:bool)->Result<(),ApiErr>{call("POST","/api/model-order/move",Some(json!({"model":model,"up":up}))).await.map(|_|())}
+pub async fn reset_model_cooldown(model:&str,channel_id:Option<i64>)->Result<(),ApiErr>{call("POST","/api/model-cooldown/reset",Some(json!({"model":model,"channel_id":channel_id}))).await.map(|_|())}

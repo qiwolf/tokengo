@@ -115,6 +115,7 @@ struct Plan {
     secrets: HashMap<i64, String>,
     /// 每条渠道「同时最多几发」（渠道 id → 上限；0 或缺席 = 不限）。
     caps: HashMap<i64, u32>,
+    explored:Option<String>,
 }
 
 impl Plan {
@@ -156,10 +157,10 @@ fn push_entry(
 /// - **普通模型名**：勾了它的渠道，按渠道顺序（面板「渠道」页从上到下 = 先试）。
 /// - **保留名 `auto`**：现场挑一串最优的模型名（见 `db::model_routes::auto_candidates`），
 ///   逐个摊成链 —— 每条候选都带着「这一发要发给上游的名字」。
-fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind) -> Result<Plan, ApiError> {
+fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vision:bool) -> Result<Plan, ApiError> {
     let conn = state.conn();
     if model_routes::is_auto(model) {
-        return load_auto_plan(state, &conn, model, endpoint);
+        return load_auto_plan(state, &conn, model, endpoint, wants_vision);
     }
     let Some(route) = model_routes::routes_for(&conn, model)? else {
         // 报错别教训人，说清「去哪儿勾上」就够了。
@@ -173,6 +174,7 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind) -> Result
         entries: Vec::new(),
         secrets: HashMap::new(),
         caps: HashMap::new(),
+        explored:None,
     };
     for channel in model_routes::channels_for(&conn, &route.name)? {
         if !channel.routable() {
@@ -209,6 +211,7 @@ fn load_auto_plan(
     conn: &rusqlite::Connection,
     model: &str,
     endpoint: EndpointKind,
+    wants_vision:bool,
 ) -> Result<Plan, ApiError> {
     let mut plan = Plan {
         route: model_routes::AUTO_NAME.to_string(),
@@ -216,9 +219,13 @@ fn load_auto_plan(
         entries: Vec::new(),
         secrets: HashMap::new(),
         caps: HashMap::new(),
+        explored:None,
     };
     let mut candidates =
-        model_routes::auto_candidates(conn, endpoint.as_model_kind(), false, now_ms())?;
+        model_routes::auto_candidates(conn, endpoint.as_model_kind(), wants_vision, now_ms())?;
+    if candidates.is_empty() && wants_vision && !model_routes::auto_candidates(conn,endpoint.as_model_kind(),false,now_ms())?.is_empty() {
+        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY,"no_vision_model","这条请求带了图片，但没有符合视觉能力的候选模型"));
+    }
     if candidates.is_empty() {
         let msg = if model_routes::auto_available(conn)? {
             format!(
@@ -236,35 +243,23 @@ fn load_auto_plan(
         return Err(ApiError::not_found(msg));
     }
     let sequence=state.auto_sequence.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-    if sequence%20==19 && candidates.len()>1 {
-        let scores=crate::db::scores::all(conn,now_ms())?;
-        if let Some(i)=candidates.iter().position(|n|!scores.contains_key(&tokengo_shared::normalize_model_name(n))) {
-            let item=candidates.remove(i);candidates.insert(0,item);
-        }
-    }
+    let config=crate::db::policy::get(conn)?;
+    use rand::Rng;
+    let draw=rand::thread_rng().gen_range(0..10000u64);
+    // Exploration must never select a model whose every matching channel is cooling.
+    candidates.retain(|name|model_routes::channels_for(conn,name).unwrap_or_default().iter().any(|c|crate::db::policy::peek(conn,c.id.0,name,c.upstream_model(name),now_ms()).ok().flatten().is_none()));
+    plan.explored=crate::db::policy::rank(conn,&mut candidates,&config,sequence,draw)?;
     for name in candidates {
         for channel in model_routes::channels_for(conn, &name)? {
-            if !channel.routable() {
+            if !channel.routable() || (wants_vision && !channel.vision) {
                 continue;
             }
             push_entry(state, conn, &mut plan, name.clone(), channel)?;
         }
     }
-    let mut pair_scores=std::collections::HashMap::new();
-    for c in &plan.entries {
-        if !pair_scores.contains_key(&c.channel.id.0) {pair_scores.insert(c.channel.id.0,crate::db::scores::for_channel(conn,now_ms(),Some(c.channel.id.0))?);}
-    }
-    // Stable sorting keeps channel priority as the tie-breaker.
-    if sequence%20!=19 {
-        plan.entries.sort_by(|a,b|{
-            let score=|c:&Candidate|pair_scores.get(&c.channel.id.0).and_then(|m|m.get(&tokengo_shared::normalize_model_name(&c.name))).map(|s|s.value()).unwrap_or(-1.0);
-            score(b).total_cmp(&score(a))
-        });
-    }
     if plan.entries.is_empty() {
-        return Err(ApiError::not_found(format!(
-            "「{model}」现在没有可挑的模型：勾过的那几个名字下面的渠道都停用了"
-        )));
+        let until=model_routes::list(conn)?.iter().flat_map(|r|crate::db::policy::rows(conn,&r.name).unwrap_or_default()).map(|r|r.until_ms.max(r.lease_until)).filter(|t|*t>now_ms()).min();
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",format!("暂无可用模型，候选均在冷却；最早可重试时间：{}",until.map(|t|t.to_string()).unwrap_or_else(||"稍后".into()))));
     }
     Ok(plan)
 }
@@ -278,10 +273,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 以前这三类 404 在 `load_plan` 里就直接 return 了，一条账都不记 —— 用户看到的是
     // 「客户端报 404、面板上干干净净」，只能靠猜。这与带图被拦（422）的处理也不一致：
     // 那条是记的。**记账绝不能反过来影响请求结果**：这里只记，记账本身错了就吞掉。
-    let plan_all = match load_plan(&state, &req.model, req.endpoint) {
+    let plan_all = match load_plan(&state, &req.model, req.endpoint,req.endpoint==EndpointKind::Chat && tokengo_shared::request_has_image(&req.body)) {
         Ok(p) => p,
         Err(e) => {
-            if e.status.is_client_error() {
+            if e.status.is_client_error() || e.status==StatusCode::SERVICE_UNAVAILABLE {
                 record_routing_refusal(&state, &req, started_ms, e.status.as_u16(), &e.message);
             }
             return Err(e);
@@ -438,6 +433,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 },
             },
         };
+        let sent=channel.upstream_model(name);
+        let generation={let c=state.conn();crate::db::policy::claim(&c,channel.id.0,name,sent,now_ms())?};
+        let Some(generation)=generation else {continue;};
+        let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false};
         tried_any = true;
         last_channel = channel.id;
         // 这一发送给上游的名字：按**这个候选名**在这条渠道上查别名
@@ -445,6 +444,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let sent_model = channel.upstream_model(name).to_string();
         // 账上记下「真正被叫的是谁」：面板上看得见 auto 这一发走了哪个模型
         guard.note_served(name);
+        if plan.explored.as_deref()==Some(name.as_str()) {let c=state.conn();let _=c.execute("UPDATE requests SET explored=1 WHERE id=?1",[request_id]);}
+
         // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
         // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
         // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
@@ -462,7 +463,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let mut body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
         let mut learned_this_request = false;
 
-        for attempt_no in 1..=cfg.max_attempts() {
+        for attempt_no in 1..=if plan.auto {1} else {cfg.max_attempts()} {
             if attempt_no > 1 {
                 // 上游在 Retry-After 里说了等多久就等多久（它比我们的默认节拍更懂自己）
                 let d = retry_after_override.take().unwrap_or_else(|| retry_delay_ms(attempt_no));
@@ -510,6 +511,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
                     last_fault = Some(format!("{}：{}", channel.name, fault.message));
+                    if plan.auto {cooldown.finish(false,&fault.message,0);}
+                    if plan.auto {break;}
                     continue;
                 }
                 Ok(r) => r,
@@ -538,7 +541,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             channel.id.0,
                             permit,
                             req.endpoint,
-                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(),
+                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(), cooldown,
                         ));
                     }
 
@@ -573,9 +576,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         ordinal += 1;
                         tracing::warn!("渠道 {} 回了 200 但一句话没说，按这条渠道的毛病处理", channel.name);
                         last_fault = Some(format!("{}：{note}", channel.name));
+                        if plan.auto {cooldown.finish(false,&note,0);}
+                        if plan.auto {break;}
                         continue;
                     }
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, adaptation_note.as_deref());
+                    cooldown.finish(true,"",0);
                     state.note_model_endpoint(name, req.endpoint);
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
@@ -666,7 +672,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     );
                     ordinal += 1;
                     last_fault = Some(format!("{}：HTTP {status} {}", channel.name, err.text));
+                    if plan.auto {cooldown.finish(false,&format!("HTTP {status}: {}",err.text),after.unwrap_or(0) as i64);}
                     last_http = Some(err);
+                    if plan.auto {break;}
                     if let Some(ms) = after {
                         // 上游自己说了「过多久再来」：
                         // · 说得很久（>2 秒）→ **别在这条渠道上耗**，剩下的尝试直接放弃、换下一条；
@@ -703,6 +711,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             }
         }
 
+        if !plan.auto {cooldown.finish(false,last_fault.as_deref().unwrap_or("候选失败"),0);}
         // 这条渠道把重试次数用完了还是不行 → 切换
         if touch_state {
             let mut r = state.routing();
@@ -741,6 +750,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         }
     }
 
+    if last_channel.0==0 && plan.auto {
+        guard.error_code=Some("models_cooling".into());
+        guard.finish(&state,Status::Failed,Some(503),None,started_ms,None,0,0,false,Some("候选冷却或恢复试用中，请稍后重试"));
+        return Ok(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling","候选冷却或恢复试用中，请稍后重试").into_response());
+    }
     // 所有渠道都试完了
     let note = last_fault
         .clone()
@@ -844,6 +858,10 @@ fn no_vision_model_response(message: String) -> Response {
 
 /// 记一次尝试。**记账失败不许把请求带崩**：抢不到库锁就把这一件丢给后台落账员，
 /// 日志里有痕迹就行。
+struct CooldownTicket {state:SharedState,id:i64,name:String,upstream:String,generation:i64,done:bool}
+impl CooldownTicket {fn finish(&mut self,success:bool,reason:&str,retry:i64){if self.done{return;}self.done=true;let c=self.state.conn();let min=if reason.contains("401")||reason.contains("403"){1800000}else{retry};if let Err(e)=crate::db::policy::complete(&c,self.id,&self.name,&self.upstream,self.generation,success,reason,min,now_ms()){tracing::warn!("冷却记录失败：{e}");}}}
+impl Drop for CooldownTicket {fn drop(&mut self){if !self.done{let c=self.state.conn();let _=crate::db::policy::release(&c,self.id,&self.name,&self.upstream,self.generation);}}}
+
 fn record_attempt(
     state: &SharedState,
     request_id: i64,
@@ -1021,12 +1039,12 @@ fn stream_passthrough(
     channel_id: i64,
     gate: Option<tokio::sync::OwnedSemaphorePermit>,
     endpoint: EndpointKind,
-    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>,
+    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
     let st = StreamState {
-        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,
+        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,cooldown,
         resp,
         scanner: SseScanner::default(),
         endpoint,
@@ -1069,6 +1087,7 @@ fn stream_passthrough(
 }
 
 struct StreamState {
+    cooldown:CooldownTicket,
     request_id:i64,ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,
     adaptation_note:Option<String>,
     first_byte_ms: Option<i64>,
@@ -1109,6 +1128,7 @@ impl StreamState {
         } else {
             None
         };
+        self.cooldown.finish(complete && !empty,note.unwrap_or(""),0);
         let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string).or_else(||self.adaptation_note.clone()),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
         match self.state.db.try_lock(){Ok(c)=>{if requests::add_attempt_args(&c,&args).is_err(){self.state.enqueue_write(crate::state::WriteJob::Attempt(args));}},Err(_)=>self.state.enqueue_write(crate::state::WriteJob::Attempt(args))}
 
@@ -1304,11 +1324,11 @@ fn record_routing_refusal(
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
-    guard.error_code=Some(if http==422 {"vision_not_ready"} else if model_routes::is_auto(&req.model) {"auto_no_candidate"} else {"model_not_configured"}.into());
+    guard.error_code=Some(if http==503 {"models_cooling"} else if http==422 {"vision_not_ready"} else if model_routes::is_auto(&req.model) {"auto_no_candidate"} else {"model_not_configured"}.into());
 
     guard.finish(
         state,
-        Status::ClientError,
+        if http==503 {Status::Failed} else {Status::ClientError},
         Some(http),
         None,
         started_ms,
