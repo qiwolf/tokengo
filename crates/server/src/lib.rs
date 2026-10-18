@@ -34,9 +34,14 @@ pub fn app(state: SharedState) -> Router {
         .nest("/api", routes::admin::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())
-        // 面板资源压缩：wasm 1.52 MB → gzip 后约 0.52 MB（首次打开少下一兆）。
+        // 面板资源压缩：wasm 841 KB → gzip 后约 330 KB（首次打开少下 500 KB）。
         // 只压文本类（wasm/js/css/html），图片之类本来就压过的会被自动跳过；
         // 浏览器第二次打开走 immutable 缓存，不会再下一遍。
+        //
+        // **只用 gzip，不加 brotli**（2026-10-18 实测）：br 只比 gzip 少 21 KB 下载，
+        // 但它的压缩器每次要占约 6 MB 内存且不还给系统 —— 连发 5 次面板，
+        // 进程常驻从 7.5 MB 涨到 **39.6 MB**（gzip 只到 9.6 MB，原样发到 8.8 MB）。
+        // 512 MB 的容器里，30 MB 换 21 KB 不划算。
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
