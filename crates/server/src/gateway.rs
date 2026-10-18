@@ -93,6 +93,7 @@ pub struct ForwardRequest {
     pub body: Value,
     pub stream: bool,
     pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
 }
 
 /// 一次请求要试的一个候选：**用哪个模型名** + 走哪条渠道。
@@ -317,6 +318,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             )?
         };
         let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+    record_client_app(&state,request_id,req.user_agent.as_deref());
         guard.finish(
             &state,
             Status::ClientError,
@@ -375,6 +377,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             )?
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+    record_client_app(&state,request_id,req.user_agent.as_deref());
 
     let cfg = state.routing().cfg.clone();
     let attempt_timeout = Duration::from_millis(cfg.attempt_timeout_ms.max(1));
@@ -925,6 +928,7 @@ fn stream_passthrough(
         resp,
         scanner: SseScanner::default(),
         endpoint,
+        first_byte_ms: None,
         guard: Some(guard),
         started_ms,
         channel_id,
@@ -935,6 +939,7 @@ fn stream_passthrough(
     let stream = unfold(st, |mut st| async move {
         match st.resp.chunk().await {
             Ok(Some(chunk)) => {
+                if st.first_byte_ms.is_none() && !chunk.is_empty() { st.first_byte_ms=Some(now_ms()-st.started_ms); }
                 st.scanner.feed(&chunk);
                 st.delivered += chunk.len();
                 Some((Ok::<Bytes, std::io::Error>(chunk), st))
@@ -962,6 +967,7 @@ fn stream_passthrough(
 }
 
 struct StreamState {
+    first_byte_ms: Option<i64>,
     endpoint: EndpointKind,
     resp: reqwest::Response,
     scanner: SseScanner,
@@ -1004,7 +1010,7 @@ impl StreamState {
             None,
             Some(self.channel_id),
             self.started_ms,
-            None,
+            self.first_byte_ms,
             input,
             output,
             true,
@@ -1154,6 +1160,7 @@ fn record_routing_refusal(
         }
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+    record_client_app(&state,request_id,req.user_agent.as_deref());
     guard.finish(
         state,
         Status::ClientError,
@@ -1173,7 +1180,15 @@ fn record_routing_refusal(
 /// 正常路径显式调 `finish`；如果这个结构是被 **Drop** 掉的（客户端中途断开时，
 /// axum/hyper 会把整个处理函数连同它一起丢掉），就记成 `canceled` ——
 /// 客户端自己断开不算渠道的毛病，不该进渠道的账。
-pub struct RequestGuard {
+pub fn record_client_app(state:&SharedState,id:i64,agent:Option<&str>) {
+    if let Some(agent)=agent { let conn=state.conn();
+        if let Err(e)=conn.execute("UPDATE requests SET user_agent=?2 WHERE id=?1",rusqlite::params![id,agent.chars().take(512).collect::<String>()]) {
+            tracing::warn!("记录请求应用失败：{e}");
+        }
+    }
+}
+
+struct RequestGuard {
     state: SharedState,
     request_id: i64,
     started_ms: i64,

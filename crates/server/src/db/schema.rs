@@ -316,4 +316,10 @@ ALTER TABLE requests ADD COLUMN served_model TEXT NOT NULL DEFAULT '';
       model_name TEXT NOT NULL, fingerprint TEXT NOT NULL,
       tries INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT '', PRIMARY KEY(channel_id,model_name));"#),
+    (13,r#"ALTER TABLE requests ADD COLUMN user_agent TEXT;
+CREATE TABLE model_vision_checks (
+      channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      model_name TEXT NOT NULL, fingerprint TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
+      next_at INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY(channel_id,model_name));"#),
 ];
