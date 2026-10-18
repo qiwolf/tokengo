@@ -272,23 +272,6 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
             </section>
 
-            <section class="card">
-                <header class="card-head">
-            <h2>"这个面板怎么更新的"</h2>
-                </header>
-                <div class="card-body">
-            <div class="panel">
-                <p class="muted small">
-                    "面板是 Rust 编出来的 WASM，和后端同一个仓库。改了界面要重新构建："
-                </p>
-                <pre class="code-block">"cd crates/web && trunk build --release"</pre>
-                <p class="muted small">
-                    "服务端从磁盘目录服务产物（" <code>"TOKENGO_WEB_DIR"</code>
-                    " 可指定），所以换面板**不用重启网关**，浏览器强刷一下就是新的。"
-                </p>
-            </div>
-                </div>
-            </section>
         </div>
     }
 }
