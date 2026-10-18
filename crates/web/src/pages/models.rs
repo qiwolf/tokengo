@@ -205,6 +205,9 @@ fn kind_source_label(source: &str) -> &'static str {
 
 #[component]
 pub fn Models(ctx:Ctx)->impl IntoView {
+    let policy=RwSignal::new(crate::model::AutoPolicy::default());
+    let order=RwSignal::new(Vec::<String>::new());
+    let ordering=RwSignal::new(false);
     let routes=RwSignal::new(Vec::<NameRoute>::new());
     let auto=RwSignal::new(AutoRoutes::default());
     let chans=RwSignal::new(Vec::<Channel>::new());
@@ -216,24 +219,32 @@ pub fn Models(ctx:Ctx)->impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             match api::model_routes().await {Ok(r)=>{routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);err.set(None);},Err(e)=>{ctx.note_err(&e);err.set(Some(e.message));}}
             if let Ok(c)=api::channels().await{chans.set(c);}
+            if let Ok(p)=api::auto_policy().await{policy.set(p.policy);order.set(p.order);}
             busy.set(false);
         });
     };
     reload();let timer=crate::every(5000,reload);on_cleanup(move ||crate::stop_timer(timer));
+    let save_policy=move |p:crate::model::AutoPolicy|{wasm_bindgen_futures::spawn_local(async move {match api::save_auto_policy(&p).await {Ok(())=>{policy.set(p);reload();},Err(e)=>ctx.say(e.message)}});};
+    let move_model=move |name:String,up:bool|{wasm_bindgen_futures::spawn_local(async move {match api::move_model(&name,up).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
+    let reset=move |name:String,id:Option<i64>|{if !web_sys::window().and_then(|w|w.confirm_with_message("重置冷却并允许立即试用？不会删除历史失败或评分。").ok()).unwrap_or(false){return;}wasm_bindgen_futures::spawn_local(async move {match api::reset_model_cooldown(&name,id).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
     let channel_name=move |id:i64|chans.get().iter().find(|c|c.id==id).map(|c|c.name.clone()).unwrap_or_else(||format!("渠道 #{id}"));
     view!{
         <div class="page model-observatory">
             <PageHead title="模型" desc="实时运行表现与自动选择"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
             {move ||err.get().map(|e|view!{<div class="banner bad">{e}</div>})}
             <section class="route-spotlight">
-                <div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code><span class="muted small">"每 20 次给无数据候选一次试用机会"</span></div>
+                <div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div>
+                <div class="policy-controls">{[("sequence","顺序"),("balanced","均衡"),("fastest","最快"),("stable","最稳定")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
+                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
+                    <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button>
+                </div>
                 {move ||{
                     let a=auto.get();
                     if !a.available{return view!{<p class="muted">"暂无已勾选的可用模型"</p>}.into_any();}
                     view!{<div class="route-selections">{[("chat","对话"),("embeddings","嵌入"),("rerank","重排")].into_iter().filter_map(|(kind,label)|{
                         let names=auto_list(&a,kind);if names.is_empty(){return None;}
                         let first=names[0].clone();let rest=names.join(" → ");
-                        Some(view!{<div class="route-selection"><small>{label}</small><b>{first}</b><span class="muted small">"运行评分优先 · 失败换下一候选"</span><details><summary>"候选顺序"</summary><p>{rest}</p></details></div>})
+                        Some(view!{<div class="route-selection"><small>{label}</small><b>{first}</b><span class="muted small">{move || match policy.get().strategy.as_str(){"sequence"=>"从第一模型开始，失败才切换","balanced"=>"轮流分配，失败换下一模型","fastest"=>"优先响应更快的模型",_=>"优先近期更稳定的模型"}}</span><details><summary>"候选顺序"</summary><p>{rest}</p></details></div>})
                     }).collect_view()}</div>}.into_any()
                 }}
             </section>
@@ -243,9 +254,10 @@ pub fn Models(ctx:Ctx)->impl IntoView {
             <div class="score-model-list">{move ||{
                 let needle=search.get().to_lowercase();let selected=tab.get();
                 let mut list:Vec<_>=routes.get().into_iter().filter(|r|tab_of(&r.kind)==selected && r.name.to_lowercase().contains(&needle)).collect();
-                if sort_score.get(){list.sort_by(|a,b|b.runtime.score.unwrap_or(-1.0).total_cmp(&a.runtime.score.unwrap_or(-1.0)).then(a.name.cmp(&b.name)));}else{list.sort_by(|a,b|a.name.cmp(&b.name));}
+                if ordering.get(){let names=order.get();list.sort_by_key(|r|names.iter().position(|n|n==&r.name).unwrap_or(usize::MAX));}else if sort_score.get(){list.sort_by(|a,b|b.runtime.score.unwrap_or(-1.0).total_cmp(&a.runtime.score.unwrap_or(-1.0)).then(a.name.cmp(&b.name)));}else{list.sort_by(|a,b|a.name.cmp(&b.name));}
                 if list.is_empty(){return view!{<div class="model-empty">"当前分类暂无匹配模型"</div>}.into_any();}
                 list.into_iter().map(|r|{
+                    let reorder_name=r.name.clone();let reorder_down=r.name.clone();let reset_name=r.name.clone();
                     let key=r.name.clone();let opened=open.get().as_deref()==Some(&key);let s=r.runtime.clone();
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
@@ -258,8 +270,10 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     }).collect::<Vec<_>>().join("\n");
                     view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="score-number"><b>{score}</b><small>{confidence}</small></div></header>
                         <div class="model-telemetry"><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"样本"</small><b>{s.samples}</b></span></div>
+                        <div class="model-cooling">{r.cooldowns.iter().map(|c|{let id=c.channel_id;let name=r.name.clone();let remaining=(c.until_ms.max(c.lease_until)-updated.get()).max(0);view!{<div><span>{format!("{} · {} · 连续失败 {}",channel_name(id),if remaining>0{format!("冷却剩余 {}",fmt::span(remaining))}else if c.failures>0{"待试用".into()}else{"可用".into()},c.failures)}</span>{(c.failures>0).then(||view!{<button on:click=move |_|reset(name.clone(),Some(id))>"重置冷却"</button>})}</div>}}).collect_view()}</div>
+                        {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         <footer><span>{channels}</span><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></footer>
-                        {opened.then(||view!{<div class="score-details"><span>{format!("成功 {} · 上游失败 {}",s.successes,s.faults)}</span><span>{format!("平均首字节延迟：{}",s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span><span>{format!("类型来源：{source} · {}",r.detection_status)}</span><span>{format!("最近样本：{}",s.last_at.map(fmt::ts).unwrap_or_else(||"无".into()))}</span><p>{route_detail}</p>{s.last_error.map(|e|view!{<p class="bad-text">{e}</p>})}<small>"90% 稳定性 + 10% 速度；不代表回答质量。旧记录无法归属的尝试不计分。"</small></div>})}
+                        {opened.then(||view!{<div class="score-details"><span>{format!("成功 {} · 上游失败 {} · 探索调用 {}",s.successes,s.faults,r.exploration_count)}</span><span>{format!("平均首字节延迟：{}",s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span><span>{format!("类型来源：{source} · {}",r.detection_status)}</span><span>{format!("最近样本：{}",s.last_at.map(fmt::ts).unwrap_or_else(||"无".into()))}</span><p>{route_detail}</p>{r.cooldowns.iter().filter(|c|!c.reason.is_empty()).map(|c|view!{<p>{format!("{}：{} · 可重试 {}",channel_name(c.channel_id),c.reason,fmt::ts(c.until_ms))}</p>}).collect_view()}<button on:click=move |_|reset(reset_name.clone(),None)>"重置该模型全部冷却"</button>{s.last_error.map(|e|view!{<p class="bad-text">{e}</p>})}<small>"90% 稳定性 + 10% 速度；不代表回答质量。旧记录无法归属的尝试不计分。"</small></div>})}
                     </article>}
                 }).collect_view().into_any()
             }}</div>

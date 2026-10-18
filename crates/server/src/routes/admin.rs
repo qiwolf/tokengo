@@ -78,6 +78,9 @@ fn router_inner() -> Router<SharedState> {
         // 「模型名 → 用途」：面板「模型」页以渠道里勾过的名字为行，用途读这张表
         .route("/channels/{id}/move", post(channels_move))
         .route("/model-kinds", get(model_kinds_list))
+        .route("/auto-policy", get(auto_policy_get).put(auto_policy_save))
+        .route("/model-order/move", post(model_order_move))
+        .route("/model-cooldown/reset", post(model_cooldown_reset))
         .route("/models/{name}/kind", put(models_set_kind))
         // 面板「模型」页要的全部事实（一名字一行 + 它后面那串渠道 + 路由状态 + auto 的候选）。
         .route("/model-routes", get(model_routes_list))
@@ -1004,6 +1007,13 @@ fn extract_reply(body: &str) -> String {
 /// 对外清单按模型组算，两处各算各的就会漂移（v0.11.0 起只有这一份）。
 ///
 /// `auto` 三类的候选各给一份：面板上点开 auto 就能看见「这一刻会挑中谁」。
+async fn auto_policy_get(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();Ok(Json(serde_json::json!({"policy":crate::db::policy::get(&c)?,"order":crate::db::policy::ordered(&c)?})))}
+async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
+#[derive(Deserialize)]struct OrderMove{model:String,up:bool}
+async fn model_order_move(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<OrderMove>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::move_model(&c,&body.model,body.up)?;Ok(Json(serde_json::json!({"ok":true})))}
+#[derive(Deserialize)]struct CoolReset{model:String,channel_id:Option<i64>}
+async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::reset(&c,&body.model,body.channel_id)?;tracing::info!("手动重置模型冷却 {}",body.model);Ok(Json(serde_json::json!({"ok":true})))}
+
 async fn model_routes_list(
     _auth: PanelAuth,
     State(state): State<SharedState>,
@@ -1015,7 +1025,11 @@ async fn model_routes_list(
     let auto = {
         let conn = state.conn();
         let cand = |k: tokengo_shared::ModelKind| {
-            model_routes::auto_candidates(&conn, k, false, now_ms()).unwrap_or_default()
+            let mut names=model_routes::auto_candidates(&conn,k,false,now_ms()).unwrap_or_default();
+            names.retain(|n|model_routes::channels_for(&conn,n).unwrap_or_default().iter().any(|c|crate::db::policy::peek(&conn,c.id.0,n,c.upstream_model(n),now_ms()).ok().flatten().is_none()));
+            let mut p=crate::db::policy::get(&conn).unwrap_or_default();p.explore=false;
+            let _=crate::db::policy::rank(&conn,&mut names,&p,state.auto_sequence.load(std::sync::atomic::Ordering::Relaxed),99);
+            names
         };
         serde_json::json!({
             // 一个勾选过的模型都没有 → 对外不显示 auto（用户口径）
@@ -1039,6 +1053,8 @@ async fn model_routes_list(
                 "name": r.name,
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),
                 "score_window_ms": crate::db::scores::WINDOW_MS,
+                "exploration_count": ({let c=state.conn();c.query_row("SELECT COUNT(*) FROM requests WHERE explored=1 AND served_model=?1",[&r.name],|r|r.get::<_,i64>(0)).unwrap_or(0)}),
+                "cooldowns": ({let c=state.conn();crate::db::policy::rows(&c,&r.name).unwrap_or_default()}),
                 "kind": r.kind.as_str(),
                 "kind_label": r.kind.label(),
                 "kind_source": r.kind_origin,
