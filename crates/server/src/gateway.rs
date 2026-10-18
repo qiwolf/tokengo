@@ -420,7 +420,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let mut tried_any = false;
         let mut busy: Vec<(i64, Arc<tokio::sync::Semaphore>)> = Vec::new();
 
-    for entry_idx in order.iter().copied() {
+    'channels: for entry_idx in order.iter().copied() {
         let Some(Candidate { name, channel }) = plan.entries.get(entry_idx) else {
             continue;
         };
@@ -449,8 +449,18 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
         // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
         let adapted = tokengo_shared::strip_fields(&req.body, &channel.drop_fields);
-        let body = rewrite_model(&adapted, &sent_model);
-        let body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
+        let mut body = rewrite_model(&adapted, &sent_model);
+        let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
+        let cached_cap = crate::db::settings::get(&state.conn(), &cap_key).ok().flatten()
+            .and_then(|s| s.parse::<u64>().ok());
+        let mut adaptation_note = None::<String>;
+        if let Some(cap) = cached_cap {
+            if clamp_output(&mut body, cap) {
+                adaptation_note = Some(format!("按此渠道已知输出上限收窄至 {cap} tokens"));
+            }
+        }
+        let mut body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
+        let mut learned_this_request = false;
 
         for attempt_no in 1..=cfg.max_attempts() {
             if attempt_no > 1 {
@@ -528,7 +538,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             channel.id.0,
                             permit,
                             req.endpoint,
-                            ordinal, name.clone(), sent_model.clone(), t0,
+                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(),
                         ));
                     }
 
@@ -565,7 +575,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         last_fault = Some(format!("{}：{note}", channel.name));
                         continue;
                     }
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, None);
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, adaptation_note.as_deref());
                     state.note_model_endpoint(name, req.endpoint);
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
@@ -591,8 +601,32 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 AttemptOutcome::ClientFault => {
                     // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
                     // 不许把整条链路打断）
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_fault", Some(status), dur, None);
                     let err = read_error(resp).await;
+                    if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
+                        record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                            "context_limit", Some(status), dur, Some(&err.text));
+                        ordinal += 1;
+                        last_fault = Some(format!("渠道 {} 上下文不足：{}", channel.name, err.text));
+                        last_http = Some(err);
+                        continue 'channels;
+                    }
+                    if req.endpoint == EndpointKind::Chat && matches!(status, 400 | 422) && !learned_this_request {
+                        if let Some(cap) = output_ceiling(&err.text) {
+                            if clamp_output(&mut body, cap) {
+                                learned_this_request = true;
+                                let _ = crate::db::settings::set(&state.conn(), &cap_key, &cap.to_string());
+                                adaptation_note = Some(format!("上游明确输出上限为 {cap} tokens，已收窄重试"));
+                                record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                    "output_limit", Some(status), dur, adaptation_note.as_deref());
+                                ordinal += 1;
+                                body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
+                                if attempt_no < cfg.max_attempts() { continue; }
+                                last_http = Some(err);
+                                continue 'channels;
+                            }
+                        }
+                    }
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_fault", Some(status), dur, Some(&err.text));
                     let note = format!(
                         "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
                         channel.name,
@@ -733,6 +767,48 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         )
         .into_response(),
     })
+}
+
+// Only explicit output-parameter errors qualify; context/input numbers are not output caps.
+fn output_ceiling(text: &str) -> Option<u64> {
+    let text = text.to_ascii_lowercase();
+    if context_rejection(&text) { return None; }
+    let start = ["max_completion_tokens", "max_output_tokens", "max_tokens"]
+        .iter().filter_map(|p| text.find(p)).min()?;
+    let tail = &text[start..];
+    for marker in ["must be less than or equal to", "must be less than", "at most", "maximum allowed value of", "maximum output tokens", "cannot exceed", "must not exceed"] {
+        if let Some(pos) = tail.find(marker) {
+            let rest = tail[pos + marker.len()..].trim_start_matches(|c: char| !c.is_ascii_digit());
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let n = digits.parse::<u64>().ok()?;
+            let cap = if marker == "must be less than" { n.checked_sub(1)? } else { n };
+            if (1..=16_777_216).contains(&cap) { return Some(cap); }
+        }
+    }
+    None
+}
+
+fn context_rejection(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    ["context_length_exceeded", "contextwindowexceeded", "maximum context length", "context length exceeded", "context window exceeded", "input token count exceeds", "input is too long"].iter().any(|m| text.contains(m))
+}
+
+fn clamp_output(body: &mut Value, cap: u64) -> bool {
+    let mut changed = false;
+    for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
+        if body.get(field).and_then(Value::as_u64).is_some_and(|n| n > cap) {
+            body[field] = Value::from(cap);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn output_cap_key(channel: &Channel, model: &str, secret: Option<&str>) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (channel.id.0, &channel.base_url, model, secret).hash(&mut h);
+    format!("learned_output_cap:{:016x}", h.finish())
 }
 
 fn gateway_timeout(plan: &Plan, model: &str) -> Response {
@@ -945,12 +1021,12 @@ fn stream_passthrough(
     channel_id: i64,
     gate: Option<tokio::sync::OwnedSemaphorePermit>,
     endpoint: EndpointKind,
-    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64,
+    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
     let st = StreamState {
-        request_id,ordinal,model_name,upstream_model,attempt_started,
+        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,
         resp,
         scanner: SseScanner::default(),
         endpoint,
@@ -994,6 +1070,7 @@ fn stream_passthrough(
 
 struct StreamState {
     request_id:i64,ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,
+    adaptation_note:Option<String>,
     first_byte_ms: Option<i64>,
     endpoint: EndpointKind,
     resp: reqwest::Response,
@@ -1032,7 +1109,7 @@ impl StreamState {
         } else {
             None
         };
-        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
+        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string).or_else(||self.adaptation_note.clone()),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
         match self.state.db.try_lock(){Ok(c)=>{if requests::add_attempt_args(&c,&args).is_err(){self.state.enqueue_write(crate::state::WriteJob::Attempt(args));}},Err(_)=>self.state.enqueue_write(crate::state::WriteJob::Attempt(args))}
 
         if complete && !empty {
@@ -1451,6 +1528,18 @@ mod tests {
         s.feed(&vec![b'x'; MAX_PENDING + 10]);
         assert_eq!(s.totals(), (0, 0));
         assert!(s.pending.is_empty(), "没有换行的垃圾流不能把内存吃光");
+    }
+
+    #[test]
+    fn limits_only_learn_explicit_output_caps() {
+        assert_eq!(output_ceiling("max_tokens must be less than or equal to 8192"), Some(8192));
+        assert_eq!(output_ceiling("max_completion_tokens must be less than 100"), Some(99));
+        assert_eq!(output_ceiling("maximum context length 8192, max_tokens 4000"), None);
+        assert_eq!(output_ceiling("429 retry after 10"), None);
+        let mut v = json!({"max_tokens":32000,"temperature":0.5});
+        assert!(clamp_output(&mut v, 8192));
+        assert_eq!(v["max_tokens"], 8192);
+        assert_eq!(v["temperature"], 0.5);
     }
 
     #[test]

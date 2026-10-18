@@ -230,6 +230,10 @@ async fn models(
             } else {
                 ModelKind::Unknown
             };
+            let context = crate::capability_detector::conservative_context(
+                servable.iter().filter(|m| matches!(m.kind,
+                    ModelKind::Chat | ModelKind::Unknown | ModelKind::Embeddings | ModelKind::Rerank))
+                    .map(|m| m.context_window));
             vec![serde_json::json!({
                 "id": model_routes::AUTO_NAME,
                 "object": "model",
@@ -238,6 +242,9 @@ async fn models(
                 // 带图的请求打 auto 只有在这时候才走得通
                 "vision": vision,
                 "kind": kind.as_str(),
+                "context_window": context,
+                "context_length": context,
+                "context_source": context.map(|_| "upstream"),
             })]
         } else {
             Vec::new()
@@ -255,8 +262,19 @@ async fn models(
             // 这是向量模型还是对话模型 —— 客户端（Hermes 这类）可以据此挑端点，
             // 不用靠名字猜（现网那批自定义名字一个特征都没有）。
             "kind": m.kind.as_str(),
+            "context_window": m.context_window,
+            "context_length": m.context_window,
+            "context_source": m.context_source,
         })
     }));
+    // Preserve the minimal legacy shape when metadata is unknown.
+    for model in &mut data {
+        if model["context_window"].is_null() {
+            if let Some(object) = model.as_object_mut() {
+                for key in ["context_window", "context_length", "context_source"] { object.remove(key); }
+            }
+        }
+    }
     Ok(Json(serde_json::json!({ "object": "list", "data": data })))
 }
 

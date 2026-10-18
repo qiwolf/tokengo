@@ -1046,6 +1046,8 @@ async fn model_routes_list(
                 "detection_status": detection_status,
                 // 有启用的渠道勾了它并标了能看图（只对对话类有意义）
                 "can_see": r.can_see(),
+                "context_window": r.context_window,
+                "context_source": r.context_source.as_deref().unwrap_or_default(),
                 // 现在有没有渠道能用（没有 = 客户端打这个名字会 404）
                 "routed": r.routed(),
                 // 谁勾了它（含停用的渠道）；以及现在真能用的那串，按先试顺序

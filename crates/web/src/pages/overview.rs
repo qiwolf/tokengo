@@ -69,6 +69,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let detail_error = RwSignal::new(None::<String>);
     let detail_busy = RwSignal::new(false);
     let lookup = RwSignal::new(String::new());
+    let lookup_detail = RwSignal::new(false);
     let detail_generation = RwSignal::new(0u64);
     let open_detail = move |id: i64| {
         detail_generation.update(|v| *v += 1);
@@ -215,16 +216,16 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 <form class="request-lookup" on:submit=move |ev| {
                     ev.prevent_default();
                     match lookup.get_untracked().trim().parse::<i64>() {
-                        Ok(id) if id > 0 => open_detail(id),
-                        _ => { detail_error.set(Some("请输入正整数请求号".into())); expanded.set(None); }
+                        Ok(id) if id > 0 => { lookup_detail.set(true); open_detail(id); },
+                        _ => { lookup_detail.set(true); detail_error.set(Some("请输入正整数请求号".into())); expanded.set(None); }
                     }
                 }>
                     <label for="request-id">"按请求号查找"</label>
                     <input id="request-id" inputmode="numeric" placeholder="完整请求 ID" prop:value=move || lookup.get() on:input=move |ev| lookup.set(event_target_value(&ev))/>
                     <button class="ghost" type="submit">"查找"</button>
                 </form>
-                {move || detail_error.get().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
-                <Show when=move || expanded.get().is_some()>
+                {move || (lookup_detail.get()).then(|| detail_error.get()).flatten().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
+                <Show when=move || lookup_detail.get() && expanded.get().is_some()>
                     <section class="request-inspector" aria-label="请求详情" aria-live="polite">
                         <header><h3>{move || format!("请求 #{}", expanded.get().unwrap_or_default())}</h3><button class="ghost" on:click=move |_| expanded.set(None)>"关闭详情"</button></header>
                         <Show when=move || detail_busy.get()><p class="muted">"正在读取尝试记录…"</p></Show>
@@ -232,35 +233,64 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </section>
                 </Show>
                 <div class="recent-list">
-                    {move || {
-                        let rows = recent.get();
-                        if rows.is_empty() { return view! { <div class="empty">"暂无调用"</div> }.into_any(); }
-                        rows.into_iter().map(|r| {
-                            let (base_label,css) = status_label(&r.status);
-                            let label=match r.error_code.as_deref() {Some("model_not_configured")=>"模型未配置",Some("auto_no_candidate")=>"无可用候选",Some("vision_not_ready")=>"视觉未就绪",Some("request_invalid")=>"请求参数错误",_=>base_label};
-                            let id=r.id;
-                            let opened=expanded.get()==Some(id);
-                            let channel=channel_name(r.channel_id);
-                            let time=fmt::ts(r.ts_ms);
-                            let clock=time.get(11..).unwrap_or(&time).to_string();
-
+                    <Show when=move || recent.with(|rows| rows.is_empty())>
+                        <div class="empty">"暂无调用"</div>
+                    </Show>
+                    // Key by request ID: detail toggles and polling must retain the row DOM.
+                    <For
+                        each=move || {
+                            let mut ids = recent.with(|rows| rows.iter().map(|r| r.id).collect::<Vec<_>>());
+                            // Keep an inspected request when new calls push it out of the window.
+                            if !lookup_detail.get() {
+                                if let Some(id) = expanded.get() {
+                                    if !ids.contains(&id) { ids.push(id); }
+                                }
+                            }
+                            ids
+                        }
+                        key=|id| *id
+                        children=move |id| {
+                            let row = Memo::new(move |_| recent.with(|rows| rows.iter().find(|r| r.id == id).cloned()).or_else(|| detail.get().filter(|d| d.request.id == id).map(|d| d.request)));
+                            let opened = move || !lookup_detail.get() && expanded.get() == Some(id);
                             view! {
-                                <article class="recent-call">
-                                    <div class="recent-main">
-                                        <span class=format!("tag {css}")>{label}</span>
-                                        <b class="recent-model">{r.model.clone()}</b>
-                                        <span class="recent-duration">{fmt::dur(r.latency_ms)}</span>
-                                    </div>
+                                <article class="recent-call" data-request-id=id>
+                                    {move || row.get().map(|r| {
+                                        let (base_label,css) = status_label(&r.status);
+                                        let label=match r.error_code.as_deref() {Some("model_not_configured")=>"模型未配置",Some("auto_no_candidate")=>"无可用候选",Some("vision_not_ready")=>"视觉未就绪",Some("request_invalid")=>"请求参数错误",_=>base_label};
+                                        view! {
+                                            <div class="recent-main">
+                                                <span class=format!("tag {css}")>{label}</span>
+                                                <b class="recent-model">{r.model}</b>
+                                                <span class="recent-duration">{fmt::dur(r.latency_ms)}</span>
+                                            </div>
+                                        }
+                                    })}
                                     <div class="recent-meta">
-                                        <time title=time>{clock}</time><span class="recent-channel">{channel.clone()}</span>
-                                        {r.has_image.then(||view! { <span class="tag vision">"带图"</span> })}
-                                        <button class="ghost" aria-expanded=opened on:click=move |_| { if expanded.get_untracked()==Some(id) { expanded.set(None); } else { open_detail(id); } }>{if opened {"收起"} else {"详情"}}</button>
+                                        {move || row.get().map(|r| {
+                                            let time = fmt::ts(r.ts_ms);
+                                            let clock = time.get(11..).unwrap_or(&time).to_string();
+                                            view! {
+                                                <time title=time>{clock}</time><span class="recent-channel">{channel_name(r.channel_id)}</span>
+                                                {r.has_image.then(|| view! { <span class="tag vision">"带图"</span> })}
+                                            }
+                                        })}
+                                    <button class="ghost" aria-expanded=opened on:click=move |_| {
+                                        if opened() { expanded.set(None); }
+                                        else { lookup_detail.set(false); open_detail(id); }
+                                    }>{move || if opened() {"收起"} else {"详情"}}</button>
                                     </div>
-
+                                    <Show when=opened>
+                                        <section class="request-inspector" aria-label="请求详情" aria-live="polite">
+                                            <header><h3>{format!("请求 #{id}")}</h3></header>
+                                            <Show when=move || detail_busy.get()><p class="muted">"正在读取尝试记录…"</p></Show>
+                                            {move || detail_error.get().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
+                                            {move || detail.get().map(|d| view! { <RequestDetailView detail=d/> })}
+                                        </section>
+                                    </Show>
                                 </article>
                             }
-                        }).collect_view().into_any()
-                    }}
+                        }
+                    />
                 </div>
             </section>
 

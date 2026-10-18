@@ -2,6 +2,7 @@
 //! 方便集成测试直接构建整套 app。
 
 pub mod config;
+pub mod capability_detector;
 pub mod crypto;
 pub mod db;
 pub mod gateway;

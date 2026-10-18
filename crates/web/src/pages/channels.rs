@@ -1288,8 +1288,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                     {ctx_len
                                                                         .map(|c| {
                                                                             view! {
-                                                                                <span class="tag" title="上游报的上下文长度">
-                                                                                    {format!("上下文 {}", fmt::ctx(c))}
+                                                                                <span class="tag" title="上游声明的上下文长度，非容量实测">
+                                                                                    {format!("上下文 {} · 上游声明", fmt::ctx(c))}
                                                                                 </span>
                                                                             }
                                                                         })}
@@ -1301,8 +1301,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                     {match vision_claim {
                                                                         Some(true) => {
                                                                             view! {
-                                                                                <span class="tag" title="上游自称能收图 —— 但我们只认实测：要不要给它接带图的请求，点「详情」里那个按钮真发一张图试试">
-                                                                                    "上游自称能收图"
+                                                                                <span class="tag" title="上游声明支持图片输入，自动关联到本渠道对应的上游模型；不是视觉实测结果">
+                                                                                    "图片输入 · 上游声明"
                                                                                 </span>
                                                                             }
                                                                                 .into_any()
@@ -1426,8 +1426,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                 </button>
                                                                             </div>
                                                                             <p class="muted small">
-                                                                                "「能看图」只认实测：点上面那个按钮真发一张图、问它左上角什么颜色，"
-                                                                                "答对了才勾得上。带图的请求只会发给勾了的渠道 —— 一条都没勾就回 422 说清楚，"
+                                                                                "「能看图」可来自上游图片输入声明、人工设置或视觉实测；点上面按钮可真发图验证，"
+                                                                                "答对后会自动勾上。带图的请求只会发给勾了的渠道 —— 一条都没勾就回 422 说清楚，"
                                                                                 "而不是把图悄悄丢掉。"
                                                                             </p>
                                                                             {move || {

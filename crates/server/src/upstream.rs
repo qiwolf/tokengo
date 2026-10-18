@@ -148,12 +148,20 @@ impl Upstream {
         for (name, value) in build_headers(channel, secret, uuid, now_ms, None) {
             rb = rb.header(name, value);
         }
-        let r = rb.send().await.map_err(|e| ChannelFault {
+        let mut r = rb.send().await.map_err(|e| ChannelFault {
             message: fault_message(&url, &e),
         })?;
         let status = r.status().as_u16();
-        let text = r.text().await.unwrap_or_default();
-        Ok((status, clamp_body(text)))
+        let mut bytes = Vec::new();
+        while let Some(chunk) = r.chunk().await.map_err(|e| ChannelFault {
+            message: fault_message(&url, &e),
+        })? {
+            if bytes.len() + chunk.len() > MAX_MODELS_BODY {
+                return Err(ChannelFault { message: "Upstream model catalog exceeds 2 MiB".into() });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
     }
 }
 
@@ -161,16 +169,6 @@ impl Upstream {
 /// 面板本来也塞不下那个量级，硬留着只会把网关内存顶起来。
 const MAX_MODELS_BODY: usize = 2 * 1024 * 1024;
 
-fn clamp_body(text: String) -> String {
-    if text.len() <= MAX_MODELS_BODY {
-        return text;
-    }
-    let mut cut = MAX_MODELS_BODY;
-    while cut > 0 && !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    text[..cut].to_string()
-}
 
 /// 上游 `/v1/models` 里的一条：模型名 + **上游自己报**的说明。
 ///

@@ -103,6 +103,12 @@ pub struct NameRoute {
     /// 有没有启用的渠道勾了它、并且标了「能看图」。
     #[serde(default)]
     pub can_see: bool,
+    /// 可用渠道的上下文长度（tokens）；缺失时不按模型名猜测。
+    #[serde(default)]
+    pub context_window: Option<i64>,
+    /// `upstream` = 上游声明；未知来源不能当作实测。
+    #[serde(default)]
+    pub context_source: String,
     /// 现在有没有渠道能用（`false` = 客户端打这个名字会 404）。
     #[serde(default)]
     pub routed: bool,
@@ -436,7 +442,7 @@ pub struct UpstreamModel {
     #[serde(default)]
     pub is_free: bool,
     /// 上游**自称**能不能收图。`None` = 它没说。**这不是我们的「能看图」标记** ——
-    /// 那个只认实测（真发一张图问它左上角什么颜色），两者别混。
+    /// 路由标记也可能由声明或人工设置采用，不能仅凭标记声称已经实测。
     #[serde(default)]
     pub vision: Option<bool>,
 }
@@ -597,6 +603,20 @@ mod tests {
             serde_json::from_str(r#"{"models":[],"auto":{"available":false},"now_ms":1}"#).unwrap();
         assert!(!empty.auto.available);
         assert!(empty.auto.chat.is_empty());
+    }
+
+    #[test]
+    fn context_metadata_is_optional_and_never_inferred() {
+        let old: NameRoute = serde_json::from_str(r#"{"name":"huge-128k-vision"}"#).unwrap();
+        assert_eq!(old.context_window, None);
+        assert!(old.context_source.is_empty());
+        assert!(!old.can_see);
+        let declared: NameRoute = serde_json::from_str(
+            r#"{"name":"alias","context_window":131072,"context_source":"upstream","can_see":true}"#,
+        ).unwrap();
+        assert_eq!(declared.context_window, Some(131072));
+        assert_eq!(declared.context_source, "upstream");
+        assert!(declared.can_see);
     }
 
     #[test]

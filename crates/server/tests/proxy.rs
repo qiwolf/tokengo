@@ -1019,6 +1019,41 @@ async fn a_malformed_body_is_a_400() {
 // ───────────────────────── 流式 ─────────────────────────
 
 #[tokio::test]
+async fn output_caps_are_learned_per_channel_and_context_errors_can_fall_back() {
+    let f = fixture(); f.with_key();
+    let small = start_mock(Reply::Ok).await;
+    small.inner.replies.lock().unwrap().push_back(Reply::Status(400,
+        r#"{"error":{"message":"max_tokens must be less than or equal to 64"}}"#));
+    let a = f.add_channel("small", &small.base, ChannelSpec::default());
+    f.serve("caps", &[a]);
+    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"caps","messages":[],"max_tokens":256})).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(small.seen()[0].body["max_tokens"],256);
+    assert_eq!(small.seen()[1].body["max_tokens"],64);
+    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"caps","messages":[],"max_tokens":256})).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(small.seen()[2].body["max_tokens"],64);
+    let wide = start_mock(Reply::Ok).await;
+    let b = f.add_channel("wide", &wide.base, ChannelSpec::default());
+    f.serve("other", &[b]);
+    let _ = post(&f,CHAT,Some(KEY),json!({"model":"other","messages":[],"max_tokens":256})).await;
+    assert_eq!(wide.seen()[0].body["max_tokens"],256,"cap must not leak to another channel");
+    small.inner.replies.lock().unwrap().push_back(Reply::Status(400,
+        r#"{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}"#));
+    for id in [a,b] {
+        let conn = f.state.conn();
+        let mut mappings = tokengo_server::db::channels::get(&conn,id).unwrap().unwrap().models;
+        mappings.push(tokengo_server::db::channels::ModelMapping::new("long",None,false));
+        tokengo_server::db::channels::set_models(&conn,id,&mappings).unwrap();
+    }
+    f.serve("long", &[a,b]);
+    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"long","messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(small.count(),4,"context rejection is not retried on the same channel");
+    assert_eq!(wide.count(),2);
+}
+
+#[tokio::test]
 async fn streaming_is_passed_through_and_usage_is_scraped() {
     let f = fixture();
     f.with_key();

@@ -179,6 +179,30 @@ pub(crate) fn auto_list<'a>(auto: &'a AutoRoutes, kind: &str) -> &'a [String] {
     }
 }
 
+/// 上下文只能展示元数据，不能把一次成功请求当作容量实测。
+fn context_badge(route: &NameRoute) -> (String, String) {
+    match route.context_window.filter(|n| *n > 0) {
+        Some(tokens) => {
+            let source = if route.context_source == "upstream" { "上游声明" } else { "来源未注明" };
+            (
+                format!("上下文 {} · {source}", fmt::ctx(tokens)),
+                format!("{tokens} tokens；{source}，非容量实测，不代表每条渠道都支持相同长度"),
+            )
+        }
+        None => ("上下文 未知".into(), "尚无上下文长度元数据，不按模型名猜测".into()),
+    }
+}
+
+fn kind_source_label(source: &str) -> &'static str {
+    match source {
+        "upstream" => "上游声明",
+        "auto" => "实测识别",
+        "manual" => "人工设置",
+        "" => "待识别",
+        _ => "来源未注明",
+    }
+}
+
 #[component]
 pub fn Models(ctx:Ctx)->impl IntoView {
     let routes=RwSignal::new(Vec::<NameRoute>::new());
@@ -226,12 +250,13 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
                     let status=if r.routed{"已配置"}else{"无可用渠道"};
-                    let source=match r.kind_source.as_str(){"upstream"=>"上游声明","auto"=>"自动识别","manual"=>"已有人工设置",_=>"待识别"};
+                    let source=kind_source_label(&r.kind_source);
+                    let (context,context_title)=context_badge(&r);
                     let channels=r.channels.iter().map(|id|channel_name(*id)).collect::<Vec<_>>().join("、");
                     let route_detail=chans.get().into_iter().filter(|c|r.declared_by.contains(&c.id)).map(|c|{
                         let upstream=c.models.iter().find(|m|tokengo_shared::same_model_name(&m.model,&r.name)).and_then(|m|m.upstream.clone()).unwrap_or(r.name.clone());format!("{} → {}",c.name,upstream)
                     }).collect::<Vec<_>>().join("\n");
-                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag">{status}</span>{r.can_see.then(||view!{<span class="tag vision">"支持图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="score-number"><b>{score}</b><small>{confidence}</small></div></header>
+                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="score-number"><b>{score}</b><small>{confidence}</small></div></header>
                         <div class="model-telemetry"><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"样本"</small><b>{s.samples}</b></span></div>
                         <footer><span>{channels}</span><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></footer>
                         {opened.then(||view!{<div class="score-details"><span>{format!("成功 {} · 上游失败 {}",s.successes,s.faults)}</span><span>{format!("平均首字节延迟：{}",s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span><span>{format!("类型来源：{source} · {}",r.detection_status)}</span><span>{format!("最近样本：{}",s.last_at.map(fmt::ts).unwrap_or_else(||"无".into()))}</span><p>{route_detail}</p>{s.last_error.map(|e|view!{<p class="bad-text">{e}</p>})}<small>"90% 稳定性 + 10% 速度；不代表回答质量。旧记录无法归属的尝试不计分。"</small></div>})}
@@ -256,6 +281,33 @@ mod tests {
             routed: !chain.is_empty(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn context_badges_keep_unknowns_and_claims_honest() {
+        let mut r = route("128k-in-name", "chat", &[1], &[1]);
+        assert_eq!(context_badge(&r).0, "上下文 未知");
+        for invalid in [0, -1] {
+            r.context_window = Some(invalid);
+            assert_eq!(context_badge(&r).0, "上下文 未知");
+        }
+        r.context_window = Some(131072);
+        r.context_source = "upstream".into();
+        let (label, title) = context_badge(&r);
+        assert_eq!(label, "上下文 131K · 上游声明");
+        assert!(title.contains("131072 tokens"));
+        assert!(title.contains("非容量实测"));
+        r.context_source = "future-source".into();
+        assert!(context_badge(&r).0.contains("来源未注明"));
+    }
+
+    #[test]
+    fn declared_and_measured_kinds_have_distinct_labels() {
+        assert_eq!(kind_source_label("upstream"), "上游声明");
+        assert_eq!(kind_source_label("auto"), "实测识别");
+        assert_eq!(kind_source_label("manual"), "人工设置");
+        assert_eq!(kind_source_label(""), "待识别");
+        assert_eq!(kind_source_label("future-source"), "来源未注明");
     }
 
     /// 一名字一行：名单与顺序都照抄服务端的（面板不再自己算一遍）。
