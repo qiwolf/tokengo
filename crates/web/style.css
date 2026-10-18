@@ -1134,3 +1134,97 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
 @media print {
   .topbar, .page-head-actions, .toast { display: none; }
 }
+
+/* ── 四类模型的「用途卡」（v0.7.2）：用户报「重排/嵌入/对话/视觉 不好区分」。
+   配色固定：蓝=对话、绿=向量、橙=重排、灰=还没定；块内是模型名 chip。── */
+.kind-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+.kind-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--line-strong);
+}
+.kind-card.kind-chat {
+  border-left-color: #3b82f6;
+}
+.kind-card.kind-emb {
+  border-left-color: #10b981;
+}
+.kind-card.kind-rerank {
+  border-left-color: #f59e0b;
+}
+.kind-card.kind-unknown {
+  border-left-color: var(--fg-3);
+}
+.kind-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.kind-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--fg-3);
+  flex: 0 0 auto;
+}
+.kind-card.kind-chat .kind-dot {
+  background: #3b82f6;
+}
+.kind-card.kind-emb .kind-dot {
+  background: #10b981;
+}
+.kind-card.kind-rerank .kind-dot {
+  background: #f59e0b;
+}
+.kind-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.kind-names .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 类型标记：在「模型名 → 渠道顺序」那张表里也照同一套颜色走 */
+.tag.count {
+  font-variant-numeric: tabular-nums;
+}
+.tag.kind-chat {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.tag.kind-emb {
+  border-color: #10b981;
+  color: #10b981;
+}
+.tag.kind-rerank {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.tag.kind-unknown {
+  border-color: var(--line-strong);
+  color: var(--fg-3);
+}
+
+/* 类型列容易被名字挤成两行碎字（v0.7.2 实测观感）：给它留够宽度，
+   「类型名」和「端点」各自不折行，端点用弱色，别抢名字的注意力。 */
+td[data-label="类型"] {
+  min-width: 11rem;
+}
+td[data-label="类型"] .tag {
+  white-space: nowrap;
+}
+td[data-label="类型"] code {
+  white-space: nowrap;
+  color: var(--fg-3);
+}
