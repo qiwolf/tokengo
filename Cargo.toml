@@ -39,6 +39,16 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # 本地 crate
 tokengo-shared = { path = "crates/shared" }
 
+# 本机开发/验证用的产物。默认 full 调试符号会让单个二进制膨胀到上百兆
+# （tokengo-server 122M、tokengo_web.so 133M、libtokengo_web.rlib 180M），
+# cargo 又不回收旧产物 —— 两天 26 批编译就能把 target/ 滚到 27G。
+# 改成只留行号级调试信息、第三方依赖不带调试信息，单产物回落到几十兆。
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"
