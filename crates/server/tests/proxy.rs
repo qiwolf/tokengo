@@ -3298,3 +3298,45 @@ async fn detector_background_task_identifies_without_any_client_request() {
     assert_eq!(mock.count(),1);
     assert_eq!(tokengo_server::db::kinds::get(&f.state.conn(),"background-model").unwrap().unwrap().kind,tokengo_shared::ModelKind::Chat);
 }
+
+#[tokio::test]
+async fn autonomous_vision_verifies_real_model_alias_and_enables_auto_images() {
+    let f=fixture();f.with_key();let mock=start_mock(Reply::SawRed).await;
+    let ch=f.add_channel("images",&mock.base,ChannelSpec::default());f.serve("public",&[ch]);
+    tokengo_server::db::channels::set_models(&f.state.conn(),ch,&[tokengo_server::db::channels::ModelMapping::new("public",Some("real-image-model".into()),false)]).unwrap();
+    tokengo_server::db::kinds::learn(&f.state.conn(),"public",tokengo_shared::ModelKind::Chat).unwrap();
+    tokengo_server::vision_detector::tick(&f.state).await.unwrap();
+    assert_eq!(mock.count(),1);assert_eq!(mock.seen()[0].model,"real-image-model");
+    let conn=f.state.conn();assert!(tokengo_server::db::channels::get(&conn,ch).unwrap().unwrap().models[0].vision);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM requests",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    drop(conn);
+    let (_,v)=get(&f,"/v1/models",Some(KEY)).await;
+    assert_eq!(v["data"].as_array().unwrap().iter().find(|r|r["id"]=="auto").unwrap()["vision"],true);
+    tokengo_server::vision_detector::tick(&f.state).await.unwrap();assert_eq!(mock.count(),1);
+}
+#[tokio::test]
+async fn failed_vision_does_not_grant_capability_and_backs_off() {
+    let f=fixture();let mock=start_mock(Reply::Status(429,"limited")).await;
+    let ch=f.add_channel("images",&mock.base,ChannelSpec::default());f.serve("public",&[ch]);
+    tokengo_server::db::kinds::learn(&f.state.conn(),"public",tokengo_shared::ModelKind::Chat).unwrap();
+    tokengo_server::vision_detector::tick(&f.state).await.unwrap();
+    tokengo_server::vision_detector::tick(&f.state).await.unwrap();assert_eq!(mock.count(),1);
+    assert!(!tokengo_server::db::channels::get(&f.state.conn(),ch).unwrap().unwrap().models[0].vision);
+}
+
+#[tokio::test]
+async fn recent_calls_keep_user_agent_and_stream_first_byte_latency() {
+    let f=fixture(); f.with_key(); let m=start_mock(Reply::Sse).await;
+    let ch=f.add_channel("detail",&m.base,ChannelSpec::default());f.serve("test-detail",&[ch]);
+    let request=axum::http::Request::builder().method("POST").uri(CHAT)
+        .header("authorization",format!("Bearer {KEY}"))
+        .header("content-type","application/json").header("user-agent","UI-regression/1.0")
+        .header("x-real-ip","192.0.2.45")
+        .body(axum::body::Body::from(json!({"model":"test-detail","messages":[],"stream":true}).to_string())).unwrap();
+    let resp=tokengo_server::app(f.state.clone()).oneshot(request).await.unwrap();
+    let _=axum::body::to_bytes(resp.into_body(),usize::MAX).await.unwrap();
+    let conn=f.state.conn();let row=tokengo_server::db::requests::recent(&conn,1).unwrap().remove(0);
+    assert_eq!(row.user_agent.as_deref(),Some("UI-regression/1.0"));
+    assert_eq!(row.client_ip.as_deref(),Some("192.0.2.45"));
+    assert!(row.first_byte_ms.is_some()); assert!(row.streamed);
+}

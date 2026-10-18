@@ -293,6 +293,14 @@ pub struct StatsResp {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LogRow {
     #[serde(default)]
+    pub first_byte_ms: Option<i64>,
+    #[serde(default)]
+    pub client_ip: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub streamed: bool,
+    #[serde(default)]
     pub served_model: String,
     pub id: i64,
     pub ts_ms: i64,

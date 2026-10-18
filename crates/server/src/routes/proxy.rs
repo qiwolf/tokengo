@@ -86,10 +86,11 @@ async fn chat_completions(
     _key: GatewayKey,
     State(state): State<SharedState>,
     headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Chat)?;
-    let ip_raw = client_ip(&headers);
+    let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
     // 失败的会走下面的 warn —— 用户排查时最常问的就是"这一发为什么没成"。
@@ -102,6 +103,7 @@ async fn chat_completions(
             body: value,
             stream,
             client_ip: ip_raw.clone(),
+            user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
     .await;
@@ -120,10 +122,11 @@ async fn embeddings(
     _key: GatewayKey,
     State(state): State<SharedState>,
     headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Embeddings)?;
-    let ip_raw = client_ip(&headers);
+    let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
     // 失败的会走下面的 warn —— 用户排查时最常问的就是"这一发为什么没成"。
@@ -136,6 +139,7 @@ async fn embeddings(
             body: value,
             stream,
             client_ip: ip_raw.clone(),
+            user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
     .await;
@@ -154,10 +158,11 @@ async fn rerank(
     _key: GatewayKey,
     State(state): State<SharedState>,
     headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Rerank)?;
-    let ip_raw = client_ip(&headers);
+    let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
     // 失败的会走下面的 warn —— 用户排查时最常问的就是"这一发为什么没成"。
@@ -170,6 +175,7 @@ async fn rerank(
             body: value,
             stream,
             client_ip: ip_raw.clone(),
+            user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
     .await;

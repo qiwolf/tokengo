@@ -204,6 +204,13 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                     {opened.then(||view! {
                                         <div class="recent-detail">
                                             <span>{format!("请求 #{} · {}",id,r.endpoint)}</span>
+                                            <span>{format!("时间：{}",fmt::ts(r.ts_ms))}</span>
+                                            <span>{format!("渠道：{channel}")}</span>
+                                            <span>{format!("首字节延迟：{}",r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into()))}</span>
+                                            <span>{format!("总耗时：{}",fmt::dur(r.latency_ms))}</span>
+                                            <span>{format!("请求应用（User-Agent）：{}",r.user_agent.as_deref().unwrap_or("未提供"))}</span>
+                                            <span>{format!("来源 IP：{}",r.client_ip.as_deref().unwrap_or("未提供"))}</span>
+                                            <span>{if r.streamed {"输出方式：流式"} else {"输出方式：非流式"}}</span>
                                             {(!served.is_empty()).then(||view! { <span>{format!("实际模型：{served}")}</span> })}
                                             <span>{format!("Token 入 {} / 出 {}",fmt::num(r.input_tokens),fmt::num(r.output_tokens))}</span>
                                             {r.http_status.map(|h|view! { <span>{format!("HTTP {h}")}</span> })}

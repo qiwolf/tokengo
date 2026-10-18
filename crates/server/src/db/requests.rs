@@ -189,6 +189,10 @@ pub fn add_attempt(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRow {
+    pub first_byte_ms: Option<i64>,
+    pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub streamed: bool,
     pub served_model: String,
     pub id: i64,
     pub ts_ms: i64,
@@ -208,13 +212,17 @@ pub struct RequestRow {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error, served_model
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt
         .query_map([limit], |r| {
             Ok(RequestRow {
                 served_model: r.get(12)?,
+                first_byte_ms:r.get(13)?,
+                client_ip:r.get(14)?,
+                user_agent:r.get(15)?,
+                streamed:r.get::<_,i64>(16)?!=0,
                 id: r.get(0)?,
                 ts_ms: r.get(1)?,
                 endpoint: r.get(2)?,
@@ -613,6 +621,9 @@ mod tests {
         assert_eq!(rows[0].channel_id, Some(44));
         assert_eq!(rows[0].latency_ms, 1234);
         assert_eq!(rows[0].input_tokens, 12);
+        assert_eq!(rows[0].first_byte_ms, Some(200));
+        assert_eq!(rows[0].client_ip.as_deref(),Some("10.0.0.1"));
+        assert_eq!(rows[0].user_agent,None);
     }
 
     #[test]
