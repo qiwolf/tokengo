@@ -910,19 +910,27 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   padding: 2px;
 }
 .m-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  display: block;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
 .m-row.on { border-color: var(--accent); background: var(--surface-3); }
-.m-pick { display: inline-grid; place-items: center; width: 18px; padding-top: 3px; }
-.m-pick input { width: 16px; height: 16px; margin: 0; }
-.m-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.m-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+/* 勾选框和模型名必须在同一行：同一个 flex 行、一起垂直居中 */
 .m-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.m-pick {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  /* 全局给 label 留了 6px 下边距，会把勾选框顶上去 —— 这一行里必须清掉，
+     不然勾选框和模型名不在同一条中线上（实测差 3px） */
+  margin: 0;
+}
+.m-pick input { display: block; width: 16px; height: 16px; margin: 0; }
 /* 名字这一格占满剩下的宽度、长了就用省略号，别把「详情」挤出去 */
 .m-name {
   flex: 1 1 auto;
@@ -931,9 +939,22 @@ input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.8125rem;
+  line-height: 20px;
 }
 .m-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* 「详情」按钮：小一号（全局 button 是 44px 触摸高度），别把那一行撑到 44px */
+.m-line > button { height: 28px; padding: 0 10px; font-size: 0.75rem; }
 .m-tags:empty { display: none; }
+.m-own {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.m-own code { font-size: 0.75rem; }
 .m-tags .tag { font-size: 0.6875rem; }
 .m-detail {
   display: flex;
