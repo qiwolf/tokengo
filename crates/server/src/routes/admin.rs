@@ -1025,6 +1025,7 @@ async fn model_routes_list(
             "rerank": cand(tokengo_shared::ModelKind::Rerank),
         })
     };
+    let scores = {let conn=state.conn(); crate::db::scores::all(&conn,now_ms())?};
     let router = state.routing();
     let rows = routes
         .iter()
@@ -1036,6 +1037,8 @@ async fn model_routes_list(
             };
             serde_json::json!({
                 "name": r.name,
+                "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),
+                "score_window_ms": crate::db::scores::WINDOW_MS,
                 "kind": r.kind.as_str(),
                 "kind_label": r.kind.label(),
                 "kind_source": r.kind_origin,

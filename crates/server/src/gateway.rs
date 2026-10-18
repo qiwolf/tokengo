@@ -217,7 +217,7 @@ fn load_auto_plan(
         secrets: HashMap::new(),
         caps: HashMap::new(),
     };
-    let candidates =
+    let mut candidates =
         model_routes::auto_candidates(conn, endpoint.as_model_kind(), false, now_ms())?;
     if candidates.is_empty() {
         let msg = if model_routes::auto_available(conn)? {
@@ -235,6 +235,13 @@ fn load_auto_plan(
         };
         return Err(ApiError::not_found(msg));
     }
+    let sequence=state.auto_sequence.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+    if sequence%20==19 && candidates.len()>1 {
+        let scores=crate::db::scores::all(conn,now_ms())?;
+        if let Some(i)=candidates.iter().position(|n|!scores.contains_key(&tokengo_shared::normalize_model_name(n))) {
+            let item=candidates.remove(i);candidates.insert(0,item);
+        }
+    }
     for name in candidates {
         for channel in model_routes::channels_for(conn, &name)? {
             if !channel.routable() {
@@ -242,6 +249,17 @@ fn load_auto_plan(
             }
             push_entry(state, conn, &mut plan, name.clone(), channel)?;
         }
+    }
+    let mut pair_scores=std::collections::HashMap::new();
+    for c in &plan.entries {
+        if !pair_scores.contains_key(&c.channel.id.0) {pair_scores.insert(c.channel.id.0,crate::db::scores::for_channel(conn,now_ms(),Some(c.channel.id.0))?);}
+    }
+    // Stable sorting keeps channel priority as the tie-breaker.
+    if sequence%20!=19 {
+        plan.entries.sort_by(|a,b|{
+            let score=|c:&Candidate|pair_scores.get(&c.channel.id.0).and_then(|m|m.get(&tokengo_shared::normalize_model_name(&c.name))).map(|s|s.value()).unwrap_or(-1.0);
+            score(b).total_cmp(&score(a))
+        });
     }
     if plan.entries.is_empty() {
         return Err(ApiError::not_found(format!(
@@ -479,7 +497,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let resp = match outcome {
                 Err(fault) => {
                     let dur = now_ms() - t0;
-                    record_attempt(&state, request_id, ordinal, channel, "channel_fault", None, dur, Some(&fault.message));
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
                     last_fault = Some(format!("{}：{}", channel.name, fault.message));
                     continue;
@@ -494,7 +512,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
                     // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
                     if req.stream {
-                        record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
+
                         if touch_state {
                             let mut r = state.routing();
                             r.on_success(&plan.route, channel.id, &all_ids, now_ms());
@@ -510,6 +528,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             channel.id.0,
                             permit,
                             req.endpoint,
+                            ordinal, name.clone(), sent_model.clone(), t0,
                         ));
                     }
 
@@ -535,6 +554,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             request_id,
                             ordinal,
                             channel,
+                            name, &sent_model,
                             "empty_reply",
                             Some(status),
                             dur,
@@ -545,7 +565,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         last_fault = Some(format!("{}：{note}", channel.name));
                         continue;
                     }
-                    record_attempt(&state, request_id, ordinal, channel, "success", Some(status), dur, None);
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, None);
                     state.note_model_endpoint(name, req.endpoint);
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
@@ -571,7 +591,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 AttemptOutcome::ClientFault => {
                     // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
                     // 不许把整条链路打断）
-                    record_attempt(&state, request_id, ordinal, channel, "client_fault", Some(status), dur, None);
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_fault", Some(status), dur, None);
                     let err = read_error(resp).await;
                     let note = format!(
                         "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
@@ -604,6 +624,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         request_id,
                         ordinal,
                         channel,
+                        name, &sent_model,
                         "channel_fault",
                         Some(status),
                         dur,
@@ -630,7 +651,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     continue;
                 }
                 AttemptOutcome::ClientGone => {
-                    record_attempt(&state, request_id, ordinal, channel, "client_gone", Some(status), dur, None);
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_gone", Some(status), dur, None);
                     guard.finish(
                         &state,
                         Status::Canceled,
@@ -752,12 +773,15 @@ fn record_attempt(
     request_id: i64,
     ordinal: u32,
     channel: &Channel,
+    model_name: &str,
+    upstream_model: &str,
     outcome: &str,
     status: Option<u16>,
     duration_ms: i64,
     error: Option<&str>,
 ) {
     let args = requests::AttemptArgs {
+        model_name:model_name.to_string(),upstream_model:upstream_model.to_string(),first_byte_ms:None,
         request_id,
         ordinal,
         channel_id: channel.id.0,
@@ -916,15 +940,17 @@ fn stream_passthrough(
     state: SharedState,
     resp: reqwest::Response,
     guard: RequestGuard,
-    _request_id: i64,
+    request_id: i64,
     started_ms: i64,
     channel_id: i64,
     gate: Option<tokio::sync::OwnedSemaphorePermit>,
     endpoint: EndpointKind,
+    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
     let st = StreamState {
+        request_id,ordinal,model_name,upstream_model,attempt_started,
         resp,
         scanner: SseScanner::default(),
         endpoint,
@@ -967,6 +993,7 @@ fn stream_passthrough(
 }
 
 struct StreamState {
+    request_id:i64,ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,
     first_byte_ms: Option<i64>,
     endpoint: EndpointKind,
     resp: reqwest::Response,
@@ -1005,6 +1032,9 @@ impl StreamState {
         } else {
             None
         };
+        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
+        match self.state.db.try_lock(){Ok(c)=>{if requests::add_attempt_args(&c,&args).is_err(){self.state.enqueue_write(crate::state::WriteJob::Attempt(args));}},Err(_)=>self.state.enqueue_write(crate::state::WriteJob::Attempt(args))}
+
         if complete && !empty {
             if let Some(name) = &guard.served_model {
                 self.state.note_model_endpoint(name, self.endpoint);
@@ -1197,6 +1227,8 @@ fn record_routing_refusal(
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
+    guard.error_code=Some(if http==422 {"vision_not_ready"} else if model_routes::is_auto(&req.model) {"auto_no_candidate"} else {"model_not_configured"}.into());
+
     guard.finish(
         state,
         Status::ClientError,
@@ -1233,6 +1265,7 @@ struct RequestGuard {
     /// 收尾时落进 `requests.served_model` —— 没有这一列，面板上只能看到
     /// 一条「auto 成功了」，看不出到底走了谁。
     served_model: Option<String>,
+    error_code:Option<String>,
 }
 
 impl RequestGuard {
@@ -1243,6 +1276,7 @@ impl RequestGuard {
             started_ms,
             done: false,
             served_model: None,
+            error_code:None,
         }
     }
 
@@ -1270,6 +1304,9 @@ impl RequestGuard {
             return;
         }
         self.done = true;
+        if matches!(status, Status::ClientError) && self.error_code.is_none() {
+            self.error_code=Some(if http_status==Some(422) && error.map(|s|s.contains("图片")).unwrap_or(false) {"vision_not_ready"} else {"request_invalid"}.into());
+        }
         // 记账不许把请求带崩：抢不到库锁就丢给后台落账员（2026-10-18 压测踩出来的规矩）
         let args = requests::FinishArgs {
             request_id: self.request_id,
@@ -1283,6 +1320,7 @@ impl RequestGuard {
             streamed,
             error: error.map(str::to_string),
             served_model: self.served_model.clone(),
+            error_code:self.error_code.clone(),
         };
         match state.db.try_lock() {
             Ok(conn) => {
@@ -1316,6 +1354,7 @@ impl Drop for RequestGuard {
             streamed: false,
             error: Some("客户端断开（处理函数被丢弃）".to_string()),
             served_model: self.served_model.clone(),
+            error_code:self.error_code.clone(),
         };
         match self.state.db.try_lock() {
             Ok(conn) => {

@@ -322,4 +322,9 @@ CREATE TABLE model_vision_checks (
       model_name TEXT NOT NULL, fingerprint TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
       next_at INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '',
       PRIMARY KEY(channel_id,model_name));"#),
+    (14,r#"ALTER TABLE attempts ADD COLUMN model_name TEXT;
+ALTER TABLE attempts ADD COLUMN upstream_model TEXT;
+ALTER TABLE attempts ADD COLUMN first_byte_ms INTEGER;
+ALTER TABLE requests ADD COLUMN error_code TEXT;
+CREATE INDEX idx_attempts_model ON attempts(model_name,channel_id,request_id);"#),
 ];

@@ -2470,7 +2470,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokengo-cli"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "tokengo-server"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "tokengo-shared"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "tokengo-web"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "console_error_panic_hook",
  "gloo-net",

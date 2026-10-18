@@ -506,7 +506,6 @@ fn Shell(ctx: Ctx) -> impl IntoView {
                         Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
                         Page::Channels => view! { <pages::channels::Channels ctx=ctx /> }.into_any(),
                         Page::Models => view! { <pages::models::Models ctx=ctx /> }.into_any(),
-                        Page::Logs => view! { <pages::logs::Logs ctx=ctx /> }.into_any(),
                         Page::Settings => view! { <pages::settings::Settings ctx=ctx /> }.into_any(),
                     }}
                 </section>
