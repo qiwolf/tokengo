@@ -64,15 +64,21 @@ pub(crate) fn groups_missing_for_channel_models(
     channels: &[Channel],
     groups: &[Group],
 ) -> Vec<(String, Vec<i64>)> {
-    use std::collections::{BTreeMap, BTreeSet};
-    let have: BTreeSet<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    use std::collections::BTreeMap;
+    let has_group = |name: &str| {
+        groups
+            .iter()
+            .any(|g| tokengo_shared::same_model_name(&g.name, name))
+    };
     let mut sorted: Vec<&Channel> = channels.iter().filter(|c| c.enabled).collect();
     sorted.sort_by_key(|c| c.id);
     let mut want: BTreeMap<String, Vec<i64>> = BTreeMap::new();
     for c in sorted {
         for m in &c.models {
             let name = m.model.trim();
-            if name.is_empty() || have.contains(name) {
+            // 比对走归一：`DeepSeek-V4.1-Flash` 与 `deepseek-v4.1-flash` 是一个名字，
+            // 不然会误报「还没有同名模型组」，还多建一个重复的组。
+            if name.is_empty() || has_group(name) {
                 continue;
             }
             want.entry(name.to_string()).or_default().push(c.id);
@@ -119,6 +125,32 @@ pub(crate) fn rows_to_drop_for_missing_names(
         }
     }
     out
+}
+
+/// 这一组里**请求不会发给它**的成员：勾过名字、却没勾这个组名。
+///
+/// v0.7.0 起「勾选就是白名单」：一条渠道只要勾了名字，就只认勾上的那些。
+/// 这里把它算出来，模型页上直接标出来 —— 不然会出现「组里挂着这条渠道，
+/// 但它一直没被用过」这种看名字看不出来的事。
+pub(crate) fn members_not_declaring(channels: &[Channel], group: &Group) -> Vec<i64> {
+    group
+        .channels
+        .iter()
+        .filter(|id| {
+            channels
+                .iter()
+                .find(|c| c.id == **id)
+                .map(|c| {
+                    !c.models.is_empty()
+                        && !c
+                            .models
+                            .iter()
+                            .any(|m| tokengo_shared::same_model_name(&m.model, &group.name))
+                })
+                .unwrap_or(false)
+        })
+        .copied()
+        .collect()
 }
 
 #[component]
@@ -592,17 +624,10 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                     let switched = r.as_ref().map(|x| x.switched).unwrap_or(false);
                                     let count = r.as_ref().map(|x| x.switch_count).unwrap_or(0);
                                     let next = r.as_ref().and_then(|x| x.next_probe_at_ms.map(|t| fmt::ago(x.now_ms, t))).unwrap_or_else(|| "—".to_string());
-                                    let channels_txt = g
-                                        .channels
-                                        .iter()
-                                        .map(|id| channel_name(*id))
-                                        .collect::<Vec<_>>()
-                                        .join(" → ");
-                                    let channels_txt = if channels_txt.is_empty() {
-                                        "还没配渠道".to_string()
-                                    } else {
-                                        channels_txt
-                                    };
+                                    // 组里哪几条渠道不会收到这个名字的请求（勾过别的名字）。
+                                    // 每个成员的小闭包各拿一份克隆（成员就那么几条，克隆便宜，
+                                    // 而且 leptos 的视图闭包要求 Send，Rc 过不了）。
+                                    let gated = members_not_declaring(&channels.get_untracked(), &g);
                                     view! {
                                         <tr>
                                             <td data-label="模型名">
@@ -671,7 +696,113 @@ pub fn Models(ctx: Ctx) -> impl IntoView {
                                                     }
                                                 }
                                             </td>
-                                            <td data-label="渠道顺序（先试 → 后试）">{channels_txt}</td>
+                                            <td data-label="渠道顺序（先试 → 后试）">
+                                                {if g.channels.is_empty() {
+                                                    view! { <span class="muted">"还没配渠道"</span> }.into_any()
+                                                } else {
+                                                    let g_name = g.name.clone();
+                                                    view! {
+                                                        <div class="member-list">
+                                                            {g
+                                                                .channels
+                                                                .iter()
+                                                                .map(|id| {
+                                                                    let id = *id;
+                                                                    let nm = channel_name(id);
+                                                                    let is_gated = gated.contains(&id);
+                                                                    let gated_inner = gated.clone();
+                                                                    let g_name = g_name.clone();
+                                                                    view! {
+                                                                        <span class="member">
+                                                                            {nm}
+                                                                            {is_gated
+                                                                                .then(|| {
+                                                                                    view! {
+                                                                                        <span
+                                                                                            class="tag warn"
+                                                                                            title="这条渠道勾过名字（勾选就是白名单），但没勾这个名字 —— 打这个名字的请求不会发给它。点右边的按钮替它勾上。"
+                                                                                        >
+                                                                                            "没勾这个名字，不会被用到"
+                                                                                        </span>
+                                                                                    }
+                                                                                })}
+                                                                            {move || {
+                                                                                if !gated_inner.contains(&id) {
+                                                                                    return ().into_any();
+                                                                                }
+                                                                                let g_name = g_name.clone();
+                                                                                view! {
+                                                                                    <button
+                                                                                        class="ghost"
+                                                                                        on:click=move |_| {
+                                                                                            let name = g_name.clone();
+                                                                                            let Some(c) = channels
+                                                                                                .get_untracked()
+                                                                                                .into_iter()
+                                                                                                .find(|c| c.id == id) else {
+                                                                                                ctx.say("这条渠道已经不在了");
+                                                                                                return;
+                                                                                            };
+                                                                                            let mut models = c.models.clone();
+                                                                                            if !models
+                                                                                                .iter()
+                                                                                                .any(|m| {
+                                                                                                    tokengo_shared::same_model_name(&m.model, &name)
+                                                                                                })
+                                                                                            {
+                                                                                                models
+                                                                                                    .push(crate::model::ModelPair {
+                                                                                                        model: name.clone(),
+                                                                                                        upstream: None,
+                                                                                                        vision: false,
+                                                                                                        drop_fields: String::new(),
+                                                                                                    });
+                                                                                            }
+                                                                                            wasm_bindgen_futures::spawn_local(async move {
+                                                                                                match api::save_channel(
+                                                                                                        Some(c.id),
+                                                                                                        &c.name,
+                                                                                                        &c.base_url,
+                                                                                                        c.enabled,
+                                                                                                        c.unwrap_envelope,
+                                                                                                        c.max_concurrent,
+                                                                                                        None,
+                                                                                                        &c.headers,
+                                                                                                        &models,
+                                                                                                    )
+                                                                                                    .await
+                                                                                                {
+                                                                                                    Ok(_) => {
+                                                                                                        ctx
+                                                                                                            .say(
+                                                                                                                format!(
+                                                                                                                    "已经把「{name}」加到这条渠道上 —— 现在请求会发给它了",
+                                                                                                                ),
+                                                                                                            );
+                                                                                                        reload();
+                                                                                                    }
+                                                                                                    Err(e) => {
+                                                                                                        ctx.note_err(&e);
+                                                                                                        ctx.say(format!("没成：{}", e.message));
+                                                                                                    }
+                                                                                                }
+                                                                                            });
+                                                                                        }
+                                                                                    >
+                                                                                        "替它勾上"
+                                                                                    </button>
+                                                                                }
+                                                                                    .into_any()
+                                                                            }}
+                                                                        </span>
+                                                                    }
+                                                                })
+                                                                .collect_view()}
+                                                        </div>
+                                                    }
+                                                        .into_any()
+                                                }}
+                                            </td>
                                             <td data-label="现在走的">
                                                 {active}
                                                 {switched.then(|| view! { <span class="tag warn">"没走首选"</span> })}
@@ -1045,6 +1176,47 @@ mod tests {
             vec![("auto2".to_string(), vec![3, 9])],
             "空名字要忽略，同名要合并且按 id 升序"
         );
+    }
+
+    fn group_with(name: &str, members: &[i64]) -> Group {
+        Group {
+            name: name.into(),
+            enabled: true,
+            channels: members.to_vec(),
+            can_see: false,
+            kind: String::new(),
+            kind_label: String::new(),
+            kind_source: String::new(),
+            ..Default::default()
+        }
+    }
+
+    /// 「这条渠道会被跳过吗」：一条都没勾 = 什么都认（不跳）；勾了别的名字 = 跳。
+    #[test]
+    fn only_channels_that_declared_other_names_are_flagged_as_skipped() {
+        let chans = vec![
+            chan(1, true, &[]),          // 什么都没勾：什么都认
+            chan(2, true, &["别的名字"]), // 勾了别的：会被跳过
+            chan(3, true, &["auto"]),    // 勾了这个：照旧服务
+        ];
+        let g = group_with("auto", &[1, 2, 3]);
+        assert_eq!(members_not_declaring(&chans, &g), vec![2]);
+    }
+
+    /// 名字比对走归一：`Auto` / `auto` 是一个名字，不该被误报成「没勾」。
+    #[test]
+    fn the_skip_check_ignores_case_and_separators() {
+        let chans = vec![chan(7, true, &["DeepSeek-V4.1-Flash"])];
+        let g = group_with("deepseek_v4.1_flash", &[7]);
+        assert!(members_not_declaring(&chans, &g).is_empty());
+    }
+
+    /// 不在组里的渠道不算数（只报这一组的成员）。
+    #[test]
+    fn only_group_members_are_considered() {
+        let chans = vec![chan(1, true, &["别的名字"]), chan(2, true, &["别的名字"])];
+        let g = group_with("auto", &[2]);
+        assert_eq!(members_not_declaring(&chans, &g), vec![2]);
     }
 
     fn chan(id: i64, enabled: bool, models: &[&str]) -> Channel {

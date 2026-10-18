@@ -228,4 +228,32 @@ ALTER TABLE requests ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 0;
 "#,
     ),
+    (
+        8,
+        r#"
+-- 渠道的「上游目录」缓存 + 一问时间（2026-10-18，v0.7.0）。
+--
+-- 以前「问一下上游有哪些模型」纯粹是个屏幕动作：拉到就画出来，关掉弹窗就没了，
+-- 下次还得再问一遍（有的上游要花钱、有限流）。更要紧的是「这条渠道真能提供哪些名字」
+-- 在库里没有持久事实 —— 只能靠人工在渠道里勾，时间一长没人说得清上游到底报过什么。
+--
+-- 这里把上游每次报回来的清单**原样记住**：上游没说的字段一律存 NULL（绝不替它猜），
+-- 面板打开弹窗先读它、写清「上次问到几点」，点按钮才真去问一次。
+-- 失败时不写：一次连不上不能把上次真拿到手的清单删掉。
+--
+-- catalog_at 挂在渠道行上：一条渠道一份清单，一起写一起读，面板拿渠道列表就能显示时间。
+CREATE TABLE channel_catalog (
+    channel_id     INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    model_id       TEXT    NOT NULL,
+    owned_by       TEXT,
+    context_window INTEGER,
+    price_note     TEXT,
+    is_free        INTEGER,
+    vision_claim   INTEGER,
+    PRIMARY KEY (channel_id, model_id)
+);
+
+ALTER TABLE channels ADD COLUMN catalog_at INTEGER NOT NULL DEFAULT 0;
+"#,
+    ),
 ];

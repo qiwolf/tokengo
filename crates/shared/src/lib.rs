@@ -22,3 +22,5 @@ pub const BRAND: &str = "tokengo";
 
 /// 项目来源说明。上游 FreeLLMAPI 的功能取舍与差异见 `docs/02-按需功能清单.md`。
 pub const ORIGIN: &str = "自用网关，参考 freellmapi (MIT) 的端点形状";
+pub mod model_name;
+pub use model_name::{normalize_model_name, same_model_name};

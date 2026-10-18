@@ -2,7 +2,9 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use tokengo_shared::{Channel, ChannelId, KindSource, ModelGroup, ModelKind};
+use tokengo_shared::{
+    same_model_name, Channel, ChannelId, KindSource, ModelGroup, ModelKind,
+};
 
 use super::{DbError, Result};
 
@@ -173,6 +175,19 @@ pub fn resolve(conn: &Connection, name: &str) -> Result<Option<ModelGroup>> {
 ///
 /// **视觉能力也挂在同一行上**：`auto` 在 A 渠道上落到能看图的模型、在 B 渠道上落到
 /// 纯文本模型是常事，所以 `vision` 跟着这条渠道这一行的标记走，不做全局推断。
+///
+/// **勾选就是白名单**（v0.7.0）：一条渠道
+/// - 一个模型名都没勾 → **什么都认**，请求按原样转发（与以前完全一致，新加的渠道不用
+///   先回去补勾）；
+/// - 勾了名字 → **就只认勾上的那些**：这个组名没勾，这条渠道直接跳过，请求不会发给它。
+///
+/// 为什么这么做：面板上的勾选本来就是用户在说「这条渠道认哪些模型」，可以前它只决定
+/// 别名/能不能看图/丢字段，请求照发 —— 取消勾选不是「不用它」，反而因为别名失效更容易
+/// 失败。现在勾选与「会不会收到这个名字的请求」是同一件事（口径与 freellmapi 的
+/// per-key model scope 一致：scope 为空 = 不限，非空 = 只服务列出的模型）。
+///
+/// 名字比对走 `same_model_name`（大小写/分隔符/行尾括注与 free 都归一），
+/// 免得 `DeepSeek-V4.1-Flash` 与 `deepseek-v4.1-flash` 这种差异静默失效。
 pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Channel>> {
     let Some(g) = get(conn, group_name)? else {
         return Ok(Vec::new());
@@ -182,19 +197,20 @@ pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Chann
         let Some(l) = super::channels::get(conn, *id)? else {
             continue;
         };
-        let mapping: Option<(Option<String>, i64, String)> = conn
-            .query_row(
-                "SELECT upstream_model, vision, drop_fields FROM channel_models
-                  WHERE channel_id = ?1 AND model_name = ?2",
-                params![id.0, g.name],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
+        // 勾选即白名单：勾了名字却没勾这一个 → 跳过这条渠道。
+        let Some(mapping) = scope_mapping(&l.models, &g.name) else {
+            tracing::debug!(
+                "渠道 {} 没认「{}」这个名字（勾了别的名字），这次请求跳过它",
+                l.id,
+                g.name
+            );
+            continue;
+        };
         let (alias, vision, drop_fields) = match mapping {
-            Some((up, v, d)) => (
-                up.filter(|u| !u.trim().is_empty()),
-                v != 0,
-                super::channels::ModelMapping::drop_fields_from_text(&d),
+            Some(m) => (
+                m.upstream.clone().filter(|u| !u.trim().is_empty()),
+                m.vision,
+                m.drop_fields.clone(),
             ),
             None => (None, false, Vec::new()),
         };
@@ -211,6 +227,44 @@ pub fn resolve_channels(conn: &Connection, group_name: &str) -> Result<Vec<Chann
             unwrap_envelope: l.unwrap_envelope,
             headers: l.headers,
         });
+    }
+    Ok(out)
+}
+
+/// 这条渠道认不认 `group_name` 这个名字。
+///
+/// 返回 `None` = **不认**（勾了名字，但勾的不是这一个）；`Some(None)` = 认、但没有
+/// 这一行配置（一个名字都没勾 = 什么都认）；`Some(Some(m))` = 认，并且带着这一行的
+/// 别名/能看图/丢字段。
+fn scope_mapping<'a>(
+    models: &'a [super::channels::ModelMapping],
+    group_name: &str,
+) -> Option<Option<&'a super::channels::ModelMapping>> {
+    if models.is_empty() {
+        return Some(None);
+    }
+    models
+        .iter()
+        .find(|m| same_model_name(&m.model, group_name))
+        .map(Some)
+}
+
+/// 这一组里**因为没勾这个名字而被跳过**的渠道名（给报错文案与面板用）。
+///
+/// 打一个模型名却一条渠道都没有时，最可能的原因就是它：组里挂着渠道，但那几条渠道
+/// 勾的是别的名字。这时报错得说清是「没勾」，别让人去查 base_url。
+pub fn channels_skipped_by_scope(conn: &Connection, group_name: &str) -> Result<Vec<String>> {
+    let Some(g) = get(conn, group_name)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in g.channels.iter() {
+        let Some(l) = super::channels::get(conn, *id)? else {
+            continue;
+        };
+        if scope_mapping(&l.models, &g.name).is_none() {
+            out.push(l.name);
+        }
     }
     Ok(out)
 }
@@ -398,9 +452,19 @@ mod tests {
         assert!(ls[0].vision, "标了能看图的渠道要带出来");
         assert!(!ls[1].vision);
 
-        // 换个组名：这条渠道上没有那一行 → 一律按"不能看图"算，绝不靠猜
+        // 换个组名：a 勾过名字（勾了 auto），却没勾这一个 → 这次请求根本不会发给它。
+        // （v0.7.0 起「勾了名字 = 白名单」，见 resolve_channels 的说明。）
         upsert(&conn, "BAAI/bge-m3", true, &[a]).unwrap();
+        assert!(
+            resolve_channels(&conn, "BAAI/bge-m3").unwrap().is_empty(),
+            "勾了别的名字的渠道，不该收到这个名字的请求"
+        );
+
+        // 一个名字都没勾的渠道（c）则是什么都认，而且没有那一行 → 不能看图。
+        let c = channel(&conn, "没勾过的上游");
+        upsert(&conn, "BAAI/bge-m3", true, &[c]).unwrap();
         let ls = resolve_channels(&conn, "BAAI/bge-m3").unwrap();
+        assert_eq!(ls.len(), 1);
         assert!(!ls[0].vision, "换了个组名就是另一行，不能沿用 auto 那行的标记");
     }
 
@@ -594,5 +658,117 @@ mod tests {
         let new = list_servable(&conn).unwrap().into_iter().find(|s| s.name == "新的").unwrap();
         assert_eq!(new.kind, ModelKind::Unknown);
         assert!(new.vision, "还没定的组不该被当成向量组、把能看图的能力丢掉");
+    }
+
+    /// 勾选就是白名单（v0.7.0）。
+    ///
+    /// 一条渠道**一个名字都没勾** → 什么都认（和以前完全一样，新加的渠道不会莫名被闸）；
+    /// **勾了名字** → 只认勾上的那些，别的组名的请求不再发给它。
+    #[test]
+    fn declaring_one_name_turns_a_channel_into_a_whitelist() {
+        let conn = open_in_memory().unwrap();
+        let a = channel(&conn, "渠道A");
+        let b = channel(&conn, "渠道B");
+
+        // 谁都没勾：两个组名都照发（老行为）
+        upsert(&conn, "auto", true, &[a, b]).unwrap();
+        upsert(&conn, "deepseek-v4.1-flash", true, &[a, b]).unwrap();
+        assert_eq!(resolve_channels(&conn, "auto").unwrap().len(), 2);
+        assert_eq!(resolve_channels(&conn, "deepseek-v4.1-flash").unwrap().len(), 2);
+
+        // A 勾了 auto —— 从此它只认 auto
+        channels::set_models(
+            &conn,
+            a,
+            &[ModelMapping::new("auto", Some("v4.1flash".into()), true)],
+        )
+        .unwrap();
+
+        let auto = resolve_channels(&conn, "auto").unwrap();
+        assert_eq!(auto.len(), 2, "勾了的那个名字当然还发给它");
+        assert_eq!(auto[0].upstream_model("auto"), "v4.1flash");
+
+        let flash = resolve_channels(&conn, "deepseek-v4.1-flash").unwrap();
+        assert_eq!(flash.len(), 1, "A 没勾这个名字，请求不该再发给它");
+        assert_eq!(flash[0].id, b);
+
+        // 报错文案要能说清是「没勾」，别让人去查 base_url
+        assert_eq!(
+            channels_skipped_by_scope(&conn, "deepseek-v4.1-flash").unwrap(),
+            vec!["渠道A".to_string()]
+        );
+
+        // B 一条都没勾 → 照旧什么都认，不在「被跳过」名单里
+        assert!(channels_skipped_by_scope(&conn, "auto").unwrap().is_empty());
+    }
+
+    /// 名字比对归一：大小写、分隔符、行尾括注与 free 都算同一个名字 ——
+    /// 不然手抄错一个大小写，别名/能看图/丢字段就全静默失效了。
+    #[test]
+    fn the_name_match_ignores_case_and_separators() {
+        let conn = open_in_memory().unwrap();
+        let a = channel(&conn, "渠道A");
+        channels::set_models(
+            &conn,
+            a,
+            &[ModelMapping::new(
+                "DeepSeek-V4.1-Flash",
+                Some("deepseek/deepseek-v4.1-flash".into()),
+                true,
+            )],
+        )
+        .unwrap();
+        upsert(&conn, "deepseek-v4.1-flash", true, &[a]).unwrap();
+        upsert(&conn, "DeepSeek V4.1 Flash Free", true, &[a]).unwrap();
+
+        for g in ["deepseek-v4.1-flash", "DeepSeek V4.1 Flash Free"] {
+            let ls = resolve_channels(&conn, g).unwrap();
+            assert_eq!(ls.len(), 1, "组名 {g} 该认出这条渠道");
+            assert_eq!(
+                ls[0].upstream_model(g),
+                "deepseek/deepseek-v4.1-flash",
+                "组名写法不一样也得带上别名"
+            );
+            assert!(ls[0].vision, "能看图的标记也跟这一行走");
+        }
+    }
+
+    /// 全组都被闸掉时，这个模型名就不再对外暴露（`/v1/models` 不该列它）。
+    #[test]
+    fn a_fully_gated_group_is_not_advertised() {
+        let conn = open_in_memory().unwrap();
+        let a = channel(&conn, "渠道A");
+        channels::set_models(&conn, a, &[ModelMapping::new("别的名字", None, false)]).unwrap();
+        upsert(&conn, "auto", true, &[a]).unwrap();
+        assert!(
+            list_servable(&conn).unwrap().is_empty(),
+            "一条渠道都没认这个名字，就不该对外说它可用"
+        );
+    }
+
+    /// 能看图的标记也要过闸门：标了能看图、但没勾这个名字的渠道，
+    /// 不能让它把整组撑成「能看图」。
+    #[test]
+    fn group_can_see_ignores_channels_gated_out_by_scope() {
+        let conn = open_in_memory().unwrap();
+        let seeing = channel(&conn, "能看图的");
+        let text = channel(&conn, "纯文本");
+        channels::set_models(
+            &conn,
+            seeing,
+            &[ModelMapping::new("别的名字", Some("glm-4v-flash".into()), true)],
+        )
+        .unwrap();
+        channels::set_models(
+            &conn,
+            text,
+            &[ModelMapping::new("auto", Some("deepseek-v4.1-flash".into()), false)],
+        )
+        .unwrap();
+        upsert(&conn, "auto", true, &[seeing, text]).unwrap();
+        assert!(
+            !group_can_see(&conn, "auto").unwrap(),
+            "没勾这个名字的渠道，就算标了能看图也不算这一组的能力"
+        );
     }
 }
