@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_group_has_no_state() {
+    fn unknown_model_has_no_state() {
         let conn = open_in_memory().unwrap();
         assert!(load_state(&conn, "nope").unwrap().is_none());
     }

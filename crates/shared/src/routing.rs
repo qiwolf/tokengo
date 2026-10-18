@@ -382,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn single_channel_group_stays_put_when_it_fails() {
+    fn single_channel_route_stays_put_when_it_fails() {
         let mut r = router();
         let one = [ChannelId(44)];
         r.attempt_order("auto", &one, T0);
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn each_group_keeps_its_own_state() {
+    fn each_model_keeps_its_own_state() {
         let mut r = router();
         r.attempt_order("auto", &CHANNELS, T0);
         r.on_channel_exhausted("auto", ChannelId(44), &CHANNELS, T0);

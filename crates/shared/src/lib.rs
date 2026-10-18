@@ -10,7 +10,7 @@ pub mod routing;
 pub use channel::{
     chunk_has_payload, empty_chat_reply, render_header_value, request_has_image,
     session_id_from_body, short_hash, strip_fields, unwrap_envelope, Channel, ChannelId,
-    KindSource, ModelGroup, ModelKind,
+    KindSource, ModelKind,
 };
 pub use routing::{classify_status, AttemptOutcome, RouteState, Router, RoutingConfig};
 

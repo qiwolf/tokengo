@@ -187,25 +187,6 @@ impl Channel {
     }
 }
 
-/// 一个对外可见的模型名，对应一张**有序**的渠道列表（顺序即优先级）。
-///
-/// `auto` 是虚拟模型名：客户端打 `auto`，网关按这个列表的顺序挑渠道。
-/// 具体模型名（如 `deepseek-v4.1-flash`）走它自己的列表，不会掉到 `auto` 去。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelGroup {
-    pub name: String,
-    /// 已按优先级排好序的渠道。
-    pub channels: Vec<ChannelId>,
-    pub enabled: bool,
-}
-
-impl ModelGroup {
-    /// 首选渠道 = 优先级最小的那条。
-    pub fn primary(&self) -> Option<ChannelId> {
-        self.channels.first().copied()
-    }
-}
-
 /// 自定义请求头里的模板替换。
 ///
 /// 有的上游要求逐请求变化的头（OpenCode Zen 的 `x-opencode-session` 要新 UUID），
@@ -490,16 +471,6 @@ mod tests {
         l.enabled = true;
         l.base_url = "   ".into();
         assert!(!l.routable());
-    }
-
-    #[test]
-    fn primary_is_the_first_by_priority() {
-        let g = ModelGroup {
-            name: "auto".into(),
-            channels: vec![ChannelId(44), ChannelId(47), ChannelId(51)],
-            enabled: true,
-        };
-        assert_eq!(g.primary(), Some(ChannelId(44)));
     }
 
     #[test]

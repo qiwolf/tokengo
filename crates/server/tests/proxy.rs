@@ -1312,7 +1312,7 @@ async fn models_lists_only_what_really_works() {
 // ───────────────────────── 向量端点 ─────────────────────────
 
 #[tokio::test]
-async fn embeddings_go_to_their_own_group() {
+async fn embeddings_go_to_their_own_route() {
     let f = fixture();
     f.with_key();
     let chat_mock = start_mock(Reply::Ok).await;

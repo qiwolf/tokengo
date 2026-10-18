@@ -602,7 +602,7 @@ mod tests {
 
     /// 同一组的多条待落状态只写最后一条（先写中间态没意义），且顺序不乱。
     #[test]
-    fn only_the_newest_state_per_group_is_written_back() {
+    fn only_the_newest_state_per_model_is_written_back() {
         std::env::remove_var(crate::crypto::MASTER_KEY_ENV);
         let dir = std::env::temp_dir().join(format!("tokengo-state-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -681,7 +681,7 @@ mod tests {
         );
 
         // 未知组不算错，静默跳过
-        st.persist_state("no-such-group").unwrap();
+        st.persist_state("no-such-model").unwrap();
 
         std::fs::remove_dir_all(&dir).ok();
     }
