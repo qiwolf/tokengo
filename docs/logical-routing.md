@@ -70,7 +70,7 @@ The adapter accepts these sources in order:
 
 Every supplied explicit ID must be a string, nonblank, at most 256 UTF-8 bytes and free of control characters, including lower-priority fields. Invalid IDs receive 400 before any upstream request. Explicit identity is hashed within the authenticated gateway key's namespace and only reaches the upstream through its configured `{{session_id}}` header template; arbitrary inbound authorization is not forwarded.
 
-Without explicit identity the existing first-user-content heuristic remains for complete-history clients. If a route uses a session template and the request has no original user message, an explicit ID is required before any source is called. Supply a real conversation ID when distinct conversations under one key start with the same text; the heuristic cannot distinguish them.
+Without explicit identity the existing first-user-content heuristic remains for complete-history clients. For chat completions, if a route uses a session template and the request has no original user message, an explicit ID is required before any source is called. Embeddings and reranking do not require a conversation ID or user messages, even when the channel has a session header template. Supply a real conversation ID when distinct conversations under one key start with the same text; the heuristic cannot distinguish them.
 
 ## Streaming error response bounds
 

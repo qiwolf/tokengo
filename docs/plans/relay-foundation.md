@@ -12,7 +12,7 @@ Base: upstream v0.34.0 / 3c1460a. The existing reviewed architecture and user au
 - [x] Add authenticated per-model routing policy API: ordered channel allowlist, retry override, recovery interval, probe control, and exclusion from auto. Unconfigured names inherit current behavior. Store policy in existing settings, preserving prior migrations.
 - [x] Verify the representative three-source chain and isolated diagnostic aliases using controlled HTTP. No real provider account availability is inferred.
 - [x] Add GitHub Actions for the supported Rust version, native workspace tests, and WASM check.
-- [ ] Review changes, run proportionate integrated checks, commit separately, push a reviewable development branch, and record remaining roadmap work.
+- [x] Review changes, run proportionate integrated checks, commit separately, push a reviewable development branch, and record remaining roadmap work.
 
 ## Interfaces and ownership
 

@@ -33,6 +33,14 @@ impl Fixture {
             calls.fetch_add(1,Ordering::SeqCst);
             let content=json!({"session":headers.get("x-opencode-session").and_then(|v|v.to_str().ok()),"authorization":headers.get("authorization").and_then(|v|v.to_str().ok())}).to_string();
             Json(json!({"choices":[{"message":{"content":content}}]}))
+        }))
+        .route("/v1/embeddings", post(|State(calls): State<Arc<AtomicUsize>>| async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Json(json!({"data":[{"index":0,"embedding":[0.1,0.2]}]}))
+        }))
+        .route("/v1/rerank", post(|State(calls): State<Arc<AtomicUsize>>| async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Json(json!({"results":[{"index":0,"relevance_score":0.9}]}))
         })).with_state(calls.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let upstream = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -268,4 +276,30 @@ async fn same_explicit_identity_is_namespaced_by_authenticated_gateway_key() {
         a["choices"][0]["message"]["content"],
         b["choices"][0]["message"]["content"]
     );
+}
+
+
+async fn nonchat_without_explicit_session(endpoint: &str, body: Value) -> Value {
+    // Each endpoint starts with an independent model to avoid learned-kind effects.
+    let fixture = Fixture::new(true).await;
+    let response = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build().unwrap()
+        .post(format!("{}/v1/{endpoint}", fixture.base))
+        .bearer_auth(&fixture.key).json(&body).send().await.unwrap();
+    let status = response.status();
+    let value: Value = response.json().await.unwrap();
+    assert_eq!(status, reqwest::StatusCode::OK, "non-chat session template must not require user messages: {value}");
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    value
+}
+
+#[tokio::test]
+async fn embeddings_with_session_template_need_no_conversation_identity() {
+    let value = nonchat_without_explicit_session("embeddings", json!({"model":"test","input":"hello"})).await;
+    assert_eq!(value["data"][0]["embedding"], json!([0.1,0.2]));
+}
+
+#[tokio::test]
+async fn rerank_with_session_template_needs_no_conversation_identity() {
+    let value = nonchat_without_explicit_session("rerank", json!({"model":"test","query":"hello","documents":["world"]})).await;
+    assert_eq!(value["results"][0]["relevance_score"], json!(0.9));
 }

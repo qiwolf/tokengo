@@ -424,7 +424,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         .is_some_and(|messages| messages.iter().any(|message| message.get("role").and_then(Value::as_str) == Some("user")));
     let needs_session = plan.entries.iter().any(|candidate| candidate.channel.headers.iter()
         .any(|(_, value)| value.contains("{{session_id}}")));
-    if explicit.is_none() && !has_user && needs_session {
+    if req.endpoint == EndpointKind::Chat && explicit.is_none() && !has_user && needs_session {
         let note = "该渠道要求稳定会话 ID；没有原始 user 消息的请求必须提供显式会话 ID";
         guard.finish(&state, Status::ClientError, Some(400), None, started_ms, None, 0, 0, req.stream, Some(note));
         return Err(ApiError::bad_request(note));
