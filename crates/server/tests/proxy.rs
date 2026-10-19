@@ -158,6 +158,10 @@ async fn mock_handler(
     let reply = next_reply(&inner);
 
     match reply {
+        Reply::Ok if uri.path() == "/v1/embeddings" => axum::Json(json!({
+            "data":[{"index":0,"embedding":[0.1,0.2]}],
+            "usage":{"prompt_tokens":11,"completion_tokens":7}
+        })).into_response(),
         Reply::Ok => axum::Json(json!({
             "id": "chatcmpl-mock",
             "object": "chat.completion",
@@ -3612,6 +3616,54 @@ async fn in_flight_request_is_running_and_records_upstream_before_completion() {
     assert_eq!(row.status,"ok"); assert_eq!(row.channel_id,Some(ch.0));
 }
 
+
+#[tokio::test]
+async fn invalid_success_bodies_fail_over_before_committing() {
+    for (path, body) in [(CHAT, json!({"model":"mock-chat","messages":[]})),
+        ("/v1/embeddings", json!({"model":"mock-chat","input":"x"})),
+        ("/v1/rerank", json!({"model":"mock-chat","query":"x","documents":["x"]}))] {
+        for invalid in ["not json", "null", "{}"] {
+            let f=fixture(); f.with_key();
+            let bad=start_mock(Reply::Status(200, invalid)).await;
+            let id=f.add_channel("bad",&bad.base,ChannelSpec::default());
+            f.serve("mock-chat",&[id]);
+            let (status,_,_)=post(&f,path,Some(KEY),body.clone()).await;
+            assert_eq!(status,StatusCode::BAD_GATEWAY,"{path}: {invalid}");
+            f.state.drain_writes();
+            assert_eq!(f.request_rows()[0].0,"failed");
+            assert!(f.attempts().iter().all(|a|a.1!="success"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn nonstream_body_timeout_is_not_an_empty_success() {
+    let f=fixture();f.with_key();stream_deadline(&f,80);
+    let bad=start_mock(Reply::TimedSse(vec![(0,"{"),(350,"}")])).await;
+    let good=start_mock(Reply::Ok).await;
+    let a=f.add_channel("bad",&bad.base,ChannelSpec::default());
+    let b=f.add_channel("good",&good.base,ChannelSpec::default());
+    f.serve("mock-chat",&[a,b]);
+    let (status,body,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);
+    assert!(!body.is_empty()); assert_eq!(good.count(),1);
+    f.state.drain_writes(); assert_eq!(f.request_rows()[0].0,"ok");
+    assert!(f.attempts().iter().any(|a|a.1=="empty_reply"));
+}
+
+#[tokio::test]
+async fn probes_reject_invalid_success_bodies() {
+    for invalid in ["not json", "null", "{}", "{\"choices\":[]}"] {
+        let f=fixture();
+        let bad=start_mock(Reply::Status(200,invalid)).await;
+        let id=f.add_channel("bad",&bad.base,ChannelSpec::default());
+        f.serve("mock-chat",&[id]);
+        let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+        let (_,value)=get_via_post(&f,&format!("/api/channels/{}/probe",id.0),&token).await;
+        assert_eq!(value["ok"],false,"{invalid}: {value}");
+        assert!(f.request_rows().is_empty());
+    }
+}
 
 fn stream_deadline(f: &Fixture, ms: u64) {
     f.state.routing().cfg.attempt_timeout_ms = ms;

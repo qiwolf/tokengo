@@ -577,8 +577,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 路由状态记成「这条渠道好了」，更不能把空泡泡原样丢给用户。
                     let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
                     let (resp, input, output, empty) = if req.endpoint == EndpointKind::Rerank {
-                        let (r, i, o) = buffer_rerank_passthrough(resp, http, &req.body).await;
-                        (r, i, o, None)
+                        buffer_rerank_passthrough(resp, http, &req.body).await
                     } else {
                         buffer_passthrough(
                             resp,
@@ -977,7 +976,10 @@ async fn buffer_passthrough(
     check_empty: bool,
 ) -> (Response, i64, i64, Option<String>) {
     let ctype = content_type(&resp);
-    let bytes = resp.bytes().await.unwrap_or_default();
+    let bytes = match resp.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => return invalid_buffer(format!("upstream body read failed: {e}")),
+    };
     let mut out = bytes.clone();
     let mut empty: Option<String> = None;
     let (input, output) = match serde_json::from_slice::<Value>(&bytes) {
@@ -988,6 +990,12 @@ async fn buffer_passthrough(
                     Err(e) => tracing::warn!("剥壳后重新序列化失败，原样回：{e}"),
                 }
             }
+            let mut validated = v.clone();
+            // A configured raw envelope remains byte-for-byte compatible, but its payload must be valid.
+            tokengo_shared::unwrap_envelope(&mut validated);
+            if let Err(note) = crate::upstream::validate_response(&validated, if check_empty { "chat/completions" } else { "embeddings" }) {
+                return invalid_buffer(note);
+            }
             if check_empty && tokengo_shared::empty_chat_reply(&v) {
                 let head: String = String::from_utf8_lossy(&out).chars().take(200).collect();
                 empty = Some(format!(
@@ -996,7 +1004,7 @@ async fn buffer_passthrough(
             }
             usage_from_value(&v)
         }
-        Err(_) => (0, 0),
+        Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
     };
     let mut b = Response::builder().status(status);
     if let Some(ct) = ctype {
@@ -1011,20 +1019,33 @@ async fn buffer_passthrough(
     )
 }
 
+fn invalid_buffer(note: String) -> (Response, i64, i64, Option<String>) {
+    (StatusCode::BAD_GATEWAY.into_response(), 0, 0, Some(note))
+}
+
 /// 重排：整段读下来再回给客户端；上游 `document` 为 null 时按 index 回填请求里的原文。
 async fn buffer_rerank_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
     req_body: &Value,
-) -> (Response, i64, i64) {
+) -> (Response, i64, i64, Option<String>) {
     let ctype = content_type(&resp);
-    let bytes = resp.bytes().await.unwrap_or_default();
+    let bytes = match resp.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => return invalid_buffer(format!("upstream body read failed: {e}")),
+    };
     let docs = req_body
         .get("documents")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let mut parsed: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let mut parsed: Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
+    };
+    if let Err(note) = crate::upstream::validate_response(&parsed, "rerank") {
+        return invalid_buffer(note);
+    }
     if let Some(results) = parsed.get_mut("results").and_then(|r| r.as_array_mut()) {
         for r in results.iter_mut() {
             let idx = r.get("index").and_then(|x| x.as_u64()).map(|x| x as usize);
@@ -1061,6 +1082,7 @@ let (input, output) = usage_from_value(&parsed);
             .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()),
         input,
         output,
+        None,
     )
 }
 

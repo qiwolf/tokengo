@@ -102,10 +102,23 @@ impl Upstream {
         uuid: &str,
         now_ms: i64,
     ) -> Result<u16, ChannelFault> {
-        let r = self
+        let mut r = self
             .call(channel, secret, path, body, false, timeout, uuid, now_ms, None)
             .await?;
-        Ok(r.status().as_u16())
+        let status = r.status().as_u16();
+        if !(200..300).contains(&status) { return Ok(status); }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = r.chunk().await.map_err(|e| ChannelFault { message: format!("probe body read failed: {e}") })? {
+            if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+                return Err(ChannelFault { message: "probe response exceeds 2 MiB".into() });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| ChannelFault { message: format!("invalid probe JSON: {e}") })?;
+        if channel.unwrap_envelope { tokengo_shared::unwrap_envelope(&mut v); }
+        validate_response(&v, path).map_err(|message| ChannelFault { message })?;
+        Ok(status)
     }
 
     /// 「测视觉」用：要状态码 **和** 正文开头 —— 判断"它到底看没看见图"得看模型
@@ -886,4 +899,23 @@ mod tests {
         assert_eq!(cat.len(), MAX_MODEL_IDS);
         assert_eq!(seen, MAX_MODEL_IDS + 5, "截断前一共多少条要数得出来");
     }
+}
+
+/// Validate the endpoint structure without rewriting provider-specific fields.
+pub(crate) fn validate_response(v: &serde_json::Value, path: &str) -> Result<(), String> {
+    if tokengo_shared::empty_chat_reply(v) {
+        return Err("上游回了 200 但一句话都没说（空回复）".into());
+    }
+    let valid = match path.trim_start_matches('/') {
+        "chat/completions" => v.get("choices").and_then(|x| x.as_array())
+            .is_some_and(|c| !c.is_empty() && !tokengo_shared::empty_chat_reply(v)),
+        "embeddings" => v.get("data").and_then(|x| x.as_array())
+            .is_some_and(|items| !items.is_empty() && items.iter().all(|x|
+                x.get("embedding").is_some_and(|e| e.is_array() || e.is_string()))),
+        "rerank" => v.get("results").and_then(|x| x.as_array())
+            .is_some_and(|items| items.iter().all(|x| x.get("index").and_then(|i| i.as_u64()).is_some()
+                && x.get("relevance_score").and_then(|i| i.as_f64()).is_some())),
+        _ => false,
+    };
+    if valid { Ok(()) } else { Err(format!("invalid or empty upstream {path} response")) }
 }
