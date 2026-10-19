@@ -360,6 +360,20 @@ pub fn set_headers(conn: &Connection, sb: &SecretBox, id: ChannelId, headers: &[
 
 /// 整体替换一条渠道的模型名映射。
 pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> Result<()> {
+    if let Some(old)=get(conn,id)? {
+        let mut existing=old.models;
+        let mut desired=models.to_vec();
+        for m in &mut desired {m.model=m.model.trim().into();}
+        existing.sort_by(|a,b|a.model.cmp(&b.model));desired.sort_by(|a,b|a.model.cmp(&b.model));
+        if existing.len()==desired.len() && existing.iter().zip(&desired).all(|(a,b)|a.model==b.model && a.upstream==b.upstream && a.drop_fields==b.drop_fields) {
+            for (a,b) in existing.iter().zip(&desired) {
+                if a.vision!=b.vision {set_model_vision(conn,id,&b.model,b.vision)?;}
+            }
+            super::catalog::adopt_vision(conn,id)?;
+            super::policy::sync_order(conn)?;
+            return Ok(());
+        }
+    }
     conn.execute("DELETE FROM channel_models WHERE channel_id = ?1", [id.0])?;
     for m in models {
         conn.execute(

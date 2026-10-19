@@ -154,8 +154,6 @@ async fn dropped_upstream_endpoints_are_really_absent() {
     for (m, uri) in [
         ("POST", "/v1/moderations"),
         ("POST", "/v1/search"),
-        ("POST", "/v1/responses"),
-        ("POST", "/v1/messages"),
         ("POST", "/v1/images/generations"),
         ("POST", "/v1/audio/speech"),
         ("POST", "/v1/decisions"),

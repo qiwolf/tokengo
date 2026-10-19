@@ -1528,3 +1528,11 @@ td[data-label="类型"] code {
 .overview-window .chip.active { border-color:var(--line-strong); background:var(--surface-3); color:var(--fg); font-weight:600; }
 .overview-window .chip:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 @media(max-width:46rem) { .overview-window { width:100%; } .overview-window .chip { height:30px; } }
+
+/* Administration reuses the existing card/form/table system. */
+.admin-page fieldset, .admin-section fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.admin-json { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; font-size: 0.75rem; }
+
+@media (max-width: 46rem) {
+  .admin-page button, .admin-section button { min-height: 44px; height: auto; }
+}

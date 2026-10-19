@@ -13,6 +13,7 @@
 //! 免得界面上显示的是过期状态（"看着还在用首选、其实早切走了"最坏事）。
 
 pub mod api;
+pub mod admin_api;
 pub mod fmt;
 pub mod model;
 pub mod pages;
@@ -513,6 +514,8 @@ fn Shell(ctx: Ctx) -> impl IntoView {
                         Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
                         Page::Channels => view! { <pages::channels::Channels ctx=ctx /> }.into_any(),
                         Page::Models => view! { <pages::models::Models ctx=ctx /> }.into_any(),
+                        Page::Users => view! { <pages::users::Users ctx=ctx /> }.into_any(),
+                        Page::Billing => view! { <pages::billing::Billing ctx=ctx /> }.into_any(),
                         Page::Settings => view! { <pages::settings::Settings ctx=ctx /> }.into_any(),
                     }}
                 </section>

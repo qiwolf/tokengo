@@ -115,6 +115,10 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
         (primary, model, secret)
     };
     let (channel, model, secret) = loaded;
+    let endpoint=match crate::protocol_config::probe_endpoint(&state.conn(),channel.id.0,endpoint) {
+        Ok(endpoint)=>endpoint,
+        Err(_)=>return ProbeResult{model:name.into(),channel:channel.id,outcome:ProbeOutcome::Skipped("Invalid source protocols".into())},
+    };
 
     let Some(model) = model else {
         return ProbeResult {
@@ -239,6 +243,8 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
             "max_tokens": 1,
             "stream": false,
         }),
+        EndpointKind::Responses => serde_json::json!({"model":model,"input":"ping","max_output_tokens":1,"stream":false,"store":false}),
+        EndpointKind::Messages => serde_json::json!({"model":model,"messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}),
         EndpointKind::Embeddings => serde_json::json!({
             "model": model,
             "input": "x",

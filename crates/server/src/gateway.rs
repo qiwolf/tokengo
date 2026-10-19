@@ -46,6 +46,8 @@ use crate::SharedState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndpointKind {
     Chat,
+    Responses,
+    Messages,
     Embeddings,
     Rerank,
 }
@@ -60,10 +62,18 @@ const LONG_RETRY_AFTER_MS: u64 = 2000;
 pub const COOLDOWN_AFTER_FAILURES: i64 = 3;
 
 impl EndpointKind {
+    pub fn protocol(self) -> Option<crate::protocol::Protocol> {
+        use crate::protocol::Protocol;
+        match self { Self::Chat=>Some(Protocol::Chat), Self::Responses=>Some(Protocol::Responses), Self::Messages=>Some(Protocol::Messages), _=>None }
+    }
+    pub fn is_generation(self)->bool {self.protocol().is_some()}
+    fn has_image(self,body:&Value)->bool {self.protocol().is_some_and(|p|crate::protocol::has_image(p,body))}
     /// 打上游时接在 base_url 后面的路径。
     pub fn path(self) -> &'static str {
         match self {
             EndpointKind::Chat => "chat/completions",
+            EndpointKind::Responses => "responses",
+            EndpointKind::Messages => "messages",
             EndpointKind::Embeddings => "embeddings",
             EndpointKind::Rerank => "rerank",
         }
@@ -72,6 +82,8 @@ impl EndpointKind {
     pub fn as_str(self) -> &'static str {
         match self {
             EndpointKind::Chat => "/v1/chat/completions",
+            EndpointKind::Responses => "/v1/responses",
+            EndpointKind::Messages => "/v1/messages",
             EndpointKind::Embeddings => "/v1/embeddings",
             EndpointKind::Rerank => "/v1/rerank",
         }
@@ -80,7 +92,7 @@ impl EndpointKind {
     /// 这个端点对应的模型类型（写进模型组、回给客户端的那种）。
     pub fn as_model_kind(self) -> tokengo_shared::ModelKind {
         match self {
-            EndpointKind::Chat => tokengo_shared::ModelKind::Chat,
+            EndpointKind::Chat | EndpointKind::Responses | EndpointKind::Messages => tokengo_shared::ModelKind::Chat,
             EndpointKind::Embeddings => tokengo_shared::ModelKind::Embeddings,
             EndpointKind::Rerank => tokengo_shared::ModelKind::Rerank,
         }
@@ -111,6 +123,8 @@ struct Candidate {
     name: String,
     channel: Channel,
     revision: i64,
+    protocols: crate::protocol_config::Capabilities,
+    binding_generation:i64,
 }
 
 /// 这次请求要试的候选链（已按顺序排好）+ 各自的密钥。
@@ -158,7 +172,9 @@ fn push_entry(
         plan.caps.insert(channel.id.0, channel.max_concurrent);
     }
     let revision=crate::db::faults::revision(conn,channel.id.0)?;
-    plan.entries.push(Candidate { name, channel, revision });
+    let protocols=crate::protocol_config::load(conn,channel.id.0)?;
+    let binding_generation=conn.query_row("SELECT binding_generation FROM channels WHERE id=?1",[channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
+    plan.entries.push(Candidate { name, channel, revision, protocols,binding_generation });
     Ok(())
 }
 
@@ -183,16 +199,23 @@ fn choices_count(body:&Value)->Result<i64,ApiError> {
     }
 }
 fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
-    if endpoint!=EndpointKind::Chat {return Ok(0);}
+    if !endpoint.is_generation() {return Ok(0);}
+    let wrong_cap=match endpoint {
+        EndpointKind::Responses=>body.get("max_tokens").is_some()||body.get("max_completion_tokens").is_some(),
+        EndpointKind::Messages=>body.get("max_output_tokens").is_some()||body.get("max_completion_tokens").is_some(),
+        EndpointKind::Chat=>body.get("max_output_tokens").is_some(),_=>false,
+    };
+    if wrong_cap {return Err(ApiError::bad_request("Output cap field does not belong to the requested protocol"));}
     let mut bound=None;
-    for key in ["max_tokens","max_completion_tokens"] {
+    let keys:&[&str]=match endpoint {EndpointKind::Responses=>&["max_output_tokens"],EndpointKind::Messages=>&["max_tokens"],_=>&["max_tokens","max_completion_tokens"]};
+    for key in keys {
         if let Some(value)=body.get(key) {
             let n=value.as_i64().filter(|n|*n>0).ok_or_else(||ApiError::bad_request("Output token limit must be a positive integer"))?;
             if bound.is_some_and(|old|old!=n) {return Err(ApiError::bad_request("Conflicting output token limits"));}
             bound=Some(n);
         }
     }
-    bound.unwrap_or(4096).checked_mul(choices_count(body)?)
+    bound.unwrap_or(4096).checked_mul(if endpoint==EndpointKind::Chat {choices_count(body)?} else {1})
         .ok_or_else(||ApiError::bad_request("Total output token bound overflow"))
 }
 fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError> {
@@ -202,21 +225,61 @@ fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError
 }
 fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>)->Result<(i64,i64),ApiError> {
     let (mut input,mut output)=admission_bound(body,endpoint)?;
+    if endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
+        input=price.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history requires a configured maximum input context bound"))?.max_input_tokens;
+    }
+    if price.is_none() && endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
+        body[if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"}]=Value::from(4096);
+    }
     if let Some(p)=price {
-        if endpoint==EndpointKind::Chat && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() {
-            let choices=choices_count(body)?;
+        if endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
+            let choices=if endpoint==EndpointKind::Chat {choices_count(body)?} else {1};
             let per_choice=4096.min(p.max_output_tokens/choices);
             if per_choice<=0 {return Err(ApiError::bad_request("Pricing configuration needs a positive output cap"));}
             output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
-            body["max_tokens"]=Value::from(per_choice);
+            body[if endpoint==EndpointKind::Responses {"max_output_tokens"} else {"max_tokens"}]=Value::from(per_choice);
         }
-        if tokengo_shared::request_has_image(body) {input=p.max_input_tokens;}
+        if endpoint.has_image(body) {input=p.max_input_tokens;}
         if input>p.max_input_tokens || output>p.max_output_tokens {
             return Err(ApiError::new(StatusCode::BAD_REQUEST,"billing_token_limit","Request exceeds configured billing token bounds"));
         }
     }
     Ok((input,output))
 }
+fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),ApiError> {
+    fn unsupported_media(v:&Value)->bool {
+        match v {
+            Value::Array(items)=>items.iter().any(unsupported_media),
+            Value::Object(map)=>matches!(map.get("type").and_then(Value::as_str),Some("input_file"|"document"|"input_audio"|"audio"|"video"|"input_video")) || ["content","input","output","messages"].iter().filter_map(|k|map.get(*k)).any(unsupported_media),
+            _=>false,
+        }
+    }
+    if unsupported_media(body) {return Err(ApiError::bad_request("File, document, audio and video blocks require dedicated capability and token accounting; this route currently supports text, images and client tools"));}
+    if body.get("container").is_some_and(|v|!v.is_null()) || body.get("web_search_options").is_some_and(|v|!v.is_null()) {
+        return Err(ApiError::bad_request("Provider containers and hosted tools require separate metering and are not enabled"));
+    }
+    if endpoint==EndpointKind::Responses && body.get("input").and_then(Value::as_array).is_some_and(|items|items.iter().any(|item|item["type"]=="item_reference" || (item.get("id").is_some() && item.get("type").is_none() && item.get("content").is_none()))) {
+        return Err(ApiError::bad_request("Provider item references are not enabled; supply complete input history"));
+    }
+    fn client_tool(endpoint:EndpointKind,tool:&Value,depth:usize)->bool {
+        if depth>8 {return false;}
+        let kind=tool.get("type").and_then(Value::as_str);
+        if endpoint==EndpointKind::Responses && kind==Some("namespace") {
+            return tool.get("tools").and_then(Value::as_array).is_some_and(|tools|!tools.is_empty() && tools.len()<=128 && tools.iter().all(|t|client_tool(endpoint,t,depth+1)));
+        }
+        match endpoint {
+            EndpointKind::Messages=>kind.is_none_or(|t|t=="custom"||t.starts_with("bash_")||t.starts_with("text_editor_")||t.starts_with("computer_")),
+            _=>matches!(kind,Some("function"|"custom"|"local_shell")),
+        }
+    }
+    if let Some(tools)=body.get("tools").and_then(Value::as_array) {
+        if tools.len()>128 || tools.iter().any(|t|!client_tool(endpoint,t,0)) {
+            return Err(ApiError::bad_request("Hosted or unknown tool types require separate metering; use client function tools and disable hosted web search"));
+        }
+    }
+    Ok(())
+}
+
 fn billing_error(e:crate::db::DbError)->ApiError {
     match e {
         crate::db::DbError::Other(message) if message.contains("config_required") => ApiError::new(StatusCode::FORBIDDEN,"pricing_required",message),
@@ -371,7 +434,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             return Err(ApiError::new(StatusCode::FORBIDDEN,"model_not_allowed","Model not permitted"));
         }
     }
-    let mut plan_all = match load_plan(&state, &req.model, req.endpoint,req.endpoint==EndpointKind::Chat && tokengo_shared::request_has_image(&req.body), req.auth.as_ref()) {
+    if req.endpoint.is_generation() {
+        validate_native_cost_and_state(req.endpoint,&req.body)?;
+    }
+    if req.endpoint==EndpointKind::Responses && ["previous_response_id","conversation"].iter().any(|f|req.body.get(*f).is_some_and(|v|!v.is_null())) {
+        return Err(ApiError::bad_request("Server-side continuation is not enabled; supply the complete input history with store=false"));
+    }
+    let mut plan_all = match load_plan(&state, &req.model, req.endpoint,req.endpoint.has_image(&req.body), req.auth.as_ref()) {
         Ok(p) => p,
         Err(e) => {
             if e.status.is_client_error() || e.status==StatusCode::SERVICE_UNAVAILABLE {
@@ -398,7 +467,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
     // 这条请求是不是在让模型看图？（只有对话端点会有图）
     let wants_vision =
-        req.endpoint == EndpointKind::Chat && tokengo_shared::request_has_image(&req.body);
+        req.endpoint.has_image(&req.body);
 
     // 带图就只走「标了能看图」的候选。**没标 = 不敢保证**：把图发给一条纯文本
     // 上游，它要么回一个含糊的 400、要么干脆把图忽略掉装没事，两种都让用户
@@ -506,7 +575,20 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     guard.identify(req.auth.as_ref())?;
 
     if let Some(auth) = &req.auth {
-        let (input, output) = admission_bound(&req.body, req.endpoint)?;
+        let (mut input, output) = admission_bound(&req.body, req.endpoint).map_err(|error|{guard.reject(&error);error})?;
+        let opaque_input=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
+        if opaque_input || req.endpoint.has_image(&req.body) {
+            let c=state.conn();
+            let mut maximum=None;
+            for candidate in &plan.entries {
+                if let Some(p)=crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)? {maximum=Some(maximum.unwrap_or(0).max(p.max_input_tokens));}
+            }
+            let tpm_limited=auth.effective_policy().tpm.is_some() || auth.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|p|p.effective_policy().tpm.is_some()));
+            if opaque_input || tpm_limited {
+                input=maximum.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque or image input with token limits requires configured context bounds")).map_err(|error|{guard.reject(&error);error})?;
+            } else if let Some(maximum)=maximum {input=maximum;}
+
+        }
         guard.admission = Some(crate::admission::acquire(state.clone(), auth, input as u64, output as u64).map_err(|e|{guard.reject(&e);e})?);
     }
     let global_cfg = state.routing().cfg.clone();
@@ -534,6 +616,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         .or_else(|| tokengo_shared::session_id_from_body(&req.body))
         .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
 
+    let opaque=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
+    let pin_key=req.explicit_session.as_deref().and_then(|id|req.endpoint.protocol().filter(|p|*p!=crate::protocol::Protocol::Chat)
+        .map(|p|crate::protocol_sessions::key(&req.session_namespace,id,&req.model,p)));
+    let existing_pin=pin_key.as_deref().map(|key|crate::protocol_sessions::load(&state.conn(),key)).transpose()?.flatten();
+    if opaque && existing_pin.is_none() {
+        let error=ApiError::bad_request("Opaque reasoning history requires an existing explicit session bound to its original source"); guard.reject(&error); return Err(error);
+    }
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
     let mut last_http: Option<UpstreamError> = None;
@@ -551,8 +640,39 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let mut busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
 
     'channels: for entry_idx in order.iter().copied() {
-        let Some(Candidate { name, channel, revision }) = plan.entries.get(entry_idx) else {
+        let Some(Candidate { name, channel, revision, protocols,binding_generation }) = plan.entries.get(entry_idx) else {
             continue;
+        };
+
+        let upstream_protocol=match req.endpoint.protocol() {
+            Some(client)=>match protocols.select(client) {
+                Some(p)=>Some(p),
+                None=>{last_policy_error=Some(ApiError::bad_request("Source does not declare this protocol or allow conversion"));continue;}
+            },
+            None=>None,
+        };
+        let candidate_pin=upstream_protocol.map(|protocol|crate::protocol_sessions::Pin {
+            channel:channel.id.0,
+            generation:*binding_generation,
+            upstream_model:channel.upstream_model(name).into(),protocol,
+        });
+        if existing_pin.as_ref().is_some_and(|pin|candidate_pin.as_ref()!=Some(pin)) {
+            last_policy_error=Some(ApiError::bad_request("Native session is pinned to a different or changed source; start a new session"));continue;
+        }
+        if opaque {
+            if let (Some(owner),Some(pin))=(&pin_key,&candidate_pin) {
+                if !crate::protocol_sessions::verify_artifacts(&state.conn(),owner,pin,&req.body)? {
+                    let error=ApiError::bad_request("Opaque history contains artifacts not issued to this key, session and source");guard.reject(&error);return Err(error);
+                }
+            }
+        }
+        let upstream_path=upstream_protocol.map(|p|p.path()).unwrap_or(req.endpoint.path());
+        let prepared=match (req.endpoint.protocol(),upstream_protocol) {
+            (Some(from),Some(to))=>match crate::protocol::convert_request(from,to,&req.body) {
+                Ok(body)=>body,
+                Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue;}
+            },
+            _=>req.body.clone(),
         };
         // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
         let permit = match pre_permits.remove(&channel.id.0) {
@@ -592,7 +712,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
         // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
         // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
-        let adapted = tokengo_shared::strip_fields(&req.body, &channel.drop_fields);
+        let adapted = tokengo_shared::strip_fields(&prepared, &channel.drop_fields);
         let mut body = rewrite_model(&adapted, &sent_model);
         let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
         let cached_cap = crate::db::settings::get(&state.conn(), &cap_key).ok().flatten()
@@ -645,16 +765,29 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             guard.settle_billing("retry_or_fallback");
             guard.usage = Usage::default();
             if !crate::db::faults::current(&state.conn(),&cooldown.account)? {break;}
+            let live_generation:i64=state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
+            if live_generation!=*binding_generation {let error=ApiError::bad_request("Source configuration changed during request; retry with current configuration"); guard.reject(&error); return Err(error);}
+            {
+                let c=state.conn();
+                let enabled=model_routes::channels_for(&c,name)?.into_iter().any(|candidate|candidate.id==channel.id && candidate.routable() && (!wants_vision || candidate.vision));
+                let kind=model_routes::routes_for(&c,name)?.map(|route|route.kind).unwrap_or_default();
+                let kind_ok=!plan.auto || kind==req.endpoint.as_model_kind() || (kind==tokengo_shared::ModelKind::Unknown && req.endpoint.is_generation());
+                let auto_ok=!plan.auto || crate::db::route_policy::load(&c,name)?.include_in_auto!=Some(false);
+                if !enabled || !kind_ok || !auto_ok {
+                    last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Model or source routing permission changed while queued"));
+                    continue 'channels;
+                }
+            }
             if let Some(auth) = &req.auth {
                 // Live policy is re-read at every outbound attempt, including retries.
                 let c = state.conn();
                 let current = crate::db::identity::context(&c, auth.key_id)?
-                    .ok_or_else(|| ApiError::unauthorized("Key revoked, expired or user disabled"))?;
+                    .ok_or_else(|| ApiError::unauthorized("Key revoked, expired or user disabled")).map_err(|error|{guard.reject(&error);error})?;
                 if !current.permits_model(&req.model) || !permitted_candidate(&c, &current, name, channel.id.0)? {
-                    return Err(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Source permission changed"));
+                    let error=ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Source permission changed");guard.reject(&error);return Err(error);
                 }
                 let price = crate::db::billing::price(&c, name, channel.id.0)?;
-                let (input, output) = billing_bound(&mut body, req.endpoint, price.as_ref())?;
+                let (input, output) = billing_bound(&mut body, match upstream_protocol {Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,None=>req.endpoint}, price.as_ref()).map_err(|error|{guard.reject(&error);error})?;
                 body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
                 let attempt_id = format!("{}:{}",request_id,ordinal);
                 let reservation = match price {
@@ -674,13 +807,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         return Err(error);
                     }
                 };
-                guard.billing_nonchat = req.endpoint != EndpointKind::Chat;
+                guard.billing_nonchat = !req.endpoint.is_generation();
                 guard.reservation = Some(id);
                 // Capture the actual loaded deployment, independent of later channel edits.
                 // Origin excludes URL credentials, paths, query parameters and fragments.
                 let source=serde_json::json!({"channel_id":channel.id.0,"channel_name":channel.name,
                     "origin":reqwest::Url::parse(&channel.base_url).ok().map(|u|u.origin().ascii_serialization()),
-                    "upstream_model":sent_model,"config_revision":revision});
+                    "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol()});
                 if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2 WHERE id=?1",rusqlite::params![id,source.to_string()]) {
                     if crate::db::billing::release(&c,id,"not_sent").is_ok(){guard.reservation=None;}
                     return Err(ApiError::from(crate::db::DbError::from(e)));
@@ -695,12 +828,16 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             }));
             let t0 = now_ms();
             let uuid = crate::upstream::new_uuid();
+            guard.active_attempt=Some((requests::AttemptArgs {
+                request_id,ordinal,channel_id:channel.id.0,model_name:name.clone(),upstream_model:sent_model.clone(),
+                outcome:"canceled".into(),http_status:None,duration_ms:0,error:Some("客户端取消当前尝试".into()),first_byte_ms:None,
+            },t0));
             let outcome = state
                 .upstream
                 .call(
                     channel,
                     plan.secret(channel.id),
-                    req.endpoint.path(),
+                    upstream_path,
                     body_bytes.clone(),
                     req.stream,
                     attempt_timeout.min(Duration::from_millis(
@@ -717,6 +854,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     let dur = now_ms() - t0;
                     slow_previous = dur >= attempt_ms as i64 * 3 / 4;
                     guard.settle_billing("channel_fault");
+                    guard.active_attempt=None;
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
                     last_fault = Some(format!("{}：{}", channel.name, fault.message));
@@ -734,7 +872,47 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
                     // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
                     if req.stream {
-
+                        let source=upstream_protocol.unwrap_or(crate::protocol::Protocol::Chat);
+                        let client=req.endpoint.protocol().unwrap_or(source);
+                        let left=attempt_ms.saturating_sub((now_ms()-t0).max(0) as u64)
+                            .min(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64));
+                        let mut resp=resp;
+                        let mut prepared=match prepare_stream(&mut resp,source,client,Duration::from_millis(left),attempt_timeout,&mut guard).await {
+                            Ok(p)=>p,
+                            Err(note)=>{
+                                guard.settle_billing("precommit_fault");
+                                guard.active_attempt=None;
+                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"channel_fault",Some(status),now_ms()-t0,Some(&note));
+                                ordinal+=1;last_fault=Some(format!("{}：{note}",channel.name));
+                                slow_previous=now_ms()-t0>=attempt_ms as i64*3/4;
+                                if cooldown.failure(&note,pending_retry_ms) {break;}
+                                continue;
+                            }
+                        };
+                        if let (Some(key),Some(pin))=(&pin_key,&candidate_pin) {
+                            let claimed={let conn=state.conn();crate::protocol_sessions::claim(&conn,key,pin)};
+                            match claimed {
+                                Ok(true)=>{},
+                                Ok(false)=>{let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");guard.reject(&error);return Err(error);},
+                                Err(_)=>{
+                                    guard.settle_billing("local_state_fault");guard.active_attempt=None;
+                                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"local_fault",Some(status),now_ms()-t0,Some("Native session state unavailable"));
+                                    guard.error_code=Some("state_unavailable".into());
+                                    guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,0,0,false,Some("Native session state unavailable"));
+                                    return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Native session state could not be persisted; no fallback was attempted"));
+                                }
+                            }
+                        }
+                        if let (Some(owner),Some(pin))=(&pin_key,&candidate_pin) {
+                            let persisted=prepared.artifacts.persist(&state.conn(),owner,pin);
+                            if persisted.is_err() {
+                                guard.settle_billing("local_state_fault");guard.active_attempt=None;
+                                record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"local_fault",Some(status),now_ms()-t0,Some("Opaque artifact state unavailable"));
+                                guard.error_code=Some("state_unavailable".into());
+                                guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,0,0,false,Some("Opaque artifact state unavailable"));
+                                return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
+                            }
+                        }
                         if touch_state {
                             let mut r = state.routing();
                             r.on_success_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
@@ -744,6 +922,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         return Ok(stream_passthrough(
                             state.clone(),
                             resp,
+                            prepared,
+                            pin_key.clone().zip(candidate_pin.clone()),
                             guard,
                             request_id,
                             started_ms,
@@ -766,6 +946,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             http,
                             channel.unwrap_envelope,
                             req.endpoint == EndpointKind::Chat,
+                            upstream_protocol.zip(req.endpoint.protocol()),
+                            pin_key.as_deref().zip(candidate_pin.as_ref()).map(|(owner,pin)|(&state,owner,pin)),
                         )
                         .await
                     };
@@ -773,9 +955,17 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     slow_previous = body_dur >= attempt_ms as i64 * 3 / 4;
                     guard.usage = usage;
 
+                    if let Some(note)=empty.as_deref().filter(|note|note.starts_with("local_state:")) {
+                        guard.settle_billing("local_state_fault");guard.active_attempt=None;
+                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"local_fault",Some(status),now_ms()-t0,Some(note));
+                        guard.error_code=Some("state_unavailable".into());
+                        guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,input,output,false,Some(note));
+                        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
+                    }
                     if let Some(note) = empty {
                         guard.settle_billing("empty_reply");
-                        record_attempt(
+                        guard.active_attempt=None;
+                    record_attempt(
                             &state,
                             request_id,
                             ordinal,
@@ -792,7 +982,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         if cooldown.failure(&note,pending_retry_ms) {break;}
                         continue;
                     }
+                    if let (Some(key),Some(pin))=(&pin_key,&candidate_pin) {
+                        if !crate::protocol_sessions::claim(&state.conn(),key,pin)? {
+                            let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session"); guard.reject(&error); return Err(error);
+                        }
+                    }
                     guard.settle_billing("success");
+                    guard.active_attempt=None;
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, adaptation_note.as_deref());
                     cooldown.finish(true,"",0);
                     state.note_model_endpoint(name, req.endpoint);
@@ -827,7 +1023,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             let elapsed = now_ms() - t0;
                             slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
                             guard.settle_billing("channel_fault");
-                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                            guard.active_attempt=None;
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                                 "channel_fault", Some(status), elapsed, Some(&note));
                             ordinal += 1;
                             last_fault = Some(format!("{}：{note}", channel.name));
@@ -843,7 +1040,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
                         guard.settle_billing("account_fault");
-                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
+                        guard.active_attempt=None;
+                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
                         ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
                         continue 'channels;
                     }
@@ -851,7 +1049,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
                         guard.settle_billing("context_limit");
-                        record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                        guard.active_attempt=None;
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                             "context_limit", Some(status), dur, Some(&err.text));
                         ordinal += 1;
                         last_fault = Some(format!("渠道 {} 上下文不足：{}", channel.name, err.text));
@@ -865,7 +1064,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                 let _ = crate::db::settings::set(&state.conn(), &cap_key, &cap.to_string());
                                 adaptation_note = Some(format!("上游明确输出上限为 {cap} tokens，已收窄重试"));
                                 guard.settle_billing("output_limit");
-                                record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                guard.active_attempt=None;
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                                     "output_limit", Some(status), dur, adaptation_note.as_deref());
                                 ordinal += 1;
                                 body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
@@ -876,6 +1076,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         }
                     }
                     guard.settle_billing("client_fault");
+                    guard.active_attempt=None;
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_fault", Some(status), dur, Some(&err.text));
                     let note = format!(
                         "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
@@ -905,7 +1106,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             let elapsed = now_ms() - t0;
                             slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
                             guard.settle_billing("channel_fault");
-                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                            guard.active_attempt=None;
+                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                                 "channel_fault", Some(status), elapsed, Some(&note));
                             ordinal += 1;
                             last_fault = Some(format!("{}：{note}", channel.name));
@@ -921,7 +1123,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
                         guard.settle_billing("account_fault");
-                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
+                        guard.active_attempt=None;
+                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
                         ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
                         continue 'channels;
                     }
@@ -933,6 +1136,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         .and_then(|v| v.to_str().ok())
                         .and_then(crate::upstream::retry_after_ms);
                     guard.settle_billing("channel_fault");
+                    guard.active_attempt=None;
                     record_attempt(
                         &state,
                         request_id,
@@ -959,6 +1163,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 }
                 AttemptOutcome::ClientGone => {
                     guard.settle_billing("client_gone");
+                    guard.active_attempt=None;
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_gone", Some(status), dur, None);
                     guard.finish(
                         &state,
@@ -1216,8 +1421,15 @@ pub fn rewrite_model(body: &Value, model: &str) -> Value {
 pub struct Usage { pub input: Option<i64>, pub output: Option<i64> }
 impl Usage {
     fn read(v: &Value) -> Self {
+        let v=v.get("response").or_else(||v.get("message")).filter(|v|v.is_object()).unwrap_or(v);
         let get = |names: [&str;2]| names.into_iter().find_map(|n| v.get("usage").and_then(|u|u.get(n)).and_then(Value::as_i64).filter(|n|*n>=0));
-        Self { input:get(["prompt_tokens","input_tokens"]), output:get(["completion_tokens","output_tokens"]) }
+        let mut input=get(["prompt_tokens","input_tokens"]);
+        for key in ["cache_creation_input_tokens","cache_read_input_tokens"] {
+            if let Some(n)=v.get("usage").and_then(|u|u.get(key)).and_then(Value::as_i64).filter(|n|*n>=0) {
+                input=input.and_then(|old|old.checked_add(n));
+            }
+        }
+        Self { input, output:get(["completion_tokens","output_tokens"]) }
     }
     fn merge(&mut self, other: Self) {
         if other.input.is_some() {self.input=other.input;}
@@ -1241,7 +1453,9 @@ async fn buffer_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
     unwrap_envelope: bool,
-    check_empty: bool,
+    _check_empty: bool,
+    protocols: Option<(crate::protocol::Protocol,crate::protocol::Protocol)>,
+    provenance:Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
     let bytes = match resp.bytes().await {
@@ -1249,7 +1463,7 @@ async fn buffer_passthrough(
         Err(e) => return invalid_buffer(if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }),
     };
     let mut out = bytes.clone();
-    let mut empty: Option<String> = None;
+    let empty: Option<String> = None;
     let usage;
     let (input, output) = match serde_json::from_slice::<Value>(&bytes) {
         Ok(mut v) => {
@@ -1263,14 +1477,21 @@ async fn buffer_passthrough(
             let mut validated = v.clone();
             // A configured raw envelope remains byte-for-byte compatible, but its payload must be valid.
             tokengo_shared::unwrap_envelope(&mut validated);
-            if let Err(note) = crate::upstream::validate_response(&validated, if check_empty { "chat/completions" } else { "embeddings" }) {
-                let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
+            let validity=match protocols {Some((source,_))=>crate::protocol::validate_response(source,&validated),None=>crate::upstream::validate_response(&validated,"embeddings")};
+            if let Err(note) = validity {
+                let mut invalid=invalid_buffer(format!("上游回了 200 但一句话都没说或响应不完整：{note}")); invalid.4=usage; return invalid;
             }
-            if check_empty && tokengo_shared::empty_chat_reply(&v) {
-                let head: String = String::from_utf8_lossy(&out).chars().take(200).collect();
-                empty = Some(format!(
-                    "上游回了 200 但一句话都没说（没 content、没 tool_calls、没推理内容）：{head}"
-                ));
+            if let Some((source,client))=protocols {
+                if source!=client {
+                    match crate::protocol::convert_response(source,client,&validated).and_then(|v|serde_json::to_vec(&v).map_err(|e|e.to_string())) {
+                        Ok(b)=>out=Bytes::from(b),
+                        Err(note)=>{let mut invalid=invalid_buffer(note);invalid.4=usage;return invalid;}
+                    }
+                }
+            }
+            if let Some((state,owner,pin))=provenance {
+                let mut artifacts=crate::protocol_sessions::ArtifactCollector::default();artifacts.value(&validated);
+                if artifacts.persist(&state.conn(),owner,pin).is_err(){let mut invalid=invalid_buffer("local_state: opaque artifact ownership could not be persisted".into());invalid.4=usage;return invalid;}
             }
             usage_from_value(&v)
         }
@@ -1314,7 +1535,7 @@ async fn buffer_rerank_passthrough(
         Ok(v) => v,
         Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
     };
-    let usage=Usage::read(&parsed);
+    let mut usage=Usage::read(&parsed);
     if let Err(note) = crate::upstream::validate_response(&parsed, "rerank") {
         let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
     }
@@ -1343,8 +1564,18 @@ async fn buffer_rerank_passthrough(
             }
         }
     }
+    if let Err(note) = crate::upstream::normalize_rerank_response(&mut parsed) {
+        let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
+    }
+    // Rerank has no generated tokens: an explicit total-only meter is input.
+    // This fallback is endpoint-specific; Chat total_tokens includes output too.
+    if usage.input.is_none() {
+        usage.input = parsed.get("usage").and_then(|u| u.get("total_tokens"))
+            .and_then(Value::as_i64).filter(|n| *n >= 0);
+    }
+    if usage.input.is_some() && usage.output.is_none() { usage.output = Some(0); }
     let out_bytes = serde_json::to_vec(&parsed).unwrap_or_else(|_| bytes.to_vec());
-let (input, output) = usage_from_value(&parsed);
+    let (input, output) = (usage.input.unwrap_or(0), usage.output.unwrap_or(0));
     let mut b = Response::builder().status(status);
     if let Some(ct) = ctype {
         b = b.header(header::CONTENT_TYPE, ct);
@@ -1359,72 +1590,129 @@ let (input, output) = usage_from_value(&parsed);
     )
 }
 
-/// 流式：边收边转发，同时从 SSE 里把最后的 usage 抠出来记账。
-///
-/// **第一个字节发出去之后就不能再换渠道了**（客户端已经看到内容了），所以流式请求的
-/// 重试只发生在"还没拿到响应头"的阶段。这一条也是"客户端断开不计渠道的账"的落点：
-/// 流被丢掉时 `RequestGuard` 记 canceled。
-fn stream_passthrough(
-    state: SharedState,
-    resp: reqwest::Response,
-    guard: RequestGuard,
-    request_id: i64,
-    started_ms: i64,
-    channel_id: i64,
-    gate: Option<crate::state::ChannelPermit>,
-    endpoint: EndpointKind,
-    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket, load_ticket:crate::state::ModelLoadTicket, idle_timeout:Duration,
-) -> Response {
-    let status = resp.status();
-    let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
-    let st = StreamState {
-        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,cooldown,_model_load:load_ticket,
-        resp,
-        scanner: SseScanner::default(),
-        endpoint,
-        first_byte_ms: None,
-        guard: Some(guard),
-        started_ms,
-        channel_id,
-        state,
-        delivered: 0,
-        idle_timeout,
-        _gate: gate,
-    };
-    let stream = unfold(st, |mut st| async move {
-        match tokio::time::timeout(st.idle_timeout, st.resp.chunk()).await {
-            Ok(Ok(Some(chunk))) => {
-                if st.first_byte_ms.is_none() && !chunk.is_empty() { st.first_byte_ms=Some(now_ms()-st.started_ms); }
-                st.scanner.feed(&chunk);
-                if let Some(g)=st.guard.as_mut() {g.usage=st.scanner.usage; g.streamed=true;}
-                st.delivered += chunk.len();
-                Some((Ok::<Bytes, std::io::Error>(chunk), st))
-            }
-            Ok(Ok(None)) => {
-                st.finish(None);
-                None
-            }
-            Ok(Err(e)) => {
-                st.finish(Some("上游流式连接异常中断；已输出内容不重试"));
-                tracing::warn!("流式响应中途断了：{e}");
-                Some((
-                    Err(std::io::Error::other(format!("上游断流：{e}"))),
-                    st,
-                ))
-            }
-            Err(_) => {
-                let note = format!("上游流式空闲超时：连续 {} 毫秒未收到数据；已输出内容不重试", st.idle_timeout.as_millis());
-                st.finish(Some(&note));
-                Some((Err(std::io::Error::new(std::io::ErrorKind::TimedOut, note)), st))
+/// Bounded precommit preserves source bytes and observes protocol semantics before headers are sent.
+struct PreparedStream {
+    observer: crate::protocol::sse::Observer,
+    transcoder: Option<crate::protocol::sse::Transcoder>,
+    prefix: Bytes,
+    eof: bool,
+    artifacts:crate::protocol_sessions::ArtifactCollector,
+}
+async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Protocol,client:crate::protocol::Protocol,
+    remaining:Duration,idle:Duration,guard:&mut RequestGuard)->Result<PreparedStream,String> {
+    let mut prepared=PreparedStream {observer:crate::protocol::sse::Observer::new(source),
+        transcoder:(source!=client).then(||crate::protocol::sse::Transcoder::new(source,client)),prefix:Bytes::new(),eof:false,artifacts:Default::default()};
+    let deadline=tokio::time::Instant::now()+remaining;
+    let mut prefix=Vec::new();
+    loop {
+        let wait=deadline.saturating_duration_since(tokio::time::Instant::now()).min(idle);
+        let chunk=tokio::time::timeout(wait,resp.chunk()).await
+            .map_err(|_|"precommit deadline exceeded before valid output".to_string())?
+            .map_err(|_|"precommit upstream body read failed".to_string())?;
+        match chunk {
+            Some(chunk)=>{
+                let observed=prepared.observer.feed(&chunk);
+                guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
+                let frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
+                prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;
+                if let Some(note)=&prepared.observer.failed {return Err(format!("precommit upstream error: {note}"));}
+                let out=match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|format!("precommit conversion error: {note}"))?,None=>chunk.to_vec()};
+                if prefix.len().saturating_add(out.len())>1<<20 {return Err("precommit prefix exceeds 1 MiB".into());}
+                prefix.extend_from_slice(&out);
+                if prepared.observer.done {
+                    if !prepared.observer.meaningful {return Err("precommit stream completed without output".into());}
+                    prepared.eof=true;
+                }
+                if prepared.observer.meaningful || prepared.observer.done {break;}
+            },
+            None=>{
+                let ended=prepared.observer.finish_frames();
+                guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
+                let frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
+                prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;
+                if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|format!("precommit conversion error: {note}"))?);}
+                prepared.eof=true;
+                if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err("precommit empty or failed stream".into());}
+                break;
             }
         }
+    }
+    prepared.prefix=Bytes::from(prefix);
+    Ok(prepared)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stream_passthrough(
+    state: SharedState, resp: reqwest::Response, prepared:PreparedStream, provenance:Option<(String,crate::protocol_sessions::Pin)>, guard: RequestGuard,
+    request_id:i64,started_ms:i64,channel_id:i64,gate:Option<crate::state::ChannelPermit>,endpoint:EndpointKind,
+    ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,adaptation_note:Option<String>,
+    cooldown:CooldownTicket,load_ticket:crate::state::ModelLoadTicket,idle_timeout:Duration,
+) -> Response {
+    let status=resp.status();
+    let st=StreamState {
+        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,cooldown,_model_load:load_ticket,
+        resp,observer:prepared.observer,transcoder:prepared.transcoder,prefix:Some(prepared.prefix),eof:prepared.eof,artifacts:prepared.artifacts,provenance,
+        endpoint,first_byte_ms:None,guard:Some(guard),started_ms,channel_id,state,delivered:0,idle_timeout,_gate:gate,
+    };
+    let stream=unfold(st,|mut st|async move {
+        if st.guard.is_none() {return None;}
+        if let Some(prefix)=st.prefix.take().filter(|p|!p.is_empty()) {
+            st.first_byte_ms=Some(now_ms()-st.started_ms);
+            st.delivered+=prefix.len();
+            if let Some(g)=st.guard.as_mut(){g.streamed=true;}
+            return Some((Ok::<Bytes,std::io::Error>(prefix),st));
+        }
+        if st.eof {st.finish(None);return None;}
+        match tokio::time::timeout(st.idle_timeout,st.resp.chunk()).await {
+            Ok(Ok(Some(chunk)))=>{
+                let observed=st.observer.feed(&chunk);
+                if let Some(g)=st.guard.as_mut(){g.usage=Usage{input:st.observer.input,output:st.observer.output};g.streamed=true;}
+                let out=observed.and_then(|frames| {
+                    st.artifacts.frames(&frames)?;
+                    if let Some((owner,pin))=&st.provenance {st.artifacts.persist(&st.state.conn(),owner,pin).map_err(|_|"local_state: opaque artifact ownership persistence failed".to_string())?;}
+                    Ok(())
+                }).and_then(|_| match st.transcoder.as_mut(){Some(t)=>t.feed(&chunk),None=>Ok(chunk.to_vec())});
+                match out {
+                    Ok(out)=>{st.delivered+=out.len();if st.observer.done {st.eof=true;} Some((Ok(Bytes::from(out)),st))},
+                    Err(note)=>{
+                        let out=if st.transcoder.is_none() && st.observer.failed.is_some(){chunk}else{stream_error(st.endpoint.protocol(),&note)};
+                        st.finish(Some(&note));Some((Ok(out),st))
+                    }
+                }
+            },
+            Ok(Ok(None))=>{
+                let ended=st.observer.finish_frames();
+                if let Some(g)=st.guard.as_mut(){g.usage=Usage{input:st.observer.input,output:st.observer.output};}
+                if let Ok(frames)=ended {
+                    if let Err(note)=st.artifacts.frames(&frames).and_then(|_|{
+                        if let Some((owner,pin))=&st.provenance {st.artifacts.persist(&st.state.conn(),owner,pin).map_err(|_|"local_state: opaque artifact ownership persistence failed".to_string())?;}
+                        Ok(())
+                    }) {st.finish(Some(&note));return Some((Ok(stream_error(st.endpoint.protocol(),&note)),st));}
+                }
+                let tail=match st.transcoder.as_mut(){Some(t)=>t.finish(),None=>Ok(vec![])};
+                match tail {
+                    Ok(tail) if !tail.is_empty()=>{st.eof=true;Some((Ok(Bytes::from(tail)),st))},
+                    Ok(_)=>{st.finish(None);None},
+                    Err(note)=>{st.finish(Some(&note));Some((Err(std::io::Error::other(note)),st))}
+                }
+            },
+            Ok(Err(_))=>{let note="上游流式连接异常中断；已输出内容不重试";st.finish(Some(note));Some((Err(std::io::Error::other(note)),st))},
+            Err(_)=>{let note="上游流式空闲超时；已输出内容不重试";st.finish(Some(note));Some((Err(std::io::Error::new(std::io::ErrorKind::TimedOut,note)),st))}
+        }
     });
-    Response::builder()
-        .status(StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK))
-        .header(header::CONTENT_TYPE, ctype)
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from_stream(stream))
-        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
+    Response::builder().status(status).header(header::CONTENT_TYPE,"text/event-stream")
+        .header(header::CACHE_CONTROL,"no-cache").body(Body::from_stream(stream))
+        .unwrap_or_else(|_|StatusCode::BAD_GATEWAY.into_response())
+}
+
+fn stream_error(protocol:Option<crate::protocol::Protocol>,note:&str)->Bytes {
+    let message=format!("Upstream stream failed after output: {note}");
+    let (event,data)=match protocol {
+        Some(crate::protocol::Protocol::Messages)=>(Some("error"),serde_json::json!({"type":"error","error":{"type":"api_error","message":message}})),
+        Some(crate::protocol::Protocol::Responses)=>(Some("error"),serde_json::json!({"type":"error","code":"upstream_error","message":message})),
+        _=>(None,serde_json::json!({"error":{"type":"upstream_error","message":message}})),
+    };
+    Bytes::from(crate::protocol::sse::Frame{event:event.map(str::to_string),data:data.to_string()}.encode())
 }
 
 struct StreamState {
@@ -1435,7 +1723,12 @@ struct StreamState {
     first_byte_ms: Option<i64>,
     endpoint: EndpointKind,
     resp: reqwest::Response,
-    scanner: SseScanner,
+    observer:crate::protocol::sse::Observer,
+    transcoder:Option<crate::protocol::sse::Transcoder>,
+    prefix:Option<Bytes>,
+    eof:bool,
+    artifacts:crate::protocol_sessions::ArtifactCollector,
+    provenance:Option<(String,crate::protocol_sessions::Pin)>,
     guard: Option<RequestGuard>,
     started_ms: i64,
     channel_id: i64,
@@ -1456,15 +1749,17 @@ impl StreamState {
         let Some(mut guard) = self.guard.take() else {
             return;
         };
-        if transport_error.is_none() { self.scanner.finish_eof(); }
-        let (input, output) = self.scanner.totals();
-        guard.usage=self.scanner.usage;
-        let ended = self.scanner.terminal();
-        let complete = transport_error.is_none() && ended && !self.scanner.error;
-        let empty = complete && !self.scanner.saw_payload();
+        let finish_error=if transport_error.is_none(){self.observer.finish().err().map(|e|format!("上游流式缺少结束标记或协议失败：{e}"))}else{None};
+        let transport_error=transport_error.or(finish_error.as_deref());
+        let (input,output)=(self.observer.input.unwrap_or(0),self.observer.output.unwrap_or(0));
+        guard.active_attempt=None;
+        guard.usage=Usage{input:self.observer.input,output:self.observer.output};
+        let ended=self.observer.done;
+        let complete=transport_error.is_none() && ended && self.observer.failed.is_none();
+        let empty=complete && !self.observer.meaningful;
         let note = if let Some(error) = transport_error {
             Some(error)
-        } else if self.scanner.error {
+        } else if self.observer.failed.is_some() {
             Some("上游流式返回错误事件，已发出去的内容收不回来")
         } else if !ended {
             Some("上游流式缺少结束标记，回答可能未完成；已输出内容不重试")
@@ -1473,8 +1768,10 @@ impl StreamState {
         } else {
             None
         };
-        self.cooldown.finish(complete && !empty,note.unwrap_or(""),0);
-        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string).or_else(||self.adaptation_note.clone()),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
+        let local_fault=note.is_some_and(|note|note.starts_with("local_state:"));
+        if local_fault {guard.error_code=Some("state_unavailable".into());}
+        else {self.cooldown.finish(complete && !empty,note.unwrap_or(""),0);}
+        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if local_fault {"local_fault"}else if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string).or_else(||self.adaptation_note.clone()),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
         match self.state.db.try_lock(){Ok(c)=>{if requests::add_attempt_args(&c,&args).is_err(){self.state.enqueue_write(crate::state::WriteJob::Attempt(args));}},Err(_)=>self.state.enqueue_write(crate::state::WriteJob::Attempt(args))}
 
         if complete && !empty {
@@ -1646,12 +1943,7 @@ impl SseScanner {
         }
     }
 
-    fn finish_eof(&mut self) {
-        // Accept a final SSE data line even when its trailing newline is absent.
-        let tail = std::mem::take(&mut self.pending);
-        if !tail.is_empty() { self.line(&tail); }
-    }
-
+    #[cfg(test)]
     fn terminal(&self) -> bool {
         self.done_event || (!self.seen_choices.is_empty()
             && self.seen_choices.is_subset(&self.finished_choices))
@@ -1679,7 +1971,7 @@ fn record_routing_refusal(
     msg: &str,
 ) {
     let has_image =
-        req.endpoint == EndpointKind::Chat && tokengo_shared::request_has_image(&req.body);
+        req.endpoint.has_image(&req.body);
     let request_id = {
         let conn = state.conn();
         match crate::db::requests::start(
@@ -1733,6 +2025,7 @@ struct RequestGuard {
     reservation: Option<i64>,
     billing_nonchat: bool,
     usage: Usage,
+    active_attempt:Option<(requests::AttemptArgs,i64)>,
     streamed: bool,
     channel_id: Option<i64>,
     state: SharedState,
@@ -1757,6 +2050,7 @@ impl RequestGuard {
             reservation: None,
             billing_nonchat: false,
             usage: Usage::default(),
+            active_attempt:None,
             streamed: false,
             channel_id: None,
             served_model: None,
@@ -1805,6 +2099,12 @@ impl RequestGuard {
         if self.done {
             return;
         }
+        if let Some((mut attempt,started))=self.active_attempt.take() {
+            attempt.duration_ms=(now_ms()-started).max(0);attempt.http_status=http_status;
+            attempt.outcome=match status {Status::Ok=>"success",Status::Canceled=>"canceled",Status::Failed=>"channel_fault",Status::ClientError=>"client_error"}.into();
+            attempt.error=error.map(str::to_string);
+            state.enqueue_write(crate::state::WriteJob::Attempt(attempt));
+        }
         self.settle_billing(status.as_str());
         self.admission.take();
         self.done = true;
@@ -1845,6 +2145,10 @@ impl Drop for RequestGuard {
     fn drop(&mut self) {
         if self.done {
             return;
+        }
+        if let Some((mut attempt,started))=self.active_attempt.take() {
+            attempt.duration_ms=(now_ms()-started).max(0);
+            self.state.enqueue_write(crate::state::WriteJob::Attempt(attempt));
         }
         self.settle_billing("canceled");
         self.admission.take();
@@ -1905,6 +2209,22 @@ mod tests {
         assert_eq!(out["stream"], true);
     }
 
+    #[test]
+    fn native_output_caps_cannot_bypass_generation_quota() {
+        let mut response=serde_json::json!({"model":"m","input":"hello"});
+        let (_,output)=billing_bound(&mut response,EndpointKind::Responses,None).unwrap();
+        assert_eq!(output,4096);assert_eq!(response["max_output_tokens"],4096);
+        assert_eq!(output_bound(&serde_json::json!({"max_output_tokens":37}),EndpointKind::Responses).unwrap(),37);
+        assert_eq!(output_bound(&serde_json::json!({"max_tokens":19}),EndpointKind::Messages).unwrap(),19);
+        assert!(output_bound(&serde_json::json!({"max_tokens":19}),EndpointKind::Responses).is_err());
+        assert!(output_bound(&serde_json::json!({"max_output_tokens":-1}),EndpointKind::Responses).is_err());
+        assert!(output_bound(&serde_json::json!({"max_output_tokens":0}),EndpointKind::Responses).is_err());
+    }
+    #[test]
+    fn native_usage_includes_cached_input_and_nested_final_response() {
+        assert_eq!(usage_from_value(&serde_json::json!({"usage":{"input_tokens":3,"output_tokens":0,"cache_read_input_tokens":5,"cache_creation_input_tokens":7}})),(15,0));
+        assert_eq!(usage_from_value(&serde_json::json!({"response":{"usage":{"input_tokens":8,"output_tokens":4}}})),(8,4));
+    }
     #[test]
     fn usage_is_read_from_openai_and_anthropic_shapes() {
         assert_eq!(

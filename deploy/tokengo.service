@@ -1,0 +1,35 @@
+[Unit]
+Description=Tokengo private AI relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tokengo
+Group=tokengo
+WorkingDirectory=/var/lib/tokengo
+EnvironmentFile=/etc/tokengo/tokengo.env
+ExecStart=/opt/tokengo/current/bin/tokengo-server
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=45
+UMask=0077
+StateDirectory=tokengo
+StateDirectoryMode=0700
+LogsDirectory=tokengo
+LogsDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/tokengo /var/log/tokengo
+
+[Install]
+WantedBy=multi-user.target

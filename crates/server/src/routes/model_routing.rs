@@ -61,6 +61,7 @@ async fn write(
     let Json(policy) =
         body.map_err(|_| ApiError::bad_request("Invalid model routing policy JSON"))?;
     let name = model_name(&query.model)?;
+    policy.validate_timeouts().map_err(ApiError::bad_request)?;
     if policy.retry_times.is_some_and(|v| v > 2) {
         return Err(ApiError::bad_request(
             "retry_times must be 0..2 (at most three attempts per target)",

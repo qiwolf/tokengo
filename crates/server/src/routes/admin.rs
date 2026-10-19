@@ -300,6 +300,7 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "account_status": crate::db::faults::rows(c).unwrap_or_default().into_iter().find(|r|r.channel_id==l.id.0 && r.model.is_empty()).map(|r|if r.ready {"等待恢复试用".to_string()}else if r.lease_until>now_ms(){"恢复试用中".into()}else{r.reason}).unwrap_or_default(),
         "unwrap_envelope": l.unwrap_envelope,
         "max_concurrent": l.max_concurrent,
+        "protocols": crate::protocol_config::load(c,l.id.0).ok(),
         // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
         "priority": l.priority,
         "headers": l.headers.iter().map(|(n, _)| serde_json::json!({"name": n, "original_name": n, "value": "********", "action": "keep"})).collect::<Vec<_>>(),
@@ -350,6 +351,8 @@ struct ModelIn {
 
 #[derive(Deserialize)]
 struct ChannelBody {
+    #[serde(default)]
+    protocols: Option<crate::protocol_config::Capabilities>,
     name: String,
     base_url: String,
     #[serde(default = "default_true")]
@@ -441,6 +444,7 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
     let models = body.models()?;
     let conn = state.conn();
     let headers = body.headers(&conn, &state, None)?;
@@ -462,6 +466,7 @@ async fn channels_create(
         }
         if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
         channels::set_models(c, id, &models)?;
+        if let Some(p)=&body.protocols {crate::protocol_config::save(c,id.0,p)?;}
         Ok(id)
     })?;
     tracing::info!("新建渠道 {id}：{}", body.name);
@@ -476,6 +481,7 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
     let models = body.models()?;
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
@@ -498,6 +504,7 @@ async fn channels_update(
         }
         if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
         channels::set_models(c, id, &models)?;
+        if let Some(p)=&body.protocols {crate::protocol_config::save(c,id.0,p)?;}
         Ok(())
     })?;
     tracing::info!("更新渠道 {id}：{}", body.name);
@@ -612,6 +619,8 @@ async fn channels_probe(
             "has_secret": has_secret,
         })));
     };
+
+    let endpoint=crate::protocol_config::probe_endpoint(&state.conn(),channel.id.0,endpoint)?;
 
     let timeout = {
         let cfg = state.routing().cfg.clone();

@@ -56,6 +56,8 @@ pub struct ModelPair {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Channel {
+    #[serde(default)]
+    pub protocols: Option<serde_json::Value>,
     pub id: i64,
     pub name: String,
     pub base_url: String,

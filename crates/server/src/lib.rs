@@ -9,6 +9,10 @@ pub mod db;
 pub mod billing_writer;
 pub mod admission;
 pub mod gateway;
+pub mod protocol;
+pub mod protocol_config;
+pub mod protocol_sessions;
+pub mod litellm_import;
 pub mod gateway_key;
 pub mod janitor;
 pub mod logging;
@@ -42,6 +46,7 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
         .merge(routes::billing::router())
+        .merge(litellm_import::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())
         // 面板资源压缩：wasm 841 KB → gzip 后约 330 KB（首次打开少下 500 KB）。

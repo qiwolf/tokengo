@@ -26,6 +26,8 @@ fn valid(kind: EndpointKind, body: &str) -> bool {
             ["content","reasoning_content"].iter().any(|k| m[*k].as_str().map(|s| !s.trim().is_empty()).unwrap_or(false))
                 || m["tool_calls"].as_array().map(|t| !t.is_empty()).unwrap_or(false)
         })).unwrap_or(false),
+        EndpointKind::Responses=>crate::protocol::validate_response(crate::protocol::Protocol::Responses,&v).is_ok(),
+        EndpointKind::Messages=>crate::protocol::validate_response(crate::protocol::Protocol::Messages,&v).is_ok(),
         EndpointKind::Embeddings => v["data"].as_array().map(|a| a.iter().any(|x| x["embedding"].as_array().map(|e| !e.is_empty() && e.iter().all(|n| n.is_number())).unwrap_or(false))).unwrap_or(false),
         EndpointKind::Rerank => v["results"].as_array().map(|a| a.iter().any(|x| x["index"].is_u64() && x["relevance_score"].is_number())).unwrap_or(false),
     }

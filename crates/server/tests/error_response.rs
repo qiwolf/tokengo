@@ -16,6 +16,11 @@ use tokengo_server::{
 
 #[derive(Clone, Copy)]
 enum Mode {
+    EmptyTerminal,
+    OutputThenError,
+    TerminalThenHang,
+    Heartbeat,
+    StreamError,
     Hang,
     Drip,
     Huge,
@@ -40,6 +45,23 @@ impl Drop for Fixture {
 async fn upstream(mode: Mode, status: u16) -> (String, tokio::task::JoinHandle<()>) {
     let router = Router::new().route("/v1/chat/completions", post(move || async move {
         let body = match mode {
+            Mode::EmptyTerminal=>Body::from("data: [DONE]\n\n"),
+            Mode::OutputThenError=>Body::from_stream(stream::unfold(0u8,|step|async move {
+                match step {
+                    0=>Some((Ok::<_,std::io::Error>(Bytes::from_static(b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"original\"},\"finish_reason\":null}]}\n\n")),1)),
+                    1=>{tokio::time::sleep(Duration::from_millis(20)).await;Some((Ok(Bytes::from_static(b"data: {\"error\":{\"message\":\"after output\"}}\n\n")),2))},
+                    _=>None,
+                }
+            })),
+            Mode::TerminalThenHang=>Body::from_stream(stream::unfold(false,|sent|async move {
+                if !sent {Some((Ok::<_,std::io::Error>(Bytes::from_static(b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"finished\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")),true))}
+                else {std::future::pending().await}
+            })),
+            Mode::Heartbeat => Body::from_stream(stream::unfold((), |_| async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Some((Ok::<_, std::io::Error>(Bytes::from_static(b": ping\n\n")), ()))
+            })),
+            Mode::StreamError => Body::from("event: error\ndata: {\"error\":{\"message\":\"failed before output\"}}\n\n"),
             Mode::Hang => Body::from_stream(stream::pending::<Result<Bytes, std::io::Error>>()),
             Mode::Drip => Body::from_stream(stream::unfold((), |_| async {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -126,7 +148,7 @@ impl Fixture {
         let response = gateway::forward(
             self.state.clone(),
             ForwardRequest {
-            auth: None,
+                auth: None,
                 explicit_session: None,
                 session_namespace: "test".into(),
                 endpoint: EndpointKind::Chat,
@@ -258,4 +280,78 @@ async fn broken_error_transport_can_fall_back() {
         .unwrap()
         .try_acquire_owned()
         .is_ok());
+}
+
+#[tokio::test]
+async fn heartbeat_only_200_has_precommit_deadline_and_falls_back() {
+    let f = Fixture::new(Mode::Heartbeat, 200, true, 90, 600).await;
+    let (s, b, _) = tokio::time::timeout(Duration::from_millis(500), f.request())
+        .await
+        .expect("heartbeats must not keep an empty stream alive forever");
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&b).contains("fallback"));
+    f.assert_ledger(true, "precommit");
+}
+#[tokio::test]
+async fn error_event_before_first_output_uses_fallback() {
+    let f = Fixture::new(Mode::StreamError, 200, true, 90, 600).await;
+    let (s, b, _) = f.request().await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&b).contains("fallback"));
+    assert!(!String::from_utf8_lossy(&b).contains("failed before output"));
+    f.assert_ledger(true, "precommit");
+}
+
+#[tokio::test]
+async fn native_error_after_output_is_preserved_without_replay() {
+    let f = Fixture::new(Mode::OutputThenError, 200, true, 150, 600).await;
+    let (s, b, _) = f.request().await;
+    assert_eq!(s, StatusCode::OK);
+    let body = String::from_utf8_lossy(&b);
+    assert!(body.contains("original"));
+    assert!(body.contains("after output"));
+    assert!(!body.contains("fallback"));
+    f.state.drain_writes();
+    let c = f.state.conn();
+    let count: i64 = c
+        .query_row("SELECT COUNT(*) FROM attempts", [], |r| r.get(0))
+        .unwrap();
+    let status: String = c
+        .query_row(
+            "SELECT status FROM requests ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(status, "failed");
+}
+#[tokio::test]
+async fn terminal_event_completes_without_waiting_for_connection_eof() {
+    let f = Fixture::new(Mode::TerminalThenHang, 200, false, 200, 600).await;
+    let (s, b, _) = tokio::time::timeout(Duration::from_millis(100), f.request())
+        .await
+        .expect("valid terminal event must close response");
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&b).contains("finished"));
+    f.state.drain_writes();
+    let status: String = f
+        .state
+        .conn()
+        .query_row(
+            "SELECT status FROM requests ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "ok");
+}
+
+#[tokio::test]
+async fn empty_terminal_event_is_rejected_before_client_commit() {
+    let f = Fixture::new(Mode::EmptyTerminal, 200, true, 100, 600).await;
+    let (s, b, _) = f.request().await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&b).contains("fallback"));
+    f.assert_ledger(true, "precommit");
 }

@@ -174,6 +174,8 @@ mod tests {
             "billing_audit",
             "billing_allocations",
             "quota_events",
+            "protocol_sessions",
+            "protocol_artifacts",
         ];
         let actual: std::collections::BTreeSet<_> = got.iter().map(String::as_str).collect();
         let expected: std::collections::BTreeSet<_> = expected.into_iter().collect();

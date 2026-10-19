@@ -1,0 +1,71 @@
+name: Linux release package
+
+'on':
+  pull_request:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: '1.98.0'
+  TRUNK_VERSION: '0.21.14'
+  CARGO_TERM_COLOR: always
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  release-check:
+    name: Linux x86_64 server and WASM, same commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, same pin as ci.yml
+        with:
+          persist-credentials: false
+      - name: Install Linux C toolchain and packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential pkg-config libssl-dev python3
+      - name: Install pinned Rust and WASM target
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown,x86_64-unknown-linux-gnu
+      - name: Cache dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4, same pin as ci.yml
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-release-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+      - name: Install pinned Trunk
+        run: cargo +"$RUST_TOOLCHAIN" install --locked --version "$TRUNK_VERSION" trunk
+      - name: Verify deploy helpers without systemd mutations
+        run: |
+          bash -n deploy/build-release.sh
+          python3 -m unittest discover -s deploy -p 'test_*.py' -v
+          # Verify directives with an existing inert executable; the real release
+          # path is absent on the build runner and is checked during LXC install.
+          sed 's|^ExecStart=.*|ExecStart=/usr/bin/true|' deploy/tokengo.service > "$RUNNER_TEMP/tokengo.service"
+          systemd-analyze verify "$RUNNER_TEMP/tokengo.service"
+      - name: Build and package both release halves
+        run: bash deploy/build-release.sh "$RUNNER_TEMP/tokengo-release"
+      - name: Verify archive and architecture
+        run: |
+          cd "$RUNNER_TEMP/tokengo-release"
+          sha256sum --check ./*.sha256
+          python3 "$GITHUB_WORKSPACE/deploy/manage.py" verify ./*.tar.gz
+      - name: Retain reviewable bundle (no publishing or deployment)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tokengo-linux-x86_64-${{ github.sha }}
+          path: ${{ runner.temp }}/tokengo-release/*
+          if-no-files-found: error
+          retention-days: 14

@@ -225,6 +225,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
     // 这条渠道的非流式响应要不要剥壳（cline.bot 那种 `{"data": {…}, "success": true}`）
     let f_unwrap = RwSignal::new(false);
+    let f_protocols = RwSignal::new(String::from(r#"{"native":["chat"],"allow_conversion":false}"#));
+    let protocol_error = RwSignal::new(String::new());
     // 这条渠道「同时最多几发」：0 = 不限。填了就在网关门口排队/换渠道，
     // 免得一次铺开几十发把上游那把 key 打成 429（上游多数是按凭据限并发的）。
     let f_cap = RwSignal::new(0u32);
@@ -270,6 +272,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
         f_unwrap.set(false);
+        f_protocols.set(String::from(r#"{"native":["chat"],"allow_conversion":false}"#));
+        protocol_error.set(String::new());
         f_cap.set(0);
         f_cap_text.set("0".to_string());
         reset_pull();
@@ -291,6 +295,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
         f_unwrap.set(l.unwrap_envelope);
+        f_protocols.set(crate::admin_api::pretty(&l.protocols.unwrap_or_else(||serde_json::json!({"native":["chat"],"allow_conversion":false}))));
+        protocol_error.set(String::new());
         f_cap.set(l.max_concurrent);
         f_cap_text.set(l.max_concurrent.to_string());
         reset_pull();
@@ -348,11 +354,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let cap = parse_cap(&f_cap_text.get_untracked());
+        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) { Ok(v) => v, Err(e) => {protocol_error.set(e); tab.set(TAB_BASIC.to_string()); return;} };
+        protocol_error.set(String::new());
         // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
         let key_arg = if key.trim().is_empty() { None } else { Some(key) };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_channel(id, &name, &url, enabled, unwrap, cap, key_arg.as_deref(), &headers, &models)
+            match api::save_channel(id, &name, &url, enabled, unwrap, cap, key_arg.as_deref(), &headers, &models, &protocols)
                 .await
             {
                 Ok(new_id) => {
@@ -399,11 +407,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let cap = parse_cap(&f_cap_text.get_untracked());
+        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) { Ok(v) => v, Err(e) => {protocol_error.set(e); tab.set(TAB_BASIC.to_string()); return;} };
+        protocol_error.set(String::new());
         let headers = f_headers.get_untracked();
         let (models, _) = mappings_to_save(&f_models.get_untracked());
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
-            match api::save_channel(Some(id), &name, &url, enabled, unwrap, cap, Some(""), &headers, &models).await {
+            match api::save_channel(Some(id), &name, &url, enabled, unwrap, cap, Some(""), &headers, &models, &protocols).await {
                 Ok(_) => {
                     f_key_note.set("已清空这条渠道的密钥。");
                     ctx.say("密钥已清空");
@@ -908,6 +918,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 <input type="checkbox" prop:checked=f_enabled
                                                     on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
                                                 <span class="muted small">"停用后不会再往这家上游发请求"</span>
+                                            </div>
+                                            <label for="channel-protocols">"原生协议与转换（JSON）"</label>
+                                            <div>
+                                                <textarea id="channel-protocols" rows="5" prop:value=f_protocols aria-describedby="channel-protocol-help channel-protocol-error" aria-invalid=move||crate::admin_api::protocols(&f_protocols.get()).is_err().to_string() on:input=move |ev|f_protocols.set(event_target_value(&ev))/>
+                                                <p id="channel-protocol-help" class="muted small">"native 填上游真实支持的 chat / responses / messages 数组（至少一个）。allow_conversion 为 true 时，未原生支持的协议会尝试转换为数组首项；仅支持明确限定的文本 / 函数工具子集。更改协议会使已有绑定会话失效，客户端需新建会话。默认只声明 chat，禁止转换。"</p>
+                                                <p id="channel-protocol-error" role="alert">{move||protocol_error.get()}</p>
                                             </div>
                                             <label>"响应解包"</label>
                                             <div>

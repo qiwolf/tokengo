@@ -27,3 +27,7 @@ logs/
 
 # Durable billing intents contain private usage data; back up with the database.
 *.billing-outbox/
+
+# Python deployment/client test caches
+__pycache__/
+*.py[cod]

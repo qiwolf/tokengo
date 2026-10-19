@@ -58,13 +58,14 @@ impl std::fmt::Display for ApiErr {
 }
 
 /// 底层：发一个请求，返回解析后的 JSON。非 2xx 变 `ApiErr`。
-async fn call(method: &str, path: &str, body: Option<Value>) -> Result<Value, ApiErr> {
+pub(crate) async fn call(method: &str, path: &str, body: Option<Value>) -> Result<Value, ApiErr> {
     // 按方法名挑构造函数：gloo-net 的 `.method()` 要 http::Method 枚举，
     // 这里用它的快捷构造函数更直观，也不会把方法名写错
     let mut b = match method {
         "GET" => Request::get(path),
         "POST" => Request::post(path),
         "PUT" => Request::put(path),
+        "PATCH" => Request::patch(path),
         "DELETE" => Request::delete(path),
         other => {
             return Err(ApiErr {
@@ -175,6 +176,7 @@ pub async fn save_channel(
     key: Option<&str>,
     headers: &[HeaderPair],
     models: &[ModelPair],
+    protocols: &Value,
 ) -> Result<Option<i64>, ApiErr> {
     let body = json!({
         "name": name,
@@ -185,6 +187,7 @@ pub async fn save_channel(
         "key": key,
         "headers": headers,
         "models": models,
+        "protocols": protocols,
     });
     match id {
         Some(i) => call("PUT", &format!("/api/channels/{i}"), Some(body)).await.map(|_| None),

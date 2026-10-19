@@ -287,6 +287,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     </article>}
                 }).collect_view().into_any()
             }}</div>
+            <super::route_policy::RoutePolicy ctx=ctx/>
         </div>
     }
 }

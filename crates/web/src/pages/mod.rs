@@ -1,6 +1,6 @@
 //! 页面清单与页面之间的公共约定。
 //!
-//! 面板只做本机真正用得上的 5 页：总览 · 渠道 · 模型 · 日志 · 设置。
+//! 面板：总览 · 渠道 · 模型 · 用户 · 账务 · 设置。
 //!
 //! 「请求」那一页 2026-10-18 撤掉了：它列的东西「总览」里都有（用户口径：内容重复）。
 //!
@@ -9,7 +9,10 @@
 //! 这一层了（一个模型名 = 渠道里勾了它的那些渠道），面板只剩「模型」一页看它。
 
 pub mod channels;
+pub mod users;
+pub mod billing;
 pub mod models;
+pub mod route_policy;
 pub mod logs;
 pub mod overview;
 pub mod settings;
@@ -22,6 +25,8 @@ pub enum Page {
     Overview,
     Channels,
     Models,
+    Users,
+    Billing,
     Settings,
 }
 
@@ -30,6 +35,8 @@ impl Page {
         Page::Overview,
         Page::Channels,
         Page::Models,
+        Page::Users,
+        Page::Billing,
         Page::Settings,
     ];
 
@@ -39,6 +46,8 @@ impl Page {
             Page::Overview => "overview",
             Page::Channels => "channels",
             Page::Models => "models",
+            Page::Users => "users",
+            Page::Billing => "billing",
             Page::Settings => "settings",
         }
     }
@@ -49,6 +58,8 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
+            Page::Users => "用户",
+            Page::Billing => "账务",
             Page::Settings => "设置",
         }
     }
@@ -59,6 +70,8 @@ impl Page {
             Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
+            Page::Users => "用户身份、虚拟密钥及其权限和限流。",
+            Page::Billing => "预算、价格版本和持久化的逐次尝试账本。",
             Page::Settings => "对外 key、面板口令、登录着的设备。",
         }
     }
@@ -123,7 +136,7 @@ mod tests {
         assert_eq!(slugs.len(), before, "slug 必须唯一");
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
-        // 五页：总览 · 渠道 · 模型 · 日志 · 设置（「请求」撤了）
-        assert_eq!(Page::ALL.len(), 4);
+        // 总览 · 渠道 · 模型 · 用户 · 账务 · 设置
+        assert_eq!(Page::ALL.len(), 6);
     }
 }
