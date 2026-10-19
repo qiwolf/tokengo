@@ -82,6 +82,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/model-kinds", get(model_kinds_list))
         .route("/auto-policy", get(auto_policy_get).put(auto_policy_save))
         .route("/model-order/move", post(model_order_move))
+        .route("/model-enabled", put(model_enabled_save))
         .route("/model-cooldown/reset", post(model_cooldown_reset))
         .route("/models/{name}/kind", put(models_set_kind))
         // 面板「模型」页要的全部事实（一名字一行 + 它后面那串渠道 + 路由状态 + auto 的候选）。
@@ -1075,6 +1076,13 @@ fn extract_reply(body: &str) -> String {
 /// 对外清单按模型组算，两处各算各的就会漂移（v0.11.0 起只有这一份）。
 ///
 /// `auto` 三类的候选各给一份：面板上点开 auto 就能看见「这一刻会挑中谁」。
+#[derive(Deserialize)]struct ModelEnabledBody {model:String,enabled:bool}
+async fn model_enabled_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<ModelEnabledBody>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();if model_routes::routes_for(&c,&body.model)?.is_none(){return Err(ApiError::not_found("模型未勾选"));}
+ model_routes::set_enabled(&c,&body.model,body.enabled)?;
+ Ok(Json(serde_json::json!({"ok":true,"enabled":body.enabled})))
+}
+
 async fn auto_policy_get(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();Ok(Json(serde_json::json!({"policy":crate::db::policy::get(&c)?,"order":crate::db::policy::ordered(&c)?})))}
 async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
 #[derive(Deserialize)]struct OrderMove{model:String,up:bool}
@@ -1121,6 +1129,7 @@ async fn model_routes_list(
             };
             serde_json::json!({
                 "name": r.name,
+                "enabled": r.enabled,
                 "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),
                 "score_window_ms": crate::db::scores::WINDOW_MS,

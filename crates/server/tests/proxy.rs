@@ -3488,3 +3488,16 @@ async fn reserved_auto_cannot_be_saved_as_channel_model(){
  let(s,_)=post_with_token(&f,"/api/channels",&token,json!({"name":"old","base_url":"http://x","models":[{"model":"auto"}]})).await;
  assert_eq!(s,StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn model_switch_controls_direct_auto_and_listing_without_deleting_mapping(){
+ let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+ let ch=f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
+ let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+ let(s,_)=put_with_token(&f,"/api/model-enabled",&token,json!({"model":"a","enabled":false})).await;assert_eq!(s,StatusCode::OK);
+ let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"a","messages":[]})).await;assert_eq!(s,StatusCode::FORBIDDEN);assert_eq!(m.count(),0);
+ let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"b");
+ {let c=f.state.conn();assert!(!tokengo_server::db::model_routes::servable(&c).unwrap().iter().any(|r|r.name=="a"));assert_eq!(tokengo_server::db::channels::get(&c,ch).unwrap().unwrap().models.len(),2);tokengo_server::db::model_routes::set_enabled(&c,"b",false).unwrap();assert!(!tokengo_server::db::model_routes::auto_available(&c).unwrap());}
+ let(s,_)=put_with_token(&f,"/api/model-enabled",&token,json!({"model":"a","enabled":true})).await;assert_eq!(s,StatusCode::OK);
+ let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"a","messages":[]})).await;assert_eq!(s,StatusCode::OK);
+}
