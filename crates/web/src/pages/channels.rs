@@ -45,6 +45,11 @@ const TAB_BASIC: &str = "basic";
 const TAB_HEADERS: &str = "headers";
 const TAB_MODELS: &str = "models";
 
+fn catalog_model_kind<'a>(m:&'a UpstreamModel,known:&'a [crate::model::NameRoute])->&'a str {
+ let kind=m.kind.as_deref().filter(|k|!k.is_empty()).or_else(||known.iter().find(|r|tokengo_shared::same_model_name(&r.name,&m.id)).map(|r|r.kind.as_str())).unwrap_or("");
+ match kind {"chat"|"embeddings"|"rerank"|"image"|"audio"|"video"=>kind,_=>"unknown"}
+}
+
 /// 按关键字过滤上游报的模型名（大小写不敏感），最多取 `limit` 个。
 pub(crate) fn filter_catalog(all: &[UpstreamModel], filter: &str, limit: usize) -> Vec<UpstreamModel> {
     let needle = filter.trim().to_lowercase();
@@ -192,6 +197,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 打开弹窗先读库把它显示出来 —— 不用为了看一眼清单又去骚扰一次上游。
     let cat_at = RwSignal::new(0i64);
     let pull_filter = RwSignal::new(String::new());
+    let catalog_kind=RwSignal::new("all".to_string());
+    let known_kinds=RwSignal::new(Vec::<crate::model::NameRoute>::new());
+    leptos::task::spawn_local(async move {if let Ok(r)=api::model_routes().await {known_kinds.set(r.models);}});
+    let visible_catalog=move ||{
+        let known=known_kinds.get();let selected=catalog_kind.get();
+        pulled.get().into_iter().filter(|m|selected=="all" || catalog_model_kind(m,&known)==selected).collect::<Vec<_>>()
+    };
     // 「加一个自己的名字」输入框里正打着的字
     // 模型那一段的结构变化（勾/取消/加/删/拉到清单）后 +1 —— 只有它会重排那一列。
     // **打字不重排**，否则正在输入的框会丢焦点。
@@ -615,7 +627,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 「全选当前显示的」：把清单里现在显示的那些名字都加进模型表。
     let select_shown = move |_| {
         let names: Vec<String> =
-            filter_catalog(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT)
+            filter_catalog(&visible_catalog(), &pull_filter.get_untracked(), SHOW_LIMIT)
                 .into_iter()
                 .map(|m| m.id)
                 .collect();
@@ -640,7 +652,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 「取消当前显示的勾选」：只动清单里这次报的、现在显示着的那些。
     let unselect_shown = move |_| {
         let names: Vec<String> =
-            filter_catalog(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT)
+            filter_catalog(&visible_catalog(), &pull_filter.get_untracked(), SHOW_LIMIT)
                 .into_iter()
                 .map(|m| m.id)
                 .collect();
@@ -829,7 +841,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                 };
                 view! {
                     <div class="modal-backdrop">
-                        <div class="modal">
+                        <div class="modal channel-editor">
                             <div class="modal-head">
                                 <h2>{if editing { "编辑渠道" } else { "新建渠道" }}</h2>
                                 <span class="muted small">
@@ -1034,6 +1046,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 })
                                         }}
 
+                                        <nav class="catalog-kind-tabs">{[("all","全部"),("chat","对话"),("embeddings","嵌入"),("rerank","重排"),("image","图像"),("audio","音频"),("video","视频"),("unknown","待识别")].into_iter().map(|(k,label)|view!{<button class:active=move ||catalog_kind.get()==k on:click=move |_|catalog_kind.set(k.into())>{label}<small>{move ||{let known=known_kinds.get();pulled.get().iter().filter(|m|k=="all"||catalog_model_kind(m,&known)==k).count()}}</small></button>}).collect_view()}</nav>
                                         <div class="pull-head">
                                             <input
                                                 type="text"
@@ -1041,13 +1054,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 placeholder="按关键字过滤，如 deepseek"
                                                 on:input=move |ev| pull_filter.set(event_target_value(&ev))
                                             />
-                                            <button class="ghost" on:click=select_shown>"全选当前显示的"</button>
-                                            <button class="ghost" on:click=unselect_shown>"取消当前显示的勾选"</button>
+                                            <button class="ghost" on:click=select_shown>"全选当前"</button>
+                                            <button class="ghost" on:click=unselect_shown>"取消当前"</button>
                                             <span class="muted small">
                                                 {move || {
                                                     let total = pulled.get().len();
                                                     let shown = filter_catalog(
-                                                            &pulled.get_untracked(),
+                                                            &visible_catalog(),
                                                             &pull_filter.get_untracked(),
                                                             SHOW_LIMIT,
                                                         )
@@ -1056,7 +1069,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     // 所有勾过的名字（含 auto 这类不在清单里的），于是「勾了 2 个」
                                                     // 会显示成「认 3 个」（用户 2026-10-18 报的）。
                                                     let shown_names = filter_catalog(
-                                                        &pulled.get_untracked(),
+                                                        &visible_catalog(),
                                                         &pull_filter.get_untracked(),
                                                         SHOW_LIMIT,
                                                     );
@@ -1098,7 +1111,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 // 结构性的东西：清单 + 过滤 + mver（勾/取消/加/删之后重排）。
                                                 // 打字**不**在这儿重排 —— 输入框在「详情」里，重排会丢焦点。
                                                 mver.get();
-                                                let catalog = pulled.get();
+                                                let catalog = visible_catalog();
                                                 let filter = pull_filter.get();
                                                 // 这份清单只放**上游报回来的名字**（用户 2026-10-18：
                                                 // 上游没有的名字不许混进来 —— 虚拟组名 auto 这类会让人
@@ -1129,14 +1142,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let n_ck = name.clone();
                                                         let n_add = name.clone();
                                                         let n_del_ck = name.clone();
-                                                        let n_del_btn = name.clone();
                                                         let n_open = name.clone();
                                                         let n_close_btn = name.clone();
                                                         let n_close_body = name.clone();
                                                         let n_field = name.clone();
                                                         let n_vis_ck = name.clone();
                                                         let n_vis_ch = name.clone();
-                                                        let n_drop = name.clone();
                                                         let n_test = name.clone();
                                                         let cur = f_models
                                                             .get_untracked()
@@ -1144,8 +1155,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                             .find(|m| m.model.trim() == name.trim());
                                                         let cur_up =
                                                             cur.as_ref().and_then(|m| m.upstream.clone()).unwrap_or_default();
-                                                        let cur_drop =
-                                                            cur.as_ref().map(|m| m.drop_fields.clone()).unwrap_or_default();
                                                         let open_me = move |_| {
                                                             if m_open.get_untracked().as_deref()
                                                                 == Some(n_open.as_str())
@@ -1272,9 +1281,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                     let n_field = n_field.clone();
                                                                     let n_vis_ck = n_vis_ck.clone();
                                                                     let n_vis_ch = n_vis_ch.clone();
-                                                                    let n_drop = n_drop.clone();
                                                                     let n_test = n_test.clone();
-                                                                    let n_del_btn = n_del_btn.clone();
                                                                     // 箭头右边那个名字要跟着输入框走 —— 用一个只更新
                                                                     // 这个文本节点的闭包，别让它把整块详情重排（会丢焦点）
                                                                     let map_field = n_field.clone();
@@ -1366,38 +1373,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                     _ => ().into_any(),
                                                                                 }
                                                                             }}
-                                                                            <label class="m-f">
-                                                                                <span>"要丢的字段"</span>
-                                                                                <input type="text" prop:value=cur_drop.clone()
-                                                                                    placeholder="留空 = 一个都不丢（如 reasoning_effort）"
-                                                                                    title="发上游之前跟这个模型名一起把这些字段删掉：有的上游收下参数却直接回 400（opencode 的 beam-free 不认 reasoning_effort），不删每次都会失败。多个用逗号分隔；只在顶层删，别的一个字节都不动。"
-                                                                                    on:input=move |ev| {
-                                                                                        let s = event_target_value(&ev);
-                                                                                        f_models
-                                                                                            .update(|v| {
-                                                                                                if let Some(x) = v
-                                                                                                    .iter_mut()
-                                                                                                    .find(|x| x.model.trim() == n_drop.trim())
-                                                                                                {
-                                                                                                    x.drop_fields = s;
-                                                                                                }
-                                                                                            });
-                                                                                    } />
-                                                                            </label>
-                                                                            <div class="m-actions">
-                                                                                <button class="ghost danger" on:click=move |_| {
-                                                                                    f_models
-                                                                                        .update(|v| {
-                                                                                            drop_mapping(v, &n_del_btn);
-                                                                                        });
-                                                                                    m_open.set(None);
-                                                                                    mver.update(|v| *v += 1);
-                                                                                    ctx.say("删掉了这一条 —— 记得点「保存」");
-                                                                                }>"删掉这一条"</button>
-                                                                                <span class="muted small">
-                                                                                    "取消后保存，该模型将不再使用。"
-                                                                                </span>
-                                                                            </div>
+
                                                                         </div>
                                                                     }.into_any()
                                                                 }}

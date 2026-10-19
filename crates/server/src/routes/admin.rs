@@ -851,6 +851,7 @@ async fn channel_catalog(
         "models": entries.iter().map(|e| e.model.clone()).collect::<Vec<_>>(),
         "info": entries.iter().map(|e| serde_json::json!({
             "id": e.model,
+            "kind": e.kind,
             "owned_by": e.owned_by,
             "context_window": e.context_window,
             "price_note": e.price_note,
