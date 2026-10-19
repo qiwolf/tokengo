@@ -1104,9 +1104,12 @@ async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(b
 async fn model_order_move(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<OrderMove>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::move_model(&c,&body.model,body.up)?;Ok(Json(serde_json::json!({"ok":true})))}
 #[derive(Deserialize)]struct CoolReset{model:Option<String>,channel_id:Option<i64>}
 async fn model_cooldowns(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{
- let c=state.conn();let mut st=c.prepare("SELECT DISTINCT model_name FROM model_cooldowns WHERE until_ms>0 OR lease_until>0").map_err(crate::db::DbError::from)?;
- let names=st.query_map([],|r|r.get::<_,String>(0)).map_err(crate::db::DbError::from)?.collect::<rusqlite::Result<Vec<_>>>().map_err(crate::db::DbError::from)?;
- let mut rows=Vec::new();for n in names{rows.extend(crate::db::policy::rows(&c,&n)?.into_iter().filter(|r|r.until_ms>0||r.lease_until>0));}
+ let c=state.conn();
+ // 表里存的是归一化后的名字（连字符/下划线都成了空格），面板上要看的是**真名**：
+ // 拿勾选过的模型名对一遍，对得上就换成真名（对不上就原样给，不能凭空造名字）。
+ let real:Vec<String>=crate::db::model_routes::list(&c)?.into_iter().map(|r|r.name).collect();
+ let mut rows=crate::db::policy::active(&c)?;
+ for r in rows.iter_mut(){if let Some(n)=real.iter().find(|x|tokengo_shared::same_model_name(x,&r.model)){r.model=n.clone();}}
  Ok(Json(serde_json::json!({"cooldowns":rows,"now_ms":now_ms()})))
 }
 async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{

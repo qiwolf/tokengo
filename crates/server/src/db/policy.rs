@@ -39,6 +39,12 @@ pub fn rows(c:&Connection,name:&str)->Result<Vec<Cooldown>>{
  let mut st=c.prepare("SELECT channel_id,model_name,upstream_model,failures,until_ms,reason,generation,lease_until FROM model_cooldowns WHERE model_name=?1")?;
  let r=st.query_map([norm(name)],|r|Ok(Cooldown{channel_id:r.get(0)?,model:r.get(1)?,upstream:r.get(2)?,failures:r.get(3)?,until_ms:r.get(4)?,reason:r.get(5)?,generation:r.get(6)?,lease_until:r.get(7)?}))?.collect::<rusqlite::Result<_>>()?;Ok(r)
 }
+/// 真正在冷却 / 恢复试用中的行（总览「模型冷却」用）。
+/// 这里**不再做名字归一化** —— 表里存的 model_name 本来就是归一化后的键。
+pub fn active(c:&Connection)->Result<Vec<Cooldown>>{
+ let mut st=c.prepare("SELECT channel_id,model_name,upstream_model,failures,until_ms,reason,generation,lease_until FROM model_cooldowns WHERE until_ms>0 OR lease_until>0")?;
+ let r=st.query_map([],|r|Ok(Cooldown{channel_id:r.get(0)?,model:r.get(1)?,upstream:r.get(2)?,failures:r.get(3)?,until_ms:r.get(4)?,reason:r.get(5)?,generation:r.get(6)?,lease_until:r.get(7)?}))?.collect::<rusqlite::Result<_>>()?;Ok(r)
+}
 pub fn delay(n:i64)->i64{match n{0|1=>15000,2=>60000,3=>300000,4=>900000,_=>1800000}}
 pub fn peek(c:&Connection,id:i64,name:&str,upstream:&str,now:i64)->Result<Option<i64>>{
  Ok(c.query_row("SELECT MAX(until_ms,lease_until) FROM model_cooldowns WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3",params![id,norm(name),upstream],|r|r.get::<_,i64>(0)).optional()?.filter(|t|*t>now))

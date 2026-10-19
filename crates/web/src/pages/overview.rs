@@ -313,7 +313,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                             let model=r.model.clone();let id=r.channel_id;
                             let remaining=(r.until_ms-cooldown_now.get()).max(0);
                             let status=if r.lease_until>cooldown_now.get(){"恢复试用中".to_string()}else if remaining>0{format!("剩余 {}",fmt::span(remaining))}else{"等待恢复试用".into()};
-                            view!{<article class="metric-card cooldown-card"><div class="metric-head"><b>{r.model}</b><button disabled=move ||clear_busy.get() on:click=move |_|clear(Some(model.clone()),Some(id))>"解除冷却"</button></div><div class="cooldown-facts"><span>{format!("渠道：{}",channel_name(Some(id)))}</span><span class="tag">{status}</span><span>{format!("连续失败：{}",r.failures)}</span></div><p class="cooldown-reason">{r.reason}</p></article>}
+                            view!{<article class="metric-card cooldown-card"><div class="metric-head"><b>{r.model}</b><button disabled=move ||clear_busy.get() on:click=move |_|clear(Some(model.clone()),Some(id))>"解除冷却"</button></div><div class="cooldown-facts"><span>{format!("渠道：{}",channel_name(Some(id)))}</span><span>{format!("上游：{}",r.upstream)}</span><span class="tag">{status}</span><span>{format!("连续失败：{}",r.failures)}</span></div><p class="cooldown-reason">{r.reason}</p></article>}
                         }).collect_view().into_any()
                     }}</div>
                 </section>
