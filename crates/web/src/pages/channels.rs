@@ -751,7 +751,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         <span class="chan-id">
                                             "第 " {idx + 1} " 位"
                                         </span>
-                                        <b class="chan-name">{l.name.clone()}</b>
+                                        <b class="chan-name">{l.name.clone()}</b>{(!l.account_status.is_empty()).then(||view!{<span class="tag warn">{l.account_status.clone()}</span>})}
                                         <span class="spacer"></span>
                                         {
                                             let (cls, tip) = if l.enabled {

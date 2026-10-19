@@ -468,5 +468,6 @@ pub async fn set_context_override(channel:i64,model:&str,upstream:&str,tokens:Op
 
 pub async fn set_model_enabled(model:&str,enabled:bool)->Result<(),ApiErr>{call("PUT","/api/model-enabled",Some(json!({"model":model,"enabled":enabled}))).await.map(|_|())}
 
+pub async fn retry_account(channel_id:i64,model:String)->Result<(),ApiErr>{call("POST","/api/channel-faults/retry",Some(json!({"channel_id":channel_id,"model":model}))).await.map(|_|())}
 pub async fn model_cooldowns()->Result<crate::model::CooldownsResp,ApiErr>{let v=call("GET","/api/model-cooldowns",None).await?;serde_json::from_value(v).map_err(|e|ApiErr{status:0,message:e.to_string()})}
 pub async fn clear_cooldowns(model:Option<String>,channel_id:Option<i64>)->Result<(),ApiErr>{call("POST","/api/model-cooldown/reset",Some(json!({"model":model,"channel_id":channel_id}))).await.map(|_|())}

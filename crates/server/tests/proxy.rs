@@ -42,6 +42,7 @@ enum Reply {
     /// 先睡一会儿再回 200 —— 用来测"客户端中途断开"
     Slow(u64),
     /// 先睡一会儿再回**正经内容**（量并发用它：`Slow` 回的是空 choices，会被当成空回复重试）
+    ConcurrentOk(Arc<tokio::sync::Barrier>),
     SlowOk(u64),
     /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
     SawRed,
@@ -170,6 +171,10 @@ async fn mock_handler(
             "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
         }))
         .into_response(),
+        Reply::ConcurrentOk(barrier) => {
+            tokio::time::timeout(std::time::Duration::from_secs(5),barrier.wait()).await.expect("all ungated requests must reach upstream together");
+            axum::Json(json!({"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}})).into_response()
+        }
         Reply::SlowOk(ms) => {
             tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
             axum::Json(json!({
@@ -3011,7 +3016,8 @@ async fn a_channel_cap_queues_instead_of_stampeding_the_upstream() {
 async fn without_a_cap_requests_are_not_gated() {
     let f = fixture();
     f.with_key();
-    let m = start_mock(Reply::SlowOk(120)).await;
+    // Synchronize arrivals rather than assuming authentication fits a 120ms sleep window.
+    let m = start_mock(Reply::ConcurrentOk(Arc::new(tokio::sync::Barrier::new(4)))).await;
     let ch = f.add_channel("不限", &m.base, ChannelSpec::default());
     f.serve("mock-chat", &[ch]);
 
@@ -3906,4 +3912,54 @@ async fn usage_stream_chunks_preserve_partial_on_cancel_and_failure() {
         assert_eq!(stats.usage.unknown_requests,i64::from(mode!=0));
         assert_eq!(m.count(),1);
     }
+}
+
+// Account faults use real HTTP responses, not a mocked classifier.
+#[tokio::test]
+async fn explicit_account_fault_switches_once_and_pauses_all_models() {
+ for (status,code) in [(400,"insufficient_balance"),(402,"insufficient_balance"),(401,"invalid_api_key"),(429,"account_quota_exhausted")] {
+    let f=fixture();f.with_key();
+    let text=match code {"invalid_api_key"=>r#"{"error":{"code":"invalid_api_key"}}"#,"account_quota_exhausted"=>r#"{"error":{"code":"account_quota_exhausted"}}"#,_=>r#"{"error":{"code":"insufficient_balance"}}"#};
+    let bad=start_mock(Reply::Status(status,text)).await;let good=start_mock(Reply::Ok).await;
+    let a=f.add_channel("bad",&bad.base,ChannelSpec::default());let b=f.add_channel("good",&good.base,ChannelSpec::default());
+    f.serve("mock-chat",&[a,b]);
+    for id in [a,b]{tokengo_server::db::channels::set_models(&f.state.conn(),id,&["mock-chat","other-chat"].map(|n|tokengo_server::db::channels::ModelMapping::new(n,None,false))).unwrap();}
+    let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(s,StatusCode::OK);assert_eq!(bad.count(),1);
+    let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"other-chat","messages":[]})).await;
+    assert_eq!(s,StatusCode::OK);assert_eq!(bad.count(),1);
+    let c=f.state.conn();assert_eq!(tokengo_server::db::faults::rows(&c).unwrap().len(),1);
+    assert_eq!(tokengo_server::db::channels::get(&c,a).unwrap().unwrap().enabled,true);
+    assert_eq!(tokengo_server::db::policy::rows(&c,"mock-chat").unwrap().iter().find(|r|r.channel_id==a.0).unwrap().failures,0);
+ }
+}
+#[tokio::test]
+async fn model_permission_fault_does_not_pause_other_models() {
+ let f=fixture();f.with_key();let bad=start_mock(Reply::Status(403,r#"{"error":{"code":"model_access_denied"}}"#)).await;let good=start_mock(Reply::Ok).await;
+ let a=f.add_channel("a",&bad.base,ChannelSpec::default());let b=f.add_channel("b",&good.base,ChannelSpec::default());f.serve("mock-chat",&[a,b]);
+ for id in [a,b]{tokengo_server::db::channels::set_models(&f.state.conn(),id,&["mock-chat","other"].map(|n|tokengo_server::db::channels::ModelMapping::new(n,None,false))).unwrap();}
+ assert_eq!(post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await.0,StatusCode::OK);
+ assert_eq!(post(&f,CHAT,Some(KEY),json!({"model":"other","messages":[]})).await.0,StatusCode::OK);
+ assert_eq!(bad.count(),2);
+}
+#[tokio::test]
+async fn ambiguous_payment_error_is_not_an_account_fault() {
+ let f=fixture();f.with_key();let bad=start_mock(Reply::Status(402,r#"{"error":{"message":"余额不足 maybe"}}"#)).await;let good=start_mock(Reply::Ok).await;
+ let a=f.add_channel("a",&bad.base,ChannelSpec::default());let b=f.add_channel("b",&good.base,ChannelSpec::default());f.serve("mock-chat",&[a,b]);
+ assert_eq!(post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await.0.as_u16(),402);
+ assert_eq!(good.count(),0);assert!(tokengo_server::db::faults::rows(&f.state.conn()).unwrap().is_empty());
+}
+#[tokio::test]
+async fn account_trial_is_single_and_only_success_clears_pause() {
+ let f=fixture();f.with_key();let bad=start_mock(Reply::Status(401,r#"{"error":{"code":"invalid_api_key"}}"#)).await;let good=start_mock(Reply::Ok).await;
+ let a=f.add_channel("a",&bad.base,ChannelSpec::default());f.serve("mock-chat",&[a]);
+ let _=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+ assert_eq!(bad.count(),1);
+ assert_eq!(post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await.0,StatusCode::SERVICE_UNAVAILABLE);
+ tokengo_server::db::faults::retry(&f.state.conn(),a.0,"").unwrap();
+ let _=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+ assert_eq!(bad.count(),2);assert!(!tokengo_server::db::faults::rows(&f.state.conn()).unwrap()[0].ready);
+ f.fix_channel(a,&good.base);
+ assert_eq!(post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await.0,StatusCode::OK);
+ assert!(tokengo_server::db::faults::rows(&f.state.conn()).unwrap().is_empty());
 }

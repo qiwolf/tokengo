@@ -61,6 +61,7 @@ pub struct Channel {
     pub base_url: String,
     pub enabled: bool,
     pub has_secret: bool,
+    #[serde(default)] pub account_status:String,
     /// 非流式响应外面套了一层壳时自动剥掉（面板上的「响应解包」勾选）。
     #[serde(default)]
     pub unwrap_envelope: bool,
@@ -722,4 +723,5 @@ pub struct LogLevel {
 
 fn model_enabled_default()->bool{true}
 
-#[derive(Debug,Clone,Default,Deserialize)]pub struct CooldownsResp{pub cooldowns:Vec<ModelCooldown>,pub now_ms:i64}
+#[derive(Debug,Clone,Default,Deserialize)]pub struct CooldownsResp{pub cooldowns:Vec<ModelCooldown>,pub now_ms:i64,#[serde(default)]pub faults:Vec<AccountFault>}
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]pub struct AccountFault{pub channel_id:i64,pub model:String,pub kind:String,pub reason:String,pub occurred_ms:i64,pub retry_at:i64,pub ready:bool,pub lease_until:i64}

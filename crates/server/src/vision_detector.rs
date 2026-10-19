@@ -29,6 +29,7 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
             if route.kind!=ModelKind::Chat || route.kind_conflict {continue;}
             for mut channel in model_routes::channels_for(&conn,&route.name)? {
                 let Some(row)=channels::get(&conn,channel.id)? else{continue};
+                if crate::db::faults::has_fault(&conn,channel.id.0,Some(&route.name))? {continue;}
                 let fp=fingerprint(&row);
                 let old=conn.query_row("SELECT fingerprint,tries,next_at,status FROM model_vision_checks WHERE channel_id=?1 AND model_name=?2",rusqlite::params![channel.id.0,route.name],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,String>(3)?))).ok();
                 let tries=match old {

@@ -41,6 +41,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
             if r.kind.is_set() || r.kind_conflict { continue; }
             for id in r.channels {
                 let Some(row) = channels::get(&conn,id)? else { continue; };
+                if crate::db::faults::has_fault(&conn,id.0,Some(&r.name))? {continue;}
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 format!("{:?}",row).hash(&mut hasher);
                 let fingerprint = hasher.finish().to_string();

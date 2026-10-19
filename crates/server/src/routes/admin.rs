@@ -83,6 +83,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/auto-policy", get(auto_policy_get).put(auto_policy_save))
         .route("/model-order/move", post(model_order_move))
         .route("/model-enabled", put(model_enabled_save))
+        .route("/channel-faults/retry", post(channel_fault_retry))
         .route("/model-cooldowns", get(model_cooldowns))
         .route("/model-cooldown/reset", post(model_cooldown_reset))
         .route("/models/{name}/kind", put(models_set_kind))
@@ -289,13 +290,14 @@ async fn auth_change_password(
 
 // ───────────────────────── 渠道 ─────────────────────────
 
-fn channel_json(l: &channels::ChannelRow) -> serde_json::Value {
+fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json::Value {
     serde_json::json!({
         "id": l.id.0,
         "name": l.name,
         "base_url": l.base_url,
         "enabled": l.enabled,
         "has_secret": l.has_secret,
+        "account_status": crate::db::faults::rows(c).unwrap_or_default().into_iter().find(|r|r.channel_id==l.id.0 && r.model.is_empty()).map(|r|if r.ready {"等待恢复试用".to_string()}else if r.lease_until>now_ms(){"恢复试用中".into()}else{r.reason}).unwrap_or_default(),
         "unwrap_envelope": l.unwrap_envelope,
         "max_concurrent": l.max_concurrent,
         // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
@@ -319,7 +321,7 @@ async fn channels_list(
     let conn = state.conn();
     let all = channels::list(&conn)?;
     Ok(Json(serde_json::json!({
-        "channels": all.iter().map(channel_json).collect::<Vec<_>>()
+        "channels": all.iter().map(|l|channel_json(&conn,l)).collect::<Vec<_>>()
     })))
 }
 
@@ -458,7 +460,7 @@ async fn channels_create(
     tracing::info!("新建渠道 {id}：{}", body.name);
 
     let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::internal("刚建的渠道读不回来"))?;
-    Ok(Json(channel_json(&l)))
+    Ok(Json(channel_json(&conn,&l)))
 }
 
 async fn channels_update(
@@ -499,7 +501,7 @@ async fn channels_update(
     tracing::info!("更新渠道 {id}：{}", body.name);
 
     let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::not_found(format!("渠道 {id} 不存在")))?;
-    Ok(Json(channel_json(&l)))
+    Ok(Json(channel_json(&conn,&l)))
 }
 
 async fn channels_delete(
@@ -1147,7 +1149,12 @@ async fn model_cooldowns(_auth:PanelAuth,State(state):State<SharedState>)->Resul
  let real:Vec<String>=crate::db::model_routes::list(&c)?.into_iter().map(|r|r.name).collect();
  let mut rows=crate::db::policy::active(&c)?;
  for r in rows.iter_mut(){if let Some(n)=real.iter().find(|x|tokengo_shared::same_model_name(x,&r.model)){r.model=n.clone();}}
- Ok(Json(serde_json::json!({"cooldowns":rows,"now_ms":now_ms()})))
+ Ok(Json(serde_json::json!({"cooldowns":rows,"faults":crate::db::faults::rows(&c)?,"now_ms":now_ms()})))
+}
+#[derive(Deserialize)]struct FaultRetry{channel_id:i64,#[serde(default)]model:String}
+async fn channel_fault_retry(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<FaultRetry>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();crate::db::in_tx(&c,|c|crate::db::faults::retry(c,body.channel_id,&body.model))?;
+ Ok(Json(serde_json::json!({"ok":true})))
 }
 async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();if let Some(name)=body.model {crate::db::policy::reset(&c,&name,body.channel_id).map_err(crate::db::DbError::from)?;} else {

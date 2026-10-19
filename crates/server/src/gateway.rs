@@ -106,6 +106,7 @@ pub struct ForwardRequest {
 struct Candidate {
     name: String,
     channel: Channel,
+    revision: i64,
 }
 
 /// 这次请求要试的候选链（已按顺序排好）+ 各自的密钥。
@@ -152,7 +153,8 @@ fn push_entry(
     if channel.max_concurrent > 0 {
         plan.caps.insert(channel.id.0, channel.max_concurrent);
     }
-    plan.entries.push(Candidate { name, channel });
+    let revision=crate::db::faults::revision(conn,channel.id.0)?;
+    plan.entries.push(Candidate { name, channel, revision });
     Ok(())
 }
 
@@ -235,6 +237,9 @@ fn load_auto_plan(
         return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY,"no_vision_model","这条请求带了图片，但没有符合视觉能力的候选模型"));
     }
     if candidates.is_empty() {
+        if !crate::db::faults::rows(conn)?.is_empty() {
+            return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling","暂无可用候选，存在账号或权限暂停，请在总览“调用异常”查看"));
+        }
         let msg = if model_routes::auto_available(conn)? {
             format!(
                 "「{model}」现在没有可挑的模型：你勾选过的模型里没有「{}」这一类的。\
@@ -268,7 +273,7 @@ fn load_auto_plan(
     }
     if plan.entries.is_empty() {
         let until=model_routes::list(conn)?.iter().flat_map(|r|crate::db::policy::rows(conn,&r.name).unwrap_or_default()).map(|r|r.until_ms.max(r.lease_until)).filter(|t|*t>now_ms()).min();
-        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",format!("暂无可用模型，候选均在冷却；最早可重试时间：{}",until.map(|t|t.to_string()).unwrap_or_else(||"稍后".into()))));
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",format!("暂无可用模型，候选冷却或账号暂停；最早可重试时间：{}",until.map(|t|t.to_string()).unwrap_or_else(||"稍后".into()))));
     }
     Ok(plan)
 }
@@ -429,7 +434,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let mut busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
 
     'channels: for entry_idx in order.iter().copied() {
-        let Some(Candidate { name, channel }) = plan.entries.get(entry_idx) else {
+        let Some(Candidate { name, channel, revision }) = plan.entries.get(entry_idx) else {
             continue;
         };
         // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
@@ -446,14 +451,16 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 },
             },
         };
+        let account={let c=state.conn();crate::db::faults::claim(&c,channel.id.0,name,*revision,now_ms())?};
+        let Some(account)=account else {continue;};
         let sent=channel.upstream_model(name);
         let generation={let c=state.conn();crate::db::policy::claim(&c,channel.id.0,name,sent,now_ms())?};
-        let Some(generation)=generation else {continue;};
+        let Some(generation)=generation else {let c=state.conn();crate::db::faults::release(&c,&account)?;continue;};
         let load_ticket=match plan.load_ticket.take(){Some((n,t)) if tokengo_shared::same_model_name(&n,name)=>t,other=>{drop(other);state.model_loads.acquire(name)}};
         // 冷到期的恢复试用只放一条：失败就进下一级冷却，不再连试三次。
         let recovering={let c=state.conn();crate::db::policy::rows(&c,name)?.iter().any(|r|r.channel_id==channel.id.0 && r.upstream==sent && r.lease_until>0)};
-        let max_attempts=if recovering {1} else {cfg.max_attempts().min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
-        let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false};
+        let max_attempts=if recovering || account.recovering() {1} else {cfg.max_attempts().min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
+        let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false,account};
         tried_any = true;
         last_channel = channel.id;
         // 这一发送给上游的名字：按**这个候选名**在这条渠道上查别名
@@ -515,6 +522,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 return Ok(gateway_timeout(&plan, &req.model));
             }
 
+            if !crate::db::faults::current(&state.conn(),&cooldown.account)? {break;}
             guard.note_served(name);
             guard.channel_id = Some(channel.id.0);
             state.enqueue_write(crate::state::WriteJob::Progress(requests::ProgressArgs {
@@ -642,6 +650,14 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
                     // 不许把整条链路打断）
                     let err = read_error(resp).await;
+                    if let Some(fault)=crate::db::faults::classify(status,&err.body) {
+                        let reason=fault.label();
+                        cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
+                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
+                        ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
+                        continue 'channels;
+                    }
+
                     guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
                         record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
@@ -689,6 +705,14 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 }
                 AttemptOutcome::ChannelFault => {
                     let err = read_error(resp).await;
+                    if let Some(fault)=crate::db::faults::classify(status,&err.body) {
+                        let reason=fault.label();
+                        cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
+                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
+                        ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
+                        continue 'channels;
+                    }
+
                     guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     let after = err
                         .retry_after
@@ -782,7 +806,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let c=state.conn();
         let until=model_routes::list(&c)?.iter().flat_map(|r|crate::db::policy::rows(&c,&r.name).unwrap_or_default()).map(|r|r.until_ms.max(r.lease_until)).filter(|t|*t>now_ms()).min();
         drop(c);
-        let msg=format!("候选冷却或恢复试用中，请稍后重试{}",until.map(|t|format!("（最早可重试时间：{t}）")).unwrap_or_default());
+        let msg=format!("候选冷却、账号暂停或恢复试用中，请在总览“调用异常”查看{}",until.map(|t|format!("（最早可重试时间：{t}）")).unwrap_or_default());
         guard.error_code=Some("models_cooling".into());
         guard.finish(&state,Status::Failed,Some(503),None,started_ms,None,0,0,false,Some(&msg));
         return Ok(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",msg).into_response());
@@ -890,11 +914,25 @@ fn no_vision_model_response(message: String) -> Response {
 
 /// 记一次尝试。**记账失败不许把请求带崩**：抢不到库锁就把这一件丢给后台落账员，
 /// 日志里有痕迹就行。
-struct CooldownTicket {state:SharedState,id:i64,name:String,upstream:String,generation:i64,done:bool}
+struct CooldownTicket {state:SharedState,id:i64,name:String,upstream:String,generation:i64,done:bool,account:crate::db::faults::Permit}
 impl CooldownTicket {
+    fn suspend(&mut self,fault:crate::db::faults::Fault,reason:&str,retry:Option<u64>)->Result<(),ApiError>{
+        let c=self.state.conn();
+        if !crate::db::faults::current(&c,&self.account)? {return Ok(());}
+        crate::db::faults::suspend(&c,&self.account,&self.name,fault,reason,now_ms())?;
+        if fault==crate::db::faults::Fault::Quota {if let Some(ms)=retry{crate::db::faults::defer_quota(&c,self.id,now_ms(),ms)?;}}
+        crate::db::policy::release(&c,self.id,&self.name,&self.upstream,self.generation)?;
+        crate::db::faults::complete(&c,&self.account,false)?;
+        self.done=true;Ok(())
+    }
     fn failure(&mut self,reason:&str,retry:i64)->bool {
         if self.done {return true;}
         let c=self.state.conn();
+        if self.account.recovering(){
+            if let Err(e)=crate::db::faults::complete(&c,&self.account,false){tracing::warn!("账号恢复记录失败：{e}");}
+            let _=crate::db::policy::release(&c,self.id,&self.name,&self.upstream,self.generation);
+            self.done=true;return true;
+        }
         let min=if reason.contains("HTTP 401:")||reason.contains("HTTP 403:"){1800000}else{retry};
         if let Err(e)=crate::db::policy::complete(&c,self.id,&self.name,&self.upstream,self.generation,false,reason,min,now_ms()){tracing::warn!("冷却记录失败：{e}");}
         let cooling=crate::db::policy::peek(&c,self.id,&self.name,&self.upstream,now_ms()).ok().flatten().is_some();
@@ -906,10 +944,11 @@ impl CooldownTicket {
         if self.done{return;}
         self.done=true;
         let c=self.state.conn();
+        if let Err(e)=crate::db::faults::complete(&c,&self.account,true){tracing::warn!("账号恢复记录失败：{e}");}
         if let Err(e)=crate::db::policy::complete(&c,self.id,&self.name,&self.upstream,self.generation,true,"",0,now_ms()){tracing::warn!("冷却记录失败：{e}");}
     }
 }
-impl Drop for CooldownTicket {fn drop(&mut self){if !self.done{let c=self.state.conn();let _=crate::db::policy::release(&c,self.id,&self.name,&self.upstream,self.generation);}}}
+impl Drop for CooldownTicket {fn drop(&mut self){if !self.done{let c=self.state.conn();let _=crate::db::policy::release(&c,self.id,&self.name,&self.upstream,self.generation);let _=crate::db::faults::release(&c,&self.account);}}}
 
 fn record_attempt(
     state: &SharedState,

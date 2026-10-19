@@ -55,7 +55,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
         )?;
         let mut job = None;
         for row in channels::list(&conn)? {
-            if !row.enabled || row.base_url.trim().is_empty() || row.models.is_empty() {
+            if !row.enabled || row.base_url.trim().is_empty() || row.models.is_empty() || crate::db::faults::has_fault(&conn,row.id.0,None)? {
                 continue;
             }
             let fp = fingerprint(&conn, &row)?;

@@ -92,7 +92,7 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
     let loaded = {
         let conn = state.conn();
         let channels_all = model_routes::channels_for(&conn, name).unwrap_or_default();
-        let Some(mut primary) = channels_all.into_iter().find(|l| l.routable()) else {
+        let Some(mut primary) = channels_all.into_iter().find(|l| l.routable() && !crate::db::faults::has_fault(&conn,l.id.0,Some(name)).unwrap_or(true)) else {
             return ProbeResult {
                 model: name.to_string(),
                 channel: ChannelId(0),
@@ -126,7 +126,7 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
         model_routes::channels_for(&conn, name)
             .unwrap_or_default()
             .into_iter()
-            .filter(|l| l.routable())
+            .filter(|l| l.routable() && !crate::db::faults::has_fault(&conn,l.id.0,Some(name)).unwrap_or(true))
             .map(|l| l.id)
             .collect()
     };

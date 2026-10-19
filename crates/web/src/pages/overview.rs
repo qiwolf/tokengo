@@ -20,6 +20,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let cooling=RwSignal::new(Vec::<crate::model::ModelCooldown>::new());
+    let faults=RwSignal::new(Vec::<crate::model::AccountFault>::new());
     let cooldown_now=RwSignal::new(0i64);
     let clear_busy=RwSignal::new(false);
     let category = RwSignal::new(0usize);
@@ -56,7 +57,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 Ok(v) => channels.set(v),
                 Err(e) => ctx.note_err(&e),
             }
-            if let Ok(r)=api::model_cooldowns().await {cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);}
+            if let Ok(r)=api::model_cooldowns().await {faults.set(r.faults);cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);}
             busy.set(false);
         });
     };
@@ -94,7 +95,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             if selected==0 {
                 match api::logs(12).await { Ok(v)=>recent.set(v),Err(e)=>ctx.note_err(&e) }
             } else if selected==5 {
-                match api::model_cooldowns().await {Ok(r)=>{cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);},Err(e)=>ctx.note_err(&e)}
+                match api::model_cooldowns().await {Ok(r)=>{faults.set(r.faults);cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);},Err(e)=>ctx.note_err(&e)}
             } else {
                 match api::stats(window).await { Ok(v)=>stats.set(v),Err(e)=>ctx.note_err(&e) }
             }
@@ -109,6 +110,12 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             match api::clear_cooldowns(model,id).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}
             clear_busy.set(false);
         });
+    };
+    let retry_account=move |id:i64,model:String|{
+        if clear_busy.get_untracked(){return;}
+        if !web_sys::window().and_then(|w|w.confirm_with_message("允许下一条真实调用恢复试用？").ok()).unwrap_or(false){return;}
+        clear_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move{match api::retry_account(id,model).await{Ok(())=>reload(),Err(e)=>ctx.say(e.message)}clear_busy.set(false);});
     };
     let refresh_timer = crate::every(5000, refresh_active);
     on_cleanup(move || crate::stop_timer(refresh_timer));
@@ -190,7 +197,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             </div>
 
             <nav class="overview-tabs" aria-label="总览分类">
-                {["最近调用","按类型","按渠道","按模型","按客户端","模型冷却"].into_iter().enumerate().map(|(i,label)| view! {
+                {["最近调用","按类型","按渠道","按模型","按客户端","调用异常"].into_iter().enumerate().map(|(i,label)| view! {
                     <button class:active=move || category.get()==i aria-pressed=move || category.get()==i on:click=move |_| {category.set(i); refresh_active();}>{label}</button>
                 }).collect_view()}
             </nav>
@@ -260,7 +267,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             </Show>
             <Show when=move || {category.get()>0 && category.get()<5}>
                 <section class="card overview-breakdown">
-                    <header class="card-head"><h2>{move || ["最近调用","按类型","按渠道","按模型","按客户端","模型冷却"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
+                    <header class="card-head"><h2>{move || ["最近调用","按类型","按渠道","按模型","按客户端","调用异常"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
                     <div class="metric-list">
                     {move || {
                         let st=stats.get().stats;
@@ -281,6 +288,18 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </section>
             </Show>
             <Show when=move || category.get()==5>
+                <section class="card overview-account-faults">
+                    <header class="card-head"><h2>"账号与权限异常"</h2></header>
+                    <div class="metric-list">{move ||{
+                        let rows=faults.get();
+                        if rows.is_empty(){return view!{<div class="empty">"暂无账号异常"</div>}.into_any();}
+                        rows.into_iter().map(|r|{
+                            let id=r.channel_id;let model=r.model.clone();
+                            let status=if r.lease_until>cooldown_now.get(){"恢复试用中"}else if r.ready{"等待恢复试用"}else{"已暂停"};
+                            view!{<article class="metric-card cooldown-card"><div class="metric-head"><b>{channel_name(Some(id))}</b><button disabled=move ||clear_busy.get() on:click=move |_|retry_account(id,model.clone())>"恢复试用"</button></div><div class="cooldown-facts"><span class="tag">{r.reason}</span><span>{status}</span><span>{if r.model.is_empty(){"整个渠道".to_string()}else{format!("模型：{}",r.model)}}</span><span>{fmt::ts(r.occurred_ms)}</span></div></article>}
+                        }).collect_view().into_any()
+                    }}</div>
+                </section>
                 <section class="card overview-cooldowns">
                     <header class="card-head"><h2>"模型冷却"</h2><span class="spacer"></span><button disabled=move ||clear_busy.get() ||cooling.get().is_empty() on:click=move |_|clear(None,None)>"解除全部"</button></header>
                     <div class="metric-list">{move ||{

@@ -118,7 +118,7 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
             if !r.declared_by.contains(&l.id) {
                 r.declared_by.push(l.id);
             }
-            if usable(l) {
+            if usable(l) && !super::faults::blocked(conn,l.id.0,raw,super::now_ms())? {
                 if !r.channels.contains(&l.id) {
                     r.channels.push(l.id);
                 }

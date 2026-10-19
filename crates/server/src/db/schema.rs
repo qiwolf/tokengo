@@ -389,4 +389,42 @@ DELETE FROM settings WHERE key IN ('gateway_key_hash','gateway_key_sealed');
 ALTER TABLE requests ADD COLUMN output_tokens_known INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE requests ADD COLUMN usage_source TEXT NOT NULL DEFAULT 'legacy';
 UPDATE requests SET input_tokens_known=(input_tokens>0), output_tokens_known=(output_tokens>0);"),
+    (24, r#"
+ALTER TABLE channels ADD COLUMN fault_revision INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE channel_faults (
+ channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+ model TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, reason TEXT NOT NULL,
+ occurred_ms INTEGER NOT NULL, revision INTEGER NOT NULL,
+ retry_at INTEGER NOT NULL DEFAULT 0, ready INTEGER NOT NULL DEFAULT 0,
+ lease_until INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(channel_id,model));
+CREATE TRIGGER fault_config_url AFTER UPDATE OF base_url ON channels WHEN OLD.base_url<>NEW.base_url BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=NEW.id;
+ UPDATE channel_faults SET revision=NEW.fault_revision+1,ready=1,lease_until=0,generation=generation+1 WHERE channel_id=NEW.id;
+END;
+CREATE TRIGGER fault_secret_insert AFTER INSERT ON channel_secrets BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=NEW.channel_id;
+ UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=NEW.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=NEW.channel_id;
+END;
+CREATE TRIGGER fault_secret_update AFTER UPDATE ON channel_secrets BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=NEW.channel_id;
+ UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=NEW.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=NEW.channel_id;
+END;
+CREATE TRIGGER fault_secret_delete AFTER DELETE ON channel_secrets BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=OLD.channel_id;
+ UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=OLD.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=OLD.channel_id;
+END;
+CREATE TRIGGER fault_header_insert AFTER INSERT ON channel_headers BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=NEW.channel_id;
+ UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=NEW.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=NEW.channel_id;
+END;
+CREATE TRIGGER fault_header_update AFTER UPDATE ON channel_headers BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=NEW.channel_id;
+ UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=NEW.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=NEW.channel_id;
+END;
+CREATE TRIGGER fault_header_delete AFTER DELETE ON channel_headers BEGIN
+ UPDATE channels SET fault_revision=fault_revision+1 WHERE id=OLD.channel_id;
+ UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=OLD.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=OLD.channel_id;
+END;
+"#),
 ];

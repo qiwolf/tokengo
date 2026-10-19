@@ -1005,3 +1005,18 @@ async fn custom_headers_are_sealed_masked_and_preserved() {
     let (s, _) = send(test_app(&f),"PUT",&path,Some(&token),Some(body)).await;
     assert_eq!(s,StatusCode::BAD_REQUEST, "a mask must never become a secret");
 }
+
+#[tokio::test]
+async fn account_fault_api_is_authenticated_and_keeps_configuration() {
+ let f=fixture();let t=panel_token(&f).await;
+ let (s,v)=send(test_app(&f),"POST","/api/channels",Some(&t),Some(json!({"name":"test","base_url":"http://127.0.0.1:1/v1","enabled":true,"models":[{"model":"test"}]}))).await;assert_eq!(s,StatusCode::OK,"{v}");let id=v["id"].as_i64().unwrap();
+ {let c=f.state.conn();let p=tokengo_server::db::faults::claim(&c,id,"test",0,0).unwrap().unwrap();tokengo_server::db::faults::suspend(&c,&p,"test",tokengo_server::db::faults::Fault::Balance,"余额不足",1).unwrap();}
+ assert_eq!(send(test_app(&f),"POST","/api/channel-faults/retry",None,Some(json!({"channel_id":id}))).await.0,StatusCode::UNAUTHORIZED);
+ let (_,v)=send(test_app(&f),"GET","/api/model-cooldowns",Some(&t),None).await;assert_eq!(v["faults"][0]["reason"],"余额不足");
+ let (_,v)=send(test_app(&f),"GET","/api/channels",Some(&t),None).await;assert_eq!(v["channels"][0]["account_status"],"余额不足");assert_eq!(v["channels"][0]["enabled"],true);
+ let (_,v)=send(test_app(&f),"GET","/api/model-routes",Some(&t),None).await;assert_eq!(v["models"][0]["routed"],false);
+ assert_eq!(send(test_app(&f),"POST","/api/model-cooldown/reset",Some(&t),Some(json!({}))).await.0,StatusCode::OK);
+ assert!(!tokengo_server::db::faults::rows(&f.state.conn()).unwrap()[0].ready);
+ assert_eq!(send(test_app(&f),"POST","/api/channel-faults/retry",Some(&t),Some(json!({"channel_id":id}))).await.0,StatusCode::OK);
+ assert!(tokengo_server::db::faults::rows(&f.state.conn()).unwrap()[0].ready);
+}

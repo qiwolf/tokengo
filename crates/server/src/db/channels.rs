@@ -272,6 +272,7 @@ pub fn reorder(conn: &Connection, id: ChannelId, up: bool) -> Result<()> {
 
 /// 存密钥（加密）。明文只在内存里过一下，绝不落库、绝不回显。
 pub fn set_secret(conn: &Connection, sb: &SecretBox, id: ChannelId, plaintext: &str) -> Result<()> {
+    if secret(conn,sb,id)?.as_deref()==Some(plaintext){return Ok(());}
     let (nonce, cipher) = sb
         .seal(plaintext)
         .map_err(|e| DbError::Other(e.to_string()))?;
@@ -345,6 +346,7 @@ pub fn headers(conn: &Connection, sb: &SecretBox, id: ChannelId) -> Result<Vec<(
 
 /// 整体替换一条渠道的请求头（面板保存时用）。
 pub fn set_headers(conn: &Connection, sb: &SecretBox, id: ChannelId, headers: &[(String, String)]) -> Result<()> {
+    if self::headers(conn,sb,id)? == headers { return Ok(()); }
     conn.execute("DELETE FROM channel_headers WHERE channel_id = ?1", [id.0])?;
     for (ord, (name, value)) in headers.iter().enumerate() {
         let value = seal_header(sb, value)?;
