@@ -650,9 +650,25 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     return Ok(resp);
                 }
                 AttemptOutcome::ClientFault => {
-                    // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
-                    // 不许把整条链路打断）
-                    let err = read_error(resp).await;
+                    // 完整客户端错误原样返回；错误正文不可读属于渠道故障，可以切换。
+                    let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
+                        .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
+                    let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
+                        Ok(err) => err,
+                        Err(note) => {
+                            let elapsed = now_ms() - t0;
+                            slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                "channel_fault", Some(status), elapsed, Some(&note));
+                            ordinal += 1;
+                            last_fault = Some(format!("{}：{note}", channel.name));
+                            // No complete HTTP error is available to pass through. A previous
+                            // candidate's error must not mask this transport/protocol failure.
+                            last_http = None;
+                            if cooldown.failure(&note, pending_retry_ms) { break; }
+                            continue;
+                        }
+                    };
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
@@ -707,7 +723,24 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     return Ok(err.into_response());
                 }
                 AttemptOutcome::ChannelFault => {
-                    let err = read_error(resp).await;
+                    let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
+                        .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
+                    let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
+                        Ok(err) => err,
+                        Err(note) => {
+                            let elapsed = now_ms() - t0;
+                            slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                "channel_fault", Some(status), elapsed, Some(&note));
+                            ordinal += 1;
+                            last_fault = Some(format!("{}：{note}", channel.name));
+                            // No complete HTTP error is available to pass through. A previous
+                            // candidate's error must not mask this transport/protocol failure.
+                            last_http = None;
+                            if cooldown.failure(&note, pending_retry_ms) { break; }
+                            continue;
+                        }
+                    };
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
@@ -1288,23 +1321,47 @@ fn content_type(resp: &reqwest::Response) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 读一眼错误响应的正文（用于记账与日志），并保留能原样回给客户端的响应形状。
-async fn read_error(resp: reqwest::Response) -> UpstreamError {
+const MAX_ERROR_BODY: usize = 64 * 1024;
+
+/// Bound error reads before committing a client response; preserve complete errors verbatim.
+async fn read_error(
+    mut resp: reqwest::Response,
+    remaining: Duration,
+    idle_timeout: Duration,
+) -> Result<UpstreamError, String> {
+    if remaining.is_zero() {
+        return Err("upstream error body deadline exceeded".into());
+    }
     let status = resp.status();
     let ctype = content_type(&resp);
     let retry_after = resp.headers().get(header::RETRY_AFTER).cloned();
-    let body = resp.bytes().await.unwrap_or_default();
+    // Keep both limits: chunk activity cannot extend the original attempt or
+    // remaining request budget, and a stalled body cannot hold channel capacity.
+    let body = tokio::time::timeout(remaining, async {
+        let mut body = Vec::new();
+        loop {
+            let chunk = tokio::time::timeout(idle_timeout, resp.chunk()).await
+                .map_err(|_| "upstream error body idle timeout".to_string())?
+                .map_err(|_| "upstream error body read failed".to_string())?;
+            let Some(chunk) = chunk else { break; };
+            if chunk.len() > MAX_ERROR_BODY - body.len() {
+                return Err(format!("upstream error body exceeds {MAX_ERROR_BODY} bytes"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(Bytes::from(body))
+    }).await.map_err(|_| "upstream error body deadline exceeded".to_string())??;
     let text = String::from_utf8_lossy(&body)
         .chars()
         .take(400)
         .collect::<String>();
-    UpstreamError {
+    Ok(UpstreamError {
         status,
         ctype,
         retry_after,
         body,
         text,
-    }
+    })
 }
 
 /// 上游的一次错误响应。保留正文与 Content-Type，最后一条渠道失败时原样透给客户端
