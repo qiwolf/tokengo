@@ -132,6 +132,10 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
         super::catalog::list(conn, ch.id).map(|entries| (ch.id, entries))
     }).collect::<Result<HashMap<_, _>>>()?;
     for r in &mut out {
+        let policy = super::route_policy::load(conn, &r.name)?;
+        super::route_policy::order_ids(&policy, &mut r.channels);
+        r.vision_channels = chans.iter().filter(|c| r.channels.contains(&c.id))
+            .any(|c| c.models.iter().any(|m| same_model_name(&m.model, &r.name) && m.vision));
         let mut confirmed = Vec::new();
         let mut manual_used = false;
         let mut upstream_used = false;
@@ -250,6 +254,7 @@ pub fn channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
             headers: l.headers,
         });
     }
+    super::route_policy::order_channels(&super::route_policy::load(conn, name)?, &mut out);
     Ok(out)
 }
 
@@ -287,6 +292,7 @@ pub fn auto_candidates(
     let stats=super::scores::all(conn,now_ms)?;
     let mut scored:Vec<(String,f64,i64)>=Vec::new();
     for r in list(conn)? {
+        if super::route_policy::load(conn, &r.name)?.include_in_auto == Some(false) { continue; }
         if !r.routed() || !kind_serves(r.kind,want) || (want_vision && !r.can_see()) {continue;}
         let v=stats.get(&normalize_model_name(&r.name)).cloned().unwrap_or_default();
         scored.push((r.name,v.value(),v.avg_ms.unwrap_or(i64::MAX)));
@@ -300,7 +306,10 @@ pub fn auto_candidates(
 /// 用户口径：「勾选（指定）使用的模型为 0 时，客户端则不显示 auto 模型」——
 /// 所以对外清单里要不要列 auto，由它说了算。
 pub fn auto_available(conn: &Connection) -> Result<bool> {
-    Ok(list(conn)?.iter().any(|r| r.routed()))
+    for route in list(conn)? {
+        if route.routed() && super::route_policy::load(conn, &route.name)?.include_in_auto != Some(false) { return Ok(true); }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]

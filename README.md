@@ -2,6 +2,8 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
+Fork 开发分支已开始个人中转站改造：流式错误正文有界读取、逻辑模型映射、逐模型来源策略和稳定会话适配。接口与范围见[逻辑路由说明](docs/logical-routing.md)，持续集成见[CI说明](docs/ci.md)。下文版本说明保留上游 v0.34.0 基线；新功能尚未部署到现网。
+
 Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
 
 ## 中文使用指南

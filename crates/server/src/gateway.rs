@@ -90,6 +90,8 @@ impl EndpointKind {
 /// 一次转发的输入。
 pub struct ForwardRequest {
     pub session_namespace: String,
+    /// Validated explicit conversation identity resolved from inbound headers/body.
+    pub explicit_session: Option<String>,
     pub endpoint: EndpointKind,
     pub model: String,
     /// 原样的请求体（只改 `model` 一处，别的一个字节都不动）。
@@ -406,17 +408,29 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
 
-    let cfg = state.routing().cfg.clone();
+    let global_cfg = state.routing().cfg.clone();
+    let cfg = crate::db::route_policy::effective(&state.conn(), &plan.route, global_cfg)?;
     let attempt_ms = if req.stream { cfg.attempt_timeout_ms } else { cfg.nonstream_timeout_ms }.max(1);
     let attempt_timeout = Duration::from_millis(attempt_ms);
 
     // 同一段对话稳定不变的会话 ID（自定义头 `{{session_id}}` 用）。
     // **按客户端原样的请求体算一次**：改成上游的模型名之后再算，同一个客户端模型名
     // 落到不同渠道会得出不同的会话 ID，上游看到的就不再是"同一段对话"了。
-    let explicit = ["session_id", "conversation_id"].iter()
-        .find_map(|field| req.body.get(field).and_then(Value::as_str).filter(|id| !id.is_empty()))
-        .map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")));
-    let session = explicit.or_else(|| tokengo_shared::session_id_from_body(&req.body))
+    let explicit = req.explicit_session.as_deref().or_else(|| {
+        ["session_id", "conversation_id"].iter()
+            .find_map(|field| req.body.get(field).and_then(Value::as_str).filter(|id| !id.is_empty()))
+    });
+    let has_user = req.body.get("messages").and_then(Value::as_array)
+        .is_some_and(|messages| messages.iter().any(|message| message.get("role").and_then(Value::as_str) == Some("user")));
+    let needs_session = plan.entries.iter().any(|candidate| candidate.channel.headers.iter()
+        .any(|(_, value)| value.contains("{{session_id}}")));
+    if req.endpoint == EndpointKind::Chat && explicit.is_none() && !has_user && needs_session {
+        let note = "该渠道要求稳定会话 ID；没有原始 user 消息的请求必须提供显式会话 ID";
+        guard.finish(&state, Status::ClientError, Some(400), None, started_ms, None, 0, 0, req.stream, Some(note));
+        return Err(ApiError::bad_request(note));
+    }
+    let session = explicit.map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")))
+        .or_else(|| tokengo_shared::session_id_from_body(&req.body))
         .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
 
     let mut ordinal: u32 = 0;
@@ -460,7 +474,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let load_ticket=match plan.load_ticket.take(){Some((n,t)) if tokengo_shared::same_model_name(&n,name)=>t,other=>{drop(other);state.model_loads.acquire(name)}};
         // 冷到期的恢复试用只放一条：失败就进下一级冷却，不再连试三次。
         let recovering={let c=state.conn();crate::db::policy::rows(&c,name)?.iter().any(|r|r.channel_id==channel.id.0 && r.upstream==sent && r.lease_until>0)};
-        let max_attempts=if recovering || account.recovering() {1} else {cfg.max_attempts().min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
+        // Auto chooses a logical candidate, not an exemption from its retry policy.
+        let retries = if plan.auto {
+            crate::db::route_policy::load(&state.conn(), name)?.retry_times.unwrap_or(cfg.retry_times)
+        } else { cfg.retry_times };
+        let max_attempts=if recovering || account.recovering() {1} else {(1 + retries).min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
         let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false,account};
         tried_any = true;
         last_channel = channel.id;
@@ -572,7 +590,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
                         if touch_state {
                             let mut r = state.routing();
-                            r.on_success(&plan.route, channel.id, &all_ids, now_ms());
+                            r.on_success_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
                             drop(r);
                             state.persist_state(&plan.route)?;
                         }
@@ -631,7 +649,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
                     if touch_state {
                         let mut r = state.routing();
-                        r.on_success(&plan.route, channel.id, &all_ids, now_ms());
+                        r.on_success_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
                         drop(r);
                         state.persist_state(&plan.route)?;
                     }
@@ -650,9 +668,25 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     return Ok(resp);
                 }
                 AttemptOutcome::ClientFault => {
-                    // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
-                    // 不许把整条链路打断）
-                    let err = read_error(resp).await;
+                    // 完整客户端错误原样返回；错误正文不可读属于渠道故障，可以切换。
+                    let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
+                        .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
+                    let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
+                        Ok(err) => err,
+                        Err(note) => {
+                            let elapsed = now_ms() - t0;
+                            slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                "channel_fault", Some(status), elapsed, Some(&note));
+                            ordinal += 1;
+                            last_fault = Some(format!("{}：{note}", channel.name));
+                            // No complete HTTP error is available to pass through. A previous
+                            // candidate's error must not mask this transport/protocol failure.
+                            last_http = None;
+                            if cooldown.failure(&note, pending_retry_ms) { break; }
+                            continue;
+                        }
+                    };
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
@@ -707,7 +741,24 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     return Ok(err.into_response());
                 }
                 AttemptOutcome::ChannelFault => {
-                    let err = read_error(resp).await;
+                    let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
+                        .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
+                    let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
+                        Ok(err) => err,
+                        Err(note) => {
+                            let elapsed = now_ms() - t0;
+                            slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                "channel_fault", Some(status), elapsed, Some(&note));
+                            ordinal += 1;
+                            last_fault = Some(format!("{}：{note}", channel.name));
+                            // No complete HTTP error is available to pass through. A previous
+                            // candidate's error must not mask this transport/protocol failure.
+                            last_http = None;
+                            if cooldown.failure(&note, pending_retry_ms) { break; }
+                            continue;
+                        }
+                    };
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
@@ -768,7 +819,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // 这条渠道把重试次数用完了还是不行 → 切换
         if touch_state {
             let mut r = state.routing();
-            r.on_channel_exhausted(&plan.route, channel.id, &all_ids, now_ms());
+            r.on_channel_exhausted_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
             drop(r);
             state.persist_state(&plan.route)?;
             tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, max_attempts);
@@ -1288,23 +1339,47 @@ fn content_type(resp: &reqwest::Response) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 读一眼错误响应的正文（用于记账与日志），并保留能原样回给客户端的响应形状。
-async fn read_error(resp: reqwest::Response) -> UpstreamError {
+const MAX_ERROR_BODY: usize = 64 * 1024;
+
+/// Bound error reads before committing a client response; preserve complete errors verbatim.
+async fn read_error(
+    mut resp: reqwest::Response,
+    remaining: Duration,
+    idle_timeout: Duration,
+) -> Result<UpstreamError, String> {
+    if remaining.is_zero() {
+        return Err("upstream error body deadline exceeded".into());
+    }
     let status = resp.status();
     let ctype = content_type(&resp);
     let retry_after = resp.headers().get(header::RETRY_AFTER).cloned();
-    let body = resp.bytes().await.unwrap_or_default();
+    // Keep both limits: chunk activity cannot extend the original attempt or
+    // remaining request budget, and a stalled body cannot hold channel capacity.
+    let body = tokio::time::timeout(remaining, async {
+        let mut body = Vec::new();
+        loop {
+            let chunk = tokio::time::timeout(idle_timeout, resp.chunk()).await
+                .map_err(|_| "upstream error body idle timeout".to_string())?
+                .map_err(|_| "upstream error body read failed".to_string())?;
+            let Some(chunk) = chunk else { break; };
+            if chunk.len() > MAX_ERROR_BODY - body.len() {
+                return Err(format!("upstream error body exceeds {MAX_ERROR_BODY} bytes"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(Bytes::from(body))
+    }).await.map_err(|_| "upstream error body deadline exceeded".to_string())??;
     let text = String::from_utf8_lossy(&body)
         .chars()
         .take(400)
         .collect::<String>();
-    UpstreamError {
+    Ok(UpstreamError {
         status,
         ctype,
         retry_after,
         body,
         text,
-    }
+    })
 }
 
 /// 上游的一次错误响应。保留正文与 Content-Type，最后一条渠道失败时原样透给客户端

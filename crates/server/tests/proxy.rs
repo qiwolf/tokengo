@@ -44,6 +44,8 @@ enum Reply {
     /// 先睡一会儿再回**正经内容**（量并发用它：`Slow` 回的是空 choices，会被当成空回复重试）
     ConcurrentOk(Arc<tokio::sync::Barrier>),
     SlowOk(u64),
+    /// Signal request arrival and hold the response until the test releases it.
+    HeldOk(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>),
     /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
     SawRed,
     /// 请求里 `max_tokens` 小于 N 就只说半句（`finish_reason=length`），给够了才答"红"。
@@ -174,6 +176,11 @@ async fn mock_handler(
         Reply::ConcurrentOk(barrier) => {
             tokio::time::timeout(std::time::Duration::from_secs(5),barrier.wait()).await.expect("all ungated requests must reach upstream together");
             axum::Json(json!({"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}})).into_response()
+        }
+        Reply::HeldOk(entered, release) => {
+            entered.notify_one();
+            release.notified().await;
+            axum::Json(json!({"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}})).into_response()
         }
         Reply::SlowOk(ms) => {
             tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
@@ -3593,17 +3600,21 @@ async fn model_switch_controls_direct_auto_and_listing_without_deleting_mapping(
 }
 
 #[tokio::test]
-async fn channel_api_rejects_custom_alias(){let f=fixture();let t=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();let(s,_)=post_with_token(&f,"/api/channels",&t,json!({"name":"x","base_url":"http://x","models":[{"model":"alias","upstream":"real"}]})).await;assert_eq!(s,StatusCode::BAD_REQUEST);}
+async fn channel_api_accepts_custom_alias(){let f=fixture();let t=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();let(s,body)=post_with_token(&f,"/api/channels",&t,json!({"name":"x","base_url":"http://x","models":[{"model":"alias","upstream":"real"}]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(body["models"][0]["model"],"alias");assert_eq!(body["models"][0]["upstream"],"real");}
 
 #[tokio::test]
 async fn in_flight_request_is_running_and_records_upstream_before_completion() {
     let f=fixture(); f.with_key();
-    let m=start_mock(Reply::SlowOk(500)).await;
+    let entered=Arc::new(tokio::sync::Notify::new());
+    let release=Arc::new(tokio::sync::Notify::new());
+    let m=start_mock(Reply::HeldOk(entered.clone(),release.clone())).await;
     let ch=f.add_channel("delayed", &m.base, ChannelSpec::default());
     f.serve("mock-chat", &[ch]);
     let call=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[{"role":"user","content":"hello"}]}));
     let sample=async {
-        for _ in 0..100 {if m.count()>0 {break;} tokio::time::sleep(std::time::Duration::from_millis(5)).await;}
+        // Cold Argon2 can take over 500ms when the parallel suite saturates CPU.
+        // Arrival is a protocol event; the watchdog only guards a stuck test.
+        tokio::time::timeout(std::time::Duration::from_secs(30),entered.notified()).await.expect("request must reach the controlled upstream");
         assert_eq!(m.count(),1);
         f.state.drain_writes();
         let c=f.state.conn();
@@ -3614,6 +3625,8 @@ async fn in_flight_request_is_running_and_records_upstream_before_completion() {
         let stats=tokengo_server::db::requests::stats_since(&c,0).unwrap();
         assert_eq!(stats.failed,0);
         assert_eq!(stats.by_model[0].model,"mock-chat");
+        drop(c);
+        release.notify_one();
     };
     let (result,())=tokio::join!(call,sample);
     assert_eq!(result.0,StatusCode::OK);

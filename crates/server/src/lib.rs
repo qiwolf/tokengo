@@ -37,6 +37,7 @@ pub fn app(state: SharedState) -> Router {
         .nest("/v1", routes::proxy::router())
         // 面板管理面
         .nest("/api", routes::admin::router())
+        .merge(routes::model_routing::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())
         // 面板资源压缩：wasm 841 KB → gzip 后约 330 KB（首次打开少下 500 KB）。

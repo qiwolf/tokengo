@@ -14,6 +14,7 @@ pub mod policy;
 pub mod maintenance;
 pub mod requests;
 pub mod routing;
+pub mod route_policy;
 pub mod schema;
 pub mod sessions;
 pub mod settings;

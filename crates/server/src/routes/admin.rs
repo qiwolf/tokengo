@@ -406,21 +406,33 @@ impl ChannelBody {
         Ok(Some(output))
     }
 
-    fn models(&self) -> Vec<channels::ModelMapping> {
-        self.models
-            .iter()
-            .filter(|m| !m.model.trim().is_empty())
-            .map(|m| {
-                let mut mapping = channels::ModelMapping::new(
-                    m.model.clone(),
-                    m.upstream.clone().filter(|u| !u.trim().is_empty()),
-                    m.vision,
-                );
-                mapping.drop_fields =
-                    channels::ModelMapping::drop_fields_from_text(&m.drop_fields);
-                mapping
-            })
-            .collect()
+    fn models(&self) -> Result<Vec<channels::ModelMapping>, ApiError> {
+        let mut names = std::collections::HashSet::new();
+        let mut mappings = Vec::with_capacity(self.models.len());
+        for input in &self.models {
+            let model = input.model.trim();
+            let normalized = tokengo_shared::normalize_model_name(model);
+            if normalized.is_empty() || input.model.chars().any(char::is_control) {
+                return Err(ApiError::bad_request("模型名不能为空或包含控制字符"));
+            }
+            if normalized == "auto" {
+                return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型"));
+            }
+            if !names.insert(normalized) {
+                return Err(ApiError::bad_request("同一渠道不能重复声明归一后相同的模型名"));
+            }
+            if input.upstream.as_deref().is_some_and(|name| name.chars().any(char::is_control)) {
+                return Err(ApiError::bad_request("上游模型名不能包含控制字符"));
+            }
+            // Only logical names use our identity normalization. Upstream names are
+            // provider-owned identifiers: preserve their case and meaningful symbols.
+            let upstream = input.upstream.as_deref().map(str::trim)
+                .filter(|name| !name.is_empty()).map(str::to_string);
+            let mut mapping = channels::ModelMapping::new(model, upstream, input.vision);
+            mapping.drop_fields = channels::ModelMapping::drop_fields_from_text(&input.drop_fields);
+            mappings.push(mapping);
+        }
+        Ok(mappings)
     }
 }
 
@@ -429,12 +441,7 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if body.models.iter().any(|m|m.upstream.as_deref().is_some_and(|u|!u.trim().is_empty() && u.trim()!=m.model.trim())) {
-        return Err(ApiError::bad_request("不支持自定义模型映射，请使用上游原名"));
-    }
-    if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
-        return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
-    }
+    let models = body.models()?;
     let conn = state.conn();
     let headers = body.headers(&conn, &state, None)?;
     // 四条写入（主行 + 密钥 + 请求头 + 模型名）必须一起成或一起败，
@@ -454,7 +461,7 @@ async fn channels_create(
             channels::set_secret(c, &state.secrets, id, k)?;
         }
         if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
-        channels::set_models(c, id, &body.models())?;
+        channels::set_models(c, id, &models)?;
         Ok(id)
     })?;
     tracing::info!("新建渠道 {id}：{}", body.name);
@@ -469,12 +476,7 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if body.models.iter().any(|m|m.upstream.as_deref().is_some_and(|u|!u.trim().is_empty() && u.trim()!=m.model.trim())) {
-        return Err(ApiError::bad_request("不支持自定义模型映射，请使用上游原名"));
-    }
-    if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
-        return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
-    }
+    let models = body.models()?;
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
     let headers = body.headers(&conn, &state, Some(id))?;
@@ -495,7 +497,7 @@ async fn channels_update(
             _ => {}
         }
         if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
-        channels::set_models(c, id, &body.models())?;
+        channels::set_models(c, id, &models)?;
         Ok(())
     })?;
     tracing::info!("更新渠道 {id}：{}", body.name);
@@ -1191,11 +1193,12 @@ async fn model_routes_list(
     };
     let scores = {let conn=state.conn(); crate::db::scores::all(&conn,now_ms())?};
     let totals = {let conn=state.conn();crate::db::scores::total_calls(&conn)?};
-    let router = state.routing();
+    // Snapshot route state before subsequent per-model DB queries.
+    let route_states = state.routing().all_states().clone();
     let rows = routes
         .iter()
         .map(|r| {
-            let st = router.state(&r.name).cloned().unwrap_or_default();
+            let st = route_states.get(&r.name).cloned().unwrap_or_default();
             let detection_status = {
                 let conn=state.conn();
                 conn.query_row("SELECT status FROM model_type_checks WHERE model_name=?1 ORDER BY next_at DESC LIMIT 1", [&r.name], |x| x.get::<_,String>(0)).unwrap_or_else(|_| if r.kind.is_set() { String::new() } else { "等待自动识别".into() })

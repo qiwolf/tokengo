@@ -38,6 +38,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
         let routes = model_routes::list(&conn)?;
         let mut job = None;
         'outer: for r in routes {
+            if db::route_policy::load(&conn, &r.name)?.probe_enabled == Some(false) { continue; }
             if r.kind.is_set() || r.kind_conflict { continue; }
             for id in r.channels {
                 let Some(row) = channels::get(&conn,id)? else { continue; };
@@ -62,6 +63,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
     for endpoint in [EndpointKind::Chat,EndpointKind::Embeddings,EndpointKind::Rerank] {
         let loaded = {
             let conn=state.conn();
+            if db::route_policy::load(&conn, &name)?.probe_enabled == Some(false) { break; }
             let route=model_routes::routes_for(&conn,&name)?;
             if route.as_ref().map(|r| r.kind.is_set() || !r.channels.contains(&id)).unwrap_or(true) { break; }
             let channel=model_routes::channels_for(&conn,&name)?.into_iter().find(|c| c.id==id);
