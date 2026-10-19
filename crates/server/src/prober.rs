@@ -92,7 +92,7 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
     let loaded = {
         let conn = state.conn();
         let channels_all = model_routes::channels_for(&conn, name).unwrap_or_default();
-        let Some(primary) = channels_all.into_iter().find(|l| l.routable()) else {
+        let Some(mut primary) = channels_all.into_iter().find(|l| l.routable()) else {
             return ProbeResult {
                 model: name.to_string(),
                 channel: ChannelId(0),
@@ -102,6 +102,10 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
         // 探活要发的名字：这条渠道为这个模型名配的那个（别名优先，见 probe_model）
         let model = probe_model(&conn, &primary, name);
         let secret = channels::secret(&conn, &state.secrets, primary.id).unwrap_or(None);
+        match channels::headers(&conn, &state.secrets, primary.id) {
+            Ok(headers) => primary.headers = headers,
+            Err(_) => return ProbeResult { model: name.into(), channel: primary.id, outcome: ProbeOutcome::Skipped("header decryption failed".into()) },
+        }
         (primary, model, secret)
     };
     let (channel, model, secret) = loaded;

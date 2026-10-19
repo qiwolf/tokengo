@@ -369,6 +369,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                         // 这样能马上用它的 URL/密钥去问上游有哪些模型，不用先关再点编辑
                         Some(i) => {
                             form.set(Form::Edit(i));
+                            f_headers.update(|v| for h in v { h.original_name=Some(h.name.clone()); h.action=Some("keep".into()); h.value.clear(); });
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
                             tab.set(TAB_MODELS.to_string());
@@ -938,6 +939,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     ().into_any()
                                 } else {
                                     view! {
+                                        <p class="muted small">"所有值加密保存，不回显。留空保留已存值，输入替换；清空值不发送，删行移除请求头。"</p>
                                         <p class="muted small">
                                             "值支持模板：" <code>"{{uuid}}"</code> "（每次请求换新 UUID）、"
                                             <code>"{{timestamp_ms}}"</code> "（当前毫秒）、"
@@ -963,7 +965,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         .map(|(i, h)| {
                                                             let h = h.clone();
                                                             let name0 = h.name.clone();
-                                                            let val0 = h.value.clone();
+                                                            let val0 = if h.action.as_deref() == Some("keep") { String::new() } else { h.value.clone() };
                                                             view! {
                                                                 <tr>
                                                                     <td>
@@ -980,19 +982,26 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                             } />
                                                                     </td>
                                                                     <td>
-                                                                        <input type="text" prop:value=val0
-                                                                            placeholder="值"
+                                                                        <input type="password" prop:value=val0
+                                                                            autocomplete="new-password"
+                                                                            aria-label="请求头值"
+                                                                            placeholder="已存值留空保留；输入替换"
                                                                             on:input=move |ev| {
                                                                                 let s = event_target_value(&ev);
                                                                                 f_headers
                                                                                     .update(|v| {
                                                                                         if let Some(x) = v.get_mut(i) {
+                                                                                            x.action = Some(if s.is_empty() && x.original_name.is_some() { "keep" } else { "replace" }.into());
                                                                                             x.value = s;
                                                                                         }
                                                                                     });
                                                                             } />
                                                                     </td>
                                                                     <td>
+                                                                        <button class="ghost" on:click=move |_| {
+                                                                            f_headers.update(|v| { if let Some(x)=v.get_mut(i) { x.value.clear(); x.action=Some("clear".into()); } });
+                                                                            form_ver.update(|v| *v += 1);
+                                                                        }>"清空值"</button>
                                                                         <button class="ghost danger" on:click=move |_| {
                                                                             f_headers.update(|v| { v.remove(i); });
                                                                             form_ver.update(|v| *v += 1);

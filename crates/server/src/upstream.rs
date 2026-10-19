@@ -76,7 +76,10 @@ impl Upstream {
             rb = rb.header(reqwest::header::ACCEPT, "text/event-stream");
         }
         for (name, value) in build_headers(channel, secret, uuid, now_ms, session) {
-            rb = rb.header(name, value);
+            let mut header = reqwest::header::HeaderValue::from_str(&value)
+                .map_err(|_| ChannelFault { message: "invalid configured header".into() })?;
+            header.set_sensitive(true);
+            rb = rb.header(name, header);
         }
         if !stream {
             return rb.timeout(timeout).send().await.map_err(|e| ChannelFault {
@@ -165,7 +168,10 @@ impl Upstream {
             .timeout(timeout)
             .header(reqwest::header::ACCEPT, "application/json");
         for (name, value) in build_headers(channel, secret, uuid, now_ms, None) {
-            rb = rb.header(name, value);
+            let mut header = reqwest::header::HeaderValue::from_str(&value)
+                .map_err(|_| ChannelFault { message: "invalid configured header".into() })?;
+            header.set_sensitive(true);
+            rb = rb.header(name, header);
         }
         let mut r = rb.send().await.map_err(|e| ChannelFault {
             message: fault_message(&url, &e),
@@ -570,8 +576,7 @@ pub fn retry_after_ms(value: &str) -> Option<u64> {
     v.parse::<u64>().ok().map(|s| s.saturating_mul(1000))
 }
 
-/// 这条渠道本次请求要带的头（自定义头在前，Authorization 最后 ——
-/// 免得用户自定义头里写了个 Authorization 又被覆盖，反过来更好查）。
+/// 自定义 Authorization 优先；未配置时才用渠道 key 生成 Bearer 头。
 ///
 /// 模板逐请求求值：`{{uuid}}` 每次都是新的，就是这个让 OpenCode 那条路能通；
 /// `{{session_id}}` 是同一段对话稳定不变的那个（`session` 为 None 时 —— 探活、
@@ -588,7 +593,7 @@ pub fn build_headers(
     let mut out = Vec::with_capacity(channel.headers.len() + 1);
     for (name, value) in &channel.headers {
         let name = name.trim();
-        if name.is_empty() || name.eq_ignore_ascii_case("authorization") && secret.is_none() {
+        if name.is_empty() {
             continue;
         }
         let value = render_header_value(value, uuid, now_ms, session);
@@ -597,8 +602,10 @@ pub fn build_headers(
         }
         out.push((name.to_string(), value));
     }
-    if let Some(s) = secret.filter(|s| !s.trim().is_empty()) {
-        out.push(("authorization".to_string(), format!("Bearer {}", s.trim())));
+    if !out.iter().any(|(n, _)| n.eq_ignore_ascii_case("authorization")) {
+        if let Some(s) = secret.filter(|s| !s.trim().is_empty()) {
+            out.push(("authorization".to_string(), format!("Bearer {}", s.trim())));
+        }
     }
     out
 }
@@ -666,6 +673,14 @@ mod tests {
             join_url("https://x.example.com/openai/v1", "embeddings"),
             "https://x.example.com/openai/v1/embeddings"
         );
+    }
+
+    #[test]
+    fn custom_authorization_works_without_key_and_overrides_bearer() {
+        let c = channel("https://example.invalid/v1", vec![("Authorization", "Basic private-{{uuid}}")]);
+        for key in [None, Some("fallback-key")] {
+            assert_eq!(build_headers(&c,key,"fresh",42,None),vec![("Authorization".into(),"Basic private-fresh".into())]);
+        }
     }
 
     #[test]

@@ -300,7 +300,7 @@ fn channel_json(l: &channels::ChannelRow) -> serde_json::Value {
         "max_concurrent": l.max_concurrent,
         // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
         "priority": l.priority,
-        "headers": l.headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect::<Vec<_>>(),
+        "headers": l.headers.iter().map(|(n, _)| serde_json::json!({"name": n, "original_name": n, "value": "********", "action": "keep"})).collect::<Vec<_>>(),
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
             "upstream": m.upstream,
@@ -326,7 +326,12 @@ async fn channels_list(
 #[derive(Deserialize)]
 struct HeaderIn {
     name: String,
+    #[serde(default)]
     value: String,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    original_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -356,7 +361,7 @@ struct ChannelBody {
     /// 明文密钥。留空表示不改动已存的（新建时留空 = 没密钥）。
     key: Option<String>,
     #[serde(default)]
-    headers: Vec<HeaderIn>,
+    headers: Option<Vec<HeaderIn>>,
     #[serde(default)]
     models: Vec<ModelIn>,
 }
@@ -366,12 +371,37 @@ fn default_true() -> bool {
 }
 
 impl ChannelBody {
-    fn headers(&self) -> Vec<(String, String)> {
-        self.headers
-            .iter()
-            .filter(|h| !h.name.trim().is_empty())
-            .map(|h| (h.name.clone(), h.value.clone()))
-            .collect()
+    fn headers(&self, conn: &rusqlite::Connection, state: &SharedState, id: Option<tokengo_shared::ChannelId>) -> Result<Option<Vec<(String,String)>>, ApiError> {
+        let Some(input) = &self.headers else { return Ok(None); };
+        let old = match id { Some(id) => channels::headers(conn, &state.secrets, id)?, None => vec![] };
+        let mut output = Vec::new();
+        let mut names = std::collections::HashSet::new();
+        for h in input {
+            let name = h.name.trim();
+            if name.is_empty() && h.value.is_empty() && h.action.is_none() { continue; }
+            if reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err() || !names.insert(name.to_ascii_lowercase()) {
+                return Err(ApiError::bad_request("Invalid or duplicate header name"));
+            }
+            let action = h.action.as_deref().unwrap_or("replace");
+            let value = match action {
+                "keep" => old.iter().find(|(n,_)| n.eq_ignore_ascii_case(h.original_name.as_deref().unwrap_or(name)))
+                    .map(|(_,v)|v.clone()).ok_or_else(||ApiError::bad_request("Header to keep does not exist"))?,
+                "replace" => {
+                    if h.value == "********" || h.value.starts_with("sealed-header-v1:") {
+                        return Err(ApiError::bad_request("Enter a replacement value, not a mask"));
+                    }
+                    h.value.clone()
+                },
+                "clear" => String::new(),
+                "delete" => continue,
+                _ => return Err(ApiError::bad_request("Unknown header action")),
+            };
+            if reqwest::header::HeaderValue::from_str(&value).is_err() {
+                return Err(ApiError::bad_request("Invalid header value"));
+            }
+            output.push((name.to_string(),value));
+        }
+        Ok(Some(output))
     }
 
     fn models(&self) -> Vec<channels::ModelMapping> {
@@ -404,6 +434,7 @@ async fn channels_create(
         return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
     }
     let conn = state.conn();
+    let headers = body.headers(&conn, &state, None)?;
     // 四条写入（主行 + 密钥 + 请求头 + 模型名）必须一起成或一起败，
     // 否则会留下"名字在、请求头丢了"的半截渠道。
     let id = crate::db::in_tx(&conn, |c| {
@@ -420,7 +451,7 @@ async fn channels_create(
         if let Some(k) = body.key.as_deref().filter(|k| !k.trim().is_empty()) {
             channels::set_secret(c, &state.secrets, id, k)?;
         }
-        channels::set_headers(c, id, &body.headers())?;
+        if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
         channels::set_models(c, id, &body.models())?;
         Ok(id)
     })?;
@@ -444,6 +475,7 @@ async fn channels_update(
     }
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
+    let headers = body.headers(&conn, &state, Some(id))?;
     crate::db::in_tx(&conn, |c| {
         channels::update(
             c,
@@ -460,7 +492,7 @@ async fn channels_update(
             Some(k) if !k.trim().is_empty() => channels::set_secret(c, &state.secrets, id, k)?,
             _ => {}
         }
-        channels::set_headers(c, id, &body.headers())?;
+        if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
         channels::set_models(c, id, &body.models())?;
         Ok(())
     })?;
@@ -520,7 +552,7 @@ fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<O
             vision: false,
             drop_fields: vec![],
             unwrap_envelope: false,
-            headers: row.headers.clone(),
+            headers: channels::headers(&conn, &state.secrets, id)?,
             max_concurrent: 0,
         },
         secret,

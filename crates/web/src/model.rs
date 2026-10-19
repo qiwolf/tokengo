@@ -33,6 +33,10 @@ pub struct SetupResp {
 pub struct HeaderPair {
     pub name: String,
     pub value: String,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub original_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]

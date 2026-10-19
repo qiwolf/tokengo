@@ -384,4 +384,5 @@ INSERT INTO gateway_keys(name,hint,created_at_ms,key_hash,is_default,legacy_seal
  FROM settings WHERE key='gateway_key_hash' AND value<>'';
 DELETE FROM settings WHERE key IN ('gateway_key_hash','gateway_key_sealed');
 "#),
+    (22, "ALTER TABLE channel_headers ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;"),
 ];

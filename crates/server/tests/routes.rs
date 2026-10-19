@@ -971,3 +971,37 @@ async fn request_detail_is_authenticated_exact_and_orders_attempts() {
     assert_eq!(empty["attempts"], json!([]));
     assert_eq!(empty["request"]["error"], "model not configured");
 }
+
+#[tokio::test]
+async fn custom_headers_are_sealed_masked_and_preserved() {
+    let f = fixture();
+    let token = panel_token(&f).await;
+    let mut body = json!({"name":"header-test","base_url":"http://127.0.0.1:9/v1",
+        "headers":[{"name":"Authorization","value":"Basic synthetic-private-token"},
+                   {"name":"X-Template","value":"private-{{uuid}}-{{timestamp_ms}}"}]});
+    let (s, created) = send(test_app(&f),"POST","/api/channels",Some(&token),Some(body.clone())).await;
+    assert_eq!(s,StatusCode::OK);
+    assert!(!created.to_string().contains("synthetic-private-token"), "API leaks header secret");
+    assert_eq!(created["headers"][0]["value"], "********");
+    let id = created["id"].as_i64().unwrap();
+    let raw: String = f.state.conn().query_row("SELECT value FROM channel_headers WHERE channel_id=?1 LIMIT 1",[id],|r|r.get(0)).unwrap();
+    assert!(!raw.contains("synthetic-private-token"), "database leaks header secret");
+    body["headers"] = created["headers"].clone();
+    let path = format!("/api/channels/{id}");
+    let (s, _) = send(test_app(&f),"PUT",&path,Some(&token),Some(body.clone())).await;
+    assert_eq!(s,StatusCode::OK);
+    let saved = tokengo_server::db::channels::headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(id)).unwrap();
+    assert_eq!(saved[0].1,"Basic synthetic-private-token");
+    let mut omitted = body.clone();
+    omitted.as_object_mut().unwrap().remove("headers");
+    assert_eq!(send(test_app(&f),"PUT",&path,Some(&token),Some(omitted)).await.0,StatusCode::OK);
+    assert_eq!(saved,tokengo_server::db::channels::headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(id)).unwrap());
+    let mut clear = body.clone();
+    clear["headers"][0]["action"]=json!("clear");
+    clear["headers"][1]["action"]=json!("delete");
+    assert_eq!(send(test_app(&f),"PUT",&path,Some(&token),Some(clear)).await.0,StatusCode::OK);
+    assert_eq!(tokengo_server::db::channels::headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(id)).unwrap(),vec![("Authorization".into(),String::new())]);
+    body["headers"][0]["action"] = json!("replace");
+    let (s, _) = send(test_app(&f),"PUT",&path,Some(&token),Some(body)).await;
+    assert_eq!(s,StatusCode::BAD_REQUEST, "a mask must never become a secret");
+}

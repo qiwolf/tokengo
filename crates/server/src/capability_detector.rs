@@ -86,7 +86,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
                 vision: false,
                 drop_fields: vec![],
                 unwrap_envelope: false,
-                headers: row.headers,
+                headers: channels::headers(&conn, &state.secrets, row.id)?,
             };
             job = Some((channel, secret, fp, tries));
             break;

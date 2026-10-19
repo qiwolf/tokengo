@@ -399,7 +399,7 @@ impl Fixture {
         if let Some(s) = spec.secret {
             tokengo_server::db::channels::set_secret(&conn, &self.state.secrets, id, &s).unwrap();
         }
-        tokengo_server::db::channels::set_headers(&conn, id, &spec.headers).unwrap();
+        tokengo_server::db::channels::set_headers(&conn, &self.state.secrets, id, &spec.headers).unwrap();
         let models: Vec<_> = spec
             .models
             .iter()
@@ -3635,15 +3635,15 @@ async fn review_documents_remaining_header_and_usage_boundaries() {
         headers:vec![("X-API-Key".into(),"review-synthetic-secret".into())],..Default::default()
     });f.serve("mock-chat",&[id]);
     let raw:String=f.state.conn().query_row("SELECT value FROM channel_headers WHERE channel_id=?1",[id.0],|r|r.get(0)).unwrap();
-    assert_eq!(raw,"review-synthetic-secret");
+    assert!(!raw.contains("review-synthetic-secret"));
     let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
     let (status,list)=get_with_token(&f,"/api/channels",&token).await;
     assert_eq!(status,StatusCode::OK);
-    assert_eq!(list["channels"][0]["headers"][0]["value"],"review-synthetic-secret");
+    assert_eq!(list["channels"][0]["headers"][0]["value"],"********");
     let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
     assert_eq!(status,StatusCode::OK);f.state.drain_writes();
     let row=&f.request_rows()[0];assert_eq!((row.2,row.3),(0,0));
-    println!("remaining boundaries: synthetic header plaintext in DB/admin API; absent usage stored as 0/0");
+    println!("header encrypted and masked; remaining boundary: absent usage stored as 0/0");
 }
 
 #[tokio::test(flavor="multi_thread", worker_threads=4)]

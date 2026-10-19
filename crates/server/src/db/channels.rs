@@ -306,12 +306,50 @@ pub fn clear_secret(conn: &Connection, id: ChannelId) -> Result<()> {
     Ok(())
 }
 
+const HEADER_PREFIX: &str = "sealed-header-v1:";
+
+fn seal_header(sb: &SecretBox, value: &str) -> Result<String> {
+    let (nonce, cipher) = sb.seal(value).map_err(|_| DbError::Other("header encryption failed".into()))?;
+    Ok(format!("{HEADER_PREFIX}{}:{}", hex::encode(nonce), hex::encode(cipher)))
+}
+
+fn open_header(sb: &SecretBox, value: &str) -> Result<String> {
+    let error = || DbError::Other("header decryption failed".into());
+    let encoded = value.strip_prefix(HEADER_PREFIX).ok_or_else(error)?;
+    let (nonce, cipher) = encoded.split_once(':').ok_or_else(error)?;
+    sb.open(&hex::decode(nonce).map_err(|_| error())?, &hex::decode(cipher).map_err(|_| error())?)
+        .map_err(|_| error())
+}
+
+/// Version is recorded separately, so even legacy values resembling ciphertext migrate once.
+pub fn migrate_headers(conn: &Connection, sb: &SecretBox) -> Result<()> {
+    super::in_tx(conn, |c| {
+        let mut stmt = c.prepare("SELECT id,value FROM channel_headers WHERE sealed=0")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id,value) in rows {
+            c.execute("UPDATE channel_headers SET value=?2,sealed=1 WHERE id=?1", params![id,seal_header(sb,&value)?])?;
+        }
+        Ok(())
+    })
+}
+
+/// Only outbound callers decrypt; management reads never need plaintext.
+pub fn headers(conn: &Connection, sb: &SecretBox, id: ChannelId) -> Result<Vec<(String,String)>> {
+    let mut stmt = conn.prepare("SELECT name,value,sealed FROM channel_headers WHERE channel_id=?1 ORDER BY ordinal,id")?;
+    let rows = stmt.query_map([id.0], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    rows.into_iter().map(|(n,v,sealed)| if sealed { Ok((n,open_header(sb,&v)?)) }
+        else { Err(DbError::Other("unmigrated header".into())) }).collect()
+}
+
 /// 整体替换一条渠道的请求头（面板保存时用）。
-pub fn set_headers(conn: &Connection, id: ChannelId, headers: &[(String, String)]) -> Result<()> {
+pub fn set_headers(conn: &Connection, sb: &SecretBox, id: ChannelId, headers: &[(String, String)]) -> Result<()> {
     conn.execute("DELETE FROM channel_headers WHERE channel_id = ?1", [id.0])?;
     for (ord, (name, value)) in headers.iter().enumerate() {
+        let value = seal_header(sb, value)?;
         conn.execute(
-            "INSERT INTO channel_headers (channel_id, name, value, ordinal) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO channel_headers (channel_id, name, value, ordinal, sealed) VALUES (?1, ?2, ?3, ?4, 1)",
             params![id.0, name.trim(), value, ord as i64],
         )?;
     }
@@ -371,6 +409,7 @@ pub fn set_model_vision(
 
 #[cfg(test)]
 mod tests {
+    fn test_box() -> crate::crypto::SecretBox { crate::crypto::SecretBox::from_hex(&"ab".repeat(32)).unwrap() }
     use super::*;
     use crate::db::open_in_memory;
     use crate::crypto::SecretBox;
@@ -453,11 +492,35 @@ mod tests {
     }
 
     #[test]
+    fn legacy_headers_migrate_once_without_loss_or_double_encryption() {
+        let conn = open_in_memory().unwrap();
+        let sb = test_box();
+        let id = create(&conn, &new_channel()).unwrap();
+        let values = ["Basic synthetic-secret", "Bearer prefix-{{uuid}}-{{timestamp_ms}}-{{session_id}}", "", "sealed-header-v1:legacy-not-ciphertext"];
+        for (i,v) in values.iter().enumerate() {
+            conn.execute("INSERT INTO channel_headers(channel_id,name,value,ordinal) VALUES(?1,?2,?3,?4)",params![id.0,format!("X-{i}"),v,i as i64]).unwrap();
+        }
+        migrate_headers(&conn,&sb).unwrap();
+        let first = get(&conn,id).unwrap().unwrap().headers;
+        assert_eq!(first.len(),values.len());
+        assert!(first.iter().all(|(_,v)|v.starts_with(HEADER_PREFIX)));
+        let decrypted = headers(&conn,&sb,id).unwrap();
+        assert_eq!(decrypted.iter().map(|(_,v)|v.as_str()).collect::<Vec<_>>(),values);
+        migrate_headers(&conn,&sb).unwrap();
+        assert_eq!(first,get(&conn,id).unwrap().unwrap().headers);
+        assert_eq!(decrypted,headers(&conn,&sb,id).unwrap());
+        let wrong = SecretBox::from_hex(&"cd".repeat(32)).unwrap();
+        assert!(headers(&conn,&wrong,id).is_err());
+        println!("legacy migration headers: 4 -> 4; decrypted exact 4/4; second pass ciphertext identical 4/4");
+    }
+
+    #[test]
     fn headers_are_replaced_wholesale_and_keep_order() {
         let conn = open_in_memory().unwrap();
         let id = create(&conn, &new_channel()).unwrap();
         set_headers(
             &conn,
+            &test_box(),
             id,
             &[
                 ("x-opencode-client".into(), "cli".into()),
@@ -468,11 +531,10 @@ mod tests {
         let got = get(&conn, id).unwrap().unwrap();
         assert_eq!(got.headers.len(), 2);
         assert_eq!(got.headers[0].0, "x-opencode-client");
-        assert_eq!(got.headers[1].1, "{{uuid}}");
+        assert_eq!(headers(&conn, &test_box(), id).unwrap()[1].1, "{{uuid}}");
 
-        set_headers(&conn, id, &[("User-Agent".into(), "tokengo/1.0".into())]).unwrap();
-        let got = get(&conn, id).unwrap().unwrap();
-        assert_eq!(got.headers, vec![("User-Agent".to_string(), "tokengo/1.0".to_string())]);
+        set_headers(&conn, &test_box(), id, &[("User-Agent".into(), "tokengo/1.0".into())]).unwrap();
+        assert_eq!(headers(&conn, &test_box(), id).unwrap(), vec![("User-Agent".to_string(), "tokengo/1.0".to_string())]);
     }
 
     #[test]
@@ -566,7 +628,7 @@ mod tests {
         let mut b = new_channel();
         b.name = "opencode-go".into();
         let b = create(&conn, &b).unwrap();
-        set_headers(&conn, a, &[("X".into(), "1".into())]).unwrap();
+        set_headers(&conn, &test_box(), a, &[("X".into(), "1".into())]).unwrap();
         let all = list(&conn).unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].id, a);
@@ -585,7 +647,7 @@ mod tests {
         // 故意给两个同名模型，第二条会撞 UNIQUE(channel_id, model_name)
         let r = crate::db::in_tx(&conn, |c| {
             let id = create(c, &new_channel())?;
-            set_headers(c, id, &[("X-Test".into(), "1".into())])?;
+            set_headers(c, &test_box(), id, &[("X-Test".into(), "1".into())])?;
             set_secret(c, &sb, id, "sk-x")?;
             set_models(
                 c,

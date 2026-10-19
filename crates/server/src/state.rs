@@ -175,6 +175,7 @@ impl AppState {
 
         let secrets = SecretBox::load_or_init(Path::new(&cfg.master_key_path))?;
         db::gateway_keys::hydrate_legacy(&conn, &secrets)?;
+        db::channels::migrate_headers(&conn, &secrets)?;
 
         let rcfg = db::routing::load_config(&conn)?;
         let mut router = RoutingRouter::new(rcfg);

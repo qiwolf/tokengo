@@ -64,7 +64,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
             let route=model_routes::routes_for(&conn,&name)?;
             if route.as_ref().map(|r| r.kind.is_set() || !r.channels.contains(&id)).unwrap_or(true) { break; }
             let channel=model_routes::channels_for(&conn,&name)?.into_iter().find(|c| c.id==id);
-            match channel { Some(c) => Some((c,channels::secret(&conn,&state.secrets,id)?)), None=>None }
+            match channel { Some(mut c) => { c.headers=channels::headers(&conn,&state.secrets,id)?; Some((c,channels::secret(&conn,&state.secrets,id)?)) }, None=>None }
         };
         let Some((channel,secret))=loaded else { break; };
         let sent=channel.model_alias.as_deref().unwrap_or(&name);

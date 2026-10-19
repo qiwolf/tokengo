@@ -143,8 +143,9 @@ fn push_entry(
     conn: &rusqlite::Connection,
     plan: &mut Plan,
     name: String,
-    channel: Channel,
+    mut channel: Channel,
 ) -> Result<(), ApiError> {
+    channel.headers = channels::headers(conn, &state.secrets, channel.id)?;
     if let Some(s) = channels::secret(conn, &state.secrets, channel.id)? {
         plan.secrets.insert(channel.id.0, s);
     }

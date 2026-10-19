@@ -27,7 +27,7 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
         let conn=state.conn();let mut job=None;
         'outer: for route in model_routes::list(&conn)? {
             if route.kind!=ModelKind::Chat || route.kind_conflict {continue;}
-            for channel in model_routes::channels_for(&conn,&route.name)? {
+            for mut channel in model_routes::channels_for(&conn,&route.name)? {
                 let Some(row)=channels::get(&conn,channel.id)? else{continue};
                 let fp=fingerprint(&row);
                 let old=conn.query_row("SELECT fingerprint,tries,next_at,status FROM model_vision_checks WHERE channel_id=?1 AND model_name=?2",rusqlite::params![channel.id.0,route.name],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,String>(3)?))).ok();
@@ -36,6 +36,7 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
                     _=>0,
                 };
                 conn.execute("INSERT INTO model_vision_checks(channel_id,model_name,fingerprint,tries,next_at,status) VALUES(?1,?2,?3,?4,?5,'检测中') ON CONFLICT(channel_id,model_name) DO UPDATE SET fingerprint=excluded.fingerprint,tries=excluded.tries,next_at=excluded.next_at,status='检测中'",rusqlite::params![channel.id.0,route.name,fp,tries+1,now_ms()+1800000])?;
+                channel.headers=channels::headers(&conn,&state.secrets,channel.id)?;
                 let secret=channels::secret(&conn,&state.secrets,channel.id)?;
                 job=Some((channel,route.name,fp,secret));break 'outer;
             }
