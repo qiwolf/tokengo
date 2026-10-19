@@ -38,6 +38,7 @@ impl Upstream {
         let client = reqwest::Client::builder()
             .user_agent(concat!("tokengo/", env!("CARGO_PKG_VERSION")))
             .tcp_nodelay(true)
+            .connect_timeout(Duration::from_secs(10))
             // 不设全局超时：每次尝试的超时由面板参数决定，逐请求传入
             .pool_idle_timeout(Duration::from_secs(90))
             .build()?;
@@ -83,7 +84,7 @@ impl Upstream {
         }
         if !stream {
             return rb.timeout(timeout).send().await.map_err(|e| ChannelFault {
-                message: fault_message(&url, &e),
+                message: if e.is_timeout() && !e.is_connect() { format!("等待非流式完成超时：{url}") } else { fault_message(&url, &e) },
             });
         }
         // A reqwest request timeout also covers the body. Streaming needs a
@@ -538,7 +539,7 @@ pub fn looks_like_a_model_list(body: &str) -> bool {
 /// 网络错分类成人能看懂的话。**不要把 key 打进日志。**
 fn fault_message(url: &str, e: &reqwest::Error) -> String {
     if e.is_timeout() {
-        format!("超时：{url}")
+        if e.is_connect() { format!("连接超时：{url}") } else { format!("超时：{url}") }
     } else if e.is_connect() {
         format!("连不上：{url}")
     } else {

@@ -22,6 +22,9 @@ pub struct RoutingConfig {
     pub retry_times: u32,
     /// 单次尝试超时。
     pub attempt_timeout_ms: u64,
+    /// 非流式等待完整响应的上限，旧配置缺字段时独立补默认值。
+    #[serde(default = "default_nonstream_timeout_ms")]
+    pub nonstream_timeout_ms: u64,
     /// 整个请求的重试总预算，超了不再重试。
     pub request_budget_ms: u64,
     /// 切换后隔多久回头试首选。
@@ -30,12 +33,15 @@ pub struct RoutingConfig {
     pub probe_enabled: bool,
 }
 
+fn default_nonstream_timeout_ms() -> u64 { 120_000 }
+
 impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
             retry_times: 3,
             attempt_timeout_ms: 30_000,
-            request_budget_ms: 90_000,
+            nonstream_timeout_ms: default_nonstream_timeout_ms(),
+            request_budget_ms: 180_000,
             reprobe_interval_ms: 10 * 60 * 1000,
             probe_enabled: true,
         }

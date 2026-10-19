@@ -1401,6 +1401,9 @@ async fn routing_set_config(
     if cfg.retry_times > 20 {
         return Err(ApiError::bad_request("重试次数过大（上限 20）"));
     }
+    if [cfg.attempt_timeout_ms, cfg.nonstream_timeout_ms, cfg.request_budget_ms].iter().any(|v| *v == 0 || *v > 3_600_000) {
+        return Err(ApiError::bad_request("超时与总预算必须在 1～3600000 毫秒之间"));
+    }
     if cfg.reprobe_interval_ms < 0 {
         return Err(ApiError::bad_request("回切间隔不能是负数"));
     }

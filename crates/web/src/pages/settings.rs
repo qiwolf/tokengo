@@ -179,6 +179,66 @@ fn GatewayKeys(ctx: Ctx) -> impl IntoView {
 }
 
 #[component]
+fn RequestTimeouts(ctx: Ctx) -> impl IntoView {
+    let stream = RwSignal::new(30u64);
+    let complete = RwSignal::new(120u64);
+    let budget = RwSignal::new(180u64);
+    let loaded = RwSignal::new(false);
+    let busy = RwSignal::new(false);
+    wasm_bindgen_futures::spawn_local(async move {
+        match api::routing().await {
+            Ok(r) => {
+                stream.set(r.config.attempt_timeout_ms / 1000);
+                complete.set(r.config.nonstream_timeout_ms / 1000);
+                budget.set(r.config.request_budget_ms / 1000);
+                loaded.set(true);
+            }
+            Err(e) => ctx.note_err(&e),
+        }
+    });
+    let save = move |_| {
+        if busy.get_untracked() || !loaded.get_untracked() { return; }
+        let values = [stream.get_untracked(), complete.get_untracked(), budget.get_untracked()];
+        if values.iter().any(|v| *v == 0 || *v > 3600) {
+            ctx.say("等待时间须为 1～3600 秒"); return;
+        }
+        busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            // Re-read to preserve unrelated retry and probe settings.
+            let result = async {
+                let mut cfg = api::routing().await?.config;
+                cfg.attempt_timeout_ms = values[0] * 1000;
+                cfg.nonstream_timeout_ms = values[1] * 1000;
+                cfg.request_budget_ms = values[2] * 1000;
+                api::save_routing_config(&cfg).await
+            }.await;
+            match result {
+                Ok(()) => ctx.say("等待时间已保存"),
+                Err(e) => { ctx.note_err(&e); ctx.say(format!("保存失败：{}", e.message)); }
+            }
+            busy.set(false);
+        });
+    };
+    view! {
+        <section class="card request-timeouts">
+            <header class="card-head"><h2>"请求等待时间"</h2></header>
+            <div class="card-body"><div class="form-grid">
+                <label>"连接时限"</label><span>"10 秒"</span>
+                <label for="stream-timeout">"流式响应 / 空闲（秒）"</label>
+                <input id="stream-timeout" type="number" min="1" max="3600" disabled=move || !loaded.get() || busy.get()
+                    prop:value=move || stream.get().to_string() on:input=move |ev| stream.set(event_target_value(&ev).parse().unwrap_or(0)) />
+                <label for="nonstream-timeout">"非流式完成（秒）"</label>
+                <input id="nonstream-timeout" type="number" min="1" max="3600" disabled=move || !loaded.get() || busy.get()
+                    prop:value=move || complete.get().to_string() on:input=move |ev| complete.set(event_target_value(&ev).parse().unwrap_or(0)) />
+                <label for="request-budget">"调用与切换总预算（秒）"</label>
+                <input id="request-budget" type="number" min="1" max="3600" disabled=move || !loaded.get() || busy.get()
+                    prop:value=move || budget.get().to_string() on:input=move |ev| budget.set(event_target_value(&ev).parse().unwrap_or(0)) />
+            </div><button disabled=move || !loaded.get() || busy.get() on:click=save>"保存等待时间"</button></div>
+        </section>
+    }
+}
+
+#[component]
 pub fn Settings(ctx: Ctx) -> impl IntoView {
     let logs_open=RwSignal::new(false);
     let info = RwSignal::new(crate::model::SettingsResp::default());
@@ -289,6 +349,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
             <GatewayKeys ctx=ctx />
+            <RequestTimeouts ctx=ctx />
 
             <section class="card">
                 <header class="card-head">

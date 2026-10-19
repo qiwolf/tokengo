@@ -407,7 +407,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     record_client_app(&state,request_id,req.user_agent.as_deref());
 
     let cfg = state.routing().cfg.clone();
-    let attempt_timeout = Duration::from_millis(cfg.attempt_timeout_ms.max(1));
+    let attempt_ms = if req.stream { cfg.attempt_timeout_ms } else { cfg.nonstream_timeout_ms }.max(1);
+    let attempt_timeout = Duration::from_millis(attempt_ms);
 
     // 同一段对话稳定不变的会话 ID（自定义头 `{{session_id}}` 用）。
     // **按客户端原样的请求体算一次**：改成上游的模型名之后再算，同一个客户端模型名
@@ -496,13 +497,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         for attempt_no in 1..=max_attempts {
             if attempt_no > 1 {
                 let left = cfg.request_budget_ms as i64 - (now_ms() - started_ms);
-                if slow_previous || left < cfg.attempt_timeout_ms.max(1) as i64 {
+                if slow_previous || left < attempt_ms as i64 {
                     break;
                 }
                 // 上游在 Retry-After 里说了等多久就等多久（它比我们的默认节拍更懂自己）
                 let d = retry_after_override.take().unwrap_or_else(|| retry_delay_ms(attempt_no));
                 if d > 0 {
-                    tokio::time::sleep(Duration::from_millis(d)).await;
+                    tokio::time::sleep(Duration::from_millis(d.min(left.max(0) as u64))).await;
                 }
             }
             // 重试总预算：超了不再重试（不做无上限的等待）
@@ -550,7 +551,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let resp = match outcome {
                 Err(fault) => {
                     let dur = now_ms() - t0;
-                    slow_previous = dur >= cfg.attempt_timeout_ms.max(1) as i64 * 3 / 4;
+                    slow_previous = dur >= attempt_ms as i64 * 3 / 4;
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
                     last_fault = Some(format!("{}：{}", channel.name, fault.message));
@@ -562,7 +563,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
             let status = resp.status().as_u16();
             let dur = now_ms() - t0;
-            slow_previous = dur >= cfg.attempt_timeout_ms.max(1) as i64 * 3 / 4;
+            slow_previous = dur >= attempt_ms as i64 * 3 / 4;
             match classify_status(status) {
                 AttemptOutcome::Success => {
                     // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
@@ -603,6 +604,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         )
                         .await
                     };
+                    let body_dur = now_ms() - t0;
+                    slow_previous = body_dur >= attempt_ms as i64 * 3 / 4;
                     guard.usage = usage;
                     if let Some(note) = empty {
                         record_attempt(
@@ -1027,7 +1030,7 @@ async fn buffer_passthrough(
     let ctype = content_type(&resp);
     let bytes = match resp.bytes().await {
         Ok(bytes) => bytes,
-        Err(e) => return invalid_buffer(format!("upstream body read failed: {e}")),
+        Err(e) => return invalid_buffer(if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }),
     };
     let mut out = bytes.clone();
     let mut empty: Option<String> = None;
@@ -1084,7 +1087,7 @@ async fn buffer_rerank_passthrough(
     let ctype = content_type(&resp);
     let bytes = match resp.bytes().await {
         Ok(bytes) => bytes,
-        Err(e) => return invalid_buffer(format!("upstream body read failed: {e}")),
+        Err(e) => return invalid_buffer(if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }),
     };
     let docs = req_body
         .get("documents")

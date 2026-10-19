@@ -194,3 +194,23 @@ mod tests {
         assert_eq!(load_config(&conn).unwrap().retry_times, 3, "坏值必须能起得来");
     }
 }
+
+#[cfg(test)]
+mod timeout_compat_tests {
+    use super::*;
+    #[test]
+    fn legacy_timeout_config_preserves_existing_values() {
+        let c=crate::db::open_in_memory().unwrap();
+        super::super::settings::set(&c,CFG_KEY,r#"{"retry_times":2,"attempt_timeout_ms":45000,"request_budget_ms":90000,"reprobe_interval_ms":600000,"probe_enabled":false}"#).unwrap();
+        let cfg=load_config(&c).unwrap();
+        assert_eq!(cfg.attempt_timeout_ms,45000);assert_eq!(cfg.request_budget_ms,90000);
+        assert_eq!(cfg.nonstream_timeout_ms,120000);assert_eq!(cfg.retry_times,2);assert!(!cfg.probe_enabled);
+        save_config(&c,&cfg).unwrap();assert_eq!(load_config(&c).unwrap().request_budget_ms,90000);
+    }
+    #[test]
+    fn no_saved_config_uses_new_defaults_without_writing() {
+        let c=crate::db::open_in_memory().unwrap();let cfg=load_config(&c).unwrap();
+        assert_eq!(cfg.nonstream_timeout_ms,120000);assert_eq!(cfg.request_budget_ms,180000);
+        assert_eq!(c.query_row("select count(*) from settings",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+}

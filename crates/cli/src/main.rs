@@ -15,6 +15,7 @@ fn main() -> anyhow::Result<()> {
             println!("重试次数（首次失败后）: {}", c.retry_times);
             println!("单条渠道最多尝试:         {}", c.max_attempts());
             println!("单次尝试超时:           {} ms", c.attempt_timeout_ms);
+            println!("非流式完成时限:         {} ms", c.nonstream_timeout_ms);
             println!("请求重试总预算:         {} ms", c.request_budget_ms);
             println!("回切检查间隔:           {} ms", c.reprobe_interval_ms);
             println!("后台探活:               {}", c.probe_enabled);

@@ -3745,7 +3745,7 @@ async fn invalid_success_bodies_fail_over_before_committing() {
 
 #[tokio::test]
 async fn nonstream_body_timeout_is_not_an_empty_success() {
-    let f=fixture();f.with_key();stream_deadline(&f,80);
+    let f=fixture();f.with_key();f.state.routing().cfg.nonstream_timeout_ms=80;
     let bad=start_mock(Reply::TimedSse(vec![(0,"{"),(350,"}")])).await;
     let good=start_mock(Reply::Ok).await;
     let a=f.add_channel("bad",&bad.base,ChannelSpec::default());
@@ -3962,4 +3962,72 @@ async fn account_trial_is_single_and_only_success_clears_pause() {
  f.fix_channel(a,&good.base);
  assert_eq!(post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await.0,StatusCode::OK);
  assert!(tokengo_server::db::faults::rows(&f.state.conn()).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn nonstream_completion_has_its_own_deadline() {
+    let f=fixture();f.with_key();stream_deadline(&f,50);
+    f.state.routing().cfg.nonstream_timeout_ms=800;
+    let m=start_mock(Reply::SlowOk(220)).await;
+    let a=f.add_channel("long-json",&m.base,ChannelSpec::default());f.serve("mock-chat",&[a]);
+    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);assert_eq!(m.count(),1);
+    assert_eq!(f.request_rows()[0].0,"ok");
+}
+
+#[tokio::test]
+async fn nonstream_long_timeout_switches_without_same_candidate_retry() {
+    let f=fixture();f.with_key();stream_deadline(&f,20);
+    f.state.routing().cfg.nonstream_timeout_ms=150;
+    let bad=start_mock(Reply::SlowOk(600)).await;let good=start_mock(Reply::Ok).await;
+    let a=f.add_channel("slow",&bad.base,ChannelSpec::default());
+    let b=f.add_channel("good",&good.base,ChannelSpec::default());f.serve("mock-chat",&[a,b]);
+    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);assert_eq!(bad.count(),1);assert_eq!(good.count(),1);
+    assert!(f.state.conn().query_row("select count(*) from attempts where error like '%非流式完成超时%'",[],|r|r.get::<_,i64>(0)).unwrap()>0);
+    let row=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().into_iter().find(|r|r.channel_id==a.0).unwrap();
+    assert_eq!((row.failures,row.until_ms),(1,0));
+}
+
+#[tokio::test]
+async fn nonstream_request_budget_is_shared_across_candidates() {
+    let f=fixture();f.with_key();
+    {let mut r=f.state.routing();r.cfg.nonstream_timeout_ms=180;r.cfg.request_budget_ms=300;}
+    let a_mock=start_mock(Reply::SlowOk(700)).await;let b_mock=start_mock(Reply::SlowOk(700)).await;
+    let a=f.add_channel("slow-a",&a_mock.base,ChannelSpec::default());let b=f.add_channel("slow-b",&b_mock.base,ChannelSpec::default());
+    f.serve("mock-chat",&[a,b]);
+    let t=std::time::Instant::now();
+    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert!(!status.is_success());
+    let spent:i64=f.state.conn().query_row("select sum(duration_ms) from attempts",[],|r|r.get(0)).unwrap();
+    assert!(spent<345,"upstream budget used {spent}ms; wall {:?}",t.elapsed());
+    assert_eq!(a_mock.count(),1);assert_eq!(b_mock.count(),1);
+    assert_eq!(f.attempts().len(),2);
+}
+
+#[tokio::test]
+async fn cancel_nonstream_releases_without_failure() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::SlowOk(800)).await;
+    let a=f.add_channel("cancel-json",&m.base,ChannelSpec::default());f.serve("mock-chat",&[a]);
+    let state=f.state.clone();
+    let task=tokio::spawn(async move {
+        let req=axum::http::Request::builder().method("POST").uri(CHAT).header("authorization",format!("Bearer {KEY}"))
+            .body(axum::body::Body::from(json!({"model":"mock-chat","messages":[]}).to_string())).unwrap();
+        app(state).oneshot(req).await
+    });
+    for _ in 0..100 {if m.count()>0 {break;} tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
+    assert_eq!(m.count(),1);task.abort();let _=task.await;
+    assert_eq!(f.request_rows()[0].0,"canceled");
+    let row=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().remove(0);
+    assert_eq!((row.failures,row.until_ms,row.lease_until),(0,0,0));
+}
+
+#[tokio::test]
+async fn nonstream_json_can_complete_after_thirty_seconds() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::SlowOk(32000)).await;
+    let a=f.add_channel("long-real-json",&m.base,ChannelSpec::default());f.serve("mock-chat",&[a]);
+    let (status,body,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);assert!(!body.is_empty());assert_eq!(m.count(),1);
+    assert_eq!(f.request_rows()[0].0,"ok");
+    assert!(f.state.conn().query_row("select duration_ms from attempts limit 1",[],|r|r.get::<_,i64>(0)).unwrap()>=32000);
 }

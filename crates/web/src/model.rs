@@ -182,6 +182,7 @@ pub struct ModelRoutesResp {
 pub struct RoutingCfg {
     pub retry_times: u32,
     pub attempt_timeout_ms: u64,
+    pub nonstream_timeout_ms: u64,
     pub request_budget_ms: u64,
     pub reprobe_interval_ms: i64,
     pub probe_enabled: bool,
