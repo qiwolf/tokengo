@@ -1,180 +1,72 @@
 # tokengo
 
-自用的 LLM 中转网关。**不是 FreeLLMAPI 的全量移植**——功能按本机实际用量取舍，
-只做真在跑的两件事：对话和向量。
+Self-hosted OpenAI-compatible LLM gateway written in Rust, with a Rust/WASM administration panel.
 
-**术语**：一条上游通道叫**渠道**（channel）—— 端点 + key + 自定义请求头 + 它认的模型名。
-2026-10-17 之前这套东西叫「腿」（leg），代码、库表、面板现在都统一成「渠道」了。
+## Features
 
-上游 FreeLLMAPI（MIT）只借了两个东西：**端点的响应形状**（好让现有客户端不改代码就能切过来）
-和 **OpenAI 兼容的线协议**。其余的免费模型目录、37 个 provider 适配器、
-41 个用不上的端点，一行都没有。
+- Chat completions and SSE streaming, embeddings, reranking and model discovery.
+- Custom upstream channels, model aliases and templated request headers.
+- Priority routing, retries, failover, recovery and per-channel concurrency limits.
+- Request accounting, runtime logs, model capability metadata and image-input routing.
+- SQLite storage, encrypted upstream credentials and authenticated administration.
+- Leptos web panel with no npm build dependency.
 
-## 为什么不全量移植
+## Build
 
-现网 FreeLLMAPI（LXC109）生产库 3 天统计：
+Requires Rust 1.98 or newer and a native C toolchain for bundled SQLite.
+Install Trunk using the official instructions at https://trunkrs.dev/ for the web panel.
 
-    总请求 100,003 次
-    向量 86,146 次   86.1%
-    对话 13,857 次   13.9%
-    其余 41 个端点   0 次
-
-全量重写要跟 89,437 行、412 个文件、381 个测试；按需做只要约 6,000–9,000 行。
-取舍的逐项依据见 [`docs/02-按需功能清单.md`](docs/02-按需功能清单.md)。
-
-## 对外端点（只有四个）
-
-    POST /v1/chat/completions    13,857 次
-    POST /v1/embeddings          86,146 次
-    GET  /v1/models              只列真实可用的
-    GET  /livez  /readyz         探测
-
-不做：`/v1/rerank`、`/v1/moderations`、`/v1/search`、`/v1/responses`、`/v1/messages`、
-`/v1/images`、`/v1/videos`、`/v1/audio/*`、`/v1/decisions`、Gemini `/v1beta`、
-Ollama `/api/*`、MCP `/mcp`、URL token——**全部真 404**，有回归测试盯着。
-
-## 路由策略
-
-优先级 + 重试 + 自动回切，**没有冷却**：
-
-    请求 auto → 按模型组的优先级顺序挑渠道
-    首选渠道失败 → 重试 3 次（共 4 次尝试）→ 全败则切到下一优先渠道
-    切换后 10 分钟 → 回头试首选；成功就切回来
-
-判失败的只有渠道自己的毛病（网络错 / 5xx / 429 / 401 / 403）。
-客户端自己的错（400 / 404 / 422）原样返回，**不重试、不切渠道**——
-否则一次写错模型名的请求会把整条链路打断。
-完整规格与验收步骤见 [`docs/03-路由策略.md`](docs/03-路由策略.md)。
-
-## 上游全部自定义添加
-
-不做免费模型目录，也不做 provider 适配器。一条渠道 = 名称 + base_url + key +
-**自定义请求头** + 该渠道认的上游模型名 + 优先级。
-
-自定义请求头是**上游没有、本项目主动加的**能力：FreeLLMAPI 的 `api_keys` 表
-18 个字段里没有 header 列，面板也没入口，所以 OpenCode Go 这类要求特定请求头的上游
-只能靠外挂脚本中转。这里加了，且支持逐请求变化的模板（`{{uuid}}`、`{{timestamp_ms}}`、
-`{{session_id}}` —— 同一个 ID 在同一段对话里不变，上游靠它认「这还是同一段对话」）。
-
-## 渠道级请求/响应适配（把两条外挂 python 中转接过来）
-
-现网有两件事只能靠外挂 python 中转干，网关自己不会（见 `docs/11-渠道适配.md`）：
-OpenCode Go 要求带上「同一段对话同一个 ID」的会话头，cline.bot 的正常回复外面套了一层壳。
-现在有了这三项，两条中转（3157 / 3158）可以退役：
-
-    {{session_id}} 模板   同一段对话稳定不变（首条 user 消息 → 哈希），首条没取到就退化成整包哈希
-    要丢的字段            按「渠道 + 模型名」声明发上游前删哪些顶层字段（beam-free 不认 reasoning_effort）
-    响应解包              勾了才剥 cline.bot 那种 {"data": {…}, "success": true} 外壳
-
-## 工作区
-
-    crates/
-      shared/   渠道与模型组的数据结构 + 路由状态机（纯逻辑，时间由外部传入，可完整测）
-      server/   网关服务端（axum）— 对外端点 + 面板管理面 + 面板静态服务
-      web/      面板（Rust → WASM，Leptos CSR）— 6 个页面，零 npm 依赖
-      cli/      命令行
-    docs/       功能清单、路由策略、数据层、阶段 2 真转发、阶段 3 面板、阶段 4 部署预案与部署记录、视觉能力、协作开发规范
-    scratch/    真机验收脚本（起真进程、真发 HTTP、断言直接读库）
-    scripts/    工具脚本
-
-## 构建与自检
-
-```bash
-cargo build --release -p tokengo-server
-cargo test  --workspace                 # 226 条测试（服务端 + 面板纯逻辑）
-cargo run   -p tokengo-cli -- routing   # 把默认路由参数走一遍状态机
-```
-
-面板（可选，独立构建；服务端不构建也能跑）：
-
-```bash
-cd crates/web && trunk build --release   # 产物在 crates/web/dist，服务端从磁盘服务
-```
-
-真机验收（**起真进程 + 真 HTTP + 真故障**，不是单测）：
-
-```bash
-python3 scratch/verify_stage1.py   # 数据层 / 会话门 / 重启韧性，22 项
-python3 scratch/verify_stage2.py   # 真转发 / 重试切换 / 回切 / 流式 / 反证，30 项
-```
-
-面板需要额外工具链（阶段 7）：
-
-```bash
+```sh
+cargo build --locked --release -p tokengo-server
+cargo test --locked --workspace
 rustup target add wasm32-unknown-unknown
-cargo install trunk
+cd crates/web
+trunk build --release
+cd ../..
 ```
 
-## 协作开发
+## Run
 
-两个人（两个号）在同一台机器上共用工作副本 `/path/to/tokengo`，共享真相是本地裸仓库
-`/path/to/tokengo-shared.git`（远端名 `shared`）。**动手前先 `git pull shared main`，
-改完 `cargo test --workspace` 全绿再 `git push shared main`** —— 完整规矩（铁律、分支、
-冲突、发版检查单、回滚）见 [`docs/10-协作开发.md`](docs/10-协作开发.md)。
-GitHub 还没有远端；未经明确指令不推。
+From the repository root after building the server and panel:
 
-## 阶段
+```sh
+TOKENGO_LISTEN=127.0.0.1:3160 \
+TOKENGO_DB=./tokengo.db \
+TOKENGO_MASTER_KEY_FILE=./master.key \
+TOKENGO_WEB_DIR=./crates/web/dist \
+TOKENGO_LOG_DIR=./logs \
+./target/release/tokengo-server
+```
 
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| 0 | 工程骨架 + 按需取舍 + 路由状态机 | 已完成 |
-| 1 | 数据层（渠道 / 模型组 / 记账）+ 面板会话鉴权 | 已完成 |
-| 2 | 三个端点真转发（重试 / 切换 / 回切 / 流式 / 记账） | 已完成（真机 30 项验收全过） |
-| 3 | 面板 6 页（Rust → WASM，零 npm） | 已完成（真浏览器 + DOM 断言 + 真点击验收） |
-| 3.1 | 「拉取上游模型清单」（加渠道不用手打模型名） | 已完成（真打上游 `/v1/models`，7 种情形实测） |
-| 4 | 部署到 LXC + 影子并行 + 切换 | **已部署到 CT112 并接上 `gateway.example.com`（只部署、未切换）** —— 见 `docs/08-CT112-部署记录.md`；切换步骤见 `docs/07-阶段4-部署预案.md`，待批准 |
-| 4.1 | 视觉能力标记（哪些模型能看图） | **已完成并上 CT112** —— 能力只认真机实测，带图请求只走标了「能看图」的渠道，一条都没有就 422 `no_vision_model`。见 `docs/09-视觉能力.md` |
-| 4.2 | 面板改版：手机端重排 + 日间/夜间主题 + 术语「腿」→「渠道」 | **已完成并上 CT112（v0.2.0）** —— 手机 375–390px 逐页自检过（表格变卡片、抽屉导航、弹窗整屏、输入框 16px 防缩放）；桌面端样式不变。见 `docs/06-面板.md` |
-| 4.4 | 渠道级请求/响应适配（`{{session_id}}` / 要丢的字段 / 响应解包） | **已完成并上 CT112（v0.3.2，21:14）** —— 让现网两条外挂 python 中转（3157 opencode-go、3158 cline.bot）可以退役；依据是现网 4 天 10 万次请求的账。真机验收 22 项（`scratch/verify_adapt.py`，含三条反证），见 `docs/11-渠道适配.md` |
-| 4.5 | 模型按类型分开（对话 / 向量 / 重排） | **已完成并上 CT112（v0.3.4）** —— 类型只认实测（手动定过不被覆盖）；面板按类型分堆、`/v1/models` 带 `kind`、探活按类型打端点（修掉「重启后拿对话请求探向量组」）；总览统计也按类型分开（按请求实际打的端点归类）。线上两个组已定好（bge-m3=向量、auto=对话）。同批顺手补：空回复当渠道的毛病重试、`Retry-After` 要认。见 `docs/12-模型类型.md` |
-| 4.6 | 面板能用、好按：一键启用/停用 + 界面改版 | **已完成并上 CT112（v0.3.5）** —— 「启用/停用」从**死标签**改成**能点的开关**（渠道卡片右上角 + 模型组状态列，各配专用接口，只改 `enabled` 一列）；顺手补上真问题：**模型组的 `enabled` 过去根本没被转发路径读**，停用了客户端照样能打，现在停用的组对外像不存在（客户端 404、不进 `/v1/models`、不再打上游）。界面重做：深浅两套配色变量、卡片化布局、表格数值右对齐、手机折卡片、开关/标签/弹窗/提示条统一。见 `docs/06-面板.md` |
+Open http://127.0.0.1:3160/ui/ and complete first-time setup. Set your own panel password and gateway API key. Add upstream channels and credentials, then select the models each channel serves. Clients use the gateway key, not an upstream key.
 
-| 4.7 | 渠道/模型页两处「白配了」的坑 | **已完成并上 CT112（v0.3.6，次日 00:19）** —— 修「勾了上游清单里的模型再点保存，勾选被无声丢掉」（保存时自动并入 + 界面亮提醒）；模型页新增「渠道声明了名字但还没有同名模型组」的发现与**一键补建模型组**（对外的名字是模型组，渠道上那一行只是说「这条渠道认这个名字」）。见 `docs/06-面板.md` |
+```sh
+curl http://127.0.0.1:3160/v1/models \
+  -H 'Authorization: Bearer YOUR_GATEWAY_API_KEY'
+```
 
-| 4.8 | 「测视觉」假红 | **已完成并上 CT112（v0.3.7，01:02）** —— 额度从 8 提到 64、被截断（`finish_reason=length`）再给 256 重问一次，额度/重问/上游原话都写进面板；测试图 16×16 → 64×64（官方文档说图片进模型前会自动缩放，小图四格会被糊在一起）。见 `docs/09-视觉能力.md` |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | /v1/chat/completions | Chat and streaming chat |
+| POST | /v1/embeddings | Embeddings |
+| POST | /v1/rerank | Reranking |
+| GET | /v1/models | Configured model list |
+| GET | /livez | Liveness |
+| GET | /readyz | Database readiness |
 
-| 4.9 | 删模型 404 + 全接口体检 + 排版收尾 | **已完成并上 CT112（v0.3.8，01:32）** —— 组名带斜杠时删除路径没转义（`BAAI/bge-m3` → 404），统一走 `api::group_path()`；顺带修「删不存在的渠道回 500、删不存在的组回 200」→ 都回 404；新增 `scratch/audit_api.py` 全接口体检（48 项全过）；卡片操作行等宽、元信息按基线对齐等排版收尾 |
+For deployment, copy the release executable and panel files to your server. Set a persistent working directory and the environment variables above. Bind to loopback behind an HTTPS reverse proxy; initialize the administrator account before exposing the service. Use a supervisor such as systemd for automatic restarts.
 
-| 4.10 | 重建 auto + 报错文案 | **已完成并上 CT112（v0.3.9，01:48）** —— 重建按「只挂声明了 `auto` 的启用渠道、按 id 升序」写入 `model_groups`/`model_group_channels`（回读为 `auto -> [3,6,7,8,9]`）；网关 404 文案不再点名某个模型名 |
+Back up SQLite using a consistent SQLite backup, together with master.key. Losing the master key makes stored upstream credentials unreadable. Never commit the database, key file, logs or real credentials. Logs can contain request metadata; restrict access and choose retention settings appropriately.
 
-| 4.11 | 账上记「带没带图」 | **已完成并上 CT112（v0.3.10，02:27）** —— 迁移 v6 给 `requests` 加 `has_image`，面板请求页标「带图」；排图片问题时能分清是客户端没发图还是上游看不见 |
+## Source Layout
 
-| 4.12 | 布局照 FreeLLMAPI 重做 | **已完成并上 CT112（v0.4.0，03:02）** —— 顶栏纯文字导航 + 选中下划线、72rem 居中内容区、页头带底边细线、内容一律卡片（发丝边）、中性灰配色；桌面与手机逐页验过无溢出、手机表格折卡片 |
+- crates/server: Axum gateway, storage, accounting and administration API.
+- crates/shared: Shared types and routing logic.
+- crates/web: Leptos panel compiled to WebAssembly.
+- crates/cli: Routing command-line demonstration.
 
-| 4.13 | 重排模型上线（`BAAI/bge-reranker-v2-m3`） | **已完成并上 CT112（2026-10-18 03:11）** —— 渠道 #5 硅基流动加模型行 + 同名模型组（类型 `rerank`/manual）；先在副本上真打一发验通（HTTP 200，相关文档 0.869 / 不相关 0.0004）再写线上。客户端打 `POST /v1/rerank`，`model=BAAI/bge-reranker-v2-m3` |
+This public repository retains sanitized development history. Private deployment reports, machine-specific scripts and operational data are intentionally excluded. Historical README snapshots describe earlier versions, not current setup instructions. No production binaries or credentials are distributed here.
 
-| 4.14 | 并发（给 Hermes 用，必须扛得住） | **已完成并上 CT112（v0.5.0，09:48）** —— ①修掉真缺陷：并发 16 起，成功的请求会被报成 500（3%~4%），根因是记账用 try_lock 抢不到库锁就报错；现在改成「抢不到就排队、后台落账员补写」，请求该成功就成功；②断开时的 canceled 不再丢账；③每条渠道可配「同时最多几发」（0=不限），满了先换渠道、全满才排队、名额按流算。实测 16/32/64/128 并发错误数 3/15/32/39 → **0/0/0/0**；上限 2 时上游实测「同时最多看到 2 发」。见 `docs/13-并发.md` |
+## License
 
-| 4.15 | 术语统一 + 面板资源压缩 | **已完成并上 CT112（v0.5.1，10:00）** —— ①新写回来的 30 处「腿」清成「渠道」（只留 19 处历史沿革说明），以后全库只用「渠道」；②面板 wasm 1.52 MB 原来原样发，现在压着发：br 465 KB / gzip 531 KB（少下约 1.1 MB，71%），带哈希的产物照旧长缓存 |
-
-| 4.16 | 面板体积砍 80% | **已完成并上 CT112（v0.5.2，10:12）** —— 面板单独按包覆盖 `opt-level="z"`（性能档留给服务器）：wasm 1,594 KB → **841 KB**；叠加服务端压缩后浏览器首次只下 **308 KB**（br）/330 KB（gzip），整页从约 1.66 MB 降到约 330 KB。对照实验：一个只有一行字的 Rust 面板 59 KB、加上用到的库 147 KB —— >**大头是我们自己的界面代码，不是「Rust 太大」**。见 `docs/06-面板.md` 的体积一节 |
-
-| 4.17 | 去掉 brotli（省内存） | **已完成并上 CT112（v0.5.3，10:22）** —— 实测 br 每次压缩吃约 6 MB 不还：连发 5 次面板，常驻内存 不压缩 8.8 MB / gzip 9.6 MB / **br 39.6 MB**，而 br 只比 gzip 少 21 KB 下载。去掉 `compression-br` 只留 gzip，服务器文件同时从 8.3 MB 回到 7.2 MB；线上空载 7.4 MB、压过面板后 9.0 MB |
-
-| 4.18 | 多余的模型名声明（提示条的两个出路） | **已完成并上 CT112（v0.6.1，12:32）** —— 面板提示「渠道里声明了名字但没同名模型组」时给两条路：真想让客户端打就「一键补建模型组」，只是上游内部名就「删掉这些名字」（新增）；线上清掉 5 行（渠道3/6/7/8/9），删后真机 `auto` → 200、`v4.1flash` → 404（预期），模型组未动 |
-
-| 4.19 | 模型在渠道页加就够 + 设置页去掉构建说明 | **已完成并上 CT112（v0.6.2，12:58）** —— ①保存渠道时自动建「缺的同名模型组」（`groups_to_create_for_models()`，只比名字不猜上游），一个动作同时完成「声明」与「客户端能打」；提示条降级为安全网；②设置页删掉「这个面板怎么更新的」那张卡（构建命令是给维护者的） |
-
-| 4.20 | 四种用途一眼分清 + 换 key | **已完成并上 CT112（v0.7.2，14:23）** —— ①「模型」页四块用途卡：对话（蓝，`/v1/chat/completions`）/向量（绿，`/v1/embeddings`）/重排（橙，`/v1/rerank`）/还没定（灰），含用途说明与数量；「视觉」是对话类的「能看图」标记；表格类型列同一套颜色；②两条 opencode-go 的 key 已换（渠道7 真机 200，渠道6 上游报额度用尽）| 
-
-| 4.21 | 对外 key 生成一次就能一直复制 | **已完成并上 CT112（v0.7.3，16:24）** —— 明文用主密钥加密存 `settings.gateway_key_sealed`（哈希照旧用于校验），面板显示掩码 + 「复制」按钮随时取用，不必反复生成；线上已换成可复制的 key（真机 200、错 key 401）| 
-
-| 4.22 | 日志能排查问题 | **已完成并上 CT112（v0.8.0，17:00）** —— 面板第 6 页「日志」：按级别/关键词/请求号筛，自动刷新；「临时开 debug」15 分钟到点自动收回；每发失败的请求记 WARN（模型名+状态+原因）；内存 2000 行 + 文件 4 MB×3 轮转（有上限，不会撑磁盘）；见 docs/14-日志.md | 
-
-| 4.23 | 首选渠道可自定义 | **已完成并上 CT112（v0.10.1，18:44）** —— 模型详情里每个成员一个「设为首选」：挪到最前 + 保存 + 立刻回切，下一发请求先试它；第一条挂「首选」标签 | 
-| 4.24 | 路由不出去也要记账 | **已完成并上 CT112（v0.10.1）** —— 模型名没配 / 组停用 / 组里没可用渠道这三类 404 都记 `client_error`（含 http 状态与原因），attempt 级仍为空 | 
-
-
-## 与现网 FreeLLMAPI 的差异
-
-| 项 | 现网 | tokengo |
-|---|---|---|
-| 路由 | `balanced` 打分 + 随机探索，同请求可能换渠道 | 优先级固定，可预测 |
-| 渠道失败 | 打进冷却，到期前不选 | 不冷却；失败即重试，全败才切 |
-| 什么时候回来 | 冷却到期，可能回到更差的渠道 | 10 分钟后主动试首选，成功才回切 |
-| 客户端错（400） | 会计入冷却，能把好渠道打坏 | 不计入 |
-| 内存 | node 进程 229.6 MB（其中 201 MB 是 V8 堆） | release 实测 6.8 MB（空载）/ 8.6 MB（打完请求） |
-
-## 许可
-
-上游 FreeLLMAPI 为 MIT，本项目沿用 MIT，声明见 `NOTICE`。
+MIT. See LICENSE and NOTICE for attribution, including FreeLLMAPI, which informed compatibility behavior.
