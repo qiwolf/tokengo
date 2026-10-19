@@ -40,7 +40,7 @@ pub fn router() -> Router<SharedState> {
 // ───────────────────────── 鉴权 ─────────────────────────
 
 /// 对外 key 的门。放在 handler 参数里即生效。
-pub struct GatewayKey { namespace: String }
+pub struct GatewayKey { pub namespace: String, pub auth: crate::db::identity::AuthContext }
 
 impl FromRequestParts<SharedState> for GatewayKey {
     type Rejection = ApiError;
@@ -62,7 +62,8 @@ impl FromRequestParts<SharedState> for GatewayKey {
             .ok_or_else(|| {
                 ApiError::unauthorized("缺少 Authorization: Bearer <对外 key>（面板「设置」里配）")
             })?;
-        if !state.authenticate_gateway_key(key.to_string()).await {
+        let auth = state.authenticate_context(key.to_string()).await;
+        if auth.is_none() {
             // 记一条：客户端连不上时最常就是这个原因（key 复制少了、还是 FreeLLMAPI 那把）。
             // 只记来源与掩码，**不记 key 本身** —— 日志会被下载/贴给人看。
             let hint: String = {
@@ -76,7 +77,7 @@ impl FromRequestParts<SharedState> for GatewayKey {
             );
             return Err(ApiError::unauthorized("对外 key 不对"));
         }
-        Ok(GatewayKey { namespace: tokengo_shared::short_hash(key) })
+        Ok(GatewayKey { namespace: tokengo_shared::short_hash(key), auth: auth.unwrap() })
     }
 }
 
@@ -105,6 +106,7 @@ async fn chat_completions(
             stream,
             client_ip: ip_raw.clone(),
             session_namespace: _key.namespace,
+            auth: Some(_key.auth),
             explicit_session,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
@@ -144,6 +146,7 @@ async fn embeddings(
             stream,
             client_ip: ip_raw.clone(),
             session_namespace: _key.namespace,
+            auth: Some(_key.auth),
             explicit_session,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
@@ -183,6 +186,7 @@ async fn rerank(
             stream,
             client_ip: ip_raw.clone(),
             session_namespace: _key.namespace,
+            auth: Some(_key.auth),
             explicit_session,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
@@ -222,14 +226,17 @@ async fn models(
     let created = crate::db::now_ms() / 1000;
     let (servable, auto_rows) = {
         let conn = state.conn();
-        let servable = model_routes::servable(&conn)?;
-        let auto_rows = if model_routes::auto_available(&conn)? {
+        let mut servable = model_routes::servable(&conn)?;
+        let mut allowed = Vec::new();
+        for model in servable.drain(..) { if gateway::permitted_model(&conn, &_key.auth, &model.name)? {allowed.push(model);} }
+        let servable=allowed;
+        let auto_rows = if _key.auth.permits_model(model_routes::AUTO_NAME) && model_routes::auto_available(&conn)? {
             let now = crate::db::now_ms();
-            let chat = !model_routes::auto_candidates(&conn, ModelKind::Chat, false, now)?.is_empty();
+            let chat = model_routes::auto_candidates(&conn, ModelKind::Chat, false, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
             let embeddings =
-                !model_routes::auto_candidates(&conn, ModelKind::Embeddings, false, now)?.is_empty();
-            let rerank = !model_routes::auto_candidates(&conn, ModelKind::Rerank, false, now)?.is_empty();
-            let vision = !model_routes::auto_candidates(&conn, ModelKind::Chat, true, now)?.is_empty();
+                model_routes::auto_candidates(&conn, ModelKind::Embeddings, false, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
+            let rerank = model_routes::auto_candidates(&conn, ModelKind::Rerank, false, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
+            let vision = model_routes::auto_candidates(&conn, ModelKind::Chat, true, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
             let kind = if chat {
                 ModelKind::Chat
             } else if embeddings {
@@ -243,7 +250,7 @@ async fn models(
                 servable.iter().filter(|m| matches!(m.kind,
                     ModelKind::Chat | ModelKind::Unknown | ModelKind::Embeddings | ModelKind::Rerank))
                     .map(|m| m.context_window));
-            vec![serde_json::json!({
+            if !chat && !embeddings && !rerank { Vec::new() } else { vec![serde_json::json!({
                 "id": model_routes::AUTO_NAME,
                 "object": "model",
                 "created": created,
@@ -257,7 +264,7 @@ async fn models(
                     let sources=servable.iter().filter_map(|m|m.context_source.as_deref()).collect::<std::collections::HashSet<_>>();
                     if sources.len()==1 { *sources.iter().next().unwrap() } else { "user_confirmed+upstream" }
                 }),
-            })]
+            })] }
         } else {
             Vec::new()
         };

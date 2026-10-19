@@ -126,6 +126,7 @@ impl Fixture {
         let response = gateway::forward(
             self.state.clone(),
             ForwardRequest {
+            auth: None,
                 explicit_session: None,
                 session_namespace: "test".into(),
                 endpoint: EndpointKind::Chat,

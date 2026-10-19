@@ -24,3 +24,6 @@ keys.json
 
 # 本机跑实例时默认写的日志目录（TOKENGO_LOG_DIR 不设时就是 ./logs）
 logs/
+
+# Durable billing intents contain private usage data; back up with the database.
+*.billing-outbox/

@@ -132,32 +132,27 @@ pub fn delete(conn: &Connection, id: i64) -> Result<bool> {
     Ok(conn.execute("DELETE FROM gateway_keys WHERE id=?1", [id])? > 0)
 }
 
-pub fn check(conn: &Connection, key: &str) -> Result<bool> {
-    if key.trim().is_empty() {
-        return Ok(false);
-    }
-    // The random public selector makes cold authentication one indexed lookup, not N Argon2 verifications.
-    let hash: Option<String> = if let Some(sel) = selector(key) {
-        conn.query_row(
-            "SELECT key_hash FROM gateway_keys WHERE selector=?1",
-            [sel],
-            |r| r.get(0),
-        )
-        .optional()?
+/// SHA-256 is appropriate for a newly generated 244-bit random credential; legacy
+/// human-chosen credentials retain their existing Argon2 verifier.
+pub fn digest(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("sha256:{}", hex::encode(Sha256::digest(key.as_bytes())))
+}
+
+pub fn verify_credential(key: &str, hash: &str) -> bool {
+    if hash.starts_with("sha256:") {
+        let expected = digest(key);
+        if expected.len() != hash.len() { return false; }
+        expected.bytes().zip(hash.bytes()).fold(0u8, |diff,(a,b)| diff | (a ^ b)) == 0
     } else {
-        None
-    };
-    if let Some(hash) = hash {
-        return Ok(sessions::verify_password(key, &hash));
+        sessions::verify_password(key, hash)
     }
-    let legacy: Option<String> = conn
-        .query_row(
-            "SELECT key_hash FROM gateway_keys WHERE is_default=1 AND selector IS NULL",
-            [],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(legacy.is_some_and(|hash| sessions::verify_password(key, &hash)))
+}
+
+pub fn check(conn: &Connection, key: &str) -> Result<bool> {
+    if key.trim().is_empty() { return Ok(false); }
+    let Some((id, hash)) = auth_candidate(conn,key)? else { return Ok(false); };
+    Ok(verify_credential(key,&hash) && super::identity::context(conn,id)?.is_some())
 }
 
 /// SQL migration consumes old settings once, including hash-only credentials. Enrich encrypted legacy metadata at startup.

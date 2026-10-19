@@ -46,6 +46,8 @@ enum Reply {
     SlowOk(u64),
     /// Signal request arrival and hold the response until the test releases it.
     HeldOk(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>),
+    /// Controlled error after arrival/release handshakes, for shared-budget tests.
+    HeldStatus(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>, u16),
     /// 假装"真看见了那张图"：回一个"红"字（「测视觉」判对错用的就是这个词）
     SawRed,
     /// 请求里 `max_tokens` 小于 N 就只说半句（`finish_reason=length`），给够了才答"红"。
@@ -176,6 +178,11 @@ async fn mock_handler(
         Reply::ConcurrentOk(barrier) => {
             tokio::time::timeout(std::time::Duration::from_secs(5),barrier.wait()).await.expect("all ungated requests must reach upstream together");
             axum::Json(json!({"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}})).into_response()
+        }
+        Reply::HeldStatus(entered, release, status) => {
+            entered.notify_one();
+            release.notified().await;
+            (StatusCode::from_u16(status).unwrap(), axum::Json(json!({"error":{"message":"controlled upstream failure"}}))).into_response()
         }
         Reply::HeldOk(entered, release) => {
             entered.notify_one();
@@ -4002,20 +4009,42 @@ async fn nonstream_long_timeout_switches_without_same_candidate_retry() {
     assert_eq!((row.failures,row.until_ms),(1,0));
 }
 
-#[tokio::test]
-async fn nonstream_request_budget_is_shared_across_candidates() {
-    let f=fixture();f.with_key();
-    {let mut r=f.state.routing();r.cfg.nonstream_timeout_ms=180;r.cfg.request_budget_ms=300;}
-    let a_mock=start_mock(Reply::SlowOk(700)).await;let b_mock=start_mock(Reply::SlowOk(700)).await;
-    let a=f.add_channel("slow-a",&a_mock.base,ChannelSpec::default());let b=f.add_channel("slow-b",&b_mock.base,ChannelSpec::default());
-    f.serve("mock-chat",&[a,b]);
-    let t=std::time::Instant::now();
-    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
-    assert!(!status.is_success());
-    let spent:i64=f.state.conn().query_row("select sum(duration_ms) from attempts",[],|r|r.get(0)).unwrap();
-    assert!(spent<345,"upstream budget used {spent}ms; wall {:?}",t.elapsed());
-    assert_eq!(a_mock.count(),1);assert_eq!(b_mock.count(),1);
-    assert_eq!(f.attempts().len(),2);
+#[test]
+fn nonstream_request_budget_is_shared_across_candidates() {
+    // A dedicated runtime isolates these deadlines from unrelated Argon2 tests.
+    // Arrival handshakes prove both candidates were reached; the first response
+    // is a controlled failure, rather than a timer that can wake after all budget.
+    std::thread::spawn(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let f = fixture(); f.with_key();
+            assert!(f.state.authenticate_gateway_key(KEY.to_owned()).await);
+            { let mut r=f.state.routing(); r.cfg.retry_times=0; r.cfg.nonstream_timeout_ms=4000; r.cfg.request_budget_ms=3000; }
+            let a_entered=Arc::new(tokio::sync::Notify::new());
+            let a_release=Arc::new(tokio::sync::Notify::new());
+            let b_entered=Arc::new(tokio::sync::Notify::new());
+            let b_release=Arc::new(tokio::sync::Notify::new());
+            let a_mock=start_mock(Reply::HeldStatus(a_entered.clone(),a_release.clone(),500)).await;
+            let b_mock=start_mock(Reply::HeldOk(b_entered.clone(),b_release.clone())).await;
+            let a=f.add_channel("controlled-a",&a_mock.base,ChannelSpec::default());
+            let b=f.add_channel("pending-b",&b_mock.base,ChannelSpec::default());
+            f.serve("mock-chat",&[a,b]);
+            let stages=async {
+                a_entered.notified().await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                a_release.notify_one();
+                b_entered.notified().await;
+            };
+            let request=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]}));
+            let ((status,_,_),())=tokio::time::timeout(std::time::Duration::from_secs(30),async {tokio::join!(request,stages)}).await.expect("both candidate handshakes and the shared deadline must complete");
+            b_release.notify_one();
+            assert!(!status.is_success());
+            let spent:i64=f.state.conn().query_row("SELECT SUM(duration_ms) FROM attempts",[],|row|row.get(0)).unwrap();
+            assert!(spent<3600,"upstream attempts used {spent}ms; independent 4s timeouts would consume about 5s");
+            assert_eq!(a_mock.count(),1); assert_eq!(b_mock.count(),1);
+            assert_eq!(f.attempts().len(),2);
+        });
+    }).join().expect("shared-budget test thread panicked");
 }
 
 #[tokio::test]

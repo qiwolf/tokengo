@@ -47,6 +47,7 @@ impl ModelLoads {
 }
 
 pub struct AppState {
+    pub admission: crate::admission::AdmissionState,
     pub auth_slots: Arc<tokio::sync::Semaphore>,
     pub model_loads:Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
@@ -162,6 +163,8 @@ impl AppState {
 
     pub fn init(cfg: Config) -> anyhow::Result<Arc<Self>> {
         let conn = db::open(&cfg.db_path)?;
+        crate::billing_writer::replay(&conn, &cfg.db_path)?;
+        db::billing::recover(&conn)?;
         let interrupted = db::requests::recover_interrupted(&conn)?;
         if interrupted > 0 { tracing::warn!(interrupted, "已收尾重启前中断的请求"); }
         tracing::info!("数据库 {} 就绪", cfg.db_path.display());
@@ -204,7 +207,8 @@ impl AppState {
                 endpoints.iter().map(|(n, k)| format!("{n}={}", k.as_model_kind().label())).collect::<Vec<_>>().join(" "));
         }
 
-        Ok(Arc::new(Self {
+        let state = Arc::new(Self {
+            admission: crate::admission::AdmissionState::default(),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             model_loads:Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),
@@ -220,54 +224,70 @@ impl AppState {
             logs: OnceLock::new(),
             log_file: OnceLock::new(),
             log_control: OnceLock::new(),
-        }))
+        });
+        if tokio::runtime::Handle::try_current().is_ok() {
+            crate::billing_writer::spawn_retry(Arc::downgrade(&state));
+        }
+        Ok(state)
     }
 
     /// Validate a named gateway credential. DB -> cache serialization makes
     /// revocation immediate for requests authenticating after deletion completes.
     pub fn check_gateway_key(&self, key: &str) -> bool {
-        if key.trim().is_empty() {
-            return false;
-        }
-        // Lock order is always DB -> cache, including mutation handlers. Hold DB through
-        // cache fill so a completed delete can never be undone by a late verifier.
+        if key.trim().is_empty() { return false; }
         let conn = self.conn();
-        let now = db::now_ms();
-        if self.key_cache.hit(key, now) {
-            return true;
-        }
-        let ok = db::sessions::check_gateway_key(&conn, key).unwrap_or(false);
-        if ok {
-            self.key_cache.remember(key, now);
-        }
+        let Some((id, hash)) = db::gateway_keys::auth_candidate(&conn,key).ok().flatten() else { return false; };
+        if db::identity::context(&conn,id).ok().flatten().is_none() { return false; }
+        let credential = format!("{}:{key}:{hash}",key.len());
+        let ok = self.key_cache.hit(&credential,db::now_ms()) || db::gateway_keys::verify_credential(key,&hash);
+        if ok { self.key_cache.remember(&credential,db::now_ms()); }
         ok
     }
 
-    pub async fn authenticate_gateway_key(self: &Arc<Self>, key: String) -> bool {
-        let candidate = {
+    /// Credential caches never cache ownership, permissions, expiry or ancestor status.
+    pub async fn authenticate_context(self: &Arc<Self>, key: String) -> Option<db::identity::AuthContext> {
+        if key.trim().is_empty() { return None; }
+        let (id,hash) = {
             let conn = self.conn();
-            if self.key_cache.hit(&key, db::now_ms()) { return true; }
-            db::gateway_keys::auth_candidate(&conn, &key).ok().flatten()
+            let candidate = db::gateway_keys::auth_candidate(&conn,&key).ok().flatten()?;
+            let context = db::identity::context(&conn,candidate.0).ok().flatten()?;
+            let credential = format!("{}:{key}:{}",key.len(),candidate.1);
+            if self.key_cache.hit(&credential,db::now_ms()) { return Some(context); }
+            candidate
         };
-        let Some((id, hash)) = candidate else { return false; };
-        let Ok(slot) = self.auth_slots.clone().acquire_owned().await else { return false; };
-        {
-            let _conn = self.conn();
-            if self.key_cache.hit(&key, db::now_ms()) { return true; }
-        }
-        let verify_key = key.clone();
-        let verify_hash = hash.clone();
-        let ok = tokio::task::spawn_blocking(move || {
-            let _slot = slot;
-            db::sessions::verify_password(&verify_key, &verify_hash)
-        }).await.unwrap_or(false);
-        if !ok { return false; }
-        // Serialize the final row comparison and cache fill with deletion. A late
-        // verifier must never resurrect a key removed while Argon2 was running.
+        let credential = format!("{}:{key}:{hash}",key.len());
+        // Random new keys have a fast digest. Only historical Argon2 work needs
+        // the bounded blocking pool; neither path holds the database guard.
+        let verified = if hash.starts_with("sha256:") {
+            db::gateway_keys::verify_credential(&key,&hash)
+        } else {
+            let slot = self.auth_slots.clone().acquire_owned().await.ok()?;
+            {
+                let conn = self.conn();
+                let current = db::gateway_keys::auth_candidate(&conn,&key).ok().flatten()?;
+                if current != (id,hash.clone()) { return None; }
+                let context = db::identity::context(&conn,id).ok().flatten()?;
+                if self.key_cache.hit(&credential,db::now_ms()) { return Some(context); }
+            }
+            let verify_key = key.clone();
+            let verify_hash = hash.clone();
+            tokio::task::spawn_blocking(move || {
+                let _slot = slot;
+                db::gateway_keys::verify_credential(&verify_key,&verify_hash)
+            }).await.ok()?
+        };
+        if !verified { return None; }
+        // Serialize the final credential and live-context recheck with all DB mutations.
         let conn = self.conn();
-        let present: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM gateway_keys WHERE id=?1 AND key_hash=?2)",rusqlite::params![id,hash],|r|r.get(0)).unwrap_or(false);
-        if present { self.key_cache.remember(&key, db::now_ms()); }
-        present
+        let current = db::gateway_keys::auth_candidate(&conn,&key).ok().flatten()?;
+        if current != (id,hash) { return None; }
+        let context = db::identity::context(&conn,id).ok().flatten()?;
+        self.key_cache.remember(&credential,db::now_ms());
+        Some(context)
+    }
+
+    pub async fn authenticate_gateway_key(self: &Arc<Self>, key: String) -> bool {
+        self.authenticate_context(key).await.is_some()
     }
 
     /// 换 key / 清 key 之后调它。
