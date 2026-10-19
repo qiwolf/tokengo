@@ -262,6 +262,9 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vis
         // 有渠道勾过这个名字，但一条都用不了：把原因指明白（停用了 / 没填 base_url）
         let mut names: Vec<String> = Vec::new();
         for id in &route.declared_by {
+            if let Some(auth) = auth {
+                if !permitted_candidate(&conn, auth, &route.name, id.0)? { continue; }
+            }
             if let Some(l) = channels::get(&conn, *id)? {
                 names.push(l.name);
             }

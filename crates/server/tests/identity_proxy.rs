@@ -610,3 +610,24 @@ async fn immutable_identity_policy_snapshot_follows_each_billed_attempt() {
     let a: Value = serde_json::from_str(&a).unwrap();
     assert_eq!(a["policy_version"], latest["policy_version"]);
 }
+
+#[tokio::test]
+async fn unavailable_route_does_not_disclose_unauthorized_source_names() {
+    let f = Fixture::new().await;
+    f.policy(json!({"allowed_models":["allowed"],"allowed_channels":[],"allow_paid":true}));
+    f.state
+        .conn()
+        .execute(
+            "UPDATE channels SET enabled=0,name='PRIVATE-SOURCE-ACCOUNT'",
+            [],
+        )
+        .unwrap();
+    let (status, value) = f.send("/v1/chat/completions", body("allowed")).await;
+    assert_ne!(status, 200);
+    assert!(value["error"].is_object(), "{value}");
+    assert!(
+        !value.to_string().contains("PRIVATE-SOURCE-ACCOUNT"),
+        "unauthorized source metadata leaked: {value}"
+    );
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
