@@ -253,13 +253,6 @@ pub struct ClientStat {
     pub output_tokens: i64,
 }
 
-/// 错误分布的一行。
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct ErrorStat {
-    pub error: String,
-    pub count: i64,
-}
-
 /// 按端点类型的账：对话 / 向量 / 重排 / 别的。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct KindStat {
@@ -310,8 +303,6 @@ pub struct Stats {
     pub by_model: Vec<ModelStat>,
     #[serde(default)]
     pub by_client: Vec<ClientStat>,
-    #[serde(default)]
-    pub errors: Vec<ErrorStat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -705,8 +696,10 @@ pub struct LogLevel {
     pub revert_at_ms: Option<i64>,
 }
 
-#[derive(Debug,Clone,PartialEq,Default,Deserialize)]pub struct ModelCooldown{pub channel_id:i64,pub upstream:String,pub failures:i64,pub until_ms:i64,pub reason:String,pub lease_until:i64}
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]pub struct ModelCooldown{#[serde(default)]pub model:String,pub channel_id:i64,pub upstream:String,pub failures:i64,pub until_ms:i64,pub reason:String,pub lease_until:i64}
 #[derive(Debug,Clone,PartialEq,Default,Deserialize,Serialize)]pub struct AutoPolicy{pub strategy:String,pub explore:bool}
 #[derive(Debug,Clone,PartialEq,Default,Deserialize)]pub struct AutoPolicyResp{pub policy:AutoPolicy,pub order:Vec<String>}
 
 fn model_enabled_default()->bool{true}
+
+#[derive(Debug,Clone,Default,Deserialize)]pub struct CooldownsResp{pub cooldowns:Vec<ModelCooldown>,pub now_ms:i64}

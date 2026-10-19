@@ -56,6 +56,8 @@ pub enum EndpointKind {
 /// 依据：现网实测的 429 有两类 —— 「Go 用量超了」与「周额度用完」，它们说的恢复时间
 /// 以小时计。这时候"等 1 秒再试 3 次"纯属白等，还会把请求预算烧光。
 const LONG_RETRY_AFTER_MS: u64 = 2000;
+/// 同一「渠道＋模型」连续失败到这个数才进冷却（用户口径：先重试，三次都失败才冷却）。
+pub const COOLDOWN_AFTER_FAILURES: i64 = 3;
 
 impl EndpointKind {
     /// 打上游时接在 base_url 后面的路径。
@@ -410,7 +412,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut last_http: Option<UpstreamError> = None;
     let mut last_channel = ChannelId(0);
     // 上游说的「过多久再来」；下一次重试用它顶掉默认节拍。
-    let mut retry_after_override: Option<u64> = None;
+
 
     // 每条渠道的「门口闸机」：同时最多几发（面板上按渠道配，0 = 不限）。
     // 满了**不硬压上去**（现网 503「bridge busy」151 次就是这么来的）：先换别的渠道；
@@ -442,6 +444,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let generation={let c=state.conn();crate::db::policy::claim(&c,channel.id.0,name,sent,now_ms())?};
         let Some(generation)=generation else {continue;};
         let load_ticket=match plan.load_ticket.take(){Some((n,t)) if tokengo_shared::same_model_name(&n,name)=>t,other=>{drop(other);state.model_loads.acquire(name)}};
+        // 冷到期的恢复试用只放一条：失败就进下一级冷却，不再连试三次。
+        let recovering={let c=state.conn();crate::db::policy::rows(&c,name)?.iter().any(|r|r.channel_id==channel.id.0 && r.upstream==sent && r.lease_until>0)};
+        let max_attempts=if recovering {1} else {cfg.max_attempts().min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
         let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false};
         tried_any = true;
         last_channel = channel.id;
@@ -469,8 +474,19 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let mut body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
         let mut learned_this_request = false;
 
-        for attempt_no in 1..=if plan.auto {1} else {cfg.max_attempts()} {
+        let mut retry_after_override:Option<u64>=None;
+        // 上一次是「快失败」还是「慢失败」。连接被拒 / 5xx / 429 这类上游马上就回了，
+        // 重试有意义；耗时顶到超时的失败多半是上游在挂，再等一轮只会把整个请求预算吃掉、
+        // 让客户端白等，所以那种直接换下一候选（冷却计数照记）。
+        let mut slow_previous=false;
+        // 这一候选上见过的最大 Retry-After：冷却时当下限用（上游自己说的等多久最准）。
+        let mut pending_retry_ms:i64=0;
+        for attempt_no in 1..=max_attempts {
             if attempt_no > 1 {
+                let left = cfg.request_budget_ms as i64 - (now_ms() - started_ms);
+                if slow_previous || left < cfg.attempt_timeout_ms.max(1) as i64 {
+                    break;
+                }
                 // 上游在 Retry-After 里说了等多久就等多久（它比我们的默认节拍更懂自己）
                 let d = retry_after_override.take().unwrap_or_else(|| retry_delay_ms(attempt_no));
                 if d > 0 {
@@ -514,11 +530,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let resp = match outcome {
                 Err(fault) => {
                     let dur = now_ms() - t0;
+                    slow_previous = dur >= cfg.attempt_timeout_ms.max(1) as i64 * 3 / 4;
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
                     last_fault = Some(format!("{}：{}", channel.name, fault.message));
-                    if plan.auto {cooldown.finish(false,&fault.message,0);}
-                    if plan.auto {break;}
+                    if cooldown.failure(&fault.message,pending_retry_ms) {break;}
                     continue;
                 }
                 Ok(r) => r,
@@ -526,6 +542,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
             let status = resp.status().as_u16();
             let dur = now_ms() - t0;
+            slow_previous = dur >= cfg.attempt_timeout_ms.max(1) as i64 * 3 / 4;
             match classify_status(status) {
                 AttemptOutcome::Success => {
                     // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
@@ -582,8 +599,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         ordinal += 1;
                         tracing::warn!("渠道 {} 回了 200 但一句话没说，按这条渠道的毛病处理", channel.name);
                         last_fault = Some(format!("{}：{note}", channel.name));
-                        if plan.auto {cooldown.finish(false,&note,0);}
-                        if plan.auto {break;}
+                        if cooldown.failure(&note,pending_retry_ms) {break;}
                         continue;
                     }
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, adaptation_note.as_deref());
@@ -632,7 +648,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                     "output_limit", Some(status), dur, adaptation_note.as_deref());
                                 ordinal += 1;
                                 body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
-                                if attempt_no < cfg.max_attempts() { continue; }
+                                if attempt_no < max_attempts { continue; }
                                 last_http = Some(err);
                                 continue 'channels;
                             }
@@ -678,22 +694,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     );
                     ordinal += 1;
                     last_fault = Some(format!("{}：HTTP {status} {}", channel.name, err.text));
-                    if plan.auto {cooldown.finish(false,&format!("HTTP {status}: {}",err.text),after.unwrap_or(0) as i64);}
+                    pending_retry_ms=pending_retry_ms.max(after.unwrap_or(0) as i64);
+                    let cooling=cooldown.failure(&format!("HTTP {status}: {}",err.text),pending_retry_ms);
                     last_http = Some(err);
-                    if plan.auto {break;}
+                    if cooling {break;}
                     if let Some(ms) = after {
-                        // 上游自己说了「过多久再来」：
-                        // · 说得很久（>2 秒）→ **别在这条渠道上耗**，剩下的尝试直接放弃、换下一条；
-                        //   现网那两种 429（Go 用量 / 周额度）等 1 秒重试纯属白等。
-                        // · 说得不久 → 就按它说的等，比我们的固定节拍更贴合。
-                        if ms > LONG_RETRY_AFTER_MS {
-                            tracing::warn!(
-                                "渠道 {} 回了 {status} 且要求等 {} 秒 → 不重试，直接换下一条渠道",
-                                channel.name,
-                                ms / 1000
-                            );
-                            break;
-                        }
+                        // Long Retry-After sets the eventual cooldown, not an unbounded request sleep.
+                        let ms=ms.min(LONG_RETRY_AFTER_MS);
                         retry_after_override = Some(ms);
                     }
                     continue;
@@ -717,19 +724,18 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             }
         }
 
-        if !plan.auto {cooldown.finish(false,last_fault.as_deref().unwrap_or("候选失败"),0);}
         // 这条渠道把重试次数用完了还是不行 → 切换
         if touch_state {
             let mut r = state.routing();
             r.on_channel_exhausted(&plan.route, channel.id, &all_ids, now_ms());
             drop(r);
             state.persist_state(&plan.route)?;
-            tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, cfg.max_attempts());
+            tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, max_attempts);
         } else {
             tracing::warn!(
                 "（带图请求，不动路由状态）渠道 {} 连续 {} 次失败",
                 channel.name,
-                cfg.max_attempts()
+                max_attempts
             );
         }
     }
@@ -756,10 +762,16 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         }
     }
 
-    if last_channel.0==0 && plan.auto {
+    // 一个候选都没敢碰（全在冷却或恢复试用里）：如实回 503 并说清最早什么时候能再试 ——
+    // 别拿「所有渠道都失败了」去冤枉渠道（渠道根本没被调过）。普通模型名和 auto 一视同仁。
+    if last_channel.0==0 {
+        let c=state.conn();
+        let until=model_routes::list(&c)?.iter().flat_map(|r|crate::db::policy::rows(&c,&r.name).unwrap_or_default()).map(|r|r.until_ms.max(r.lease_until)).filter(|t|*t>now_ms()).min();
+        drop(c);
+        let msg=format!("候选冷却或恢复试用中，请稍后重试{}",until.map(|t|format!("（最早可重试时间：{t}）")).unwrap_or_default());
         guard.error_code=Some("models_cooling".into());
-        guard.finish(&state,Status::Failed,Some(503),None,started_ms,None,0,0,false,Some("候选冷却或恢复试用中，请稍后重试"));
-        return Ok(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling","候选冷却或恢复试用中，请稍后重试").into_response());
+        guard.finish(&state,Status::Failed,Some(503),None,started_ms,None,0,0,false,Some(&msg));
+        return Ok(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",msg).into_response());
     }
     // 所有渠道都试完了
     let note = last_fault
@@ -865,7 +877,24 @@ fn no_vision_model_response(message: String) -> Response {
 /// 记一次尝试。**记账失败不许把请求带崩**：抢不到库锁就把这一件丢给后台落账员，
 /// 日志里有痕迹就行。
 struct CooldownTicket {state:SharedState,id:i64,name:String,upstream:String,generation:i64,done:bool}
-impl CooldownTicket {fn finish(&mut self,success:bool,reason:&str,retry:i64){if self.done{return;}self.done=true;let c=self.state.conn();let min=if reason.contains("401")||reason.contains("403"){1800000}else{retry};if let Err(e)=crate::db::policy::complete(&c,self.id,&self.name,&self.upstream,self.generation,success,reason,min,now_ms()){tracing::warn!("冷却记录失败：{e}");}}}
+impl CooldownTicket {
+    fn failure(&mut self,reason:&str,retry:i64)->bool {
+        if self.done {return true;}
+        let c=self.state.conn();
+        let min=if reason.contains("HTTP 401:")||reason.contains("HTTP 403:"){1800000}else{retry};
+        if let Err(e)=crate::db::policy::complete(&c,self.id,&self.name,&self.upstream,self.generation,false,reason,min,now_ms()){tracing::warn!("冷却记录失败：{e}");}
+        let cooling=crate::db::policy::peek(&c,self.id,&self.name,&self.upstream,now_ms()).ok().flatten().is_some();
+        self.done=cooling;
+        cooling
+    }
+    fn finish(&mut self,success:bool,reason:&str,retry:i64){
+        if !success {self.failure(reason,retry);return;}
+        if self.done{return;}
+        self.done=true;
+        let c=self.state.conn();
+        if let Err(e)=crate::db::policy::complete(&c,self.id,&self.name,&self.upstream,self.generation,true,"",0,now_ms()){tracing::warn!("冷却记录失败：{e}");}
+    }
+}
 impl Drop for CooldownTicket {fn drop(&mut self){if !self.done{let c=self.state.conn();let _=crate::db::policy::release(&c,self.id,&self.name,&self.upstream,self.generation);}}}
 
 fn record_attempt(
