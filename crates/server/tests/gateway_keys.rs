@@ -42,6 +42,39 @@ async fn request(
 }
 
 #[tokio::test]
+async fn async_auth_verifier_cannot_resurrect_a_deleted_key() {
+    let cfg=config(); let state=AppState::init(cfg.clone()).unwrap();
+    let key=gateway_keys::generate();
+    let row=gateway_keys::create(&state.conn(),&state.secrets,"race",&key,false).unwrap();
+    let slots=state.auth_slots.clone().acquire_many_owned(2).await.unwrap();
+    let verifier=tokio::spawn({let state=state.clone();let key=key.clone();async move {state.authenticate_gateway_key(key).await}});
+    tokio::task::yield_now().await;
+    { let conn=state.conn(); gateway_keys::delete(&conn,row.id).unwrap();state.forget_gateway_key(); }
+    drop(slots);
+    assert!(!verifier.await.unwrap());
+    assert!(!state.authenticate_gateway_key(key).await);
+    std::fs::remove_dir_all(cfg.db_path.parent().unwrap()).unwrap();
+}
+
+#[tokio::test(flavor="current_thread")]
+async fn slow_auth_does_not_starve_the_async_runtime() {
+    let cfg=config(); let state=AppState::init(cfg.clone()).unwrap();
+    sessions::set_panel_password(&state.conn(),"test-password").unwrap();
+    sessions::set_gateway_key(&state.conn(),&state.secrets,"legacy-key").unwrap();
+    let login=request(state.clone(),"POST","/api/auth/login",None,json!({"password":"wrong"}));
+    let timer=async { let t=std::time::Instant::now(); tokio::time::sleep(std::time::Duration::from_millis(15)).await; t.elapsed() };
+    let ((status,_),elapsed)=tokio::join!(login,timer);
+    assert_eq!(status,StatusCode::UNAUTHORIZED);
+    assert!(elapsed.as_millis()<150,"login blocked runtime for {elapsed:?}");
+    let check=request(state.clone(),"GET","/v1/models",Some("wrong-legacy"),json!({}));
+    let timer=async { let t=std::time::Instant::now(); tokio::time::sleep(std::time::Duration::from_millis(15)).await; t.elapsed() };
+    let ((status,_),elapsed)=tokio::join!(check,timer);
+    assert_eq!(status,StatusCode::UNAUTHORIZED);
+    assert!(elapsed.as_millis()<150,"key auth blocked runtime for {elapsed:?}");
+    std::fs::remove_dir_all(cfg.db_path.parent().unwrap()).unwrap();
+}
+
+#[tokio::test]
 async fn named_keys_routes_revocation_restart_and_settings_compatibility() {
     let cfg = config();
     let state = AppState::init(cfg.clone()).unwrap();

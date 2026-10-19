@@ -194,3 +194,12 @@ pub fn default_hint(conn: &Connection) -> Result<Option<String>> {
         )
         .optional()?)
 }
+
+/// Snapshot authentication work without retaining a database guard across Argon2.
+pub fn auth_candidate(conn: &Connection, key: &str) -> Result<Option<(i64, String)>> {
+    if let Some(sel) = selector(key) {
+        let row = conn.query_row("SELECT id,key_hash FROM gateway_keys WHERE selector=?1",[sel],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        if row.is_some() { return Ok(row); }
+    }
+    Ok(conn.query_row("SELECT id,key_hash FROM gateway_keys WHERE is_default=1 AND selector IS NULL",[],|r|Ok((r.get(0)?,r.get(1)?))).optional()?)
+}

@@ -47,6 +47,7 @@ impl ModelLoads {
 }
 
 pub struct AppState {
+    pub auth_slots: Arc<tokio::sync::Semaphore>,
     pub model_loads:Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
     pub db: Mutex<Connection>,
@@ -203,6 +204,7 @@ impl AppState {
         }
 
         Ok(Arc::new(Self {
+            auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             model_loads:Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),
             db: Mutex::new(conn),
@@ -238,6 +240,33 @@ impl AppState {
             self.key_cache.remember(key, now);
         }
         ok
+    }
+
+    pub async fn authenticate_gateway_key(self: &Arc<Self>, key: String) -> bool {
+        let candidate = {
+            let conn = self.conn();
+            if self.key_cache.hit(&key, db::now_ms()) { return true; }
+            db::gateway_keys::auth_candidate(&conn, &key).ok().flatten()
+        };
+        let Some((id, hash)) = candidate else { return false; };
+        let Ok(slot) = self.auth_slots.clone().acquire_owned().await else { return false; };
+        {
+            let _conn = self.conn();
+            if self.key_cache.hit(&key, db::now_ms()) { return true; }
+        }
+        let verify_key = key.clone();
+        let verify_hash = hash.clone();
+        let ok = tokio::task::spawn_blocking(move || {
+            let _slot = slot;
+            db::sessions::verify_password(&verify_key, &verify_hash)
+        }).await.unwrap_or(false);
+        if !ok { return false; }
+        // Serialize the final row comparison and cache fill with deletion. A late
+        // verifier must never resurrect a key removed while Argon2 was running.
+        let conn = self.conn();
+        let present: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM gateway_keys WHERE id=?1 AND key_hash=?2)",rusqlite::params![id,hash],|r|r.get(0)).unwrap_or(false);
+        if present { self.key_cache.remember(&key, db::now_ms()); }
+        present
     }
 
     /// 换 key / 清 key 之后调它。

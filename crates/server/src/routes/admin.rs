@@ -233,12 +233,17 @@ async fn auth_login(
     headers: axum::http::HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let hash = settings::get(&state.conn(), settings::PANEL_PASSWORD_HASH)?
+        .ok_or_else(|| ApiError::bad_request("还没设置口令，请先初始化"))?;
+    let slot = state.auth_slots.clone().try_acquire_owned()
+        .map_err(|_| ApiError::new(axum::http::StatusCode::TOO_MANY_REQUESTS, "auth_busy", "Authentication busy; try again later"))?;
+    let verify_hash = hash.clone();
+    let ok = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        sessions::verify_password(&body.password, &verify_hash)
+    }).await.map_err(|e| ApiError::internal(e.to_string()))?;
     let conn = state.conn();
-    if !sessions::has_panel_password(&conn)? {
-        return Err(ApiError::bad_request("还没设置口令，请先初始化"));
-    }
-    if !sessions::check_panel_password(&conn, &body.password)? {
-        tracing::warn!("面板登录失败：口令不对");
+    if !ok || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str()) {
         return Err(ApiError::unauthorized("口令不对"));
     }
     sessions::purge_expired(&conn)?;

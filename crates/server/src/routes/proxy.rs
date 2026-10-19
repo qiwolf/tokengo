@@ -62,7 +62,7 @@ impl FromRequestParts<SharedState> for GatewayKey {
             .ok_or_else(|| {
                 ApiError::unauthorized("缺少 Authorization: Bearer <对外 key>（面板「设置」里配）")
             })?;
-        if !state.check_gateway_key(key) {
+        if !state.authenticate_gateway_key(key.to_string()).await {
             // 记一条：客户端连不上时最常就是这个原因（key 复制少了、还是 FreeLLMAPI 那把）。
             // 只记来源与掩码，**不记 key 本身** —— 日志会被下载/贴给人看。
             let hint: String = {
