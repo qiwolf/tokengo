@@ -1091,6 +1091,7 @@ async fn model_routes_list(
             names.retain(|n|model_routes::channels_for(&conn,n).unwrap_or_default().iter().any(|c|crate::db::policy::peek(&conn,c.id.0,n,c.upstream_model(n),now_ms()).ok().flatten().is_none()));
             let mut p=crate::db::policy::get(&conn).unwrap_or_default();p.explore=false;
             let _=crate::db::policy::rank(&conn,&mut names,&p,state.auto_sequence.load(std::sync::atomic::Ordering::Relaxed),99);
+            if p.strategy=="idle" {state.model_loads.preview(&mut names);}
             names
         };
         serde_json::json!({
