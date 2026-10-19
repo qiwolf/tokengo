@@ -3704,7 +3704,17 @@ async fn fixed_delay_real_http_four_concurrency_levels_balance_the_ledger() {
         println!("concurrency={concurrency} requests={} errors=0 p50={}ms p95={}ms elapsed={}ms",timings.len(),timings[timings.len()/2],timings[timings.len()*95/100],started.elapsed().as_millis());
         total+=concurrency*4;
     }
-    f.state.drain_writes();
+    // drain_writes deliberately uses try_lock: the billing retry worker can
+    // briefly own SQLite even after every HTTP response has completed. Wait for
+    // the queue's actual completion, rather than assuming one poll drained it.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while f.state.pending_writes() > 0 {
+            f.state.drain_writes();
+            if f.state.pending_writes() > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+    }).await.expect("request and attempt writes must finish after HTTP load");
     let conn=f.state.conn();
     let (requests,ok,running):(i64,i64,i64)=conn.query_row("SELECT count(*),sum(status='ok'),sum(status='running') FROM requests",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
     let attempts:i64=conn.query_row("SELECT count(*) FROM attempts",[],|r|r.get(0)).unwrap();
