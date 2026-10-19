@@ -3643,7 +3643,10 @@ async fn review_documents_remaining_header_and_usage_boundaries() {
     let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
     assert_eq!(status,StatusCode::OK);f.state.drain_writes();
     let row=&f.request_rows()[0];assert_eq!((row.2,row.3),(0,0));
-    println!("header encrypted and masked; remaining boundary: absent usage stored as 0/0");
+    let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+    let (_,list)=get_with_token(&f,"/api/logs",&token).await;
+    assert_eq!(list["logs"][0]["usage_source"],"unreported");
+    assert_eq!(list["logs"][0]["input_tokens_known"],false);
 }
 
 #[tokio::test(flavor="multi_thread", worker_threads=4)]
@@ -3850,4 +3853,57 @@ async fn broken_stream_reports_transport_failure_once() {
     assert!(rows[0].5.as_deref().unwrap().contains("连接异常中断"));
     assert_eq!(m.count(),1);assert_eq!(f.attempts().len(),1);
     assert_eq!(tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap()[0].failures,1);
+}
+
+#[tokio::test]
+async fn usage_zero_missing_partial_and_api_coverage() {
+    for (path, body, reply, input, output) in [
+        (CHAT,json!({"model":"mock-chat","messages":[]}),r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"#,Some(0),Some(0)),
+        (CHAT,json!({"model":"mock-chat","messages":[]}),r#"{"choices":[{"message":{"content":"ok"}}]}"#,None,None),
+        ("/v1/embeddings",json!({"model":"mock-chat","input":"x"}),r#"{"data":[{"embedding":[1,2]}],"usage":{"prompt_tokens":8}}"#,Some(8),None),
+        ("/v1/rerank",json!({"model":"mock-chat","query":"x","documents":["x"]}),r#"{"results":[{"index":0,"relevance_score":1}],"usage":{"input_tokens":3,"output_tokens":0}}"#,Some(3),Some(0)),
+        (CHAT,json!({"model":"mock-chat","messages":[]}),r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":-1,"completion_tokens":"2"}}"#,None,None),
+    ] {
+        let f=fixture();f.with_key();
+        let m=start_mock(Reply::Status(200,reply)).await;
+        let id=f.add_channel("usage",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+        let (status,_,_)=post(&f,path,Some(KEY),body).await;assert_eq!(status,StatusCode::OK);
+        f.state.drain_writes();
+        let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+        let (_,list)=get_with_token(&f,"/api/logs",&token).await;
+        let r=&list["logs"][0];
+        assert_eq!(r["input_tokens"],input.unwrap_or(0));assert_eq!(r["output_tokens"],output.unwrap_or(0));
+        assert_eq!(r["input_tokens_known"],input.is_some());assert_eq!(r["output_tokens_known"],output.is_some());
+        let (_,detail)=get_with_token(&f,&format!("/api/requests/{}",r["id"]),&token).await;
+        assert_eq!(detail["request"],*r);
+        let (_,stats)=get_with_token(&f,"/api/stats",&token).await;
+        let unknown=i64::from(input.is_none()||output.is_none());
+        assert_eq!(stats["stats"]["usage"]["unknown_requests"],unknown);
+        for key in ["by_model","by_client","by_channel"] {assert_eq!(stats["stats"][key][0]["usage"]["unknown_requests"],unknown);}
+        let kind=stats["stats"]["by_kind"].as_array().unwrap().iter().find(|k|k["requests"]==1).unwrap();
+        assert_eq!(kind["usage"]["unknown_requests"],unknown);
+    }
+}
+
+const USAGE_PARTIAL: &str="data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}],\"usage\":{\"prompt_tokens\":0}}\n\n";
+#[tokio::test]
+async fn usage_stream_chunks_preserve_partial_on_cancel_and_failure() {
+    for mode in [0,1,2] {
+        let f=fixture();f.with_key();stream_deadline(&f,100);
+        let chunks=if mode==0 { vec![(0,USAGE_PARTIAL),(0,"data: {\"usage\":{\"completion_tokens\":0}}\n\n"),(0,"data: [DONE]\n\n")] }else{vec![(0,USAGE_PARTIAL),(400,"data: [DONE]\n\n")]};
+        let m=start_mock(Reply::TimedSse(chunks)).await;
+        let id=f.add_channel("usage-stream",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+        let req=axum::http::Request::builder().method("POST").uri(CHAT).header("authorization",format!("Bearer {KEY}"))
+            .body(axum::body::Body::from(json!({"model":"mock-chat","stream":true,"messages":[]}).to_string())).unwrap();
+        let response=app(f.state.clone()).oneshot(req).await.unwrap();
+        if mode==1 {use futures_util::StreamExt;let mut body=response.into_body().into_data_stream();assert!(body.next().await.unwrap().is_ok());drop(body);}
+        else {let body=axum::body::to_bytes(response.into_body(),1<<20).await;assert_eq!(body.is_ok(),mode==0);}
+        f.state.drain_writes();
+        let rows=tokengo_server::db::requests::recent(&f.state.conn(),1).unwrap();let r=&rows[0];
+        assert_eq!(r.status,["ok","canceled","failed"][mode]);assert!(r.input_tokens_known);assert_eq!(r.input_tokens,0);
+        assert_eq!(r.output_tokens_known,mode==0);assert_eq!(r.usage_source,"upstream");assert!(r.streamed);
+        let stats=tokengo_server::db::requests::stats_since(&f.state.conn(),0).unwrap();
+        assert_eq!(stats.usage.unknown_requests,i64::from(mode!=0));
+        assert_eq!(m.count(),1);
+    }
 }

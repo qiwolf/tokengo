@@ -385,4 +385,8 @@ INSERT INTO gateway_keys(name,hint,created_at_ms,key_hash,is_default,legacy_seal
 DELETE FROM settings WHERE key IN ('gateway_key_hash','gateway_key_sealed');
 "#),
     (22, "ALTER TABLE channel_headers ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;"),
+    (23, "ALTER TABLE requests ADD COLUMN input_tokens_known INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE requests ADD COLUMN output_tokens_known INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE requests ADD COLUMN usage_source TEXT NOT NULL DEFAULT 'legacy';
+UPDATE requests SET input_tokens_known=(input_tokens>0), output_tokens_known=(output_tokens>0);"),
 ];

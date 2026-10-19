@@ -196,7 +196,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </div>
                 </div>
                 <div class="stat">
-                    <div class="stat-title">"Token"</div>
+                    <div class="stat-title" title="仅汇总已报告字段及保留的历史数值；未报告用量及其成本不在统计内，不代表零消耗或费用账单。">"已记录 Token"</div>
                     <div class="stat-value">
                         {move || {
                             let s = stats.get().stats;
@@ -206,7 +206,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     <div class="stat-sub">
                         {move || {
                             let s = stats.get().stats;
-                            format!("入 {} · 出 {}", fmt::num(s.input_tokens), fmt::num(s.output_tokens))
+                            format!("入 {} · 出 {} · 未完整报告 {} 次（历史来源不确定 {} 次）", fmt::num(s.input_tokens), fmt::num(s.output_tokens),s.usage.unknown_requests,s.usage.legacy_requests)
                         }}
                     </div>
                 </div>
@@ -288,10 +288,10 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     {move || {
                         let st=stats.get().stats;
                         let items:Vec<(String,String,String,String)>=match category.get() {
-                            1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.ok+k.failed+k.client_errors)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},fmt::num(k.input_tokens+k.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
-                            2=>st.by_channel.into_iter().map(|c| (channel_name(Some(c.channel_id)),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {}",fmt::dur(c.avg_ms)),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
-                            3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.ok+m.failed+m.client_errors)),format!("Token {}",fmt::num(m.input_tokens+m.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
-                            4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.ok+c.failed+c.client_errors)),format!("Token {}",fmt::num(c.input_tokens+c.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
+                            1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.ok+k.failed+k.client_errors)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},format!("{} · 未完整报告 {} 次",fmt::num(k.input_tokens+k.output_tokens),k.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
+                            2=>st.by_channel.into_iter().map(|c| (channel_name(Some(c.channel_id)),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {} · 未完整报告 {} 次",fmt::dur(c.avg_ms),c.usage.unknown_requests),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
+                            3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.ok+m.failed+m.client_errors)),format!("Token {}",format!("{} · 未完整报告 {} 次",fmt::num(m.input_tokens+m.output_tokens),m.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
+                            4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.ok+c.failed+c.client_errors)),format!("Token {}",format!("{} · 未完整报告 {} 次",fmt::num(c.input_tokens+c.output_tokens),c.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
                             _=>Vec::new(),
                         };
                         if items.is_empty(){return view!{<div class="empty">"当前时间窗口暂无记录"</div>}.into_any();}
@@ -406,7 +406,8 @@ fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
         ("实际模型",actual),("请求入口",r.model.clone()),("结果",label.into()),
         ("请求时间",fmt::ts(r.ts_ms)),("总耗时",if r.status=="running" {"进行中…".into()}else{fmt::dur(r.latency_ms)}),
         ("首字节延迟",if r.status=="running" {"等待上游响应".into()}else if r.channel_id.is_none(){"不适用".into()}else{r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}),
-        ("输入 Token",fmt::num(r.input_tokens)),("输出 Token",fmt::num(r.output_tokens)),
+        ("输入 Token",usage_number(r.input_tokens,r.input_tokens_known,&r.usage_source)),("输出 Token",usage_number(r.output_tokens,r.output_tokens_known,&r.usage_source)),
+        ("用量来源",if r.usage_source=="legacy" {"历史记录，零值来源不确定"}else if r.usage_source=="upstream" {"上游已报告字段"}else{"上游未报告"}.into()),
         ("输出方式",if r.streamed{"流式"}else{"非流式"}.into()),
         ("HTTP 状态",r.http_status.map(|n|n.to_string()).unwrap_or_else(||"未记录".into())),
         ("来源 IP",r.client_ip.unwrap_or_else(||"未提供".into())),
@@ -462,4 +463,8 @@ mod tests {
         k.ok = 0;
         assert_eq!(k.success_rate(), 0.0);
     }
+}
+
+fn usage_number(value:i64, known:bool, source:&str)->String {
+    if known {fmt::num(value)} else if source=="legacy" {"历史来源不确定".into()} else {"未报告".into()}
 }

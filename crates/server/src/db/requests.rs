@@ -43,8 +43,8 @@ pub fn start(
     has_image: bool,
 ) -> Result<i64> {
     conn.execute(
-        "INSERT INTO requests (ts_ms, endpoint, model, status, client_ip, has_image)
-         VALUES (?1, ?2, ?3, 'running', ?4, ?5)",
+        "INSERT INTO requests (ts_ms, endpoint, model, status, client_ip, has_image, usage_source)
+         VALUES (?1, ?2, ?3, 'running', ?4, ?5, 'unreported')",
         params![now_ms(), endpoint, model, client_ip, has_image as i64],
     )?;
     Ok(conn.last_insert_rowid())
@@ -76,6 +76,10 @@ pub fn recover_interrupted(conn: &Connection) -> Result<usize> {
 /// 后台落账员（`state::WriteJob`），所以参数得是自持有（owned）的，不能借用请求里的东西。
 #[derive(Debug, Clone)]
 pub struct FinishArgs {
+    pub input_tokens_known: bool,
+    pub output_tokens_known: bool,
+    pub usage_source: String,
+
     pub request_id: i64,
     pub status: Status,
     pub http_status: Option<u16>,
@@ -122,6 +126,7 @@ pub fn finish_args(conn: &Connection, a: &FinishArgs) -> Result<()> {
         a.streamed,
         a.error.as_deref(),
     )?;
+    conn.execute("UPDATE requests SET input_tokens_known=?2,output_tokens_known=?3,usage_source=?4 WHERE id=?1",params![a.request_id,a.input_tokens_known,a.output_tokens_known,a.usage_source])?;
     if let Some(code)=&a.error_code {conn.execute("UPDATE requests SET error_code=?2 WHERE id=?1",params![a.request_id,code])?;}
     // served_model 只在「真正被叫的名字与客户端打的名字不一样」时才有值（auto）。
     // 单独一条小 UPDATE：既不用给 finish 加第 12 个参数（把一圈调用点全改了），
@@ -206,6 +211,10 @@ pub fn add_attempt(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRow {
+    pub input_tokens_known: bool,
+    pub output_tokens_known: bool,
+    pub usage_source: String,
+
     pub explored:bool,
     pub error_code: Option<String>,
     pub first_byte_ms: Option<i64>,
@@ -230,6 +239,7 @@ pub struct RequestRow {
 
 fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
     Ok(RequestRow {
+        input_tokens_known:r.get(19)?,output_tokens_known:r.get(20)?,usage_source:r.get(21)?,
         explored:r.get::<_,i64>(18)?!=0,
         error_code:r.get(17)?,
         served_model: r.get(12)?,
@@ -276,7 +286,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let request = conn.query_row(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
                 input_tokens, output_tokens, has_image, error, served_model, first_byte_ms,
-                client_ip, user_agent, streamed, error_code, explored FROM requests WHERE id = ?1",
+                client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source FROM requests WHERE id = ?1",
         [id], request_row,
     ).optional()?;
     let Some(request) = request else { return Ok(None); };
@@ -297,7 +307,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt
@@ -308,10 +318,24 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     Ok(rows)
 }
 
+/// Coverage is independent of numeric totals: historical zero cannot establish absence or zero use.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct UsageCoverage {
+    pub unknown_requests: i64,
+    pub unknown_input_requests: i64,
+    pub unknown_output_requests: i64,
+    pub legacy_requests: i64,
+}
+fn coverage(conn: &Connection, since: i64, filter: &str, key: Option<&str>) -> Result<UsageCoverage> {
+    let sql=format!("SELECT COALESCE(SUM(NOT(input_tokens_known AND output_tokens_known)),0), COALESCE(SUM(NOT input_tokens_known),0), COALESCE(SUM(NOT output_tokens_known),0), COALESCE(SUM(usage_source='legacy'),0) FROM requests WHERE ts_ms>=?1 AND {filter}");
+    Ok(conn.query_row(&sql, params![since,key], |r| Ok(UsageCoverage { unknown_requests:r.get(0)?,unknown_input_requests:r.get(1)?,unknown_output_requests:r.get(2)?,legacy_requests:r.get(3)? }))?)
+}
+
 /// 按渠道的账。**分母是"被叫了几次"，不是"成功了几次"** —— 这是判断一条渠道
 /// 值不值得留的关键。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ChannelStat {
+    pub usage: UsageCoverage,
     pub channel_id: i64,
     pub attempts: i64,
     pub successes: i64,
@@ -324,6 +348,7 @@ pub struct ChannelStat {
 /// 按模型名的账。看的是**客户端打了什么名字**，与最终落哪条渠道无关。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ModelStat {
+    pub usage: UsageCoverage,
     pub model: String,
     pub requests: i64,
     pub ok: i64,
@@ -336,6 +361,7 @@ pub struct ModelStat {
 /// 按客户端的账。`client_ip` 为 `None` 表示没拿到来源地址。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ClientStat {
+    pub usage: UsageCoverage,
     pub client_ip: Option<String>,
     pub requests: i64,
     pub ok: i64,
@@ -355,6 +381,7 @@ pub struct ClientStat {
 /// 对话改成向量，昨天那批对话请求就会被算成向量）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct KindStat {
+    pub usage: UsageCoverage,
     /// `chat` / `embeddings` / `rerank` / `""`（认不出来的端点）
     pub kind: String,
     /// 给人看的中文名。
@@ -385,6 +412,7 @@ impl KindStat {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Stats {
+    pub usage: UsageCoverage,
     pub since_ms: i64,
     pub total: i64,
     pub ok: i64,
@@ -440,6 +468,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     let mut by_channel: Vec<ChannelStat> = stmt
         .query_map([since_ms], |r| {
             Ok(ChannelStat {
+                usage: UsageCoverage::default(),
                 channel_id: r.get(0)?,
                 attempts: r.get(1)?,
                 successes: r.get(2)?,
@@ -455,10 +484,11 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     for s in &mut by_channel {
         let (i, o): (i64, i64) = conn.query_row(
             "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
-               FROM requests WHERE ts_ms >= ?1 AND channel_id = ?2 AND status = 'ok'",
+               FROM requests WHERE ts_ms >= ?1 AND channel_id = ?2 ",
             params![since_ms, s.channel_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
+        s.usage=coverage(conn,since_ms,"channel_id=CAST(?2 AS INTEGER)",Some(&s.channel_id.to_string()))?;
         s.input_tokens = i;
         s.output_tokens = o;
     }
@@ -475,9 +505,10 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
            FROM requests WHERE ts_ms >= ?1
           GROUP BY actual_model ORDER BY COUNT(*) DESC LIMIT 50",
     )?;
-    let by_model: Vec<ModelStat> = stmt
+    let mut by_model: Vec<ModelStat> = stmt
         .query_map([since_ms], |r| {
             Ok(ModelStat {
+                usage: UsageCoverage::default(),
                 model: r.get(0)?,
                 requests: r.get(1)?,
                 ok: r.get(2)?,
@@ -523,6 +554,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     let zero = |kind: &str, label: &str| KindStat {
         kind: kind.to_string(),
         label: label.to_string(),
+        usage: UsageCoverage::default(),
         requests: 0,
         ok: 0,
         failed: 0,
@@ -574,9 +606,10 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
            FROM requests WHERE ts_ms >= ?1
           GROUP BY client_ip ORDER BY COUNT(*) DESC LIMIT 50",
     )?;
-    let by_client: Vec<ClientStat> = stmt
+    let mut by_client: Vec<ClientStat> = stmt
         .query_map([since_ms], |r| {
             Ok(ClientStat {
+                usage: UsageCoverage::default(),
                 client_ip: r.get(0)?,
                 requests: r.get(1)?,
                 ok: r.get(2)?,
@@ -588,7 +621,15 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         })?
         .collect::<rusqlite::Result<_>>()?;
 
+    for row in &mut by_model {
+        row.usage=coverage(conn,since_ms,"(CASE WHEN TRIM(served_model)<>'' AND LOWER(TRIM(served_model))<>'auto' THEN served_model WHEN channel_id IS NULL THEN '未调用上游' WHEN LOWER(TRIM(model))='auto' THEN '实际模型未记录' ELSE model END)=?2",Some(&row.model))?;
+    }
+    for row in &mut by_client { row.usage=coverage(conn,since_ms,"client_ip IS ?2",row.client_ip.as_deref())?; }
+    for row in &mut by_kind {
+        row.usage=coverage(conn,since_ms,"(CASE endpoint WHEN '/v1/chat/completions' THEN 'chat' WHEN '/v1/embeddings' THEN 'embeddings' WHEN '/v1/rerank' THEN 'rerank' ELSE '' END)=?2",Some(&row.kind))?;
+    }
     Ok(Stats {
+        usage:coverage(conn,since_ms,"(?2 IS NULL)",None)?,
         since_ms,
         total,
         ok,
@@ -635,6 +676,26 @@ mod tests {
         )
         .unwrap();
         id
+    }
+
+    #[test]
+    fn usage_migration_preserves_legacy_totals_and_marks_ambiguous_zero() {
+        let c=Connection::open_in_memory().unwrap();
+        for (v,sql) in super::super::schema::MIGRATIONS.iter().filter(|(v,_)|*v<=22) {
+            c.execute_batch(sql).unwrap();
+            if *v==1 {c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT);").unwrap();}
+            c.execute("INSERT INTO schema_migrations(version) VALUES(?1)",[v]).unwrap();
+        }
+        c.execute_batch("INSERT INTO requests(ts_ms,endpoint,model,status,input_tokens,output_tokens) VALUES(1,'chat','old','ok',12,0),(2,'chat','old','failed',0,0),(3,'chat','old','canceled',4,2);").unwrap();
+        let snapshot=|c:&Connection| c.query_row("SELECT count(*),sum(input_tokens),sum(output_tokens),sum(status='ok'),sum(status='failed'),sum(status='canceled') FROM requests",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?))).unwrap();
+        let before=snapshot(&c);super::super::migrate(&c).unwrap();assert_eq!(before,snapshot(&c));
+        let rows=recent(&c,3).unwrap();assert!(rows.iter().all(|r|r.usage_source=="legacy"));
+        assert!(rows[0].input_tokens_known && rows[0].output_tokens_known);
+        assert!(!rows[1].input_tokens_known && !rows[1].output_tokens_known);
+        assert!(rows[2].input_tokens_known && !rows[2].output_tokens_known);
+        let s=stats_since(&c,0).unwrap();assert_eq!(s.usage.unknown_requests,2);assert_eq!(s.usage.legacy_requests,3);
+        assert_eq!((s.input_tokens,s.output_tokens),(16,2));
+        super::super::migrate(&c).unwrap();assert_eq!(before,snapshot(&c));
     }
 
     #[test]

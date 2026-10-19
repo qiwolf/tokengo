@@ -584,7 +584,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // （现网 4 天 9 次），那种必须当这条渠道的毛病去重试/换渠道 —— 不能先把
                     // 路由状态记成「这条渠道好了」，更不能把空泡泡原样丢给用户。
                     let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-                    let (resp, input, output, empty) = if req.endpoint == EndpointKind::Rerank {
+                    let (resp, input, output, empty, usage) = if req.endpoint == EndpointKind::Rerank {
                         buffer_rerank_passthrough(resp, http, &req.body).await
                     } else {
                         buffer_passthrough(
@@ -595,6 +595,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         )
                         .await
                     };
+                    guard.usage = usage;
                     if let Some(note) = empty {
                         record_attempt(
                             &state,
@@ -641,6 +642,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // 客户端自己的错：原样返回，**不重试不换渠道**（换个说法：一次写错的请求
                     // 不许把整条链路打断）
                     let err = read_error(resp).await;
+                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
                         record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                             "context_limit", Some(status), dur, Some(&err.text));
@@ -687,6 +689,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 }
                 AttemptOutcome::ChannelFault => {
                     let err = read_error(resp).await;
+                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     let after = err
                         .retry_after
                         .as_ref()
@@ -951,21 +954,20 @@ pub fn rewrite_model(body: &Value, model: &str) -> Value {
 }
 
 /// 从响应体里取出 token 用量（OpenAI 形状；向量端点只有输入没有输出）。
-pub fn usage_from_value(v: &Value) -> (i64, i64) {
-    let u = match v.get("usage") {
-        Some(u) => u,
-        None => return (0, 0),
-    };
-    let get = |names: [&str; 2]| -> i64 {
-        for n in names {
-            if let Some(x) = u.get(n).and_then(|x| x.as_i64()) {
-                return x;
-            }
-        }
-        0
-    };
-    (get(["prompt_tokens", "input_tokens"]), get(["completion_tokens", "output_tokens"]))
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Usage { pub input: Option<i64>, pub output: Option<i64> }
+impl Usage {
+    fn read(v: &Value) -> Self {
+        let get = |names: [&str;2]| names.into_iter().find_map(|n| v.get("usage").and_then(|u|u.get(n)).and_then(Value::as_i64).filter(|n|*n>=0));
+        Self { input:get(["prompt_tokens","input_tokens"]), output:get(["completion_tokens","output_tokens"]) }
+    }
+    fn merge(&mut self, other: Self) {
+        if other.input.is_some() {self.input=other.input;}
+        if other.output.is_some() {self.output=other.output;}
+    }
+    fn source(self) -> &'static str { if self.input.is_some() || self.output.is_some() {"upstream"} else {"unreported"} }
 }
+pub fn usage_from_value(v: &Value) -> (i64,i64) { let u=Usage::read(v); (u.input.unwrap_or(0),u.output.unwrap_or(0)) }
 
 /// 非流式：整段读下来再回给客户端（顺带把 token 账记上）。
 ///
@@ -982,7 +984,7 @@ async fn buffer_passthrough(
     status: StatusCode,
     unwrap_envelope: bool,
     check_empty: bool,
-) -> (Response, i64, i64, Option<String>) {
+) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
     let bytes = match resp.bytes().await {
         Ok(bytes) => bytes,
@@ -990,6 +992,7 @@ async fn buffer_passthrough(
     };
     let mut out = bytes.clone();
     let mut empty: Option<String> = None;
+    let usage;
     let (input, output) = match serde_json::from_slice::<Value>(&bytes) {
         Ok(mut v) => {
             if unwrap_envelope && tokengo_shared::unwrap_envelope(&mut v) {
@@ -998,11 +1001,12 @@ async fn buffer_passthrough(
                     Err(e) => tracing::warn!("剥壳后重新序列化失败，原样回：{e}"),
                 }
             }
+            usage = Usage::read(&v);
             let mut validated = v.clone();
             // A configured raw envelope remains byte-for-byte compatible, but its payload must be valid.
             tokengo_shared::unwrap_envelope(&mut validated);
             if let Err(note) = crate::upstream::validate_response(&validated, if check_empty { "chat/completions" } else { "embeddings" }) {
-                return invalid_buffer(note);
+                let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
             }
             if check_empty && tokengo_shared::empty_chat_reply(&v) {
                 let head: String = String::from_utf8_lossy(&out).chars().take(200).collect();
@@ -1024,11 +1028,12 @@ async fn buffer_passthrough(
         input,
         output,
         empty,
+        usage,
     )
 }
 
-fn invalid_buffer(note: String) -> (Response, i64, i64, Option<String>) {
-    (StatusCode::BAD_GATEWAY.into_response(), 0, 0, Some(note))
+fn invalid_buffer(note: String) -> (Response, i64, i64, Option<String>, Usage) {
+    (StatusCode::BAD_GATEWAY.into_response(), 0, 0, Some(note), Usage::default())
 }
 
 /// 重排：整段读下来再回给客户端；上游 `document` 为 null 时按 index 回填请求里的原文。
@@ -1036,7 +1041,7 @@ async fn buffer_rerank_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
     req_body: &Value,
-) -> (Response, i64, i64, Option<String>) {
+) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
     let bytes = match resp.bytes().await {
         Ok(bytes) => bytes,
@@ -1051,8 +1056,9 @@ async fn buffer_rerank_passthrough(
         Ok(v) => v,
         Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
     };
+    let usage=Usage::read(&parsed);
     if let Err(note) = crate::upstream::validate_response(&parsed, "rerank") {
-        return invalid_buffer(note);
+        let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
     }
     if let Some(results) = parsed.get_mut("results").and_then(|r| r.as_array_mut()) {
         for r in results.iter_mut() {
@@ -1091,6 +1097,7 @@ let (input, output) = usage_from_value(&parsed);
         input,
         output,
         None,
+        usage,
     )
 }
 
@@ -1131,6 +1138,7 @@ fn stream_passthrough(
             Ok(Ok(Some(chunk))) => {
                 if st.first_byte_ms.is_none() && !chunk.is_empty() { st.first_byte_ms=Some(now_ms()-st.started_ms); }
                 st.scanner.feed(&chunk);
+                if let Some(g)=st.guard.as_mut() {g.usage=st.scanner.usage; g.streamed=true;}
                 st.delivered += chunk.len();
                 Some((Ok::<Bytes, std::io::Error>(chunk), st))
             }
@@ -1192,6 +1200,7 @@ impl StreamState {
         };
         if transport_error.is_none() { self.scanner.finish_eof(); }
         let (input, output) = self.scanner.totals();
+        guard.usage=self.scanner.usage;
         let ended = self.scanner.terminal();
         let complete = transport_error.is_none() && ended && !self.scanner.error;
         let empty = complete && !self.scanner.saw_payload();
@@ -1289,6 +1298,7 @@ pub struct SseScanner {
     pending: Vec<u8>,
     input: i64,
     output: i64,
+    usage: Usage,
     /// 整条流里到底有没有真内容（正文 / 工具调用 / 推理内容）——
     /// 流式不能等读完再判断（字节早发出去了），只能边转边记。
     payload: bool,
@@ -1348,11 +1358,9 @@ impl SseScanner {
             if tokengo_shared::chunk_has_payload(&v) {
                 self.payload = true;
             }
-            let (i, o) = usage_from_value(&v);
-            if i > 0 || o > 0 {
-                self.input = i;
-                self.output = o;
-            }
+            self.usage.merge(Usage::read(&v));
+            self.input=self.usage.input.unwrap_or(0);
+            self.output=self.usage.output.unwrap_or(0);
         }
     }
 
@@ -1438,6 +1446,8 @@ pub fn record_client_app(state:&SharedState,id:i64,agent:Option<&str>) {
 }
 
 struct RequestGuard {
+    usage: Usage,
+    streamed: bool,
     channel_id: Option<i64>,
     state: SharedState,
     request_id: i64,
@@ -1457,6 +1467,8 @@ impl RequestGuard {
             request_id,
             started_ms,
             done: false,
+            usage: Usage::default(),
+            streamed: false,
             channel_id: None,
             served_model: None,
             error_code:None,
@@ -1492,14 +1504,17 @@ impl RequestGuard {
         }
         // 记账不许把请求带崩：抢不到库锁就丢给后台落账员（2026-10-18 压测踩出来的规矩）
         let args = requests::FinishArgs {
+            input_tokens_known: self.usage.input.is_some(),
+            output_tokens_known: self.usage.output.is_some(),
+            usage_source: self.usage.source().into(),
             request_id: self.request_id,
             status,
             http_status,
             channel_id: channel_id.or(self.channel_id),
             latency_ms: now_ms() - started_ms,
             first_byte_ms,
-            input_tokens,
-            output_tokens,
+            input_tokens: self.usage.input.unwrap_or(input_tokens),
+            output_tokens: self.usage.output.unwrap_or(output_tokens),
             streamed,
             error: error.map(str::to_string),
             served_model: self.served_model.clone(),
@@ -1526,15 +1541,18 @@ impl Drop for RequestGuard {
         // 请求被中断（客户端断开等）也要记上一条 canceled —— 以前这里抢不到库锁就整条丢掉，
         // 面板上那一发就永远停在「进行中」。现在抢不到就丢给后台落账员补写。
         let args = requests::FinishArgs {
+            input_tokens_known: self.usage.input.is_some(),
+            output_tokens_known: self.usage.output.is_some(),
+            usage_source: self.usage.source().into(),
             request_id: self.request_id,
             status: Status::Canceled,
             http_status: None,
             channel_id: self.channel_id,
             latency_ms: now_ms() - self.started_ms,
             first_byte_ms: None,
-            input_tokens: 0,
-            output_tokens: 0,
-            streamed: false,
+            input_tokens: self.usage.input.unwrap_or(0),
+            output_tokens: self.usage.output.unwrap_or(0),
+            streamed: self.streamed,
             error: Some("客户端断开（处理函数被丢弃）".to_string()),
             served_model: self.served_model.clone(),
             error_code:self.error_code.clone(),

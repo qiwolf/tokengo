@@ -217,7 +217,16 @@ pub struct RoutingResp {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct UsageCoverage {
+    pub unknown_requests:i64,
+    pub unknown_input_requests:i64,
+    pub unknown_output_requests:i64,
+    pub legacy_requests:i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ChannelStat {
+    #[serde(default)] pub usage: UsageCoverage,
     pub channel_id: i64,
     #[serde(default)]
     pub channel_name: Option<String>,
@@ -235,6 +244,7 @@ pub struct ChannelStat {
 /// 按模型名的账（看的是客户端打了什么名字）。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ModelStat {
+    #[serde(default)] pub usage: UsageCoverage,
     pub model: String,
     pub requests: i64,
     pub ok: i64,
@@ -247,6 +257,7 @@ pub struct ModelStat {
 /// 按客户端的账。`client_ip` 为空 = 没拿到来源地址。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ClientStat {
+    #[serde(default)] pub usage: UsageCoverage,
     #[serde(default)]
     pub client_ip: Option<String>,
     pub requests: i64,
@@ -260,6 +271,7 @@ pub struct ClientStat {
 /// 按端点类型的账：对话 / 向量 / 重排 / 别的。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct KindStat {
+    #[serde(default)] pub usage: UsageCoverage,
     /// `chat` / `embeddings` / `rerank` / `""`
     #[serde(default)]
     pub kind: String,
@@ -290,6 +302,7 @@ impl KindStat {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Stats {
+    #[serde(default)] pub usage: UsageCoverage,
     pub since_ms: i64,
     pub total: i64,
     pub ok: i64,
@@ -317,6 +330,9 @@ pub struct StatsResp {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LogRow {
+    #[serde(default)] pub input_tokens_known:bool,
+    #[serde(default)] pub output_tokens_known:bool,
+    #[serde(default)] pub usage_source:String,
     #[serde(default)]pub explored:bool,
     #[serde(default)]
     pub error_code:Option<String>,
