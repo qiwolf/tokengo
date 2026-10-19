@@ -146,6 +146,7 @@ pub struct Ctx {
     pub page: RwSignal<Page>,
     /// 一句话提示，显示在顶栏
     pub toast: RwSignal<Option<String>>,
+    toast_timer: RwSignal<Option<i32>>,
     /// 顶栏右上角那个菜单开没开（手机上主要靠它跳页）
     pub nav_open: RwSignal<bool>,
     /// 当前主题（日间 / 夜间）
@@ -163,7 +164,12 @@ impl Ctx {
     }
 
     pub fn say(&self, msg: impl Into<String>) {
+        if let Some(id)=self.toast_timer.get_untracked(){if let Some(w)=web_sys::window(){w.clear_timeout_with_handle(id);}}
         self.toast.set(Some(msg.into()));
+        let toast=self.toast;let timer=self.toast_timer;
+        let cb=wasm_bindgen::closure::Closure::once_into_js(move ||{toast.set(None);timer.set(None);});
+        let id=web_sys::window().and_then(|w|w.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(),4000).ok());
+        self.toast_timer.set(id);
     }
 
     /// 切页并把当前页写进 URL 的 hash —— 刷新、前进、后退都还在这一页。
@@ -208,6 +214,7 @@ pub fn App() -> impl IntoView {
         phase,
         page,
         toast,
+        toast_timer:RwSignal::new(None),
         nav_open,
         theme,
     };

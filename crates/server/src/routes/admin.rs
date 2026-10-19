@@ -387,6 +387,9 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
+        return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
+    }
     let conn = state.conn();
     // 四条写入（主行 + 密钥 + 请求头 + 模型名）必须一起成或一起败，
     // 否则会留下"名字在、请求头丢了"的半截渠道。
@@ -420,6 +423,9 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
+        return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
+    }
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
     crate::db::in_tx(&conn, |c| {

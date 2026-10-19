@@ -330,7 +330,7 @@ mod tests {
         // 数据一条不少，列名也换了
         let one = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
         assert_eq!(one("SELECT COUNT(*) FROM channels"), 1);
-        assert_eq!(one("SELECT COUNT(*) FROM channel_models"), 1);
+        assert_eq!(one("SELECT COUNT(*) FROM channel_models"), 0, "废弃auto映射在v19清理，历史账保留");
         assert_eq!(one("SELECT COUNT(*) FROM model_group_channels"), 1);
         assert_eq!(one("SELECT channel_id FROM requests WHERE id = 1"), 1);
         assert_eq!(one("SELECT channel_id FROM attempts"), 1);
