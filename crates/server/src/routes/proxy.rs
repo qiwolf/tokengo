@@ -90,6 +90,7 @@ async fn chat_completions(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Chat)?;
+    let explicit_session = explicit_session_id(&headers, &value)?;
     let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
@@ -104,6 +105,7 @@ async fn chat_completions(
             stream,
             client_ip: ip_raw.clone(),
             session_namespace: _key.namespace,
+            explicit_session,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -127,6 +129,7 @@ async fn embeddings(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Embeddings)?;
+    let explicit_session = explicit_session_id(&headers, &value)?;
     let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
@@ -141,6 +144,7 @@ async fn embeddings(
             stream,
             client_ip: ip_raw.clone(),
             session_namespace: _key.namespace,
+            explicit_session,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -164,6 +168,7 @@ async fn rerank(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Rerank)?;
+    let explicit_session = explicit_session_id(&headers, &value)?;
     let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
@@ -178,6 +183,7 @@ async fn rerank(
             stream,
             client_ip: ip_raw.clone(),
             session_namespace: _key.namespace,
+            explicit_session,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -282,6 +288,38 @@ async fn models(
         }
     }
     Ok(Json(serde_json::json!({ "object": "list", "data": data })))
+}
+
+/// Resolve client conversation identity without forwarding arbitrary client headers.
+/// Validate every supplied ID, including lower-priority fields, instead of silently
+/// turning malformed explicit identity into a heuristic content hash.
+fn explicit_session_id(headers: &HeaderMap, body: &Value) -> Result<Option<String>, ApiError> {
+    fn accept(chosen: &mut Option<String>, id: &str) -> Result<(), ApiError> {
+        if id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
+            return Err(ApiError::bad_request("会话 ID 必须非空、不超过 256 字节且不含控制字符"));
+        }
+        if chosen.is_none() { *chosen = Some(id.to_owned()); }
+        Ok(())
+    }
+    let mut chosen = None;
+    for name in ["x-opencode-session", "session_id", "x-session-id", "x-conversation-id"] {
+        for value in headers.get_all(name) {
+            let id = value.to_str().map_err(|_| ApiError::bad_request("会话 ID 请求头不是有效文本"))?;
+            accept(&mut chosen, id)?;
+        }
+    }
+    for (object, fields) in [
+        (Some(body), ["session_id", "conversation_id"]),
+        (body.get("metadata"), ["conversation_id", "session_id"]),
+    ] {
+        for field in fields {
+            if let Some(value) = object.and_then(|object| object.get(field)) {
+                let id = value.as_str().ok_or_else(|| ApiError::bad_request("会话 ID 必须是字符串"))?;
+                accept(&mut chosen, id)?;
+            }
+        }
+    }
+    Ok(chosen)
 }
 
 /// 请求体：必须是 JSON 对象且带 model。**模型名写错是客户端的错**，回 400/404，

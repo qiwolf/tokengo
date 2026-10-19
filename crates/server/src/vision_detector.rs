@@ -26,6 +26,7 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
     let job={
         let conn=state.conn();let mut job=None;
         'outer: for route in model_routes::list(&conn)? {
+            if db::route_policy::load(&conn, &route.name)?.probe_enabled == Some(false) {continue;}
             if route.kind!=ModelKind::Chat || route.kind_conflict {continue;}
             for mut channel in model_routes::channels_for(&conn,&route.name)? {
                 let Some(row)=channels::get(&conn,channel.id)? else{continue};
@@ -48,6 +49,7 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
     for budget in [crate::prober::VISION_TEST_TOKENS,crate::prober::VISION_TEST_TOKENS_RETRY] {
         {
             let conn=state.conn();
+            if db::route_policy::load(&conn, &name)?.probe_enabled == Some(false) {return Ok(());}
             if channels::get(&conn,channel.id)?.map(|r|fingerprint(&r)!=fp).unwrap_or(true){return Ok(());}
             if !model_routes::channels_for(&conn,&name)?.iter().any(|c|c.id==channel.id){return Ok(());}
         }

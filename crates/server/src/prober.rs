@@ -72,13 +72,14 @@ pub fn spawn(state: SharedState) -> tokio::task::JoinHandle<()> {
 pub async fn tick(state: &SharedState, now: i64) -> Vec<ProbeResult> {
     let due = {
         let r = state.routing();
-        if !r.cfg.probe_enabled {
-            return Vec::new();
-        }
         r.models_needing_probe(now)
     };
     let mut out = Vec::new();
     for model in due {
+        let global = state.routing().cfg.clone();
+        let enabled = crate::db::route_policy::effective(&state.conn(), &model, global)
+            .map(|cfg| cfg.probe_enabled).unwrap_or(false);
+        if !enabled { continue; }
         out.push(probe_route(state, &model, now).await);
     }
     out
@@ -87,6 +88,11 @@ pub async fn tick(state: &SharedState, now: i64) -> Vec<ProbeResult> {
 /// 探一个模型名的首选渠道。
 pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResult {
     let endpoint = state.model_endpoint(name);
+    let global = state.routing().cfg.clone();
+    let cfg = match crate::db::route_policy::effective(&state.conn(), name, global) {
+        Ok(cfg) => cfg,
+        Err(_) => return ProbeResult { model: name.into(), channel: ChannelId(0), outcome: ProbeOutcome::Skipped("Invalid routing policy".into()) },
+    };
 
     // 一次性把要用的东西捞齐（同步短锁，绝不在持锁期间 await）
     let loaded = {
@@ -131,10 +137,7 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
             .collect()
     };
 
-    let timeout = {
-        let cfg = state.routing().cfg.clone();
-        Duration::from_millis(cfg.attempt_timeout_ms.max(1)).min(PROBE_TIMEOUT_CAP)
-    };
+    let timeout = Duration::from_millis(cfg.attempt_timeout_ms.max(1)).min(PROBE_TIMEOUT_CAP);
     let body = probe_body(endpoint, &model);
     let uuid = crate::upstream::new_uuid();
 
@@ -161,7 +164,7 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
             AttemptOutcome::Success => {
                 {
                     let mut r = state.routing();
-                    r.on_success(name, channel.id, &ids, now);
+                    r.on_success_with_interval(name, channel.id, &ids, now, cfg.reprobe_interval_ms);
                 }
                 if let Err(e) = state.persist_state(name) {
                     tracing::error!("探活成功后落库失败：{e}");
@@ -188,9 +191,12 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
 }
 
 fn mark_exhausted(state: &SharedState, model: &str, channel: ChannelId, ids: &[ChannelId], now: i64) {
+    let global_interval = state.routing().cfg.reprobe_interval_ms;
+    let interval = crate::db::route_policy::load(&state.conn(), model).ok()
+        .and_then(|p| p.reprobe_interval_ms).unwrap_or(global_interval);
     {
         let mut r = state.routing();
-        r.on_channel_exhausted(model, channel, ids, now);
+        r.on_channel_exhausted_with_interval(model, channel, ids, now, interval);
     }
     if let Err(e) = state.persist_state(model) {
         tracing::error!("探活失败后落库失败：{e}");

@@ -3593,7 +3593,7 @@ async fn model_switch_controls_direct_auto_and_listing_without_deleting_mapping(
 }
 
 #[tokio::test]
-async fn channel_api_rejects_custom_alias(){let f=fixture();let t=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();let(s,_)=post_with_token(&f,"/api/channels",&t,json!({"name":"x","base_url":"http://x","models":[{"model":"alias","upstream":"real"}]})).await;assert_eq!(s,StatusCode::BAD_REQUEST);}
+async fn channel_api_accepts_custom_alias(){let f=fixture();let t=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();let(s,body)=post_with_token(&f,"/api/channels",&t,json!({"name":"x","base_url":"http://x","models":[{"model":"alias","upstream":"real"}]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(body["models"][0]["model"],"alias");assert_eq!(body["models"][0]["upstream"],"real");}
 
 #[tokio::test]
 async fn in_flight_request_is_running_and_records_upstream_before_completion() {

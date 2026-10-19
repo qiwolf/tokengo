@@ -183,8 +183,11 @@ impl Router {
     ///   切换回第一个选择的模型"的落点。**
     /// - 命中的不是首选 → 记下它是当前渠道；若与之前不同则计一次切换并重设检查点。
     pub fn on_success(&mut self, model: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64) {
+        self.on_success_with_interval(model, channel, channels, now_ms, self.cfg.reprobe_interval_ms);
+    }
+
+    pub fn on_success_with_interval(&mut self, model: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64, interval: i64) {
         let primary = channels.first().copied();
-        let interval = self.cfg.reprobe_interval_ms;
         let st = self.entry(model);
         let was = st.active;
         st.active = Some(channel);
@@ -207,8 +210,11 @@ impl Router {
     /// - 它正是首选、且此刻是回切检查点 → 把检查点往后推一个间隔。
     ///   （不加这一条会出现"每次请求都去戳已经坏掉的首选"的忙探活。）
     pub fn on_channel_exhausted(&mut self, model: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64) {
+        self.on_channel_exhausted_with_interval(model, channel, channels, now_ms, self.cfg.reprobe_interval_ms);
+    }
+
+    pub fn on_channel_exhausted_with_interval(&mut self, model: &str, channel: ChannelId, channels: &[ChannelId], now_ms: i64, interval: i64) {
         let primary = channels.first().copied();
-        let interval = self.cfg.reprobe_interval_ms;
         let st = self.entry(model);
 
         if st.active == Some(channel) {

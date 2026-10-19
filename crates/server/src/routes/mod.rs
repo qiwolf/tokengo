@@ -4,6 +4,7 @@
 //! 其余 41 个端点一次都没被调用过，一律不做。
 
 pub mod admin;
+pub mod model_routing;
 pub mod proxy;
 pub mod status;
 pub mod web;
