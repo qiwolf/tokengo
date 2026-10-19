@@ -438,6 +438,7 @@ pub struct ModelPull {
 /// 上游 `/v1/models` 里的一条。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct UpstreamModel {
+    #[serde(default)]pub kind:Option<String>,
     /// 上游认的名字。
     pub id: String,
     /// 归属方（有的上游不报）。
