@@ -294,14 +294,20 @@ async fn assistant_audio_id_history_never_reaches_undeclared_source() {
     let f = Fixture::new(false, true, None).await;
     let body = json!({"model":"asr","max_tokens":16,"messages":[{"role":"user","content":"transcribe"},{"role":"assistant","content":null,"audio":{"id":"audio_external_unissued"}},{"role":"user","content":"repeat the previous audio"}]});
     let (code, reply) = f.call("/v1/chat/completions", body).await;
-    assert_eq!(code, 400, "unsupported provider audio state reached source; reply={reply}");
+    assert_eq!(
+        code, 400,
+        "unsupported provider audio state reached source; reply={reply}"
+    );
     assert!(f.seen.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn native_input_audio_capability_does_not_enable_audio_output() {
     let f = Fixture::new(true, true, None).await;
-    for patch in [json!({"audio":{"voice":"alloy","format":"wav"}}), json!({"modalities":["text","audio"]})] {
+    for patch in [
+        json!({"audio":{"voice":"alloy","format":"wav"}}),
+        json!({"modalities":["text","audio"]}),
+    ] {
         let mut body = request();
         for (key, value) in patch.as_object().unwrap() {
             body[key] = value.clone();
@@ -309,5 +315,33 @@ async fn native_input_audio_capability_does_not_enable_audio_output() {
         let (code, reply) = f.call("/v1/chat/completions", body).await;
         assert_eq!(code, 400, "{reply}");
     }
+    assert!(f.seen.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn file_handles_and_nontext_output_cannot_reuse_the_audio_input_capability() {
+    let f = Fixture::new(true, true, None).await;
+    db::channels::set_models(
+        &f.state.conn(),
+        f.channel,
+        &[db::channels::ModelMapping::new(
+            "asr",
+            Some("source-asr".into()),
+            true,
+        )],
+    )
+    .unwrap();
+    let mut file = request();
+    file["messages"][0]["content"] =
+        json!([{"type":"file","file":{"file_id":"someone-elses-file"}}]);
+    let mut nested = request();
+    nested["messages"][0]["content"] =
+        json!([{"type":"image","source":{"type":"file","file_id":"someone-elses-image"}}]);
+    let mut output = request();
+    output["modalities"] = json!(["text", "image"]);
+    let mut statuses = vec![];
+    for body in [file, nested, output] {
+        statuses.push(f.call("/v1/chat/completions", body).await.0);
+    }
+    assert_eq!(statuses, vec![400, 400, 400]);
     assert!(f.seen.lock().unwrap().is_empty());
 }

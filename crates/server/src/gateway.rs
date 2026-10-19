@@ -313,12 +313,12 @@ fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),
     fn unsupported_media(v:&Value,allow_audio:bool)->bool {
         match v {
             Value::Array(items)=>items.iter().any(|item|unsupported_media(item,allow_audio)),
-            Value::Object(map)=>map.get("audio").is_some_and(|v|!v.is_null()) || matches!(map.get("type").and_then(Value::as_str),Some("input_file"|"document"|"audio"|"video"|"input_video")) || (!allow_audio && map.get("type").and_then(Value::as_str)==Some("input_audio")) || ["content","input","output","messages"].iter().filter_map(|k|map.get(*k)).any(|child|unsupported_media(child,allow_audio)),
+            Value::Object(map)=>["audio","file_id","file_data"].iter().any(|key|map.get(*key).is_some_and(|v|!v.is_null())) || matches!(map.get("type").and_then(Value::as_str),Some("file"|"input_file"|"document"|"audio"|"video"|"input_video")) || (!allow_audio && map.get("type").and_then(Value::as_str)==Some("input_audio")) || ["content","input","output","messages","source","file"].iter().filter_map(|k|map.get(*k)).any(|child|unsupported_media(child,allow_audio)),
             _=>false,
         }
     }
     if has_input_audio(body) {validate_input_audio(body)?;}
-    if body.get("audio").is_some_and(|v|!v.is_null()) || body.get("modalities").and_then(Value::as_array).is_some_and(|m|m.iter().any(|v|v=="audio")){return Err(ApiError::bad_request("Audio output is not enabled"));}
+    if body.get("audio").is_some_and(|v|!v.is_null()) || body.get("modalities").and_then(Value::as_array).is_some_and(|m|m.iter().any(|v|v!="text")){return Err(ApiError::bad_request("Only text output is enabled; media output requires separate capabilities and metering"));}
     if unsupported_media(body,endpoint==EndpointKind::Chat) {return Err(ApiError::bad_request("File, document, audio and video blocks require dedicated capability and token accounting; this route currently supports text, images and client tools"));}
     if body.get("container").is_some_and(|v|!v.is_null()) || body.get("web_search_options").is_some_and(|v|!v.is_null()) {
         return Err(ApiError::bad_request("Provider containers and hosted tools require separate metering and are not enabled"));
