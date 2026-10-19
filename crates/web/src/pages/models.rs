@@ -234,7 +234,6 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     reload();let timer=crate::every(5000,reload);on_cleanup(move ||crate::stop_timer(timer));
     let save_policy=move |p:crate::model::AutoPolicy|{wasm_bindgen_futures::spawn_local(async move {match api::save_auto_policy(&p).await {Ok(())=>{policy.set(p);reload();},Err(e)=>ctx.say(e.message)}});};
     let move_model=move |name:String,up:bool|{wasm_bindgen_futures::spawn_local(async move {match api::move_model(&name,up).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
-    let reset=move |name:String,id:Option<i64>|{if !web_sys::window().and_then(|w|w.confirm_with_message("重置冷却并允许立即试用？不会删除历史失败或评分。").ok()).unwrap_or(false){return;}wasm_bindgen_futures::spawn_local(async move {match api::reset_model_cooldown(&name,id).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
     let toggle_model=move |name:String,enabled:bool|{wasm_bindgen_futures::spawn_local(async move {match api::set_model_enabled(&name,enabled).await{Ok(())=>{ctx.say(if enabled{"模型已启用"}else{"模型已停用"});reload();},Err(e)=>ctx.say(e.message)}});};
     let channel_name=move |id:i64|chans.get().iter().find(|c|c.id==id).map(|c|c.name.clone()).unwrap_or_else(||format!("渠道 #{id}"));
     view!{
@@ -266,7 +265,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                 if ordering.get(){let names=order.get();list.sort_by_key(|r|names.iter().position(|n|n==&r.name).unwrap_or(usize::MAX));}else if sort_score.get(){list.sort_by(|a,b|b.runtime.score.unwrap_or(-1.0).total_cmp(&a.runtime.score.unwrap_or(-1.0)).then(a.name.cmp(&b.name)));}else{list.sort_by(|a,b|a.name.cmp(&b.name));}
                 if list.is_empty(){return view!{<div class="model-empty">"当前分类暂无匹配模型"</div>}.into_any();}
                 list.into_iter().map(|r|{
-                    let reorder_name=r.name.clone();let reorder_down=r.name.clone();let reset_name=r.name.clone();
+                    let reorder_name=r.name.clone();let reorder_down=r.name.clone();
                     let toggle_name=r.name.clone();let channel_available=!r.channels.is_empty();let model_enabled=r.enabled && channel_available;
                     let key=r.name.clone();let opened=open.get().as_deref()==Some(&key);let s=r.runtime.clone();
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
@@ -275,18 +274,14 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     let source=kind_source_label(&r.kind_source);
                     let (context,context_title)=context_badge(&r);
 
-                    let route_detail=chans.get().into_iter().filter(|c|r.declared_by.contains(&c.id)).map(|c|{
-                        let upstream=c.models.iter().find(|m|tokengo_shared::same_model_name(&m.model,&r.name)).and_then(|m|m.upstream.clone()).unwrap_or(r.name.clone());format!("{} → {}",c.name,upstream)
-                    }).collect::<Vec<_>>().join("\n");
                     view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=!channel_available role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"已启用"}else{"已停用"}}</button><div class="score-number"><b>{score}</b><small>{confidence}</small></div></div></header>
                         <div class="model-telemetry"><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div>
-                        <div class="model-status-row"><div class="model-cooling">{r.declared_by.iter().map(|id|{let c=r.cooldowns.iter().find(|c|c.channel_id==*id);let failures=c.map(|c|c.failures).unwrap_or(0);let remaining=c.map(|c|(c.until_ms.max(c.lease_until)-updated.get()).max(0)).unwrap_or(0);let label=if remaining>0{format!("冷却剩余 {}",fmt::span(remaining))}else if failures>0{"待试用".into()}else if r.channels.contains(id){"可用".into()}else{"未启用".into()};view!{<div><span>{format!("{} · {} · 连续失败 {}",channel_name(*id),label,failures)}</span></div>}}).collect_view()}</div><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></div>
+                        <div class="model-status-row"><div class="model-cooling">{r.declared_by.iter().map(|id|view!{<div>{channel_name(*id)}</div>}).collect_view()}</div><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         {opened.then(||view!{<div class="model-detail-grid">
                             <section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
                             <section><h3>"能力信息"</h3><dl><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
-                            <section><h3>"渠道与冷却"</h3><p class="model-mapping">{route_detail}</p>{r.cooldowns.iter().filter(|c|c.failures>0).map(|c|view!{<div class="model-cooldown-detail"><b>{channel_name(c.channel_id)}</b><span>{format!("连续失败 {} · 可重试 {}",c.failures,fmt::ts(c.until_ms))}</span><p>{c.reason.clone()}</p></div>}).collect_view()}<button on:click=move |_|reset(reset_name.clone(),None)>"重置全部冷却"</button></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
                         </div>})}
                     </article>}

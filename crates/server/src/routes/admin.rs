@@ -83,6 +83,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/auto-policy", get(auto_policy_get).put(auto_policy_save))
         .route("/model-order/move", post(model_order_move))
         .route("/model-enabled", put(model_enabled_save))
+        .route("/model-cooldowns", get(model_cooldowns))
         .route("/model-cooldown/reset", post(model_cooldown_reset))
         .route("/models/{name}/kind", put(models_set_kind))
         // 面板「模型」页要的全部事实（一名字一行 + 它后面那串渠道 + 路由状态 + auto 的候选）。
@@ -1101,8 +1102,19 @@ async fn auto_policy_get(_auth:PanelAuth,State(state):State<SharedState>)->Resul
 async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
 #[derive(Deserialize)]struct OrderMove{model:String,up:bool}
 async fn model_order_move(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<OrderMove>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::move_model(&c,&body.model,body.up)?;Ok(Json(serde_json::json!({"ok":true})))}
-#[derive(Deserialize)]struct CoolReset{model:String,channel_id:Option<i64>}
-async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::reset(&c,&body.model,body.channel_id)?;tracing::info!("手动重置模型冷却 {}",body.model);Ok(Json(serde_json::json!({"ok":true})))}
+#[derive(Deserialize)]struct CoolReset{model:Option<String>,channel_id:Option<i64>}
+async fn model_cooldowns(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();let mut st=c.prepare("SELECT DISTINCT model_name FROM model_cooldowns WHERE until_ms>0 OR lease_until>0").map_err(crate::db::DbError::from)?;
+ let names=st.query_map([],|r|r.get::<_,String>(0)).map_err(crate::db::DbError::from)?.collect::<rusqlite::Result<Vec<_>>>().map_err(crate::db::DbError::from)?;
+ let mut rows=Vec::new();for n in names{rows.extend(crate::db::policy::rows(&c,&n)?.into_iter().filter(|r|r.until_ms>0||r.lease_until>0));}
+ Ok(Json(serde_json::json!({"cooldowns":rows,"now_ms":now_ms()})))
+}
+async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();if let Some(name)=body.model {crate::db::policy::reset(&c,&name,body.channel_id).map_err(crate::db::DbError::from)?;} else {
+ if body.channel_id.is_some(){return Err(ApiError::bad_request("全部解除不能指定渠道"));}
+ c.execute("UPDATE model_cooldowns SET failures=0,until_ms=0,lease_until=0,reason='',generation=generation+1",[]).map_err(crate::db::DbError::from)?;
+ }Ok(Json(serde_json::json!({"ok":true})))
+}
 
 async fn model_routes_list(
     _auth: PanelAuth,

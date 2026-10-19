@@ -48,13 +48,14 @@ pub fn claim(c:&Connection,id:i64,name:&str,upstream:&str,now:i64)->Result<Optio
  c.execute("INSERT OR IGNORE INTO model_cooldowns(channel_id,model_name,upstream_model) VALUES(?1,?2,?3)",params![id,norm(name),upstream])?;
  let row:(i64,i64,i64,i64)=c.query_row("SELECT failures,until_ms,lease_until,generation FROM model_cooldowns WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3",params![id,norm(name),upstream],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
  if row.1>now||row.2>now{return Ok(None);}
- if row.0>0 {c.execute("UPDATE model_cooldowns SET lease_until=?4 WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3",params![id,norm(name),upstream,now+660000])?;}
+ if row.1>0 {c.execute("UPDATE model_cooldowns SET lease_until=?4 WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3",params![id,norm(name),upstream,now+660000])?;}
  Ok(Some(row.3))
 }
 pub fn complete(c:&Connection,id:i64,name:&str,upstream:&str,generation:i64,success:bool,reason:&str,retry_ms:i64,now:i64)->Result<()> {
  if success {c.execute("UPDATE model_cooldowns SET failures=0,until_ms=0,lease_until=0,reason='' WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3 AND generation=?4",params![id,norm(name),upstream,generation])?;}else{
  let n:Option<i64>=c.query_row("SELECT failures+1 FROM model_cooldowns WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3 AND generation=?4",params![id,norm(name),upstream,generation],|r|r.get(0)).optional()?;
- if let Some(n)=n{c.execute("UPDATE model_cooldowns SET failures=?5,until_ms=?6,lease_until=0,reason=?7 WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3 AND generation=?4",params![id,norm(name),upstream,generation,n,now+delay(n).max(retry_ms),reason])?;}
+ let recovering:bool=c.query_row("SELECT lease_until>0 FROM model_cooldowns WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3",params![id,norm(name),upstream],|r|r.get(0))?;
+ if let Some(n)=n{c.execute("UPDATE model_cooldowns SET failures=?5,until_ms=?6,lease_until=0,reason=?7 WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3 AND generation=?4",params![id,norm(name),upstream,generation,n,if n>=3 || recovering {now+delay((n-2).max(1)).max(retry_ms)} else {0},reason])?;}
  }Ok(())
 }
 pub fn release(c:&Connection,id:i64,name:&str,upstream:&str,generation:i64)->Result<()>{c.execute("UPDATE model_cooldowns SET lease_until=0 WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3 AND generation=?4",params![id,norm(name),upstream,generation])?;Ok(())}
@@ -64,6 +65,19 @@ pub fn reset(c:&Connection,name:&str,id:Option<i64>)->Result<()>{c.execute("UPDA
  fn fixture()->Connection{let c=crate::db::open_in_memory().unwrap();c.execute("INSERT INTO channels(name,base_url,enabled) VALUES('x','http://x',1)",[]).unwrap();for n in ["a","b","c"]{c.execute("INSERT INTO channel_models(channel_id,model_name) VALUES(1,?1)",[n]).unwrap();}c}
  #[test]fn sequence_is_persistent_and_balance_rotates(){let c=fixture();move_model(&c,"b",true).unwrap();let mut n=vec!["c".into(),"a".into(),"b".into()];rank(&c,&mut n,&Policy::default(),10,0).unwrap();assert_eq!(n,vec!["b","a","c"]);let p=Policy{strategy:"balanced".into(),explore:false};rank(&c,&mut n,&p,1,0).unwrap();assert_eq!(n,vec!["a","c","b"]);}
  #[test]fn exploration_is_disabled_by_default_and_only_five_percent_of_draws(){let c=fixture();let mut count=0;for draw in 0..100{let mut n=vec!["a".into(),"b".into()];assert!(rank(&c,&mut n,&Policy::default(),0,draw).unwrap().is_none());let mut p=Policy::default();p.explore=true;if rank(&c,&mut n,&p,0,draw).unwrap().is_some(){count+=1;}}assert_eq!(count,5);}
- #[test]fn cooldown_survives_reopen_and_success_clears_failures(){let c=fixture();let g=claim(&c,1,"a","a",0).unwrap().unwrap();complete(&c,1,"a","a",g,false,"429",120000,0).unwrap();assert_eq!(peek(&c,1,"a","a",1).unwrap(),Some(120000));let g=claim(&c,1,"a","a",120001).unwrap().unwrap();complete(&c,1,"a","a",g,true,"",0,120002).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,0);}
+ #[test]fn cooldown_survives_reopen_and_success_clears_failures(){let c=fixture();let g=claim(&c,1,"a","a",0).unwrap().unwrap();for _ in 0..3 {complete(&c,1,"a","a",g,false,"429",120000,0).unwrap();}assert_eq!(peek(&c,1,"a","a",1).unwrap(),Some(120000));let g=claim(&c,1,"a","a",120001).unwrap().unwrap();complete(&c,1,"a","a",g,true,"",0,120002).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,0);}
 }
-#[cfg(test)]mod tests{use super::*;#[test]fn gradient_reset_and_single_recovery_lease(){let c=crate::db::open_in_memory().unwrap();let g=claim(&c,1,"a","up",100).unwrap().unwrap();complete(&c,1,"a","up",g,false,"timeout",0,100).unwrap();assert_eq!(peek(&c,1,"a","up",100).unwrap(),Some(15100));assert_eq!(claim(&c,1,"a","up",200).unwrap(),None);assert!(claim(&c,1,"a","up",15101).unwrap().is_some());assert!(claim(&c,1,"a","up",15102).unwrap().is_none());reset(&c,"a",None).unwrap();complete(&c,1,"a","up",g,false,"late",0,20000).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,0);assert_eq!([1,2,3,4,5,6].map(delay),[15000,60000,300000,900000,1800000,1800000]);}}
+#[cfg(test)]mod tests{use super::*;#[test]fn gradient_reset_and_single_recovery_lease(){let c=crate::db::open_in_memory().unwrap();let g=claim(&c,1,"a","up",100).unwrap().unwrap();for _ in 0..3 {complete(&c,1,"a","up",g,false,"timeout",0,100).unwrap();}assert_eq!(peek(&c,1,"a","up",100).unwrap(),Some(15100));assert_eq!(claim(&c,1,"a","up",200).unwrap(),None);assert!(claim(&c,1,"a","up",15101).unwrap().is_some());assert!(claim(&c,1,"a","up",15102).unwrap().is_none());reset(&c,"a",None).unwrap();complete(&c,1,"a","up",g,false,"late",0,20000).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,0);assert_eq!([1,2,3,4,5,6].map(delay),[15000,60000,300000,900000,1800000,1800000]);}}
+
+#[cfg(test)]mod threshold_tests {
+ use super::*;
+ #[test]fn only_third_failure_cools_and_recovery_failure_escalates(){
+ let c=crate::db::open_in_memory().unwrap();let g=claim(&c,1,"a","up",100).unwrap().unwrap();
+ for n in 1..=2{complete(&c,1,"a","up",g,false,"500",0,100).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,n);assert_eq!(peek(&c,1,"a","up",101).unwrap(),None);}
+ complete(&c,1,"a","up",g,false,"500",0,100).unwrap();assert_eq!(peek(&c,1,"a","up",101).unwrap(),Some(15100));
+ let g=claim(&c,1,"a","up",15101).unwrap().unwrap();assert!(claim(&c,1,"a","up",15102).unwrap().is_none());
+ release(&c,1,"a","up",g).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,3);
+ let g=claim(&c,1,"a","up",15103).unwrap().unwrap();complete(&c,1,"a","up",g,false,"500",0,15104).unwrap();assert_eq!(peek(&c,1,"a","up",15105).unwrap(),Some(75104));
+ reset(&c,"a",None).unwrap();complete(&c,1,"a","up",g,false,"late",0,15106).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,0);
+ }
+}

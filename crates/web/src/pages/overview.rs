@@ -19,6 +19,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let channels = RwSignal::new(Vec::<crate::model::Channel>::new());
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    let cooling=RwSignal::new(Vec::<crate::model::ModelCooldown>::new());
+    let cooldown_now=RwSignal::new(0i64);
+    let clear_busy=RwSignal::new(false);
     let category = RwSignal::new(0usize);
     let metric_open = RwSignal::new(None::<String>);
 
@@ -53,6 +56,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 Ok(v) => channels.set(v),
                 Err(e) => ctx.note_err(&e),
             }
+            if let Ok(r)=api::model_cooldowns().await {cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);}
             busy.set(false);
         });
     };
@@ -89,10 +93,21 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             if selected==0 {
                 match api::logs(12).await { Ok(v)=>recent.set(v),Err(e)=>ctx.note_err(&e) }
+            } else if selected==5 {
+                match api::model_cooldowns().await {Ok(r)=>{cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);},Err(e)=>ctx.note_err(&e)}
             } else {
                 match api::stats(window).await { Ok(v)=>stats.set(v),Err(e)=>ctx.note_err(&e) }
             }
             recent_busy.set(false);
+        });
+    };
+    let clear=move |model:Option<String>,id:Option<i64>|{
+        if clear_busy.get_untracked(){return;}
+        if !web_sys::window().and_then(|w|w.confirm_with_message("解除模型冷却？历史调用记录保持不变。").ok()).unwrap_or(false){return;}
+        clear_busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::clear_cooldowns(model,id).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}
+            clear_busy.set(false);
         });
     };
     let refresh_timer = crate::every(5000, refresh_active);
@@ -198,7 +213,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             </div>
 
             <nav class="overview-tabs" aria-label="总览分类">
-                {["最近调用","按类型","按渠道","按模型","按客户端","错误分布"].into_iter().enumerate().map(|(i,label)| view! {
+                {["最近调用","按类型","按渠道","按模型","按客户端","模型冷却"].into_iter().enumerate().map(|(i,label)| view! {
                     <button class:active=move || category.get()==i aria-pressed=move || category.get()==i on:click=move |_| {category.set(i); refresh_active();}>{label}</button>
                 }).collect_view()}
             </nav>
@@ -266,9 +281,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             </section>
 
             </Show>
-            <Show when=move || category.get()!=0>
+            <Show when=move || {category.get()>0 && category.get()<5}>
                 <section class="card overview-breakdown">
-                    <header class="card-head"><h2>{move || ["最近调用","按类型","按渠道","按模型","按客户端","错误分布"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
+                    <header class="card-head"><h2>{move || ["最近调用","按类型","按渠道","按模型","按客户端","模型冷却"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
                     <div class="metric-list">
                     {move || {
                         let st=stats.get().stats;
@@ -277,7 +292,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                             2=>st.by_channel.into_iter().map(|c| (channel_name(Some(c.channel_id)),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {}",fmt::dur(c.avg_ms)),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
                             3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.ok+m.failed+m.client_errors)),format!("Token {}",fmt::num(m.input_tokens+m.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
                             4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.ok+c.failed+c.client_errors)),format!("Token {}",fmt::num(c.input_tokens+c.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
-                            5=>st.errors.into_iter().map(|e| (e.error.lines().next().unwrap_or("未记录原因").chars().take(90).collect(),format!("{} 次",e.count),String::new(),e.error)).collect(),
                             _=>Vec::new(),
                         };
                         if items.is_empty(){return view!{<div class="empty">"当前时间窗口暂无记录"</div>}.into_any();}
@@ -287,6 +301,21 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         }).collect_view().into_any()
                     }}
                     </div>
+                </section>
+            </Show>
+            <Show when=move || category.get()==5>
+                <section class="card overview-cooldowns">
+                    <header class="card-head"><h2>"模型冷却"</h2><span class="spacer"></span><button disabled=move ||clear_busy.get() ||cooling.get().is_empty() on:click=move |_|clear(None,None)>"解除全部"</button></header>
+                    <div class="metric-list">{move ||{
+                        let rows=cooling.get();
+                        if rows.is_empty(){return view!{<div class="empty">"暂无冷却中的模型"</div>}.into_any();}
+                        rows.into_iter().map(|r|{
+                            let model=r.model.clone();let id=r.channel_id;
+                            let remaining=(r.until_ms-cooldown_now.get()).max(0);
+                            let status=if r.lease_until>cooldown_now.get(){"恢复试用中".to_string()}else if remaining>0{format!("剩余 {}",fmt::span(remaining))}else{"等待恢复试用".into()};
+                            view!{<article class="metric-card cooldown-card"><div class="metric-head"><b>{r.model}</b><button disabled=move ||clear_busy.get() on:click=move |_|clear(Some(model.clone()),Some(id))>"解除冷却"</button></div><div class="cooldown-facts"><span>{format!("渠道：{}",channel_name(Some(id)))}</span><span class="tag">{status}</span><span>{format!("连续失败：{}",r.failures)}</span></div><p class="cooldown-reason">{r.reason}</p></article>}
+                        }).collect_view().into_any()
+                    }}</div>
                 </section>
             </Show>
             <details class="fold callable-models">

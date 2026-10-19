@@ -722,11 +722,11 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["choices"][0]["message"]["content"], "你好");
 
-    // 尝试级：坏渠道 4 次全败（1 + 3 次重试），好渠道 1 次成功
+    // 尝试级：坏渠道 3 次全败（1 + 2 次重试，第三次失败即冷却阈值），好渠道 1 次成功
     let att = f.attempts();
-    assert_eq!(att.len(), 5, "应该是 4 次重试 + 1 次成功：{att:?}");
-    assert!(att[..4].iter().all(|(l, o, _)| *l == dead.0 && o == "channel_fault"));
-    assert_eq!(att[4], (good.0, "success".to_string(), Some(200)));
+    assert_eq!(att.len(), 4, "应该是 3 次失败 + 1 次成功：{att:?}");
+    assert!(att[..3].iter().all(|(l, o, _)| *l == dead.0 && o == "channel_fault"));
+    assert_eq!(att[3], (good.0, "success".to_string(), Some(200)));
     assert_eq!(m.count(), 1);
 
     // 路由状态：切到第二条渠道、检查点 +10 分钟、切换次数 1
@@ -745,7 +745,7 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
     let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(m.count(), 2);
-    assert_eq!(f.attempts().len(), 6, "第二个请求只该有 1 次尝试");
+    assert_eq!(f.attempts().len(), 5, "第二个请求只该有 1 次尝试");
 }
 
 /// 所有渠道都坏 → 客户端拿到明确的 502，账上记 failed。
@@ -763,10 +763,55 @@ async fn everything_down_returns_a_clear_502() {
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(msg.contains("所有渠道都失败了"), "错误要说清楚：{msg}");
 
-    assert_eq!(f.attempts().len(), 8, "两条渠道各 4 次尝试");
+    assert_eq!(f.attempts().len(), 6, "两条渠道各 3 次尝试");
     let rows = f.request_rows();
     assert_eq!(rows[0].0, "failed");
     assert!(rows[0].5.as_deref().unwrap().contains("坏渠道B"));
+}
+
+/// 用户口径（关键）：上游失败会重试，**连续三次都失败**才进冷却；中途成功立刻清零。
+#[tokio::test]
+async fn a_candidate_cools_only_after_three_consecutive_failures() {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::Ok).await;
+    let a = f.add_channel("时好时坏的渠道", &m.base, ChannelSpec::default());
+    f.serve("mock-chat", &[a]);
+
+    // 两发 500 之后成功：客户端拿到正常回复，账上清零、没有任何冷却
+    {
+        let mut q = m.inner.replies.lock().unwrap();
+        q.push_back(Reply::Status(500, "flaky"));
+        q.push_back(Reply::Status(500, "flaky"));
+    }
+    let (s, body, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
+    assert_eq!(s, StatusCode::OK, "第三次重试该成功");
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["message"]["content"], "你好");
+    let att = f.attempts();
+    assert_eq!(att.len(), 3, "失败两次 + 成功一次：{att:?}");
+    assert_eq!(att[0].1, "channel_fault");
+    assert_eq!(att[1].1, "channel_fault");
+    assert_eq!(att[2].1, "success");
+    let row = tokengo_server::db::policy::rows(&f.state.conn(), "mock-chat").unwrap().remove(0);
+    assert_eq!(row.failures, 0, "成功要把连续失败清零：{row:?}");
+    assert_eq!(row.until_ms, 0, "两次失败不该进冷却：{row:?}");
+
+    // 连发三发 500 → 第三次失败才进冷却；这一发没有别的渠道可换，如实报错
+    for _ in 0..3 { m.inner.replies.lock().unwrap().push_back(Reply::Status(500, "dead")); }
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
+    assert_ne!(s, StatusCode::OK, "整条链路都挂就该如实报错");
+    let att = f.attempts();
+    assert_eq!(att.len(), 6, "第二发请求该重试到第三次失败：{att:?}");
+    let row = tokengo_server::db::policy::rows(&f.state.conn(), "mock-chat").unwrap().remove(0);
+    assert_eq!(row.failures, 3, "连续三次失败：{row:?}");
+    assert!(row.until_ms > tokengo_server::db::now_ms(), "第三次失败才进冷却：{row:?}");
+
+    // 冷却期间不再去打上游 → 直接 503，客户端不用白等
+    let count = m.count();
+    let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(m.count(), count, "冷却中的渠道一次都不该再被叫");
 }
 
 /// 上游真回了 500/429（不是网络错）也一样算渠道的毛病，重试 + 切换。
@@ -782,7 +827,7 @@ async fn upstream_5xx_is_a_channel_fault_and_triggers_a_switch() {
 
     let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(bad.count(), 4, "5xx 要重试满 4 次");
+    assert_eq!(bad.count(), 3, "5xx 要重试到第三次失败（冷却阈值）");
     assert_eq!(good.count(), 1);
     assert_eq!(f.routing("mock-chat").active, Some(b));
 }
@@ -824,6 +869,12 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
     // 账上也不该算成渠道的锅
     let rows = f.request_rows();
     assert!(rows.iter().all(|r| r.0 == "client_error"), "{rows:?}");
+
+    // 冷却表里也必须是干净的：客户端写错六次，一次都不许记到渠道头上
+    let cool = tokengo_server::db::policy::rows(&f.state.conn(), "mock-chat").unwrap();
+    let mine = cool.iter().find(|r| r.channel_id == a.0).expect("渠道该在冷却表里留一行");
+    assert_eq!(mine.failures, 0, "客户端错误不许计进连续失败：{mine:?}");
+    assert_eq!(mine.until_ms, 0, "客户端错误不许触发冷却：{mine:?}");
 }
 
 /// 模型名压根没配 → 404，一次上游请求都不发。
@@ -1135,6 +1186,8 @@ async fn a_client_that_hangs_up_is_recorded_as_canceled() {
     handle.abort();
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
+    let cooldowns=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap();
+    assert_eq!(cooldowns[0].failures,0);assert_eq!(cooldowns[0].until_ms,0);assert_eq!(cooldowns[0].lease_until,0);
     let rows = f.request_rows();
     assert_eq!(rows.len(), 1);
     assert_eq!(
@@ -2379,7 +2432,7 @@ async fn an_empty_reply_is_retried_instead_of_being_passed_through() {
     assert_eq!(att[0].1, "empty_reply", "空回复那次要记成 empty_reply：{att:?}");
     assert_eq!(att[1].1, "success");
 
-    // 反证：一直空 → 4 次尝试都记 empty_reply，请求记失败并**说清原因**
+    // 反证：一直空 → 重试到第三次失败（冷却阈值）都记 empty_reply，请求记失败并**说清原因**
     let f2 = fixture();
     f2.with_key();
     let m2 = start_mock(Reply::Empty).await;
@@ -2399,7 +2452,7 @@ async fn an_empty_reply_is_retried_instead_of_being_passed_through() {
         "要说清上游一个字都没说，不能给个含糊的 502：{text}"
     );
     let att = f2.attempts();
-    assert_eq!(att.len(), 4, "按重试策略走满 4 次：{att:?}");
+    assert_eq!(att.len(), 3, "按重试策略走满 3 次：{att:?}");
     assert!(att.iter().all(|a| a.1 == "empty_reply"), "{att:?}");
     let rows = f2.request_rows();
     assert_eq!(rows[0].0, "failed", "{rows:?}");
@@ -2409,9 +2462,10 @@ async fn an_empty_reply_is_retried_instead_of_being_passed_through() {
     );
 }
 
-/// 上游在 `Retry-After` 里说要等很久 → **别在这条渠道上耗**，剩下的重试直接放弃、换下一条。
+/// 上游在 `Retry-After` 里说要等很久 → 重试到第三次失败（冷却阈值）就放它进冷却，
+/// 而且冷却时长按上游说的「等 300 秒」当下限（比默认 15 秒更懂它自己）。
 #[tokio::test]
-async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
+async fn a_long_retry_after_applies_only_after_three_failures() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::RateLimited(300)).await;
@@ -2431,13 +2485,16 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["choices"][0]["message"]["content"], "你好");
     let att = f.attempts();
-    assert_eq!(att.len(), 2, "第一条只准试一次就放弃：{att:?}");
+    assert_eq!(att.len(), 4, "第一条要重试到第三次失败才冷却：{att:?}");
     assert_eq!(att[0].0, a.0);
     assert_eq!(att[0].2, Some(429));
-    assert_eq!(att[1].0, b.0);
-    assert_eq!(m.count(), 1, "要求等 300 秒的渠道，一次都不许多试: {}", m.count());
+    assert_eq!(att[3].0, b.0);
+    assert_eq!(tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().iter().find(|r|r.channel_id==a.0).unwrap().failures,3);
+    assert_eq!(m.count(), 3, "要求等 300 秒的渠道，重试到冷却阈值为止: {}", m.count());
+    let row=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().into_iter().find(|r|r.channel_id==a.0).unwrap();
+    assert!(row.until_ms-tokengo_server::db::now_ms()>=290_000, "冷却时长要听上游说的 300 秒：{row:?}");
 
-    // 反证：上游只要求等 0 秒 → 不算「很久」，照旧重试满 4 次
+    // 反证：上游只要求等 0 秒 → 没有额外下限，照旧按三次失败进冷却
     let f2 = fixture();
     f2.with_key();
     let m2 = start_mock(Reply::RateLimited(0)).await;
@@ -2451,7 +2508,7 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
     )
     .await;
     assert_ne!(s, StatusCode::OK);
-    assert_eq!(f2.attempts().len(), 4, "等 0 秒的 429 该照旧重试满：{:?}", f2.attempts());
+    assert_eq!(f2.attempts().len(), 3, "等 0 秒的 429 照旧按三次失败冷却：{:?}", f2.attempts());
 }
 
 // ───────── 面板上那个「一键启用/停用」开关 ─────────
@@ -2464,7 +2521,7 @@ async fn a_long_retry_after_skips_the_remaining_attempts_on_that_channel() {
 async fn the_channel_order_can_be_moved_and_the_route_follows() {
     let f = fixture();
     f.with_key();
-    // 第一条回的 429 要求等 300 秒 → 网关不在这条上耗，直接换下一条
+    // 第一条回的 429 要求等 300 秒 → 网关重试到第三次失败就把它放冷却，然后换下一条
     let slow = start_mock(Reply::RateLimited(300)).await;
     let good = start_mock(Reply::Ok).await;
     let a = f.add_channel("排前面的渠道", &slow.base, ChannelSpec::default());
@@ -3417,11 +3474,11 @@ async fn auto_scores_same_channel_models_separately_and_scope_changes_apply_imme
 async fn scoring_keeps_failed_candidate_identity_after_auto_fallback() {
     let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
     let ch=f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
-    // Four attempts on a fail, then b succeeds on the same upstream.
-    for _ in 0..1 {m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"broken-a"));}
+    // Three attempts on a fail (the cooldown threshold), then b succeeds on the same upstream.
+    for _ in 0..3 {m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"broken-a"));}
     let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);
     let conn=f.state.conn();let scores=tokengo_server::db::scores::all(&conn,tokengo_server::db::now_ms()).unwrap();
-    assert_eq!(scores["a"].faults,1);assert_eq!(scores["b"].successes,1);
+    assert_eq!(scores["a"].faults,3);assert_eq!(scores["b"].successes,1);
     assert!(scores["b"].value()>scores["a"].value());
     let _=ch;
 }
@@ -3440,10 +3497,10 @@ async fn sequence_keeps_using_a_then_cools_it_and_returns_after_reset() {
  let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
  let ch=f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
  for _ in 0..3 {let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"a");}
- m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"a failed"));
+ for _ in 0..3 {m.inner.replies.lock().unwrap().push_back(Reply::Status(500,"a failed"));}
  let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"b");
  let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"b");
- let row=tokengo_server::db::policy::rows(&f.state.conn(),"a").unwrap().remove(0);assert_eq!(row.failures,1);
+ let row=tokengo_server::db::policy::rows(&f.state.conn(),"a").unwrap().remove(0);assert_eq!(row.failures,3);
  tokengo_server::db::policy::reset(&f.state.conn(),"a",Some(ch.0)).unwrap();
  let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"a");
 }

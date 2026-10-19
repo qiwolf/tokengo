@@ -325,13 +325,6 @@ pub struct ClientStat {
     pub output_tokens: i64,
 }
 
-/// 错误分布：同一条错误话术被记了多少次。**只数失败与客户端错**。
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ErrorStat {
-    pub error: String,
-    pub count: i64,
-}
-
 /// 按端点归类的账：对话 / 向量 / 重排 / 别的。
 ///
 /// 为什么要它：同一个网关后面挂着三种用法完全不同的模型，混在一起看不出
@@ -386,7 +379,6 @@ pub struct Stats {
     pub by_kind: Vec<KindStat>,
     pub by_model: Vec<ModelStat>,
     pub by_client: Vec<ClientStat>,
-    pub errors: Vec<ErrorStat>,
 }
 
 /// 汇总自 `since_ms` 起的账。
@@ -576,24 +568,6 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         })?
         .collect::<rusqlite::Result<_>>()?;
 
-    // ── 错误分布 ──
-    // 只数失败/客户端错；没写 error 的用「（没记原因）」占一行，
-    // 否则「失败 12 次但一条原因都看不到」会让人以为面板坏了。
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(NULLIF(TRIM(error), ''), '（没记原因）') AS e, COUNT(*)
-           FROM requests
-          WHERE ts_ms >= ?1 AND status IN ('failed', 'client_error')
-          GROUP BY e ORDER BY COUNT(*) DESC LIMIT 20",
-    )?;
-    let errors: Vec<ErrorStat> = stmt
-        .query_map([since_ms], |r| {
-            Ok(ErrorStat {
-                error: r.get(0)?,
-                count: r.get(1)?,
-            })
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-
     Ok(Stats {
         since_ms,
         total,
@@ -607,7 +581,6 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         by_kind,
         by_model,
         by_client,
-        errors,
     })
 }
 
@@ -838,9 +811,8 @@ mod tests {
         assert_eq!(none.requests, 1, "没拿到来源地址的请求也要占一行，不能丢");
 
         // 错误分布：两条不同原因各 1 次，成功的不进这个榜
-        assert_eq!(s.errors.len(), 2);
-        assert_eq!(s.errors.iter().map(|e| e.count).sum::<i64>(), 2);
-        assert!(s.errors.iter().any(|e| e.error.contains("连接超时")));
+        let rows=recent(&conn,10).unwrap();
+        assert!(rows.iter().any(|r|r.error.as_deref().unwrap_or("").contains("连接超时")));
     }
 
     #[test]
@@ -848,9 +820,7 @@ mod tests {
         let conn = open_in_memory().unwrap();
         record_detail(&conn, "auto", Some("10.0.0.1"), Status::Failed, None);
         let s = stats_since(&conn, 0).unwrap();
-        assert_eq!(s.errors.len(), 1);
-        assert_eq!(s.errors[0].error, "（没记原因）");
-        assert_eq!(s.errors[0].count, 1);
+        assert_eq!(s.failed,1);
     }
 
     #[test]
