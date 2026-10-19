@@ -64,12 +64,12 @@ async fn source(
             frame(json!({"role":"assistant","content":"first text"}), 1)
         } else {
             frame(
-                json!({"role":"assistant","reasoning_content":"valid native thought"}),
+                json!({"role":"assistant","reasoning_details":[{"type":"opaque","data":"native-provider-state"}]}),
                 3,
             )
         };
         let second = if !good && s.mode == 2 {
-            frame(json!({"reasoning_content":"valid late native thought"}), 3)
+            frame(json!({"reasoning_details":[{"type":"opaque","data":"late-native-state"}]}), 3)
         } else {
             frame(json!({"content":"answer"}), 3)
         };
@@ -99,7 +99,7 @@ async fn source(
     }
     let mut message = json!({"role":"assistant","content":"answer"});
     if !good {
-        message["reasoning_content"] = json!("valid native thought");
+        message["reasoning_details"] = json!([{"type":"opaque","data":"native-provider-state"}]);
     }
     Json(json!({"id":"chat_review","object":"chat.completion","model":"source","choices":[{"index":0,"message":message,"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}})).into_response()
 }

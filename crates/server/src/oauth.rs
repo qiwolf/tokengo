@@ -621,6 +621,9 @@ pub fn bind(state: &SharedState, channel_id: i64, binding: &Binding) -> Result<(
                 native: vec![Protocol::Responses],
                 allow_conversion: true,
                 native_input_audio: false,
+                chat_reasoning_replay: false,
+                max_input_tokens: None,
+                max_output_tokens: None,
             },
         )?;
         c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id,reasoning_effort,service_tier,max_input_tokens,max_output_tokens) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(channel_id) DO UPDATE SET account_id=excluded.account_id,reasoning_effort=excluded.reasoning_effort,service_tier=excluded.service_tier,max_input_tokens=excluded.max_input_tokens,max_output_tokens=excluded.max_output_tokens",params![channel_id,binding.account_id,binding.reasoning_effort,binding.service_tier,binding.max_input_tokens,binding.max_output_tokens])?;

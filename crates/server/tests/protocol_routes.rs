@@ -165,6 +165,9 @@ impl Fixture {
                     ],
                     allow_conversion: false,
                     native_input_audio: false,
+                    chat_reasoning_replay: false,
+                    max_input_tokens: None,
+                    max_output_tokens: None,
                 },
             )
             .unwrap();
@@ -617,6 +620,9 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
                 native: vec![tokengo_server::protocol::Protocol::Messages],
                 allow_conversion: false,
                     native_input_audio: false,
+                    chat_reasoning_replay: false,
+                    max_input_tokens: None,
+                    max_output_tokens: None,
             },
         )
         .unwrap();

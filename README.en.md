@@ -6,9 +6,13 @@ A self-hosted OpenAI-compatible LLM gateway written in Rust, with an Axum server
 
 ## Version and Scope
 
-This public source snapshot is **v0.34.0**. It separates the non-streaming completion deadline from the streaming idle timeout. Recent updates include explicit upstream account-fault isolation, single recovery trials, encrypted custom headers, unknown-usage reporting and live request progress.
+This fork builds on upstream **v0.34.0** and retains that Cargo version. Use the commit identity and current documentation to determine behavior; build the server and panel from the same commit.
 
-Supported client endpoints are chat completions (including SSE), embeddings, reranking and model listing. This is not a full OpenAI API implementation: Responses, native Anthropic/Gemini protocols, audio and video endpoints are not provided. Upstream model capabilities still determine whether tools, reasoning and image input work.
+The fork provides native Chat, Responses and Messages endpoints, strict text/client-function conversion in all six directions, embeddings, reranking, model listing and standalone DeepSeek Search/Fetch. Users, scoped virtual keys, ancestor quotas, ordered fallback, versioned prices, budgets and durable per-attempt accounting share one executor. Configure source capabilities explicitly; a model name is not evidence of support.
+
+See [protocols and clients](docs/protocols.md), [identity and metering](docs/identity-metering.md), [routing](docs/logical-routing.md), [Search/Fetch](docs/deepseek-search-fetch.md), [independent OpenAI OAuth](docs/openai-oauth.md), and [deployment](docs/deployment.md). Implementation and local tests do not establish acceptance by every real provider, subscription or CLI.
+
+Conversion rejects semantics it cannot represent. Responses requires full input replay; native signatures and opaque state have ownership restrictions. Native Chat inline audio is an explicit source capability, but separate audio/video/file APIs, native Gemini and arbitrary subscription conversion are not implemented. The official OAuth preview rejects some ordinary API generation fields; review its specific limitations.
 
 ## Features
 
@@ -20,14 +24,18 @@ Supported client endpoints are chat completions (including SSE), embeddings, rer
 - Named gateway API keys, authenticated administration and encrypted stored upstream secrets.
 - Request/attempt accounting, running-request progress, runtime logs and retention controls.
 - Track missing usage separately from explicitly reported zero usage.
-- Six administration pages: overview, channels, models, requests, logs and settings.
+- Overview, channels, models, users, billing and settings, with a separate diagnostic log entry.
+- User/key/ancestor permissions and quotas, immutable token/request prices, durable settlement and unknown-cost reporting.
+- Independent OAuth enrollment and rotating encrypted credentials; standalone Search/Fetch with request-unit accounting.
 
 ## Build From Source
+
+Route C is currently delivered on the development branch, pending merge to main. The command below selects it explicitly. Pin a reviewed commit for deployment rather than relying on the unchanged Cargo version.
 
 Requirements: Rust 1.98 or later, a native C compiler/linker for bundled SQLite, the wasm32 target and [Trunk](https://trunkrs.dev/). Use an official Trunk binary if a source installation fails to resolve dependencies. Install toolchain prerequisites for your operating system first.
 
 ```sh
-git clone https://github.com/shang1626/tokengo.git
+git clone --branch codex/protocols-and-deployment https://github.com/qiwolf/tokengo.git
 cd tokengo
 cargo build --locked --release -p tokengo-server
 rustup target add wasm32-unknown-unknown
@@ -57,7 +65,7 @@ Open http://127.0.0.1:3160/ui/ and initialize your administrator password before
 2. Add an upstream in Channels. Supply its OpenAI-compatible base URL and upstream credentials. For a provider whose endpoint is `/v1/chat/completions`, the base URL normally ends in `/v1`, not `/chat/completions`.
 3. Add/select the model names served by that channel. Set the upstream model name when it differs from the client-facing name.
 4. Set the model purpose (chat, embeddings or rerank) and image capability as appropriate. A name alone is not evidence of capability.
-5. In Settings, create named gateway keys for clients. Gateway keys and upstream provider keys are different credentials.
+5. In Users, create a user and virtual key with appropriate model/channel and paid-source permissions and quotas. Configure prices and budgets in Billing when needed. Panel passwords, virtual keys and upstream credentials are distinct.
 6. Point your client at `http://127.0.0.1:3160/v1`, using a gateway key and a configured model name.
 
 ## Environment Variables
@@ -69,6 +77,7 @@ Open http://127.0.0.1:3160/ui/ and initialize your administrator password before
 | TOKENGO_MASTER_KEY_FILE | master.key | Persistent encryption key file |
 | TOKENGO_WEB_DIR | Auto-discovery | Built panel directory; set explicitly in production |
 | TOKENGO_LOG_DIR | ./logs in server entry point | Runtime file log directory |
+| TOKENGO_OPENAI_PROXY | Default HTTP client behavior when unset | Dedicated OpenAI OAuth/subscription proxy; does not change ordinary source clients |
 
 Relative paths resolve against the working directory. Routing, retention and timeout settings are managed through the panel, not an invented configuration file. Default routing values in this snapshot include 3 retries after the initial attempt, a 30-second attempt/stream-idle timeout and a 120-second non-streaming deadline; saved settings can override them. These are not a guarantee that every request lasts exactly this long.
 

@@ -46,6 +46,51 @@ fn valid_status(v: &Value) -> Result<(), String> {
         Ok(())
     }
 }
+pub(super) fn plain_reasoning(item: &Value) -> Result<&str, String> {
+    fields(
+        item,
+        &[
+            "type",
+            "id",
+            "status",
+            "summary",
+            "content",
+            "encrypted_content",
+        ],
+    )?;
+    valid_status(item)?;
+    if let Some(id) = item.get("id") {
+        if !id
+            .as_str()
+            .is_some_and(|s| !s.trim().is_empty() && !s.chars().any(char::is_control))
+        {
+            return Err("Reasoning id must be nonempty text without controls".into());
+        }
+    }
+    if item["type"] != "reasoning" || item.get("encrypted_content").is_some_and(|v| !v.is_null()) {
+        return Err("Opaque reasoning cannot be converted".into());
+    }
+    if !item["summary"].as_array().is_some_and(Vec::is_empty) {
+        return Err("Reasoning summaries are not raw reasoning".into());
+    }
+    let parts = item["content"]
+        .as_array()
+        .ok_or("Expected raw reasoning content")?;
+    if parts.len() != 1 {
+        return Err("Only one exact reasoning_text part is convertible".into());
+    }
+    fields(&parts[0], &["type", "text"])?;
+    if parts[0]["type"] != "reasoning_text" {
+        return Err("Expected reasoning_text".into());
+    }
+    let text = parts[0]["text"]
+        .as_str()
+        .ok_or("Reasoning text must be a string")?;
+    if text.len() > 16 * 1024 * 1024 {
+        return Err("Reasoning exceeds 16 MiB".into());
+    }
+    Ok(text)
+}
 pub(super) fn decode_messages(protocol: Protocol, body: &Value) -> Result<Vec<Value>, String> {
     let mut out = Vec::new();
     match protocol {
@@ -56,7 +101,14 @@ pub(super) fn decode_messages(protocol: Protocol, body: &Value) -> Result<Vec<Va
             {
                 fields(
                     m,
-                    &["role", "content", "tool_calls", "tool_call_id", "name"],
+                    &[
+                        "role",
+                        "content",
+                        "tool_calls",
+                        "tool_call_id",
+                        "name",
+                        "reasoning_content",
+                    ],
                 )?;
                 let role = string(m, "role")?;
                 if !["system", "developer", "user", "assistant", "tool"].contains(&role.as_str()) {
@@ -69,6 +121,16 @@ pub(super) fn decode_messages(protocol: Protocol, body: &Value) -> Result<Vec<Va
                     return Err("tool_call_id requires tool role".into());
                 }
                 let mut row = message(&role, text(m.get("content").unwrap_or(&Value::Null))?);
+                if let Some(reasoning) = m.get("reasoning_content").filter(|v| !v.is_null()) {
+                    if role != "assistant" {
+                        return Err("reasoning_content requires assistant role".into());
+                    }
+                    let reasoning = reasoning.as_str().ok_or("reasoning_content must be text")?;
+                    if reasoning.len() > 16 * 1024 * 1024 {
+                        return Err("Reasoning exceeds 16 MiB".into());
+                    }
+                    row["reasoning_content"] = json!(reasoning);
+                }
                 if role == "tool" {
                     row["tool_call_id"] = json!(string(m, "tool_call_id")?);
                 }
@@ -125,7 +187,27 @@ pub(super) fn decode_messages(protocol: Protocol, body: &Value) -> Result<Vec<Va
                         if !["system", "developer", "user", "assistant"].contains(&role.as_str()) {
                             return Err("Unsupported Responses role".into());
                         }
-                        out.push(message(&role, text(&item["content"])?));
+                        let content = text(&item["content"])?;
+                        if role == "assistant"
+                            && out.last().is_some_and(|m| {
+                                m.get("reasoning_content").is_some()
+                                    && m["content"] == ""
+                                    && m.get("tool_calls").is_none()
+                            })
+                        {
+                            out.last_mut().unwrap()["content"] = json!(content);
+                        } else {
+                            out.push(message(&role, content));
+                        }
+                    }
+                    "reasoning" => {
+                        let reasoning = plain_reasoning(item)?;
+                        if out.last().is_some_and(|m| m["role"] == "assistant") {
+                            return Err("Reasoning must precede its assistant text/tools".into());
+                        }
+                        out.push(
+                            json!({"role":"assistant","content":"","reasoning_content":reasoning}),
+                        );
                     }
                     "function_call" => {
                         fields(
@@ -251,7 +333,16 @@ pub(super) fn encode_messages(
                     items.push(json!({"type":"function_call_output","call_id":string(m,"tool_call_id")?,"output":m["content"]}));
                     continue;
                 }
-                if let Some(content) = m["content"].as_str() {
+                if let Some(reasoning) = m.get("reasoning_content") {
+                    if role != "assistant" {
+                        return Err("Reasoning requires assistant".into());
+                    }
+                    items.push(json!({"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":reasoning}]}));
+                }
+                if let Some(content) = m["content"]
+                    .as_str()
+                    .filter(|c| !c.is_empty() || m.get("reasoning_content").is_none())
+                {
                     items.push(json!({"type":"message","role":role,"content":[{"type":if role=="assistant"{"output_text"}else{"input_text"},"text":content}]}));
                 }
                 if let Some(calls) = m["tool_calls"].as_array() {
@@ -266,6 +357,9 @@ pub(super) fn encode_messages(
             let mut system = Vec::new();
             let mut items: Vec<Value> = Vec::new();
             for m in messages {
+                if m.get("reasoning_content").is_some() {
+                    return Err("Plain reasoning has no native Messages signature".into());
+                }
                 let role = string(m, "role")?;
                 if role == "developer" {
                     return Err(
@@ -545,8 +639,8 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
     }
     // Responses and Messages carry stream meters in their native terminal events.
     // Ask a converted Chat source for its real meter instead of relying on target placeholders.
-    if to==Protocol::Chat && result["stream"]==true {
-        result["stream_options"]=json!({"include_usage":true});
+    if to == Protocol::Chat && result["stream"] == true {
+        result["stream_options"] = json!({"include_usage":true});
     }
     let mut cap = None;
     for key in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
@@ -801,8 +895,10 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
         return vec![];
     }
     let mut notes = vec![];
-    if to==Protocol::Chat && body["stream"]==true {
-        notes.push("converted Chat stream requests source usage; missing source meters remain unknown");
+    if to == Protocol::Chat && body["stream"] == true {
+        notes.push(
+            "converted Chat stream requests source usage; missing source meters remain unknown",
+        );
     }
     if from == Protocol::Responses {
         if body.get("client_metadata").is_some() {

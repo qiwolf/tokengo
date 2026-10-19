@@ -146,6 +146,7 @@ fn payload(v: &Value) -> bool {
                 .as_array()
                 .is_some_and(|a| a.iter().any(|v| nonempty(&v["text"])))
                 || nonempty(&v["encrypted_content"])
+                || v["content"].as_array().is_some_and(|a| a.iter().any(|p| p["type"] == "reasoning_text" && nonempty(&p["text"])))
         }
         _ => false,
     }
@@ -388,6 +389,12 @@ pub struct Transcoder {
     model: String,
     text: String,
     text_index: Option<u32>,
+    reasoning: String,
+    reasoning_tokens: Option<u64>,
+    reasoning_index: Option<u32>,
+    reasoning_item: String,
+    reasoning_closed: bool,
+    source_reasoning: Option<(u64, String)>,
     message_item: String,
     next_index: u32,
     next_tool: u32,
@@ -421,6 +428,12 @@ impl Transcoder {
             model: "tokengo".into(),
             text: String::new(),
             text_index: None,
+            reasoning: String::new(),
+            reasoning_tokens: None,
+            reasoning_index: None,
+            reasoning_item: format!("rs_{unique}"),
+            reasoning_closed: false,
+            source_reasoning: None,
             message_item: format!("msg_{unique}"),
             next_index: 0,
             next_tool: 0,
@@ -476,6 +489,9 @@ impl Transcoder {
                 u.insert("total_tokens".into(), json!(n));
             }
         }
+        if let Some(n)=self.reasoning_tokens {
+            u.insert(if chat {"completion_tokens_details"} else {"output_tokens_details"}.into(), json!({"reasoning_tokens":n}));
+        }
         Value::Object(u)
     }
     fn messages_wire_usage(&self) -> Value {
@@ -512,6 +528,78 @@ impl Transcoder {
         }
         Ok(())
     }
+    fn reasoning(&mut self, delta: &str, out: &mut Vec<u8>) -> Result<(), String> {
+        if delta.is_empty() {
+            return Ok(());
+        }
+        if !matches!(
+            (self.from, self.to),
+            (Protocol::Chat, Protocol::Responses) | (Protocol::Responses, Protocol::Chat)
+        ) {
+            return Err("Plain reasoning conversion requires Chat/Responses".into());
+        }
+        if self.reasoning_closed || self.text_index.is_some() || !self.tools.is_empty() {
+            return Err("Reasoning after text/tools is not representable".into());
+        }
+        self.add_size(delta.len())?;
+        self.begin(out);
+        if self.reasoning_index.is_none() {
+            let index = self.next_index;
+            self.next_index += 1;
+            self.reasoning_index = Some(index);
+            if self.to == Protocol::Responses {
+                self.emit(out,Some("response.output_item.added"),json!({"type":"response.output_item.added","output_index":index,"item":{"id":self.reasoning_item,"type":"reasoning","status":"in_progress","summary":[],"content":[]}}));
+            }
+        }
+        self.reasoning.push_str(delta);
+        if self.to == Protocol::Responses {
+            self.emit(out,Some("response.reasoning_text.delta"),json!({"type":"response.reasoning_text.delta","item_id":self.reasoning_item,"output_index":self.reasoning_index.unwrap(),"content_index":0,"delta":delta}));
+        } else {
+            self.emit(out,None,json!({"id":self.id,"object":"chat.completion.chunk","model":self.model,"choices":[{"index":0,"delta":{"reasoning_content":delta},"finish_reason":null}]}));
+        }
+        Ok(())
+    }
+    fn reasoning_item(&self) -> Value {
+        json!({"id":self.reasoning_item,"type":"reasoning","status":"completed","summary":[],"content":[{"type":"reasoning_text","text":self.reasoning}]})
+    }
+    fn close_reasoning(&mut self, out: &mut Vec<u8>) {
+        if self.reasoning_closed {
+            return;
+        }
+        self.reasoning_closed = true;
+        if self.reasoning_index.is_none() {
+            return;
+        }
+        if self.to == Protocol::Responses {
+            let index = self.reasoning_index.unwrap();
+            self.emit(out,Some("response.reasoning_text.done"),json!({"type":"response.reasoning_text.done","item_id":self.reasoning_item,"output_index":index,"content_index":0,"text":self.reasoning}));
+            self.emit(out,Some("response.output_item.done"),json!({"type":"response.output_item.done","output_index":index,"item":self.reasoning_item()}));
+        }
+    }
+    fn response_reasoning(
+        &mut self,
+        index: u64,
+        id: &str,
+        text: &str,
+        complete: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<(), String> {
+        if let Some((old_index, old_id)) = &self.source_reasoning {
+            if *old_index != index || old_id != id {
+                return Err("Multiple or changed reasoning identities".into());
+            }
+        } else {
+            self.source_reasoning = Some((index, id.into()));
+        }
+        let delta = if complete {
+            text.strip_prefix(&self.reasoning)
+                .ok_or("Final reasoning disagrees with deltas")?
+        } else {
+            text
+        }
+        .to_owned();
+        self.reasoning(&delta, out)
+    }
     fn text(&mut self, delta: &str, out: &mut Vec<u8>) -> Result<(), String> {
         if delta.is_empty() {
             return Ok(());
@@ -521,6 +609,7 @@ impl Transcoder {
                 "Text after tool blocks cannot be converted to Messages without reordering".into(),
             );
         }
+        self.close_reasoning(out);
         self.add_size(delta.len())?;
         self.begin(out);
         if self.text_index.is_none() {
@@ -551,6 +640,7 @@ impl Transcoder {
         start: bool,
         out: &mut Vec<u8>,
     ) -> Result<(), String> {
+        self.close_reasoning(out);
         let mut tool = if let Some(t) = self.tools.remove(key) {
             t
         } else {
@@ -646,9 +736,11 @@ impl Transcoder {
                             return Err("Multiple Chat choices cannot be converted".into());
                         }
                         let d = &c["delta"];
+                        if let Some(r)=d.get("reasoning_content").filter(|v| !v.is_null()) {
+                            if !r.is_string() || (self.to != Protocol::Responses && r != "") { return Err("Unsupported raw reasoning destination/type".into()); }
+                        }
                         for k in [
                             "reasoning",
-                            "reasoning_content",
                             "reasoning_details",
                             "refusal",
                             "audio",
@@ -672,7 +764,7 @@ impl Transcoder {
                 }
             }
             Protocol::Responses => {
-                if event.contains("reasoning")
+                if (event.contains("reasoning") && !matches!(event,"response.reasoning_text.delta"|"response.reasoning_text.done"))
                     || event.contains("refusal")
                     || event.contains("audio")
                     || event.contains("image")
@@ -688,6 +780,15 @@ impl Transcoder {
                     .chain(v.get("item").into_iter())
                 {
                     let t = item["type"].as_str().ok_or("Missing Responses item type")?;
+                    if t == "reasoning" && self.to == Protocol::Chat {
+                        let mut item=item.clone();
+                        if event=="response.output_item.added" {
+                            if item["status"]=="in_progress" { item.as_object_mut().unwrap().remove("status"); }
+                            if item["content"].as_array().is_some_and(Vec::is_empty) { item["content"]=json!([{"type":"reasoning_text","text":""}]); }
+                        }
+                        super::request::plain_reasoning(&item)?;
+                        continue;
+                    }
                     if !matches!(t, "message" | "function_call") {
                         return Err(format!("Unsupported Responses output item {t}"));
                     }
@@ -707,7 +808,7 @@ impl Transcoder {
                     }
                 }
                 if let Some(t) = v["item"]["type"].as_str() {
-                    if !matches!(t, "message" | "function_call") {
+                    if !matches!(t, "message" | "function_call" | "reasoning") {
                         return Err(format!("Unsupported Responses output item {t}"));
                     }
                 }
@@ -787,6 +888,10 @@ impl Transcoder {
                         }
                     }
                 }
+                Some("reasoning") => {
+                    let raw=super::request::plain_reasoning(item)?;
+                    self.response_reasoning(i as u64,item["id"].as_str().ok_or("Missing reasoning id")?,raw,true,out)?;
+                }
                 Some("function_call") => {
                     let key = format!("r:{i}");
                     if !self.tools.contains_key(&key) {
@@ -821,6 +926,11 @@ impl Transcoder {
             return Ok(());
         }
         let v: Value = serde_json::from_str(&frame.data).map_err(|_| "Invalid SSE JSON")?;
+        if matches!((self.from,self.to),(Protocol::Chat,Protocol::Responses)|(Protocol::Responses,Protocol::Chat)) {
+            for usage in [&v["usage"], &v["response"]["usage"]] {
+                if let Some(n)=super::response::reasoning_tokens(self.from,usage)? {self.reasoning_tokens=Some(n);}
+            }
+        }
         let model = match self.from {
             Protocol::Chat => v["model"].as_str(),
             Protocol::Responses => v["response"]["model"].as_str(),
@@ -836,6 +946,7 @@ impl Transcoder {
                 if let Some(choices) = v["choices"].as_array() {
                     for c in choices {
                         let d = &c["delta"];
+                        if let Some(reasoning)=d["reasoning_content"].as_str() { self.reasoning(reasoning,out)?; }
                         if let Some(text) = d["content"].as_str() {
                             self.text(text, out)?;
                         }
@@ -871,8 +982,23 @@ impl Transcoder {
             Protocol::Responses => {
                 let event = kind(frame, &v);
                 match event {
+                    "response.reasoning_text.delta" | "response.reasoning_text.done" => {
+                        let complete=event.ends_with(".done");
+                        if v["content_index"].as_u64()!=Some(0) { return Err("Only one raw reasoning part is supported".into()); }
+                        let index=v["output_index"].as_u64().ok_or("Missing reasoning index")?;
+                        let id=v["item_id"].as_str().ok_or("Missing reasoning identity")?;
+                        if self.source_reasoning.as_ref()!=Some(&(index,id.to_owned())) { return Err("Reasoning delta precedes or changes item identity".into()); }
+                        self.response_reasoning(index,id,v[if complete {"text"} else {"delta"}].as_str().ok_or("Missing raw reasoning text")?,complete,out)?;
+                        if complete { self.close_reasoning(out); }
+                    }
                     "response.output_item.added" => {
                         let item = &v["item"];
+                        if item["type"]=="reasoning" {
+                            let index=v["output_index"].as_u64().ok_or("Missing reasoning index")?;
+                            let id=item["id"].as_str().ok_or("Missing reasoning identity")?;
+                            let initial=item["content"].as_array().and_then(|a|a.first()).and_then(|p|p["text"].as_str()).unwrap_or("");
+                            self.response_reasoning(index,id,initial,false,out)?;
+                        }
                         if item["type"] == "function_call" {
                             let index = v["output_index"]
                                 .as_u64()
@@ -946,6 +1072,10 @@ impl Transcoder {
                     }
                     "response.output_item.done" => {
                         let item = &v["item"];
+                        if item["type"]=="reasoning" {
+                            self.response_reasoning(v["output_index"].as_u64().ok_or("Missing reasoning index")?,item["id"].as_str().ok_or("Missing reasoning id")?,super::request::plain_reasoning(item)?,true,out)?;
+                            self.close_reasoning(out);
+                        }
                         if item["type"] == "message" {
                             for (i, part) in
                                 item["content"].as_array().into_iter().flatten().enumerate()
@@ -1074,6 +1204,7 @@ impl Transcoder {
         if self.ended {
             return Ok(());
         }
+        self.close_reasoning(out);
         let keys: Vec<_> = self.tools.keys().cloned().collect();
         for key in &keys {
             self.tool(key, None, None, "", true, out)?;
@@ -1160,6 +1291,7 @@ impl Transcoder {
             }
             Protocol::Responses => {
                 let mut items = Vec::new();
+                if let Some(index)=self.reasoning_index { items.push((index,self.reasoning_item())); }
                 if let Some(index) = self.text_index {
                     let part = json!({"type":"output_text","text":self.text,"annotations":[]});
                     let item = json!({"id":self.message_item,"type":"message","role":"assistant","status":"completed","content":[part]});

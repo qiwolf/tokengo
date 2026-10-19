@@ -600,6 +600,9 @@ async fn apply(
                     native: vec![d.protocol],
                     allow_conversion: false,
                     native_input_audio: false,
+                    chat_reasoning_replay: false,
+                    max_input_tokens: None,
+                    max_output_tokens: None,
                 },
             )?;
             db::kinds::set(c, &d.logical, d.kind)?;

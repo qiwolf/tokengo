@@ -11,6 +11,16 @@ pub struct Capabilities {
     /// Native Chat input_audio only; output audio and media conversion stay disabled.
     #[serde(default, skip_serializing_if = "is_false")]
     pub native_input_audio: bool,
+    /// Explicit ability to replay converted assistant reasoning_content history.
+    /// Native Chat passthrough and returned reasoning fields do not require it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub chat_reasoning_replay: bool,
+    /// Verified independent input/output ceilings, not a token price or a promise
+    /// that both ceilings fit the provider's joint context window simultaneously.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i64>,
 }
 fn is_false(v: &bool) -> bool {
     !*v
@@ -21,11 +31,22 @@ impl Default for Capabilities {
             native: vec![Protocol::Chat],
             allow_conversion: false,
             native_input_audio: false,
+            chat_reasoning_replay: false,
+            max_input_tokens: None,
+            max_output_tokens: None,
         }
     }
 }
 impl Capabilities {
     pub fn validate(&self) -> Result<(), String> {
+        match (self.max_input_tokens,self.max_output_tokens) {
+            (None,None)=>{},
+            (Some(input),Some(output)) if input>0 && output>0=>{},
+            _=>return Err("Source context bounds require positive max_input_tokens and max_output_tokens together".into()),
+        }
+        if self.chat_reasoning_replay && !self.native.contains(&Protocol::Chat) {
+            return Err("chat_reasoning_replay requires native chat".into());
+        }
         if self.native_input_audio && !self.native.contains(&Protocol::Chat) {
             return Err("native_input_audio requires native chat".into());
         }
@@ -38,6 +59,9 @@ impl Capabilities {
             }
         }
         Ok(())
+    }
+    pub fn context_bounds(&self) -> Option<(i64, i64)> {
+        self.max_input_tokens.zip(self.max_output_tokens)
     }
     pub fn select(&self, client: Protocol) -> Option<Protocol> {
         if self.native.contains(&client) {
@@ -85,6 +109,9 @@ mod tests {
             native: vec![Protocol::Messages],
             allow_conversion: true,
             native_input_audio: false,
+            chat_reasoning_replay: false,
+            max_input_tokens: None,
+            max_output_tokens: None,
         };
         save(&c, 19, &chosen).unwrap();
         assert_eq!(
@@ -97,14 +124,20 @@ mod tests {
         assert!(Capabilities {
             native: vec![],
             allow_conversion: true,
-            native_input_audio: false
+            native_input_audio: false,
+            chat_reasoning_replay: false,
+            max_input_tokens: None,
+            max_output_tokens: None,
         }
         .validate()
         .is_err());
         assert!(Capabilities {
             native: vec![Protocol::Chat, Protocol::Chat],
             allow_conversion: true,
-            native_input_audio: false
+            native_input_audio: false,
+            chat_reasoning_replay: false,
+            max_input_tokens: None,
+            max_output_tokens: None,
         }
         .validate()
         .is_err());
@@ -138,8 +171,102 @@ pub fn probe_endpoint(
 }
 
 /// OAuth and standalone paid tools must use the authenticated, metered executor.
-pub fn background_probe_allowed(c:&rusqlite::Connection,id:i64)->db::Result<bool> {
-    let oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[id],|r|r.get(0))?;
-    let tools=crate::search_tools::load(c,id)?;
-    Ok(!oauth&&!tools.search&&!tools.fetch)
+pub fn background_probe_allowed(c: &rusqlite::Connection, id: i64) -> db::Result<bool> {
+    let oauth: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",
+        [id],
+        |r| r.get(0),
+    )?;
+    let tools = crate::search_tools::load(c, id)?;
+    Ok(!oauth && !tools.search && !tools.fetch)
+}
+#[cfg(test)]
+mod context_capability_tests {
+    use super::*;
+    #[test]
+    fn context_pairs_and_chat_reasoning_replay_require_valid_explicit_declarations() {
+        let default = Capabilities::default();
+        let raw = serde_json::to_value(&default).unwrap();
+        assert!(raw.get("chat_reasoning_replay").is_none());
+        assert!(raw.get("max_input_tokens").is_none());
+        assert_eq!(
+            serde_json::from_value::<Capabilities>(raw)
+                .unwrap()
+                .context_bounds(),
+            None
+        );
+        for (input, output) in [
+            (Some(1), None),
+            (None, Some(1)),
+            (Some(0), Some(1)),
+            (Some(1), Some(-1)),
+        ] {
+            assert!(Capabilities {
+                max_input_tokens: input,
+                max_output_tokens: output,
+                ..Default::default()
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(Capabilities {
+            native: vec![Protocol::Responses],
+            chat_reasoning_replay: true,
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+        assert!(Capabilities {
+            max_input_tokens: Some(1048576),
+            max_output_tokens: Some(393216),
+            ..Default::default()
+        }
+        .validate()
+        .is_ok());
+    }
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+    #[test]
+    fn reasoning_and_context_capability_changes_advance_source_generation() {
+        let c = db::open_in_memory().unwrap();
+        let id = db::channels::create(
+            &c,
+            &db::channels::NewChannel {
+                name: "test".into(),
+                base_url: "https://example.invalid".into(),
+                enabled: true,
+                unwrap_envelope: false,
+                max_concurrent: 1,
+            },
+        )
+        .unwrap()
+        .0;
+        let mut cap = Capabilities::default();
+        save(&c, id, &cap).unwrap();
+        let generation = |c: &rusqlite::Connection| {
+            c.query_row(
+                "SELECT binding_generation FROM channels WHERE id=?1",
+                [id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        let original = generation(&c);
+        cap.chat_reasoning_replay = true;
+        save(&c, id, &cap).unwrap();
+        assert_eq!(generation(&c), original + 1);
+        cap.max_input_tokens = Some(1048576);
+        cap.max_output_tokens = Some(393216);
+        save(&c, id, &cap).unwrap();
+        assert_eq!(generation(&c), original + 2);
+        save(&c, id, &cap).unwrap();
+        assert_eq!(generation(&c), original + 2);
+        assert_eq!(
+            load(&c, id).unwrap().context_bounds(),
+            Some((1048576, 393216))
+        );
+    }
 }

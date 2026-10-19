@@ -23,6 +23,10 @@ impl Protocol {
 }
 pub use request::{convert_request, has_image, normalization_notes};
 pub use response::{convert_response, validate_response};
+/// Only the exact supported plaintext shape may bypass opaque-state ownership.
+pub(crate) fn is_plain_reasoning(item: &Value) -> bool {
+    request::plain_reasoning(item).is_ok()
+}
 fn object(v: &Value) -> Result<&serde_json::Map<String, Value>, String> {
     v.as_object().ok_or_else(|| "Expected JSON object".into())
 }
@@ -277,6 +281,8 @@ mod llama_conversion_tests {
         assert_eq!(message["content"][0]["text"], "本地回复");
         let mut thinking = body;
         thinking["choices"][0]["message"]["reasoning_content"] = json!("nonempty native reasoning");
-        assert!(convert_response(Protocol::Chat, Protocol::Responses, &thinking).is_err());
+        let converted=convert_response(Protocol::Chat, Protocol::Responses, &thinking).unwrap();
+        assert_eq!(converted["output"][0]["content"][0]["text"], "nonempty native reasoning");
+        assert!(convert_response(Protocol::Chat, Protocol::Messages, &thinking).is_err());
     }
 }

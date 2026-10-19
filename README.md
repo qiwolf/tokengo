@@ -2,7 +2,7 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-Fork 开发分支已开始个人中转站改造：流式错误正文有界读取、逻辑模型映射、逐模型来源策略和稳定会话适配；路线 B 已加入用户/VKey 权限、双层额度、价格版本与持久计量账本，见[身份与计量 API](docs/identity-metering.md)。接口与范围见[逻辑路由说明](docs/logical-routing.md)，持续集成见[CI说明](docs/ci.md)。下文版本说明保留上游 v0.34.0 基线；新功能尚未部署到现网。
+本 fork 基于上游 v0.34.0，已加入用户与虚拟密钥（VKey）、预算及逐尝试账本、逻辑模型与有序 fallback、Chat / Responses / Messages 原生入口和文本/函数工具转换。另提供 DeepSeek Search/Fetch 按次计费、原生 Chat 语音输入与独立 OpenAI OAuth。具体配置和限制见[身份与计量](docs/identity-metering.md)、[模型路由](docs/logical-routing.md)、[协议与客户端](docs/protocols.md)、[Search/Fetch](docs/deepseek-search-fetch.md)、[OAuth](docs/openai-oauth.md)和[部署指南](docs/deployment.md)。功能存在不等于任意供应商、订阅或客户端均已验收。
 
 Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
 
@@ -10,18 +10,22 @@ Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 Op
 
 ### 版本与范围
 
-当前公开源码为 **v0.34.0**，不是私人开发分支或部署环境的实时状态。本版分开非流式完整响应期限和流式空闲超时；近期还包括账号故障隔离、单次恢复试探、请求头加密、用量未知标记和进行中请求进度。
+Cargo 版本号保留上游 **v0.34.0**；本分支的实际功能以提交及文档为准。服务端与前端须从同一提交构建。
 
-支持对话、SSE 流式输出、向量、重排、模型清单、多渠道配置、模型映射、命名网关密钥、请求记账及运行日志。管理面板分为总览、渠道、模型、请求、日志、设置六页。
+提供 Chat、Responses、Messages、向量、重排、模型清单与独立 Search/Fetch 接口。源协议、转换、图像及内联语音能力须显式配置，不按模型名猜测。流式提交前可切换允许的备用源，提交后不重放；取消、未知用量与来源错误分别记录。
 
-不提供 Responses、Anthropic/Gemini 原生协议或音视频接口。图片、工具调用和推理内容是否可用仍取决于上游；不能仅按模型名称认定支持。
+管理面板包括总览、渠道、模型、用户、账务和设置；日志从排障入口访问。用户/VKey 支持权限与限额，账务支持版本价格、预算及账本；不是多实例共享配额服务。
+
+当前转换只覆盖可保真的文本与客户端函数工具。原生签名/不透明状态有归属约束，不能跨协议搬运；Responses 要求完整历史重放。未实现 Gemini 原生协议、独立音视频/文件 API 或任意订阅转换。官方 OAuth 预览也不接受部分普通 API 参数，详见对应文档。
 
 ### 构建与启动
+
+路线 C 目前通过开发分支和 PR 交付，尚未合并到 main；下例明确选择该分支。部署时进一步固定已审阅的提交 SHA，不按 Cargo 版本号猜功能。
 
 需要 Rust 1.98 或更新版本、C 编译器与链接器（内置 SQLite 所需），以及 [Trunk](https://trunkrs.dev/)。先按操作系统安装编译依赖。Trunk 源码安装遇到依赖解析问题时可使用官方预编译版本，并校验下载文件。
 
 ```sh
-git clone https://github.com/shang1626/tokengo.git
+git clone --branch codex/protocols-and-deployment https://github.com/qiwolf/tokengo.git
 cd tokengo
 cargo build --locked --release -p tokengo-server
 rustup target add wasm32-unknown-unknown
@@ -44,7 +48,7 @@ TOKENGO_LOG_DIR=./logs \
 2. 在“渠道”填写上游基础地址与提供商密钥。若完整接口为 `/v1/chat/completions`，基础地址一般填写到 `/v1`，不要填写整个接口路径。
 3. 在渠道内添加或勾选服务的模型名，必要时填写客户端名到上游模型名的映射；确认渠道已启用。
 4. 根据实际能力设置用途和图片输入支持，不按名字猜。模型页不是另一个独立模型提供商。
-5. 在“设置”为不同客户端创建命名网关密钥。客户端使用网关密钥，不是面板口令，也不是上游提供商密钥。
+5. 在“用户”创建调用用户及虚拟密钥，设置模型/渠道范围、付费权限及限额；需要计费时在“账务”配置价格和预算。客户端使用虚拟密钥，不是面板口令或上游提供商密钥。
 6. 客户端基础地址填写 `http://127.0.0.1:3160/v1`，模型填写已配置的客户端模型名。
 
 ```sh
@@ -68,6 +72,7 @@ curl -N http://127.0.0.1:3160/v1/chat/completions \
 | TOKENGO_MASTER_KEY_FILE | master.key | 持久化加密主密钥 |
 | TOKENGO_WEB_DIR | 自动查找 | 面板目录；生产建议显式指定 |
 | TOKENGO_LOG_DIR | 服务入口默认 ./logs | 运行日志目录 |
+| TOKENGO_OPENAI_PROXY | 未设置则沿用 HTTP 客户端默认出站行为 | 仅 OpenAI OAuth/订阅推理专用代理，不改普通源客户端 |
 
 相对路径以工作目录为准；生产使用绝对路径。路由、超时和数据保留通过面板设置，不是额外的 YAML 配置。
 

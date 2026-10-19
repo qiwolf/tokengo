@@ -43,9 +43,16 @@ fn message(protocol: Protocol, body: &Value) -> Result<Value, String> {
     };
     let mut text = String::new();
     let mut calls = Vec::new();
+    let mut reasoning: Option<String> = None;
     for row in canonical {
         if row["role"] != "assistant" {
             return Err("Response contains non-assistant item".into());
+        }
+        if let Some(raw) = row.get("reasoning_content") {
+            if reasoning.is_some() {
+                return Err("Multiple reasoning segments cannot be merged".into());
+            }
+            reasoning = Some(raw.as_str().ok_or("Reasoning must be text")?.to_owned());
         }
         if let Some(s) = row["content"].as_str() {
             text.push_str(s);
@@ -55,6 +62,9 @@ fn message(protocol: Protocol, body: &Value) -> Result<Value, String> {
         }
     }
     let mut result = json!({"role":"assistant","content":if text.is_empty()&&!calls.is_empty(){Value::Null}else{json!(text)}});
+    if let Some(reasoning) = reasoning {
+        result["reasoning_content"] = json!(reasoning);
+    }
     if !calls.is_empty() {
         result["tool_calls"] = json!(calls);
     }
@@ -110,6 +120,34 @@ fn usage(protocol: Protocol, body: &Value) -> Result<Option<(u64, u64)>, String>
         }
     }
     Ok(Some((input, output)))
+}
+/// The two protocols define this same output-token subset. Missing is unknown, not zero.
+pub(super) fn reasoning_tokens(protocol: Protocol, usage: &Value) -> Result<Option<u64>, String> {
+    let key = if protocol == Protocol::Chat {
+        "completion_tokens_details"
+    } else {
+        "output_tokens_details"
+    };
+    let Some(details) = usage.get(key).filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    object(details)?;
+    let Some(value) = details.get("reasoning_tokens").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let n = value
+        .as_u64()
+        .filter(|n| *n <= i64::MAX as u64)
+        .ok_or("Invalid reasoning token count")?;
+    let total = usage.get(if protocol == Protocol::Chat {
+        "completion_tokens"
+    } else {
+        "output_tokens"
+    });
+    if total.and_then(Value::as_u64).is_some_and(|total| n > total) {
+        return Err("Reasoning token count exceeds total output".into());
+    }
+    Ok(Some(n))
 }
 pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Value, String> {
     if from == to {
@@ -204,6 +242,14 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
     let msg = message(from, body)?;
     let finish = reason(from, body, msg.get("tool_calls").is_some())?;
     let counts = usage(from, body)?;
+    let reasoning_count = if matches!(
+        (from, to),
+        (Protocol::Chat, Protocol::Responses) | (Protocol::Responses, Protocol::Chat)
+    ) {
+        reasoning_tokens(from, &body["usage"])?
+    } else {
+        None
+    };
     let id = body.get("id").cloned().unwrap_or(json!("converted"));
     let model = body.get("model").cloned().unwrap_or(json!("unknown"));
     let mut out = match to {
@@ -226,6 +272,8 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
             {
                 let prefix = if item["type"] == "function_call" {
                     "fc"
+                } else if item["type"] == "reasoning" {
+                    "rs"
                 } else {
                     "msg"
                 };
@@ -239,7 +287,7 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
                     "completed"
                 });
                 if let Some(blocks) = item.get_mut("content").and_then(Value::as_array_mut) {
-                    for block in blocks {
+                    for block in blocks.iter_mut().filter(|b| b["type"] == "output_text") {
                         block["annotations"] = json!([]);
                     }
                 }
@@ -259,6 +307,13 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
         } else {
             json!({"input_tokens":input,"output_tokens":output,"total_tokens":input.checked_add(output).ok_or("Usage total overflow")?})
         };
+    }
+    if let Some(n) = reasoning_count {
+        out["usage"][if to == Protocol::Chat {
+            "completion_tokens_details"
+        } else {
+            "output_tokens_details"
+        }] = json!({"reasoning_tokens":n});
     }
     Ok(out)
 }

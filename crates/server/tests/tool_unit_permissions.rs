@@ -189,11 +189,47 @@ async fn standalone_tools_respect_ancestor_rpm_and_budget_without_spending_token
             "test",
         )
         .unwrap();
+        // An unavailable, misconfigured OAuth candidate must not turn request-unit
+        // tools into token-consuming requests before the ordinary source is tried.
+        let oauth_channel = db::channels::create(
+            &c,
+            &db::channels::NewChannel {
+                name: "unavailable OAuth tool candidate".into(),
+                base_url: "http://127.0.0.1:9".into(),
+                enabled: true,
+                unwrap_envelope: false,
+                max_concurrent: 0,
+            },
+        )
+        .unwrap();
+        db::channels::set_models(
+            &c,
+            oauth_channel,
+            &[db::channels::ModelMapping::new(
+                "deepseek-search",
+                None,
+                false,
+            )],
+        )
+        .unwrap();
+        tokengo_server::search_tools::save(
+            &c,
+            oauth_channel.0,
+            &tokengo_server::search_tools::ToolCapabilities {
+                search: true,
+                account_scope: "unavailable-oauth-tool".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('synthetic','https://auth.openai.com','subject','client','revoked','[]',0,0)",[]).unwrap();
+        let account = c.last_insert_rowid();
+        c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id,max_input_tokens,max_output_tokens) VALUES(?1,?2,8192,4096)",rusqlite::params![oauth_channel.0,account]).unwrap();
         let policy = db::identity::Policy {
             tpm: Some(1),
             rpm: Some(12),
             allowed_models: Some(vec!["deepseek-search".into()]),
-            allowed_channels: Some(vec![channel.0]),
+            allowed_channels: Some(vec![oauth_channel.0, channel.0]),
             ..Default::default()
         };
         let user = db::identity::create_user(&c, "tool-ancestor-owner", "user", &policy).unwrap();
@@ -226,6 +262,7 @@ async fn standalone_tools_respect_ancestor_rpm_and_budget_without_spending_token
             &c,
             "deepseek-search",
             &db::route_policy::RoutePolicy {
+                channel_ids: Some(vec![oauth_channel.0, channel.0]),
                 probe_enabled: Some(false),
                 retry_times: Some(0),
                 ..Default::default()

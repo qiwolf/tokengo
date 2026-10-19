@@ -307,21 +307,26 @@ fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::
 fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (mut input,mut output)=admission_bound(body,endpoint)?;
     if has_input_audio(body) || endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
-        input=price.map(|p|p.max_input_tokens).or(context.map(|v|v.0)).filter(|n|*n>0)
+        input=context.map(|v|v.0).or(price.map(|p|p.max_input_tokens)).filter(|n|*n>0)
             .ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history or audio requires a configured maximum input context bound"))?;
     }
+    if endpoint.has_image(body) {if let Some((max_input,_))=context {input=max_input;}}
     if price.is_none() && endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
-        body[if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"}]=Value::from(4096);
+        let choices=if endpoint==EndpointKind::Chat {choices_count(body)?}else{1};
+        let per_choice=4096.min(context.map(|v|v.1/choices).unwrap_or(4096));
+        if per_choice<=0 {return Err(ApiError::bad_request("Source configuration needs a positive output cap"));}
+        output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
+        body[if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"}]=Value::from(per_choice);
     }
     if let Some(p)=price {
         if endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
             let choices=if endpoint==EndpointKind::Chat {choices_count(body)?} else {1};
-            let per_choice=4096.min(p.max_output_tokens/choices);
+            let per_choice=4096.min(p.max_output_tokens.min(context.map(|v|v.1).unwrap_or(i64::MAX))/choices);
             if per_choice<=0 {return Err(ApiError::bad_request("Pricing configuration needs a positive output cap"));}
             output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
             body[if endpoint==EndpointKind::Responses {"max_output_tokens"} else {"max_tokens"}]=Value::from(per_choice);
         }
-        if endpoint.has_image(body) {input=p.max_input_tokens;}
+        if endpoint.has_image(body) {input=context.map(|v|v.0).unwrap_or(p.max_input_tokens);}
         if input>p.max_input_tokens || output>p.max_output_tokens {
             return Err(ApiError::new(StatusCode::BAD_REQUEST,"billing_token_limit","Request exceeds configured billing token bounds"));
         }
@@ -688,11 +693,25 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     record_client_app(&state,request_id,req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
 
+    let mut admitted_input = None;
     if let Some(auth) = &req.auth {
         let (mut input, mut output) = admission_bound(&req.body, req.endpoint).map_err(|error|{guard.reject(&error);error})?;
+        // Predict the per-source default without borrowing mutable price caps.
+        // OAuth keeps its full binding ceiling; a missing OAuth bound never uses generic caps.
+        let default_output=req.endpoint.is_generation() && ["max_tokens","max_completion_tokens","max_output_tokens"].iter().all(|key|req.body.get(*key).is_none());
+        let choices=if req.endpoint==EndpointKind::Chat {choices_count(&req.body)?}else{1};
+        let mut planned_output=None;
         for candidate in &plan.entries {
-            if let Some((_,bound))=crate::oauth::context_bounds(&state.conn(),candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))? {output=output.max(bound);}
+            let c=state.conn();
+            let oauth_bound=crate::oauth::context_bounds(&c,candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))?;
+            let has_oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[candidate.channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
+            let candidate_output=if !req.endpoint.is_generation() {0}else if has_oauth {oauth_bound.map(|v|v.1).unwrap_or(output)}else if default_output {
+                4096.min(candidate.protocols.context_bounds().map(|v|v.1/choices).unwrap_or(4096)).checked_mul(choices)
+                    .ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?
+            }else {output};
+            planned_output=Some(planned_output.unwrap_or(0).max(candidate_output));
         }
+        if let Some(planned)=planned_output {output=planned;}
         let opaque_input=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
         let audio_input=has_input_audio(&req.body);
         if audio_input && !plan.entries.iter().any(|entry|entry.protocols.native_input_audio && entry.protocols.native.contains(&crate::protocol::Protocol::Chat)) {
@@ -703,8 +722,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let mut maximum=None;
             for candidate in &plan.entries {
                 if audio_input && !candidate.protocols.native_input_audio {continue;}
-                if let Some(p)=crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)? {maximum=Some(maximum.unwrap_or(0).max(p.max_input_tokens));}
-                if let Some((bound,_))=crate::oauth::context_bounds(&c,candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))? {maximum=Some(maximum.unwrap_or(0).max(bound));}
+                let oauth_bound=crate::oauth::context_bounds(&c,candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))?;
+                let has_oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[candidate.channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
+                let context=if has_oauth {oauth_bound}else{candidate.protocols.context_bounds()};
+                let bound=context.map(|v|v.0).or(crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)?.map(|p|p.max_input_tokens));
+                if let Some(bound)=bound.filter(|n|*n>0) {maximum=Some(maximum.unwrap_or(0).max(bound));}
             }
             let tpm_limited=auth.effective_policy().tpm.is_some() || auth.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|p|p.effective_policy().tpm.is_some()));
             if opaque_input || audio_input || tpm_limited {
@@ -713,6 +735,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
         }
         guard.admission = Some(crate::admission::acquire(state.clone(), auth, input as u64, output as u64).map_err(|e|{guard.reject(&e);e})?);
+        admitted_input=Some(input);
     }
     let global_cfg = state.routing().cfg.clone();
     let cfg = crate::db::route_policy::effective(&state.conn(), &plan.route, global_cfg)?;
@@ -805,6 +828,17 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             },
             _=>req.body.clone(),
         }};
+        // A source returning reasoning does not imply it accepts that dialect
+        // in assistant history. Only converted Chat replay needs explicit opt-in.
+        if req.endpoint.protocol().is_some_and(|client| client != crate::protocol::Protocol::Chat)
+            && upstream_protocol == Some(crate::protocol::Protocol::Chat)
+            && !protocols.chat_reasoning_replay
+            && prepared.get("messages").and_then(Value::as_array).is_some_and(|messages|
+                messages.iter().any(|message| message.get("reasoning_content").is_some_and(|value| !value.is_null())))
+        {
+            last_policy_error=Some(ApiError::bad_request("Source does not declare Chat reasoning history replay support"));
+            continue;
+        }
         // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
         let permit = match pre_permits.remove(&channel.id.0) {
             Some(p) => Some(p),
@@ -934,9 +968,27 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     let error=ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Source permission changed");guard.reject(&error);return Err(error);
                 }
                 let price = crate::db::billing::price(&c, name, channel.id.0)?;
-                let context=oauth.as_ref().and_then(|credential|credential.max_input_tokens.zip(credential.max_output_tokens));
-                let bounds=if req.endpoint.tool_kind().is_some(){Ok((0,0))}else if oauth.is_some() {subscription_bound(&body,price.as_ref(),context)}else {billing_bound(&mut body, match upstream_protocol {Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,None=>req.endpoint}, price.as_ref())};
+                let context=match oauth.as_ref() {
+                    Some(credential)=>credential.max_input_tokens.zip(credential.max_output_tokens),
+                    None=>protocols.context_bounds(),
+                };
+                let image_input=req.endpoint.has_image(&req.body);
+                let tpm_limited=current.effective_policy().tpm.is_some() || current.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|parent|parent.effective_policy().tpm.is_some()));
+                // An aggregate admission maximum is not this source's image context.
+                // Preserve unbounded native images only when token limits do not apply.
+                if image_input && tpm_limited && context.is_none() && (oauth.is_some() || !price.as_ref().is_some_and(|p|p.max_input_tokens>0)) {
+                    last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Image input with token limits requires this source's configured context bounds"));
+                    continue 'channels;
+                }
+                let full_context_input=has_input_audio(&req.body)
+                    || req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body))
+                    || (image_input && (tpm_limited || context.is_some() || price.is_some()));
+                let bounds=if req.endpoint.tool_kind().is_some(){Ok((0,0))}else if oauth.is_some() {subscription_bound(&body,price.as_ref(),context)}else {billing_bound_with_context(&mut body, match upstream_protocol {Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,None=>req.endpoint}, price.as_ref(),context)};
                 let (input, output) = bounds.map_err(|error|{guard.reject(&error);error})?;
+                if full_context_input && admitted_input.is_some_and(|reserved|input>reserved) {
+                    let error=ApiError::new(StatusCode::BAD_REQUEST,"source_context_changed","Source context exceeds the admitted input reservation; retry with current configuration");
+                    guard.reject(&error);return Err(error);
+                }
                 body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
                 let attempt_id = format!("{}:{}",request_id,ordinal);
                 let reservation = if req.endpoint.tool_kind().is_some() {
@@ -2525,6 +2577,22 @@ mod tests {
         assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Responses,None,Some((131072,4096))).unwrap(),(131072,31));
         assert_eq!(body["max_output_tokens"],31);
         assert!(billing_bound_with_context(&mut body,EndpointKind::Responses,None,Some((131072,30))).is_err());
+    }
+    #[test]
+    fn declared_source_context_cannot_be_underreserved_by_smaller_price_cap() {
+        let price=crate::db::billing::Price{id:1,channel_id:1,model:"m".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:512,max_output_tokens:4096};
+        let mut body=json!({"model":"m","input":[{"type":"reasoning","encrypted_content":"opaque"}],"max_output_tokens":16});
+        assert!(billing_bound_with_context(&mut body,EndpointKind::Responses,Some(&price),Some((4096,4096))).is_err(),"fullsource context4096 must not be replaced by price cap512");
+    }
+    #[test]
+    fn declared_generic_source_context_accounts_for_audio_and_images_without_price() {
+        let mut audio=json!({"max_tokens":16,"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"YQ==","format":"wav"}}]}]});
+        assert_eq!(billing_bound_with_context(&mut audio,EndpointKind::Chat,None,Some((4096,64))).unwrap(),(4096,16));
+        let mut image=json!({"max_tokens":16,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.invalid/image.png"}}]}]});
+        assert_eq!(billing_bound_with_context(&mut image,EndpointKind::Chat,None,Some((4096,64))).unwrap(),(4096,16));
+        let mut text=json!({"messages":[{"role":"user","content":"hello"}]});
+        let (_,out)=billing_bound_with_context(&mut text,EndpointKind::Chat,None,Some((4096,64))).unwrap();
+        assert_eq!(out,64);assert_eq!(text["max_tokens"],64);
     }
     #[test]
     fn native_usage_includes_cached_input_and_nested_final_response() {

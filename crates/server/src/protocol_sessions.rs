@@ -131,7 +131,11 @@ pub fn opaque_history(protocol: Protocol, body: &Value) -> bool {
     items.is_some_and(|items| {
         items.iter().any(|m| {
             (protocol == Protocol::Responses
-                && (m["type"] == "reasoning" || m.get("encrypted_content").is_some()))
+                && if m["type"] == "reasoning" {
+                    !crate::protocol::is_plain_reasoning(m)
+                } else {
+                    m.get("encrypted_content").is_some()
+                })
                 || m.get("content")
                     .and_then(Value::as_array)
                     .is_some_and(|parts| {
@@ -194,6 +198,26 @@ mod tests {
             Protocol::Messages,
             &serde_json::json!({"messages":[{"role":"user","content":[{"type":"tool_result","content":"signature"}]}]})
         ));
+    }
+    #[test]
+    fn only_valid_plain_reasoning_is_exempt_from_opaque_ownership() {
+        let plain = serde_json::json!({"type":"reasoning","id":"rs_plain","status":"completed","summary":[],"content":[{"type":"reasoning_text","text":"public reasoning"}]});
+        for encrypted in [false, true] {
+            let mut item = plain.clone();
+            if encrypted { item["encrypted_content"] = Value::Null; }
+            assert!(!opaque_history(Protocol::Responses, &serde_json::json!({"input":[item]})));
+        }
+        for (field, value) in [
+            ("encrypted_content", serde_json::json!("ciphertext")),
+            ("summary", serde_json::json!([{"type":"summary_text","text":"summary"}])),
+            ("content", serde_json::json!([{"type":"reasoning_text","text":17}])),
+            ("content", serde_json::json!([{"type":"reasoning_text","text":"x","signature":"opaque"}])),
+            ("status", serde_json::json!("in_progress")),
+            ("unknown", serde_json::json!(true)),
+        ] {
+            let mut item = plain.clone(); item[field] = value;
+            assert!(opaque_history(Protocol::Responses, &serde_json::json!({"input":[item]})), "{field}");
+        }
     }
 }
 

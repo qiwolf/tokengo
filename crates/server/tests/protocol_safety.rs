@@ -192,6 +192,9 @@ impl Fixture {
                     native: vec![tokengo_server::protocol::Protocol::Messages],
                     allow_conversion: false,
                     native_input_audio: false,
+                    chat_reasoning_replay: false,
+                    max_input_tokens: None,
+                    max_output_tokens: None,
                 },
             )
             .unwrap();
@@ -523,6 +526,9 @@ async fn local_artifact_storage_failure_never_falls_back_or_cools_sources() {
                     native: vec![tokengo_server::protocol::Protocol::Messages],
                     allow_conversion: false,
                     native_input_audio: false,
+                    chat_reasoning_replay: false,
+                    max_input_tokens: None,
+                    max_output_tokens: None,
                 },
             )
             .unwrap();
