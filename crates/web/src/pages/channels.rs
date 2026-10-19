@@ -580,44 +580,14 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             match api::pull_channel_models(id).await {
                 Ok(r) => {
                     pulling.set(false);
-                    let mut s = String::new();
-                    s.push_str(if r.ok { "问到清单了" } else { "没问到清单" });
-                    if r.ok {
-                        s.push_str(&format!("：{} 个模型", r.count));
-                    }
-                    if let Some(u) = &r.url {
-                        s.push_str(&format!("；打的地址 {u}"));
-                    }
-                    if let Some(code) = r.http_status {
-                        s.push_str(&format!("；HTTP {code}"));
-                    }
-                    if let Some(ms) = r.latency_ms {
-                        s.push_str(&format!("；{}", fmt::dur(ms)));
-                    }
-                    if let Some(n) = &r.note {
-                        // 成功时 note 是"拉到 N 个模型名"，前面写过了
-                        if !(r.ok && n.starts_with("拉到")) {
-                            s.push_str(&format!("；{n}"));
-                        }
-                    }
+                    let mut s=if r.ok {format!("已获取 {} 个模型",r.count)}else{"获取失败".into()};
                     if r.ok {
                         cat_at.set(r.fetched_at);
-                        s.push_str("；已记住这一份：下次打开这条渠道不用再问一遍");
-                        // 上游改名/下线是常事，一次问答看不出漂移 —— 把它跟上次的比出来。
-                        if !r.added.is_empty() {
-                            s.push_str(&format!(
-                                "；比上次多了 {}：{}",
-                                r.added.len(),
-                                r.added.join("、")
-                            ));
-                        }
-                        if !r.removed.is_empty() {
-                            s.push_str(&format!(
-                                "；比上次少了 {}：{}（上游可能改名或下线了）",
-                                r.removed.len(),
-                                r.removed.join("、")
-                            ));
-                        }
+                        if let Some(ms)=r.latency_ms{s.push_str(&format!(" · {}",fmt::dur(ms)));}
+                        if !r.added.is_empty() || !r.removed.is_empty(){s.push_str(&format!(" · 新增 {} / 减少 {}",r.added.len(),r.removed.len()));}
+                    } else {
+                        if let Some(code)=r.http_status{s.push_str(&format!(" · HTTP {code}"));}
+                        if let Some(note)=&r.note{s.push_str(&format!("：{note}"));}
                     }
                     pull_msg.set(Some((s, r.ok)));
                     pull_filter.set(String::new());
@@ -1164,7 +1134,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let n_close_btn = name.clone();
                                                         let n_close_body = name.clone();
                                                         let n_field = name.clone();
-                                                        let n_up = name.clone();
                                                         let n_vis_ck = name.clone();
                                                         let n_vis_ch = name.clone();
                                                         let n_drop = name.clone();
@@ -1301,7 +1270,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                     // 里面的 on:input 是 move 闭包，不克隆的话
                                                                     // 这个块就成 FnOnce 了（Leptos 要它能反复跑）。
                                                                     let n_field = n_field.clone();
-                                                                    let n_up = n_up.clone();
                                                                     let n_vis_ck = n_vis_ck.clone();
                                                                     let n_vis_ch = n_vis_ch.clone();
                                                                     let n_drop = n_drop.clone();
