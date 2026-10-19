@@ -211,7 +211,7 @@ impl AppState {
 
         let state = Arc::new(Self {
             tool_rates: Default::default(),
-            oauth: crate::oauth::OAuthRuntime::default(),
+            oauth: crate::oauth::OAuthRuntime::new()?,
             admission: crate::admission::AdmissionState::default(),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             model_loads:Arc::new(ModelLoads::default()),

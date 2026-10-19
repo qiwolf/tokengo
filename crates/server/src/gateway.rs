@@ -1000,7 +1000,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             let outbound_secret=oauth.as_ref().map(|credential|credential.access_token.as_str()).or_else(||plan.secret(channel.id));
             let outcome = state
                 .upstream
-                .call(
+                .call_via(
                     &oauth_channel,
                     outbound_secret,
                     upstream_path,
@@ -1012,6 +1012,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     &uuid,
                     now_ms(),
                     session.as_deref(),
+                    oauth.is_some(),
                 )
                 .await;
 

@@ -33,6 +33,8 @@ Token response的`earliest_refresh_at`按Unix秒解析，内部时间统一毫�
 
 ## 验证边界
 
+可在受限服务环境文件中设置 `TOKENGO_OPENAI_PROXY=http://proxy-host:port`。它只作用于独立的 OpenAI 授权/目录/撤销客户端与订阅推理连接池，其他模型保持原连接池。未设置时沿用原默认网络行为；不需要设置全局 HTTP_PROXY 或修改共享网络。代理配置错误只返回固定错误信息，不打印 URL 或可能包含的代理凭据。
+
 回归使用独立合成RSA测试密钥、loopback JWKS/token/revocation/catalog服务；没有调用真实授权或读旧CLI认证。测试覆盖非法JWT、一次性state、跨账号、并发轮转/跨runtime CAS、刷新取消/撤销、重启保留、密文存储和管理权限。测试用api_base覆盖仅在cfg(test)编译；生产端点固定，不能经API/环境配置任意host。
 
 官方依据：[注册与登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)、[token字段](https://developers.openai.com/siwc/token-sharing-open-source/token-reference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。

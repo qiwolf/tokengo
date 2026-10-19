@@ -58,18 +58,24 @@ pub struct OAuthRuntime {
 }
 impl Default for OAuthRuntime {
     fn default() -> Self {
-        Self {
-            client: reqwest::Client::builder()
+        Self::new().expect("OpenAI OAuth HTTP client configuration")
+    }
+}
+impl OAuthRuntime {
+    pub fn new()->anyhow::Result<Self> {
+        Ok(Self {
+            client: crate::openai_transport::configure(reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(5))
-                .timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(20)))
+                .map_err(anyhow::Error::msg)?
                 .build()
-                .expect("OAuth HTTP client"),
+                .map_err(|_|anyhow::anyhow!("OpenAI OAuth HTTP client configuration failed"))?,
             endpoints: Mutex::new(Endpoints::default()),
             locks: Mutex::new(HashMap::new()),
             #[cfg(test)]
             api_override: Mutex::new(None),
-        }
+        })
     }
 }
 impl OAuthRuntime {

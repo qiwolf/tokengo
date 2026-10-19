@@ -31,6 +31,7 @@ impl std::fmt::Display for ChannelFault {
 #[derive(Clone)]
 pub struct Upstream {
     client: reqwest::Client,
+    subscription_client:reqwest::Client,
 }
 
 impl Upstream {
@@ -42,7 +43,12 @@ impl Upstream {
             // 不设全局超时：每次尝试的超时由面板参数决定，逐请求传入
             .pool_idle_timeout(Duration::from_secs(90))
             .build()?;
-        Ok(Self { client })
+        let subscription_client=crate::openai_transport::configure(reqwest::Client::builder()
+            .user_agent(concat!("tokengo/",env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none()).tcp_nodelay(true)
+            .connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(90)))
+            .map_err(anyhow::Error::msg)?.build().map_err(|_|anyhow::anyhow!("OpenAI inference client configuration failed"))?;
+        Ok(Self { client,subscription_client })
     }
 
     /// 往一条渠道上发一次请求。
@@ -66,9 +72,18 @@ impl Upstream {
         now_ms: i64,
         session: Option<&str>,
     ) -> Result<reqwest::Response, ChannelFault> {
+        self.call_via(channel,secret,path,body,stream,timeout,uuid,now_ms,session,false).await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn call_via(&self,channel:&Channel,secret:Option<&str>,path:&str,body:Bytes,stream:bool,timeout:Duration,uuid:&str,now_ms:i64,session:Option<&str>,subscription:bool)->Result<reqwest::Response,ChannelFault> {
+        if subscription {
+            let allowed=channel.base_url.trim_end_matches('/')==crate::oauth::API_BASE&&path=="responses";
+            #[cfg(test)]let allowed=allowed||reqwest::Url::parse(&channel.base_url).is_ok_and(|url|url.host_str()==Some("127.0.0.1"));
+            if !allowed {return Err(ChannelFault{message:"Invalid OpenAI subscription destination".into()});}
+        }
         let url = join_url(&channel.base_url, path);
-        let mut rb = self
-            .client
+        let client=if subscription {&self.subscription_client}else{&self.client};
+        let mut rb = client
             .post(&url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::ACCEPT, "application/json")

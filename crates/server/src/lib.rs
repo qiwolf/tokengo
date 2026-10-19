@@ -4,6 +4,7 @@
 pub mod oauth;
 pub mod search_tools;
 pub mod source_rates;
+pub mod openai_transport;
 pub mod config;
 pub mod capability_detector;
 pub mod model_registry;
