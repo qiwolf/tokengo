@@ -388,6 +388,9 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.models.iter().any(|m|m.upstream.as_deref().is_some_and(|u|!u.trim().is_empty() && u.trim()!=m.model.trim())) {
+        return Err(ApiError::bad_request("不支持自定义模型映射，请使用上游原名"));
+    }
     if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
         return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
     }
@@ -424,6 +427,9 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.models.iter().any(|m|m.upstream.as_deref().is_some_and(|u|!u.trim().is_empty() && u.trim()!=m.model.trim())) {
+        return Err(ApiError::bad_request("不支持自定义模型映射，请使用上游原名"));
+    }
     if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
         return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
     }

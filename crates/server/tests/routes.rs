@@ -380,7 +380,7 @@ async fn create_a_channel_and_route_a_model_end_to_end() {
                 { "name": "x-opencode-client", "value": "cli" },
                 { "name": "x-opencode-session", "value": "{{uuid}}" }
             ],
-            "models": [{ "model": "mock-chat", "upstream": "deepseek/deepseek-v4.1-flash" }]
+            "models": [{ "model": "mock-chat", "upstream": null }]
         })),
     )
     .await;

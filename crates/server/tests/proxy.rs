@@ -1530,14 +1530,14 @@ async fn catalog_refresh_and_channel_save_publish_explicit_vision_for_aliases() 
     }
     let (s, saved) = put_with_token(&f, &format!("/api/channels/{}", id.0), &token, json!({
         "name":"mock", "base_url":m.base, "models":[
-            {"model":"new-alias","upstream":"real","vision":false}
+            {"model":"real","upstream":null,"vision":false}
         ]
     })).await;
     assert_eq!(s, StatusCode::OK, "{saved}");
     assert_eq!(saved["models"][0]["vision"], true);
     let (_, listed) = get(&f, "/v1/models", Some(KEY)).await;
     assert_eq!(listed["data"].as_array().unwrap().iter()
-        .find(|r| r["id"] == "new-alias").unwrap()["vision"], true);
+        .find(|r| r["id"] == "real").unwrap()["vision"], true);
     assert_eq!(m.seen().len(), 1, "saving uses cached metadata, never a paid probe");
     assert!(f.request_rows().is_empty());
     assert!(f.attempts().is_empty());
@@ -1958,7 +1958,7 @@ async fn the_panel_can_mark_a_model_as_seeing_and_reads_it_back() {
             "key": "sk-x",
             "headers": [],
             "models": [
-                {"model": "mock-chat", "upstream": "glm-4v-flash", "vision": true},
+                {"model": "mock-chat", "upstream": null, "vision": true},
                 {"model": "BAAI/bge-m3", "upstream": null, "vision": false}
             ]
         }),
@@ -3501,3 +3501,6 @@ async fn model_switch_controls_direct_auto_and_listing_without_deleting_mapping(
  let(s,_)=put_with_token(&f,"/api/model-enabled",&token,json!({"model":"a","enabled":true})).await;assert_eq!(s,StatusCode::OK);
  let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"a","messages":[]})).await;assert_eq!(s,StatusCode::OK);
 }
+
+#[tokio::test]
+async fn channel_api_rejects_custom_alias(){let f=fixture();let t=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();let(s,_)=post_with_token(&f,"/api/channels",&t,json!({"name":"x","base_url":"http://x","models":[{"model":"alias","upstream":"real"}]})).await;assert_eq!(s,StatusCode::BAD_REQUEST);}

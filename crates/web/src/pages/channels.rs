@@ -1410,20 +1410,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             }}
                                         </div>
 
-                                        <section class="m-list">
-                                            <h3>"历史映射 · 上下文"</h3>
-                                            <small>"不混入上游清单；配置立即保存，关闭渠道表单不会撤销上下文设置。"</small>
-                                            {move || {
-                                                mver.get();
-                                                let catalog=pulled.get_untracked();
-                                                let channel=match form.get_untracked() {Form::Edit(id)=>Some(id),_=>None};
-                                                f_models.get_untracked().into_iter().filter(|m|!catalog.iter().any(|e|e.id==m.model)).map(|m| {
-                                                    view!{<details><summary>{format!("{} → {} · 上下文详情",m.model,m.upstream.as_deref().filter(|s|!s.trim().is_empty()).unwrap_or(&m.model))}</summary>
-                                                        <ContextCapacity channel=channel model=m.model upstream=m.upstream.unwrap_or_default() ctx=ctx />
-                                                    </details>}
-                                                }).collect_view()
-                                            }}
-                                        </section>
+
 
                                     }.into_any()
                                 }}
