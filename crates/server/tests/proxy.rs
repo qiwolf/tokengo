@@ -3618,6 +3618,20 @@ async fn in_flight_request_is_running_and_records_upstream_before_completion() {
 
 
 #[tokio::test]
+async fn retry_budget_caps_attempt_headers_but_not_active_streams() {
+    let f=fixture(); f.with_key();
+    { let mut r=f.state.routing(); r.cfg.attempt_timeout_ms=1000; r.cfg.request_budget_ms=120; }
+    let m=start_mock(Reply::SlowOk(600)).await;
+    let id=f.add_channel("slow",&m.base,ChannelSpec::default()); f.serve("mock-chat",&[id]);
+    assert!(f.state.check_gateway_key(KEY));
+    let start=std::time::Instant::now();
+    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_ne!(status,StatusCode::OK);
+    assert!(start.elapsed().as_millis()<400,"elapsed {:?}",start.elapsed());
+    f.state.drain_writes(); assert_ne!(f.request_rows()[0].0,"running");
+}
+
+#[tokio::test]
 async fn invalid_success_bodies_fail_over_before_committing() {
     for (path, body) in [(CHAT, json!({"model":"mock-chat","messages":[]})),
         ("/v1/embeddings", json!({"model":"mock-chat","input":"x"})),

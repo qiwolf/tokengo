@@ -493,7 +493,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 }
             }
             // 重试总预算：超了不再重试（不做无上限的等待）
-            if now_ms() - started_ms > cfg.request_budget_ms as i64 {
+            if now_ms() - started_ms >= cfg.request_budget_ms as i64 {
                 guard.finish(
                     &state,
                     Status::Failed,
@@ -524,7 +524,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     req.endpoint.path(),
                     body_bytes.clone(),
                     req.stream,
-                    attempt_timeout,
+                    attempt_timeout.min(Duration::from_millis(
+                        (cfg.request_budget_ms as i64 - (now_ms() - started_ms)).max(1) as u64,
+                    )),
                     &uuid,
                     now_ms(),
                     session.as_deref(),
