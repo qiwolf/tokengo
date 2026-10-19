@@ -456,14 +456,8 @@ pub async fn save_auto_policy(policy:&crate::model::AutoPolicy)->Result<(),ApiEr
 pub async fn move_model(model:&str,up:bool)->Result<(),ApiErr>{call("POST","/api/model-order/move",Some(json!({"model":model,"up":up}))).await.map(|_|())}
 pub async fn reset_model_cooldown(model:&str,channel_id:Option<i64>)->Result<(),ApiErr>{call("POST","/api/model-cooldown/reset",Some(json!({"model":model,"channel_id":channel_id}))).await.map(|_|())}
 
-/// 只读缓存，不联网查询登记源。
-pub async fn registry(channel: i64, model: &str, upstream: &str, query: &str) -> Result<Value, ApiErr> {
-    call("GET", &format!("/api/channels/{channel}/registry?model={}&upstream={}&q={}",
-        js_sys::encode_uri_component(model), js_sys::encode_uri_component(upstream), js_sys::encode_uri_component(query)), None).await
-}
-pub async fn associate_registry(channel: i64, model: &str, upstream: &str, identity: Option<&str>) -> Result<(), ApiErr> {
-    call("PUT", &format!("/api/channels/{channel}/registry"), Some(json!({"model":model,"upstream":upstream,"identity":identity}))).await?;
-    Ok(())
+pub async fn context_capacity(channel:i64,model:&str,upstream:&str)->Result<Value,ApiErr>{
+ call("GET",&format!("/api/channels/{channel}/context?model={}&upstream={}",js_sys::encode_uri_component(model),js_sys::encode_uri_component(upstream)),None).await
 }
 
 pub async fn set_context_override(channel:i64,model:&str,upstream:&str,tokens:Option<i64>) -> Result<(),ApiErr> {

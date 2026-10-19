@@ -75,7 +75,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/channels/{id}/models", post(channels_models))
         .route("/channels/{id}/catalog", get(channel_catalog))
         .route("/channels/{id}/registry", get(registry_get).put(registry_set))
-        .route("/channels/{id}/context", put(context_override_set))
+        .route("/channels/{id}/context", get(context_override_get).put(context_override_set))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         // 「模型名 → 用途」：面板「模型」页以渠道里勾过的名字为行，用途读这张表
         .route("/channels/{id}/move", post(channels_move))
@@ -768,6 +768,10 @@ fn registry_mapping(conn: &rusqlite::Connection, id: i64, model: &str, upstream:
 
 #[derive(Deserialize)]
 struct ContextOverrideWrite { model: String, upstream: String, tokens: Option<i64> }
+async fn context_override_get(_auth:PanelAuth,State(state):State<SharedState>,Path(id):Path<i64>,Query(query):Query<RegistryQuery>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();let mapping=registry_mapping(&c,id,&query.model,&query.upstream)?;
+ Ok(Json(serde_json::json!({"override_tokens":crate::model_registry::context_override(&c,tokengo_shared::ChannelId(id),&mapping)?})))
+}
 async fn context_override_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<ContextOverrideWrite>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn=state.conn();
     let mapping=registry_mapping(&conn,id,&body.model,&body.upstream)?;
