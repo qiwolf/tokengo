@@ -3,6 +3,8 @@
 //! SQLite（rusqlite，bundled 编译，不依赖系统库），与现网 FreeLLMAPI 同一种库，
 //! 将来搬数据和对拍都方便。
 
+pub mod identity;
+pub mod billing;
 pub mod faults;
 pub mod catalog;
 pub mod gateway_keys;
@@ -138,7 +140,7 @@ mod tests {
     fn migrations_create_the_expected_tables() {
         let conn = open_in_memory().unwrap();
         let got = table_names(&conn);
-        for want in [
+        let expected = [
             "attempts",
             "gateway_keys",
             "channel_catalog",
@@ -162,15 +164,24 @@ mod tests {
             "routing_state",
             "schema_migrations",
             "settings",
-        ] {
-            assert!(got.contains(&want.to_string()), "缺表 {want}，实际有 {got:?}");
-        }
-        assert!(got.contains(&"channel_faults".to_string()));
-        assert_eq!(got.len(), 24, "表数与设计不符：{got:?}");
+            "channel_faults",
+            // Route B adds identity, immutable pricing/ledger/budget and quota state.
+            "users",
+            "audit_events",
+            "billing_prices",
+            "billing_budgets",
+            "billing_ledger",
+            "billing_audit",
+            "billing_allocations",
+            "quota_events",
+        ];
+        let actual: std::collections::BTreeSet<_> = got.iter().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<_> = expected.into_iter().collect();
+        assert_eq!(actual, expected, "库表集合与当前设计不符");
     }
 
     /// 关键反证：**免费模型目录相关的表一张都不该有。**
-    /// 用户明确不要目录同步，那些表也是库持续膨胀的来源。
+    /// 用户明确不要无关目录同步；Route B 的 users 属于已授权的身份体系。
     ///
     /// `channel_catalog` 不在禁列里，因为它是**另一回事**：不是随包发的免费模型目录，
     /// 而是用户按一次「问一次上游」之后，上游当场报回来的清单存下来的一行（v0.7.0）。
@@ -192,7 +203,6 @@ mod tests {
             "idempotency_claims",
             "url_tokens",
             "profiles",
-            "users",
         ] {
             assert!(
                 !got.contains(&forbidden.to_string()),

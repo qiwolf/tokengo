@@ -427,4 +427,8 @@ CREATE TRIGGER fault_header_delete AFTER DELETE ON channel_headers BEGIN
  UPDATE channel_faults SET revision=(SELECT fault_revision FROM channels WHERE id=OLD.channel_id),ready=1,lease_until=0,generation=generation+1 WHERE channel_id=OLD.channel_id;
 END;
 "#),
+    (25, include_str!("identity.sql")),
+    (26, include_str!("billing.sql")),
+    (27, include_str!("../admission.sql")),
+    (28, include_str!("gateway_identity.sql")),
 ];

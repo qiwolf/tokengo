@@ -6,6 +6,8 @@ pub mod capability_detector;
 pub mod model_registry;
 pub mod crypto;
 pub mod db;
+pub mod billing_writer;
+pub mod admission;
 pub mod gateway;
 pub mod gateway_key;
 pub mod janitor;
@@ -38,6 +40,8 @@ pub fn app(state: SharedState) -> Router {
         // 面板管理面
         .nest("/api", routes::admin::router())
         .merge(routes::model_routing::router())
+        .merge(routes::identity::router())
+        .merge(routes::billing::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())
         // 面板资源压缩：wasm 841 KB → gzip 后约 330 KB（首次打开少下 500 KB）。

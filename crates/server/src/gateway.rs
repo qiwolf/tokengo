@@ -89,6 +89,8 @@ impl EndpointKind {
 
 /// 一次转发的输入。
 pub struct ForwardRequest {
+    /// Authenticated identity. None is reserved for trusted in-process diagnostics/tests.
+    pub auth: Option<crate::db::identity::AuthContext>,
     pub session_namespace: String,
     /// Validated explicit conversation identity resolved from inbound headers/body.
     pub explicit_session: Option<String>,
@@ -160,16 +162,79 @@ fn push_entry(
     Ok(())
 }
 
+/// Authorization covers the logical name and the physical source, including unknown prices.
+pub fn permitted_candidate(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str,channel:i64)->Result<bool,ApiError> {
+    if !auth.permits_model(name) {return Ok(false);}
+    let paid=crate::db::billing::price(c,name,channel)?.is_none_or(|p|p.input_micro_per_million>0 || p.output_micro_per_million>0);
+    Ok(auth.permits_channel(channel,paid))
+}
+pub fn permitted_model(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str)->Result<bool,ApiError> {
+    if !auth.permits_model(name) {return Ok(false);}
+    for channel in model_routes::channels_for(c,name)? {
+        if channel.routable() && permitted_candidate(c,auth,name,channel.id.0)? {return Ok(true);}
+    }
+    Ok(false)
+}
+fn choices_count(body:&Value)->Result<i64,ApiError> {
+    match body.get("n") {
+        None=>Ok(1),
+        Some(n)=>n.as_i64().filter(|n|(1..=128).contains(n))
+            .ok_or_else(||ApiError::bad_request("n must be an integer between 1 and 128")),
+    }
+}
+fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
+    if endpoint!=EndpointKind::Chat {return Ok(0);}
+    let mut bound=None;
+    for key in ["max_tokens","max_completion_tokens"] {
+        if let Some(value)=body.get(key) {
+            let n=value.as_i64().filter(|n|*n>0).ok_or_else(||ApiError::bad_request("Output token limit must be a positive integer"))?;
+            if bound.is_some_and(|old|old!=n) {return Err(ApiError::bad_request("Conflicting output token limits"));}
+            bound=Some(n);
+        }
+    }
+    bound.unwrap_or(4096).checked_mul(choices_count(body)?)
+        .ok_or_else(||ApiError::bad_request("Total output token bound overflow"))
+}
+fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError> {
+    let input=i64::try_from(serde_json::to_vec(body).map_err(|e|ApiError::bad_request(e.to_string()))?.len())
+        .ok().and_then(|n|n.checked_add(256)).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
+    Ok((input,output_bound(body,endpoint)?))
+}
+fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>)->Result<(i64,i64),ApiError> {
+    let (mut input,mut output)=admission_bound(body,endpoint)?;
+    if let Some(p)=price {
+        if endpoint==EndpointKind::Chat && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() {
+            let choices=choices_count(body)?;
+            let per_choice=4096.min(p.max_output_tokens/choices);
+            if per_choice<=0 {return Err(ApiError::bad_request("Pricing configuration needs a positive output cap"));}
+            output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
+            body["max_tokens"]=Value::from(per_choice);
+        }
+        if tokengo_shared::request_has_image(body) {input=p.max_input_tokens;}
+        if input>p.max_input_tokens || output>p.max_output_tokens {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST,"billing_token_limit","Request exceeds configured billing token bounds"));
+        }
+    }
+    Ok((input,output))
+}
+fn billing_error(e:crate::db::DbError)->ApiError {
+    match e {
+        crate::db::DbError::Other(message) if message.contains("config_required") => ApiError::new(StatusCode::FORBIDDEN,"pricing_required",message),
+        crate::db::DbError::Other(message) if message.contains("budget") => ApiError::new(StatusCode::TOO_MANY_REQUESTS,"budget_exceeded",message),
+        e=>ApiError::from(e),
+    }
+}
+
 /// 从库里把这次请求要用的候选链一次捞齐（同步、短暂持锁；返回后就不许再碰库守卫）。
 ///
 /// 两种情形：
 /// - **普通模型名**：勾了它的渠道，按渠道顺序（面板「渠道」页从上到下 = 先试）。
 /// - **保留名 `auto`**：现场挑一串最优的模型名（见 `db::model_routes::auto_candidates`），
 ///   逐个摊成链 —— 每条候选都带着「这一发要发给上游的名字」。
-fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vision:bool) -> Result<Plan, ApiError> {
+fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vision:bool, auth: Option<&crate::db::identity::AuthContext>) -> Result<Plan, ApiError> {
     let conn = state.conn();
     if model_routes::is_auto(model) {
-        return load_auto_plan(state, &conn, model, endpoint, wants_vision);
+        return load_auto_plan(state, &conn, model, endpoint, wants_vision, auth);
     }
     let Some(route) = model_routes::routes_for(&conn, model)? else {
         // 报错别教训人，说清「去哪儿勾上」就够了。
@@ -223,6 +288,7 @@ fn load_auto_plan(
     model: &str,
     endpoint: EndpointKind,
     wants_vision:bool,
+    auth: Option<&crate::db::identity::AuthContext>,
 ) -> Result<Plan, ApiError> {
     let mut plan = Plan {
         route: model_routes::AUTO_NAME.to_string(),
@@ -235,6 +301,13 @@ fn load_auto_plan(
     };
     let mut candidates =
         model_routes::auto_candidates(conn, endpoint.as_model_kind(), wants_vision, now_ms())?;
+    let had_candidates = !candidates.is_empty();
+    if let Some(auth) = auth {
+        candidates.retain(|name| permitted_model(&conn, auth, name).unwrap_or(false));
+    }
+    if had_candidates && candidates.is_empty() && auth.is_some() {
+        return Err(ApiError::new(StatusCode::FORBIDDEN,"model_not_allowed","No authorized auto candidates"));
+    }
     if candidates.is_empty() && wants_vision && !model_routes::auto_candidates(conn,endpoint.as_model_kind(),false,now_ms())?.is_empty() {
         return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY,"no_vision_model","这条请求带了图片，但没有符合视觉能力的候选模型"));
     }
@@ -289,7 +362,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 以前这三类 404 在 `load_plan` 里就直接 return 了，一条账都不记 —— 用户看到的是
     // 「客户端报 404、面板上干干净净」，只能靠猜。这与带图被拦（422）的处理也不一致：
     // 那条是记的。**记账绝不能反过来影响请求结果**：这里只记，记账本身错了就吞掉。
-    let plan_all = match load_plan(&state, &req.model, req.endpoint,req.endpoint==EndpointKind::Chat && tokengo_shared::request_has_image(&req.body)) {
+    if let Some(auth) = &req.auth {
+        if !auth.permits_model(&req.model) {
+            record_routing_refusal(&state, &req, started_ms, 403, "Model not permitted");
+            return Err(ApiError::new(StatusCode::FORBIDDEN,"model_not_allowed","Model not permitted"));
+        }
+    }
+    let mut plan_all = match load_plan(&state, &req.model, req.endpoint,req.endpoint==EndpointKind::Chat && tokengo_shared::request_has_image(&req.body), req.auth.as_ref()) {
         Ok(p) => p,
         Err(e) => {
             if e.status.is_client_error() || e.status==StatusCode::SERVICE_UNAVAILABLE {
@@ -298,6 +377,19 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             return Err(e);
         }
     };
+    if let Some(auth) = &req.auth {
+        let conn = state.conn();
+        let mut authorized = Vec::new();
+        for entry in plan_all.entries.drain(..) {
+            if permitted_candidate(&conn, auth, &entry.name, entry.channel.id.0)? { authorized.push(entry); }
+        }
+        plan_all.entries = authorized;
+        if plan_all.entries.is_empty() {
+            drop(conn);
+            record_routing_refusal(&state, &req, started_ms, 403, "No authorized sources");
+            return Err(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","No authorized sources"));
+        }
+    }
     // 这一链的全量候选（状态机与「记账记的是谁」都看这一份）
     let all_ids = plan_all.ids();
 
@@ -348,6 +440,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         };
         let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
+    guard.identify(req.auth.as_ref())?;
         guard.finish(
             &state,
             Status::ClientError,
@@ -407,7 +500,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
+    guard.identify(req.auth.as_ref())?;
 
+    if let Some(auth) = &req.auth {
+        let (input, output) = admission_bound(&req.body, req.endpoint)?;
+        guard.admission = Some(crate::admission::acquire(state.clone(), auth, input as u64, output as u64).map_err(|e|{guard.reject(&e);e})?);
+    }
     let global_cfg = state.routing().cfg.clone();
     let cfg = crate::db::route_policy::effective(&state.conn(), &plan.route, global_cfg)?;
     let attempt_ms = if req.stream { cfg.attempt_timeout_ms } else { cfg.nonstream_timeout_ms }.max(1);
@@ -443,6 +541,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 每条渠道的「门口闸机」：同时最多几发（面板上按渠道配，0 = 不限）。
     // 满了**不硬压上去**（现网 503「bridge busy」151 次就是这么来的）：先换别的渠道；
     // 所有渠道都满，才在门口排队等一个名额，等到再重跑一遍。排队有预算上限，不会挂死。
+    let mut last_policy_error: Option<ApiError> = None;
     let mut pre_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     'pass: loop {
         let mut tried_any = false;
@@ -480,8 +579,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         } else { cfg.retry_times };
         let max_attempts=if recovering || account.recovering() {1} else {(1 + retries).min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
         let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false,account};
-        tried_any = true;
-        last_channel = channel.id;
+
         // 这一发送给上游的名字：按**这个候选名**在这条渠道上查别名
         // （auto 时每个候选各不相同 —— auto 挑中的是谁，上游看到的就是谁的名字）
         let sent_model = channel.upstream_model(name).to_string();
@@ -541,7 +639,52 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 return Ok(gateway_timeout(&plan, &req.model));
             }
 
+            guard.settle_billing("retry_or_fallback");
+            guard.usage = Usage::default();
             if !crate::db::faults::current(&state.conn(),&cooldown.account)? {break;}
+            if let Some(auth) = &req.auth {
+                // Live policy is re-read at every outbound attempt, including retries.
+                let c = state.conn();
+                let current = crate::db::identity::context(&c, auth.key_id)?
+                    .ok_or_else(|| ApiError::unauthorized("Key revoked, expired or user disabled"))?;
+                if !current.permits_model(&req.model) || !permitted_candidate(&c, &current, name, channel.id.0)? {
+                    return Err(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Source permission changed"));
+                }
+                let price = crate::db::billing::price(&c, name, channel.id.0)?;
+                let (input, output) = billing_bound(&mut body, req.endpoint, price.as_ref())?;
+                body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
+                let attempt_id = format!("{}:{}",request_id,ordinal);
+                let reservation = match price {
+                    Some(p) => crate::db::billing::reserve(&c,current.user_id,current.key_id,request_id,&attempt_id,&p,input,output),
+                    None => crate::db::billing::reserve_unpriced(&c,current.user_id,current.key_id,request_id,&attempt_id,channel.id.0,name),
+                };
+                let id = match reservation {
+                    Ok(id)=>id,
+                    Err(e)=>{
+                        let error=billing_error(e);
+                        if matches!(error.kind,"budget_exceeded"|"pricing_required") {
+                            crate::db::identity::audit(&c,Some(&current),"attempt.denied","channel",channel.id.0,serde_json::json!({"request_id":request_id,"model":name,"reason":error.kind}))?;
+                            last_policy_error=Some(error);
+                            continue 'channels;
+                        }
+                        guard.reject(&error);
+                        return Err(error);
+                    }
+                };
+                guard.billing_nonchat = req.endpoint != EndpointKind::Chat;
+                guard.reservation = Some(id);
+                // Capture the actual loaded deployment, independent of later channel edits.
+                // Origin excludes URL credentials, paths, query parameters and fragments.
+                let source=serde_json::json!({"channel_id":channel.id.0,"channel_name":channel.name,
+                    "origin":reqwest::Url::parse(&channel.base_url).ok().map(|u|u.origin().ascii_serialization()),
+                    "upstream_model":sent_model,"config_revision":revision});
+                if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2 WHERE id=?1",rusqlite::params![id,source.to_string()]) {
+                    if crate::db::billing::release(&c,id,"not_sent").is_ok(){guard.reservation=None;}
+                    return Err(ApiError::from(crate::db::DbError::from(e)));
+                }
+            }
+            tried_any = true;
+            last_channel = channel.id;
             guard.note_served(name);
             guard.channel_id = Some(channel.id.0);
             state.enqueue_write(crate::state::WriteJob::Progress(requests::ProgressArgs {
@@ -570,6 +713,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 Err(fault) => {
                     let dur = now_ms() - t0;
                     slow_previous = dur >= attempt_ms as i64 * 3 / 4;
+                    guard.settle_billing("channel_fault");
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
                     ordinal += 1;
                     last_fault = Some(format!("{}：{}", channel.name, fault.message));
@@ -625,7 +769,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     let body_dur = now_ms() - t0;
                     slow_previous = body_dur >= attempt_ms as i64 * 3 / 4;
                     guard.usage = usage;
+
                     if let Some(note) = empty {
+                        guard.settle_billing("empty_reply");
                         record_attempt(
                             &state,
                             request_id,
@@ -643,6 +789,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         if cooldown.failure(&note,pending_retry_ms) {break;}
                         continue;
                     }
+                    guard.settle_billing("success");
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, adaptation_note.as_deref());
                     cooldown.finish(true,"",0);
                     state.note_model_endpoint(name, req.endpoint);
@@ -676,6 +823,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         Err(note) => {
                             let elapsed = now_ms() - t0;
                             slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                            guard.settle_billing("channel_fault");
                             record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                                 "channel_fault", Some(status), elapsed, Some(&note));
                             ordinal += 1;
@@ -687,9 +835,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             continue;
                         }
                     };
+                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
+                        guard.settle_billing("account_fault");
                         record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
                         ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
                         continue 'channels;
@@ -697,6 +847,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
                     guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
+                        guard.settle_billing("context_limit");
                         record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                             "context_limit", Some(status), dur, Some(&err.text));
                         ordinal += 1;
@@ -710,6 +861,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                 learned_this_request = true;
                                 let _ = crate::db::settings::set(&state.conn(), &cap_key, &cap.to_string());
                                 adaptation_note = Some(format!("上游明确输出上限为 {cap} tokens，已收窄重试"));
+                                guard.settle_billing("output_limit");
                                 record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                                     "output_limit", Some(status), dur, adaptation_note.as_deref());
                                 ordinal += 1;
@@ -720,6 +872,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             }
                         }
                     }
+                    guard.settle_billing("client_fault");
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_fault", Some(status), dur, Some(&err.text));
                     let note = format!(
                         "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
@@ -748,6 +901,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         Err(note) => {
                             let elapsed = now_ms() - t0;
                             slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                            guard.settle_billing("channel_fault");
                             record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
                                 "channel_fault", Some(status), elapsed, Some(&note));
                             ordinal += 1;
@@ -759,9 +913,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             continue;
                         }
                     };
+                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
                         cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
+                        guard.settle_billing("account_fault");
                         record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
                         ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
                         continue 'channels;
@@ -773,6 +929,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         .as_ref()
                         .and_then(|v| v.to_str().ok())
                         .and_then(crate::upstream::retry_after_ms);
+                    guard.settle_billing("channel_fault");
                     record_attempt(
                         &state,
                         request_id,
@@ -798,6 +955,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     continue;
                 }
                 AttemptOutcome::ClientGone => {
+                    guard.settle_billing("client_gone");
                     record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_gone", Some(status), dur, None);
                     guard.finish(
                         &state,
@@ -854,6 +1012,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         }
     }
 
+    if let Some(error)=last_policy_error {
+        guard.reject(&error);
+        return Err(error);
+    }
     // 一个候选都没敢碰（全在冷却或恢复试用里）：如实回 503 并说清最早什么时候能再试 ——
     // 别拿「所有渠道都失败了」去冤枉渠道（渠道根本没被调过）。普通模型名和 auto 一视同仁。
     if last_channel.0==0 {
@@ -1533,6 +1695,7 @@ fn record_routing_refusal(
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
+    if let Err(e)=guard.identify(req.auth.as_ref()) { tracing::error!("refusal identity write failed: {e:?}"); }
     guard.error_code=Some(if http==503 {"models_cooling"} else if http==422 {"vision_not_ready"} else if model_routes::is_auto(&req.model) {"auto_no_candidate"} else {"model_not_configured"}.into());
 
     guard.finish(
@@ -1563,6 +1726,9 @@ pub fn record_client_app(state:&SharedState,id:i64,agent:Option<&str>) {
 }
 
 struct RequestGuard {
+    admission: Option<crate::admission::AdmissionPermit>,
+    reservation: Option<i64>,
+    billing_nonchat: bool,
     usage: Usage,
     streamed: bool,
     channel_id: Option<i64>,
@@ -1584,11 +1750,32 @@ impl RequestGuard {
             request_id,
             started_ms,
             done: false,
+            admission: None,
+            reservation: None,
+            billing_nonchat: false,
             usage: Usage::default(),
             streamed: false,
             channel_id: None,
             served_model: None,
             error_code:None,
+        }
+    }
+
+    fn reject(&mut self,e:&ApiError) {
+        self.error_code=Some(e.kind.into());
+        let state=self.state.clone();
+        self.finish(&state,Status::ClientError,Some(e.status.as_u16()),None,self.started_ms,None,0,0,false,Some(&e.message));
+    }
+    fn identify(&self, auth: Option<&crate::db::identity::AuthContext>) -> Result<(),ApiError> {
+        if let Some(auth) = auth { self.state.conn().execute("UPDATE requests SET user_id=?2,key_id=?3,auth_snapshot=?4 WHERE id=?1",rusqlite::params![self.request_id,auth.user_id,auth.key_id,serde_json::to_string(auth).map_err(|e|ApiError::internal(e.to_string()))?]).map_err(crate::db::DbError::from)?; }
+        Ok(())
+    }
+    fn settle_billing(&mut self, outcome: &str) {
+        if let Some(id)=self.reservation.take() {
+            if let Err(e)=crate::billing_writer::settle(&self.state,id,self.usage.input,self.usage.output.or_else(||self.billing_nonchat.then_some(0)),outcome) {
+                // The durable hold remains reserved; it cannot be spent twice. Startup reconciles it.
+                tracing::error!(reservation_id=id,"Billing settlement pending reconciliation: {e}");
+            }
         }
     }
 
@@ -1615,6 +1802,8 @@ impl RequestGuard {
         if self.done {
             return;
         }
+        self.settle_billing(status.as_str());
+        self.admission.take();
         self.done = true;
         if matches!(status, Status::ClientError) && self.error_code.is_none() {
             self.error_code=Some(if http_status==Some(422) && error.map(|s|s.contains("图片")).unwrap_or(false) {"vision_not_ready"} else {"request_invalid"}.into());
@@ -1654,6 +1843,8 @@ impl Drop for RequestGuard {
         if self.done {
             return;
         }
+        self.settle_billing("canceled");
+        self.admission.take();
         self.done = true;
         // 请求被中断（客户端断开等）也要记上一条 canceled —— 以前这里抢不到库锁就整条丢掉，
         // 面板上那一发就永远停在「进行中」。现在抢不到就丢给后台落账员补写。
