@@ -139,6 +139,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </button>
             </PageHead>
 
+            <div class="overview-dashboard">
             <div class="overview-window" role="group" aria-label="时间窗口">
                     {[1i64, 24, 72, 168]
                     .into_iter()
@@ -186,6 +187,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     </dl>
                 </details>
             </section>
+            </div>
 
             <nav class="overview-tabs" aria-label="总览分类">
                 {["最近调用","按类型","按渠道","按模型","按客户端","模型冷却"].into_iter().enumerate().map(|(i,label)| view! {

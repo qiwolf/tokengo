@@ -1439,13 +1439,14 @@ td[data-label="类型"] code {
 .page-head > p { margin:0; }
 
 /* One quiet statistics strip; secondary figures stay collapsed. */
-.overview-summary { border-block:1px solid var(--line); }
-.overview-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); padding:14px 0; }
-.overview-metrics .stat { display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:0 18px; border:0; border-right:1px solid var(--line); border-radius:0; background:none; min-width:0; }
+.overview-dashboard { display:flex; flex-direction:column; gap:6px; }
+.overview-summary { border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.overview-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); padding:0; }
+.overview-metrics .stat { display:flex; flex-direction:row; align-items:center; justify-content:space-between; gap:8px; padding:13px 14px; border:0; border-right:1px solid var(--line); border-radius:0; background:none; min-width:0; }
 .overview-metrics .stat:last-child { border-right:0; }
 .overview-metrics .stat-title { color:var(--fg-3); font-size:11px; }
-.overview-metrics .stat-value { font-size:23px; line-height:1.2; text-align:left; letter-spacing:-.5px; overflow-wrap:anywhere; }
-.overview-stat-details { padding:0 18px 10px; }
+.overview-metrics .stat-value { font-size:20px; line-height:1.2; text-align:right; letter-spacing:-.3px; overflow-wrap:anywhere; }
+.overview-stat-details { padding:4px 14px 5px; border-top:1px solid var(--line); background:var(--surface); }
 .overview-stat-details summary { width:fit-content; cursor:pointer; color:var(--fg-2); font-size:11px; }
 .overview-stat-details dl { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px 18px; margin:14px 0 2px; }
 .overview-stat-details dl > div { min-width:0; }
@@ -1453,10 +1454,10 @@ td[data-label="类型"] code {
 .overview-stat-details dd { margin:4px 0 0; font-size:12px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 @media(max-width:46rem) {
   .overview-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); padding:0; }
-  .overview-metrics .stat { padding:12px 14px; }
+  .overview-metrics .stat { padding:13px 12px; }
   .overview-metrics .stat:nth-child(2) { border-right:0; }
   .overview-metrics .stat:nth-child(-n+2) { border-bottom:1px solid var(--line); }
-  .overview-stat-details { padding:8px 14px 10px; }
+  .overview-stat-details { padding:4px 12px 5px; }
   .overview-stat-details dl { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 
@@ -1522,8 +1523,8 @@ td[data-label="类型"] code {
 
 .overview-cooldowns .metric-head b{min-width:0;overflow-wrap:anywhere}.overview-cooldowns button{flex:0 0 auto;height:28px;padding:0 9px;background:none;border:1px solid var(--line)}.cooldown-facts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px}.cooldown-reason{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;margin:8px 0 0}
 
-.overview-window { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; width:min(100%,360px); padding:4px; border:1px solid var(--line); border-radius:9px; background:var(--surface); }
-.overview-window .chip { width:100%; height:30px; margin:0; padding:0 8px; border:1px solid transparent; border-radius:6px; background:none; color:var(--fg-2); font-size:11px; white-space:nowrap; }
+.overview-window { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; width:min(100%,360px); padding:0; border:0; border-radius:0; background:none; }
+.overview-window .chip { width:100%; height:30px; margin:0; padding:0 8px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--fg-2); font-size:11px; white-space:nowrap; }
 .overview-window .chip.active { border-color:var(--line-strong); background:var(--surface-3); color:var(--fg); font-weight:600; }
 .overview-window .chip:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-@media(max-width:46rem) { .overview-window { width:100%; } .overview-window .chip { height:34px; } }
+@media(max-width:46rem) { .overview-window { width:100%; } .overview-window .chip { height:30px; } }
