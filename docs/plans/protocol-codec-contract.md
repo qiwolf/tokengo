@@ -49,3 +49,8 @@ Native streams are forwarded byte-for-byte. Financial usage comes from an indepe
 For conversion to Messages, `message_start` and terminal `message_delta` include schema-required numeric `usage.input_tokens` and `usage.output_tokens`. Missing source values use wire-format zero placeholders for client compatibility, and known final values replace them. These placeholders are not financial evidence: never derive billing known flags or charges by observing the generated target stream.
 
 Text streams immediately. To maintain sequential Messages content-block lifecycles, converted parallel tool calls buffer their arguments until source termination and then emit complete start/delta/stop blocks. Text after a tool block, reasoning/refusal or opaque provider blocks, non-text content, and nonzero Messages cache buckets are explicitly rejected for incompatible conversion rather than silently discarded. Native forwarding retains these provider fields. Each SSE frame is limited to 1 MiB; converted accumulated content is bounded at 16 MiB.
+
+
+## 原生音频输入的明确边界
+
+渠道协议配置可单独设置 `native_input_audio: true`，且 native 必须包含 chat。只支持 `/v1/chat/completions` 的内联 `input_audio: {data: 标准base64, format: wav或mp3}` 原样转发，不创建 `/audio/transcriptions` 假接口，不转换 Responses/Messages 音频，不启用音频输出。未声明源在发送前跳过；无已配置价格/最大输入上下文时403。输入按完整配置上下文预占用户/key/祖先TPM及预算，不能把base64长度冒充音频tokens；最终计量以源usage为准，未报告则保持未知/保守估算。现有JSON body大小限制保留，未开放无限音频上传。

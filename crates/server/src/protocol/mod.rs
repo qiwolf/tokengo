@@ -20,7 +20,7 @@ impl Protocol {
         }
     }
 }
-pub use request::{convert_request, has_image};
+pub use request::{convert_request, has_image, normalization_notes};
 pub use response::{convert_response, validate_response};
 fn object(v: &Value) -> Result<&serde_json::Map<String, Value>, String> {
     v.as_object().ok_or_else(|| "Expected JSON object".into())
@@ -252,5 +252,23 @@ mod image_bound_tests {
             Protocol::Chat,
             &json!({"messages":[{"role":"assistant","tool_calls":[{"function":{"arguments":"{\"type\":\"image\"}"}}]}]})
         ));
+    }
+}
+#[cfg(test)]
+mod llama_conversion_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn llama_timings_do_not_change_portable_text_or_token_usage() {
+        let body = json!({"id":"llama_chat","object":"chat.completion","created":1,"model":"local","timings":{"prompt_n":7,"predicted_n":3,"predicted_ms":24.5},"choices":[{"index":0,"message":{"role":"assistant","content":"本地回复"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}});
+        let response = convert_response(Protocol::Chat, Protocol::Responses, &body).unwrap();
+        assert_eq!(response["output"][0]["content"][0]["text"], "本地回复");
+        assert_eq!(response["usage"]["input_tokens"], 7);
+        assert_eq!(response["usage"]["output_tokens"], 3);
+        let message = convert_response(Protocol::Chat, Protocol::Messages, &body).unwrap();
+        assert_eq!(message["content"][0]["text"], "本地回复");
+        let mut thinking = body;
+        thinking["choices"][0]["message"]["reasoning_content"] = json!("nonempty native reasoning");
+        assert!(convert_response(Protocol::Chat, Protocol::Responses, &thinking).is_err());
     }
 }

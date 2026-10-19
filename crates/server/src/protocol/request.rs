@@ -479,6 +479,10 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "metadata",
                 "max_output_tokens",
                 "store",
+                "client_metadata",
+                "prompt_cache_key",
+                "reasoning",
+                "include",
             ],
             Protocol::Messages => &[
                 "model",
@@ -492,9 +496,11 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "metadata",
                 "max_tokens",
                 "stop_sequences",
+                "output_config",
             ],
         },
     )?;
+    validate_cli_hints(from, body)?;
     if has_image(from, body) {
         return Err("Image conversion is not supported; use native protocol".into());
     }
@@ -638,4 +644,176 @@ pub fn has_image(protocol: Protocol, body: &Value) -> bool {
         "messages"
     })
     .is_some_and(contains_image)
+}
+
+#[cfg(test)]
+mod modern_cli_tests {
+    use super::*;
+    #[test]
+    fn disabled_codex_reasoning_and_advisory_hints_convert_without_claiming_cache_or_opaque_state()
+    {
+        let body = json!({"model":"M","input":"hello","store":false,"reasoning":{},"include":["reasoning.encrypted_content"],"client_metadata":{"session_id":"private-tracing-id"},"prompt_cache_key":"private-cache-hint"});
+        let result = convert_request(Protocol::Responses, Protocol::Chat, &body).unwrap();
+        assert_eq!(result["messages"][0]["content"], "hello");
+        for field in [
+            "client_metadata",
+            "prompt_cache_key",
+            "reasoning",
+            "include",
+        ] {
+            assert!(result.get(field).is_none());
+        }
+        let notes = normalization_notes(Protocol::Responses, Protocol::Chat, &body).join(";");
+        assert!(notes.contains("cache") && notes.contains("opaque"));
+        assert!(!notes.contains("private-tracing-id"));
+        assert!(!notes.contains("private-cache-hint"));
+        assert_eq!(
+            convert_request(Protocol::Responses, Protocol::Responses, &body).unwrap(),
+            body
+        );
+    }
+    #[test]
+    fn active_reasoning_opaque_inputs_and_nonadvisory_include_remain_explicitly_rejected() {
+        for reasoning in [
+            json!({"effort":"low"}),
+            json!({"effort":"high"}),
+            json!({"summary":"auto"}),
+            json!({"summary":"detailed"}),
+            json!({"unknown":false}),
+            json!(true),
+        ] {
+            let body = json!({"model":"M","input":"hello","reasoning":reasoning,"include":["reasoning.encrypted_content"]});
+            assert!(
+                convert_request(Protocol::Responses, Protocol::Chat, &body).is_err(),
+                "{body}"
+            );
+        }
+        for include in [
+            json!(["message.output_text.logprobs"]),
+            json!(["reasoning.encrypted_content", "reasoning.encrypted_content"]),
+            json!(true),
+        ] {
+            assert!(convert_request(
+                Protocol::Responses,
+                Protocol::Chat,
+                &json!({"model":"M","input":"hi","reasoning":{},"include":include})
+            )
+            .is_err());
+        }
+        assert!(convert_request(Protocol::Responses,Protocol::Chat,&json!({"model":"M","input":[{"type":"reasoning","encrypted_content":"opaque"}],"reasoning":{}})).is_err());
+        assert!(convert_request(
+            Protocol::Responses,
+            Protocol::Chat,
+            &json!({"model":"M","input":"hi","include":["reasoning.encrypted_content"]})
+        )
+        .is_err());
+    }
+    #[test]
+    fn claude_plain_text_and_disabled_effort_convert_but_real_effort_or_format_do_not() {
+        for config in [
+            json!({}),
+            json!({"effort":"none"}),
+            json!({"format":{"type":"text"}}),
+        ] {
+            let body = json!({"model":"M","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"output_config":config});
+            let converted = convert_request(Protocol::Messages, Protocol::Chat, &body).unwrap();
+            assert!(converted.get("output_config").is_none());
+        }
+        for config in [
+            json!({"effort":"high"}),
+            json!({"effort":"low"}),
+            json!({"format":{"type":"json_schema","schema":{}}}),
+            json!({"task_budget":10}),
+            json!(false),
+        ] {
+            assert!(convert_request(Protocol::Messages,Protocol::Chat,&json!({"model":"M","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"output_config":config})).is_err());
+        }
+    }
+}
+
+/// Advisory fields are intentionally normalized only for cross-protocol requests.
+/// Empty/disabled reasoning never establishes support for provider reasoning state.
+fn validate_cli_hints(from: Protocol, body: &Value) -> Result<(), String> {
+    if from == Protocol::Responses {
+        if let Some(value) = body.get("client_metadata") {
+            object(value)?;
+        }
+        if let Some(value) = body.get("prompt_cache_key") {
+            if value
+                .as_str()
+                .is_none_or(|s| s.len() > 512 || s.chars().any(char::is_control))
+            {
+                return Err("prompt_cache_key must be an advisory string up to 512 bytes".into());
+            }
+        }
+        let mut explicitly_disabled = false;
+        if let Some(value) = body.get("reasoning") {
+            fields(value, &["effort", "summary"])?;
+            for parameter in ["effort", "summary"] {
+                if value
+                    .get(parameter)
+                    .is_some_and(|v| v.as_str() != Some("none"))
+                {
+                    return Err("Requested reasoning effort or summary cannot be converted; disable reasoning and summary for text/function conversion".into());
+                }
+            }
+            explicitly_disabled = true;
+        }
+        if let Some(include) = body.get("include") {
+            let items = include.as_array().ok_or("include must be an array")?;
+            if !items.is_empty()
+                && (items.len() != 1
+                    || items[0] != "reasoning.encrypted_content"
+                    || !explicitly_disabled)
+            {
+                return Err("Opaque reasoning include requires explicitly empty/disabled reasoning; other includes cannot be converted".into());
+            }
+        }
+    }
+    if from == Protocol::Messages {
+        if let Some(value) = body.get("output_config") {
+            fields(value, &["effort", "format"])?;
+            if value
+                .get("effort")
+                .is_some_and(|v| !v.is_null() && v.as_str() != Some("none"))
+            {
+                return Err("Requested Messages effort cannot be converted; disable effort in the client model capabilities".into());
+            }
+            if let Some(format) = value.get("format").filter(|v| !v.is_null()) {
+                fields(format, &["type"])?;
+                if format["type"] != "text" {
+                    return Err("Only plain-text output_config.format can be converted".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fixed, secret-free notes; gateway records these after successful conversion.
+pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'static str> {
+    if from == to {
+        return vec![];
+    }
+    let mut notes = vec![];
+    if from == Protocol::Responses {
+        if body.get("client_metadata").is_some() {
+            notes.push("client_metadata tracing omitted; values not forwarded or retained");
+        }
+        if body.get("prompt_cache_key").is_some() {
+            notes.push(
+                "prompt_cache_key hint omitted; gateway does not implement or claim cache affinity",
+            );
+        }
+        if body.get("reasoning").is_some() {
+            notes.push("empty/disabled reasoning normalized to text/function mode; opaque reasoning is unsupported");
+        }
+        if body.get("include").is_some() {
+            notes.push("empty include or disabled-reasoning encrypted include normalized; no opaque output is promised");
+        }
+    }
+    if from == Protocol::Messages && body.get("output_config").is_some() {
+        notes.push("plain-text/disabled-effort output_config normalized; active reasoning effort and structured formats are unsupported");
+    }
+    notes
 }

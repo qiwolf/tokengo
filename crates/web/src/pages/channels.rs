@@ -922,7 +922,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             <label for="channel-protocols">"原生协议与转换（JSON）"</label>
                                             <div>
                                                 <textarea id="channel-protocols" rows="5" prop:value=f_protocols aria-describedby="channel-protocol-help channel-protocol-error" aria-invalid=move||crate::admin_api::protocols(&f_protocols.get()).is_err().to_string() on:input=move |ev|f_protocols.set(event_target_value(&ev))/>
-                                                <p id="channel-protocol-help" class="muted small">"native 填上游真实支持的 chat / responses / messages 数组（至少一个）。allow_conversion 为 true 时，未原生支持的协议会尝试转换为数组首项；仅支持明确限定的文本 / 函数工具子集。更改协议会使已有绑定会话失效，客户端需新建会话。默认只声明 chat，禁止转换。"</p>
+                                                <p id="channel-protocol-help" class="muted small">"native 填上游真实支持的 chat / responses / messages 数组（至少一个）。allow_conversion 为 true 时，未原生支持的协议会尝试转换为数组首项；仅支持明确限定的文本 / 函数工具子集。native_input_audio 可显式启用原生 Chat 内联 WAV/MP3 输入，必须配置最大输入上下文；不支持跨协议音频转换或音频输出。更改协议会使已有绑定会话失效，客户端需新建会话。默认只声明 chat，禁止转换。"</p>
                                                 <p id="channel-protocol-error" role="alert">{move||protocol_error.get()}</p>
                                             </div>
                                             <label>"响应解包"</label>

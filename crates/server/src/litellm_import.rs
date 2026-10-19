@@ -599,6 +599,7 @@ async fn apply(
                 &Capabilities {
                     native: vec![d.protocol],
                     allow_conversion: false,
+                    native_input_audio: false,
                 },
             )?;
             db::kinds::set(c, &d.logical, d.kind)?;

@@ -100,10 +100,11 @@ pub const POLICY: &str = r#"{
 
 pub fn protocols(raw: &str) -> Result<Value, String> {
     let v = object(raw)?;
-    if v.as_object()
-        .is_some_and(|o| o.keys().any(|k| k != "native" && k != "allow_conversion"))
-    {
-        return Err("协议配置仅支持 native 与 allow_conversion".into());
+    if v.as_object().is_some_and(|o| {
+        o.keys()
+            .any(|k| k != "native" && k != "allow_conversion" && k != "native_input_audio")
+    }) {
+        return Err("协议配置仅支持 native、allow_conversion 与 native_input_audio".into());
     }
     let native = v["native"].as_array().ok_or("native 必须是协议数组")?;
     if native.is_empty()
@@ -115,8 +116,13 @@ pub fn protocols(raw: &str) -> Result<Value, String> {
     {
         return Err("native 需填写 1..3 个不重复的 chat / responses / messages".into());
     }
-    if v.get("allow_conversion").is_some_and(|x| !x.is_boolean()) {
-        return Err("allow_conversion 必须是布尔值".into());
+    for flag in ["allow_conversion", "native_input_audio"] {
+        if v.get(flag).is_some_and(|x| !x.is_boolean()) {
+            return Err(format!("{flag} 必须是布尔值"));
+        }
+    }
+    if v["native_input_audio"] == true && !native.iter().any(|p| p == "chat") {
+        return Err("native_input_audio 需要原生 chat".into());
     }
     Ok(v)
 }

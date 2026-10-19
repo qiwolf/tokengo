@@ -127,6 +127,8 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
                 "usage",
                 "system_fingerprint",
                 "service_tier",
+                // llama.cpp diagnostics do not change text, tool or usage semantics.
+                "timings",
             ],
             Protocol::Responses => &[
                 "id",

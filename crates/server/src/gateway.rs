@@ -223,10 +223,73 @@ fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError
         .ok().and_then(|n|n.checked_add(256)).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
     Ok((input,output_bound(body,endpoint)?))
 }
+fn has_input_audio(v: &Value) -> bool {
+    match v {
+        Value::Array(items) => items.iter().any(has_input_audio),
+        Value::Object(map) => {
+            map.get("type").and_then(Value::as_str) == Some("input_audio")
+                || ["content", "input", "output", "messages"]
+                    .iter()
+                    .filter_map(|k| map.get(*k))
+                    .any(has_input_audio)
+        }
+        _ => false,
+    }
+}
+fn validate_input_audio(v: &Value) -> Result<(), ApiError> {
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                validate_input_audio(item)?;
+            }
+        }
+        Value::Object(map) => {
+            if map.get("type").and_then(Value::as_str) == Some("input_audio") {
+                let audio = map
+                    .get("input_audio")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| ApiError::bad_request("input_audio requires data and format"))?;
+                if audio.keys().any(|k| k != "data" && k != "format")
+                    || !matches!(
+                        audio.get("format").and_then(Value::as_str),
+                        Some("wav" | "mp3")
+                    )
+                {
+                    return Err(ApiError::bad_request(
+                        "Native input_audio supports inline wav/mp3 only",
+                    ));
+                }
+                use base64::Engine;
+                let data = audio
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::bad_request("input_audio data must be base64"))?;
+                if data.is_empty()
+                    || base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .is_err()
+                {
+                    return Err(ApiError::bad_request(
+                        "input_audio data must be nonempty standard base64",
+                    ));
+                }
+            }
+            for child in ["content", "input", "output", "messages"]
+                .iter()
+                .filter_map(|k| map.get(*k))
+            {
+                validate_input_audio(child)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>)->Result<(i64,i64),ApiError> {
     let (mut input,mut output)=admission_bound(body,endpoint)?;
-    if endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
-        input=price.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history requires a configured maximum input context bound"))?.max_input_tokens;
+    if has_input_audio(body) || endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
+        input=price.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history or audio requires a configured maximum input context bound"))?.max_input_tokens;
     }
     if price.is_none() && endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
         body[if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"}]=Value::from(4096);
@@ -247,14 +310,16 @@ fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::
     Ok((input,output))
 }
 fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),ApiError> {
-    fn unsupported_media(v:&Value)->bool {
+    fn unsupported_media(v:&Value,allow_audio:bool)->bool {
         match v {
-            Value::Array(items)=>items.iter().any(unsupported_media),
-            Value::Object(map)=>matches!(map.get("type").and_then(Value::as_str),Some("input_file"|"document"|"input_audio"|"audio"|"video"|"input_video")) || ["content","input","output","messages"].iter().filter_map(|k|map.get(*k)).any(unsupported_media),
+            Value::Array(items)=>items.iter().any(|item|unsupported_media(item,allow_audio)),
+            Value::Object(map)=>map.get("audio").is_some_and(|v|!v.is_null()) || matches!(map.get("type").and_then(Value::as_str),Some("input_file"|"document"|"audio"|"video"|"input_video")) || (!allow_audio && map.get("type").and_then(Value::as_str)==Some("input_audio")) || ["content","input","output","messages"].iter().filter_map(|k|map.get(*k)).any(|child|unsupported_media(child,allow_audio)),
             _=>false,
         }
     }
-    if unsupported_media(body) {return Err(ApiError::bad_request("File, document, audio and video blocks require dedicated capability and token accounting; this route currently supports text, images and client tools"));}
+    if has_input_audio(body) {validate_input_audio(body)?;}
+    if body.get("audio").is_some_and(|v|!v.is_null()) || body.get("modalities").and_then(Value::as_array).is_some_and(|m|m.iter().any(|v|v=="audio")){return Err(ApiError::bad_request("Audio output is not enabled"));}
+    if unsupported_media(body,endpoint==EndpointKind::Chat) {return Err(ApiError::bad_request("File, document, audio and video blocks require dedicated capability and token accounting; this route currently supports text, images and client tools"));}
     if body.get("container").is_some_and(|v|!v.is_null()) || body.get("web_search_options").is_some_and(|v|!v.is_null()) {
         return Err(ApiError::bad_request("Provider containers and hosted tools require separate metering and are not enabled"));
     }
@@ -577,15 +642,20 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     if let Some(auth) = &req.auth {
         let (mut input, output) = admission_bound(&req.body, req.endpoint).map_err(|error|{guard.reject(&error);error})?;
         let opaque_input=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
-        if opaque_input || req.endpoint.has_image(&req.body) {
+        let audio_input=has_input_audio(&req.body);
+        if audio_input && !plan.entries.iter().any(|entry|entry.protocols.native_input_audio && entry.protocols.native.contains(&crate::protocol::Protocol::Chat)) {
+            let error=ApiError::bad_request("No source declares native Chat input_audio");guard.reject(&error);return Err(error);
+        }
+        if opaque_input || audio_input || req.endpoint.has_image(&req.body) {
             let c=state.conn();
             let mut maximum=None;
             for candidate in &plan.entries {
+                if audio_input && !candidate.protocols.native_input_audio {continue;}
                 if let Some(p)=crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)? {maximum=Some(maximum.unwrap_or(0).max(p.max_input_tokens));}
             }
             let tpm_limited=auth.effective_policy().tpm.is_some() || auth.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|p|p.effective_policy().tpm.is_some()));
-            if opaque_input || tpm_limited {
-                input=maximum.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque or image input with token limits requires configured context bounds")).map_err(|error|{guard.reject(&error);error})?;
+            if opaque_input || audio_input || tpm_limited {
+                input=maximum.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque/audio input or image input with token limits requires configured context bounds")).map_err(|error|{guard.reject(&error);error})?;
             } else if let Some(maximum)=maximum {input=maximum;}
 
         }
@@ -644,6 +714,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             continue;
         };
 
+        if has_input_audio(&req.body) && (req.endpoint!=EndpointKind::Chat || !protocols.native_input_audio || !protocols.native.contains(&crate::protocol::Protocol::Chat)) {
+            last_policy_error=Some(ApiError::bad_request("Source does not declare native Chat input_audio"));continue;
+        }
         let upstream_protocol=match req.endpoint.protocol() {
             Some(client)=>match protocols.select(client) {
                 Some(p)=>Some(p),
@@ -717,10 +790,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
         let cached_cap = crate::db::settings::get(&state.conn(), &cap_key).ok().flatten()
             .and_then(|s| s.parse::<u64>().ok());
-        let mut adaptation_note = None::<String>;
+        let notes=match (req.endpoint.protocol(),upstream_protocol) { (Some(from),Some(to))=>crate::protocol::normalization_notes(from,to,&req.body), _=>vec![] };
+        let mut adaptation_note = (!notes.is_empty()).then(||notes.join("; "));
         if let Some(cap) = cached_cap {
             if clamp_output(&mut body, cap) {
-                adaptation_note = Some(format!("按此渠道已知输出上限收窄至 {cap} tokens"));
+                let cap_note=format!("按此渠道已知输出上限收窄至 {cap} tokens");
+                adaptation_note=Some(match adaptation_note.take(){Some(previous)=>format!("{previous}; {cap_note}"),None=>cap_note});
             }
         }
         let mut body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);

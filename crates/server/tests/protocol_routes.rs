@@ -164,6 +164,7 @@ impl Fixture {
                         tokengo_server::protocol::Protocol::Messages,
                     ],
                     allow_conversion: false,
+                    native_input_audio: false,
                 },
             )
             .unwrap();
@@ -615,6 +616,7 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
             &tokengo_server::protocol_config::Capabilities {
                 native: vec![tokengo_server::protocol::Protocol::Messages],
                 allow_conversion: false,
+                    native_input_audio: false,
             },
         )
         .unwrap();

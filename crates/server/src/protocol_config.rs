@@ -8,17 +8,27 @@ pub struct Capabilities {
     pub native: Vec<Protocol>,
     #[serde(default)]
     pub allow_conversion: bool,
+    /// Native Chat input_audio only; output audio and media conversion stay disabled.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub native_input_audio: bool,
+}
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 impl Default for Capabilities {
     fn default() -> Self {
         Self {
             native: vec![Protocol::Chat],
             allow_conversion: false,
+            native_input_audio: false,
         }
     }
 }
 impl Capabilities {
     pub fn validate(&self) -> Result<(), String> {
+        if self.native_input_audio && !self.native.contains(&Protocol::Chat) {
+            return Err("native_input_audio requires native chat".into());
+        }
         if self.native.is_empty() || self.native.len() > 3 {
             return Err("native must declare one to three protocols".into());
         }
@@ -74,6 +84,7 @@ mod tests {
         let chosen = Capabilities {
             native: vec![Protocol::Messages],
             allow_conversion: true,
+            native_input_audio: false,
         };
         save(&c, 19, &chosen).unwrap();
         assert_eq!(
@@ -85,13 +96,15 @@ mod tests {
     fn malformed_capabilities_fail_closed() {
         assert!(Capabilities {
             native: vec![],
-            allow_conversion: true
+            allow_conversion: true,
+            native_input_audio: false
         }
         .validate()
         .is_err());
         assert!(Capabilities {
             native: vec![Protocol::Chat, Protocol::Chat],
-            allow_conversion: true
+            allow_conversion: true,
+            native_input_audio: false
         }
         .validate()
         .is_err());
