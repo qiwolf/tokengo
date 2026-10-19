@@ -77,6 +77,17 @@ pub fn num(v: i64) -> String {
     }
 }
 
+/// Compact headline only; exact recorded usage remains in statistics details.
+pub fn compact_tokens(n: i64) -> String {
+    if n >= 100_000_000 {
+        format!("{:.2}亿", n as f64 / 100_000_000.0)
+    } else if n >= 10_000 {
+        format!("{:.0}万", n as f64 / 10_000.0)
+    } else {
+        num(n)
+    }
+}
+
 /// 上下文长度的人话刻度：`8,192` → `8K`、`163840` → `164K`、`1_000_000` → `1M`。
 ///
 /// 上游报的是 token 数（有的写得很大），面板上是一行小标签，别塞六个数字进去。
@@ -162,6 +173,13 @@ mod tests {
         assert_eq!(num(1000), "1,000");
         assert_eq!(num(1234567), "1,234,567");
         assert_eq!(num(-1234), "-1,234");
+    }
+
+    #[test]
+    fn token_headlines_are_compact_but_small_counts_stay_exact() {
+        for (n, expected) in [(0,"0"),(9999,"9,999"),(10000,"1万"),(91_481_699,"9148万"),(100_000_000,"1.00亿"),(i64::MAX,"92233720368.55亿")] {
+            assert_eq!(compact_tokens(n), expected);
+        }
     }
 
     #[test]

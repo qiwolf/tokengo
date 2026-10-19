@@ -139,9 +139,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 </button>
             </PageHead>
 
-            <div class="toolbar">
-                <span class="seg">
-                    <span class="seg-label">"时间窗口"</span>
+            <div class="overview-window" role="group" aria-label="时间窗口">
                     {[1i64, 24, 72, 168]
                     .into_iter()
                     .map(|h| {
@@ -155,6 +153,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                             <button
                                 class="chip"
                                 class:active=move || hours.get() == h
+                                aria-pressed=move || if hours.get()==h {"true"} else {"false"}
                                 on:click=move |_| pick(h)
                             >
                                 {label}
@@ -162,55 +161,31 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         }
                     })
                     .collect_view()}
-                </span>
-                <span class="spacer"></span>
             </div>
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
-            // 四个数：并排的数字条（不是卡片，靠竖线分隔）
-            <div class="overview-metrics">
-                <div class="stat">
-                    <div class="stat-title">"请求数"</div>
-                    <div class="stat-value">{move || fmt::num(stats.get().stats.total)}</div>
-                    <div class="stat-sub">"当前时间窗口"</div>
+            <section class="overview-summary" aria-label="调用统计">
+                <div class="overview-metrics">
+                    <div class="stat"><div class="stat-title">"请求数"</div><div class="stat-value">{move || fmt::num(stats.get().stats.total)}</div></div>
+                    <div class="stat"><div class="stat-title">"成功率"</div><div class="stat-value">{move || {let s=stats.get().stats; fmt::pct(s.ok,s.ok+s.failed+s.client_errors)}}</div></div>
+                    <div class="stat"><div class="stat-title">"失败数"</div><div class="stat-value">{move || fmt::num(stats.get().stats.failed)}</div></div>
+                    <div class="stat"><div class="stat-title">"Token"</div><div class="stat-value">{move || {let s=stats.get().stats; fmt::compact_tokens(s.input_tokens+s.output_tokens)}}</div></div>
                 </div>
-                <div class="stat">
-                    <div class="stat-title">"成功率"</div>
-                    <div class="stat-value">
-                        {move || {
-                            let s = stats.get().stats;
-                            fmt::pct(s.ok, s.ok+s.failed+s.client_errors)
-                        }}
-                    </div>
-                    <div class="stat-sub">{move || format!("成功 {}", fmt::num(stats.get().stats.ok))}</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-title">"失败"</div>
-                    <div class="stat-value">{move || fmt::num(stats.get().stats.failed)}</div>
-                    <div class="stat-sub">
-                        {move || {
-                            let s = stats.get().stats;
-                            format!("取消 {} · 客户端错 {}", fmt::num(s.canceled), fmt::num(s.client_errors))
-                        }}
-                    </div>
-                </div>
-                <div class="stat">
-                    <div class="stat-title" title="仅汇总已报告字段及保留的历史数值；未报告用量及其成本不在统计内，不代表零消耗或费用账单。">"已记录 Token"</div>
-                    <div class="stat-value">
-                        {move || {
-                            let s = stats.get().stats;
-                            fmt::num(s.input_tokens + s.output_tokens)
-                        }}
-                    </div>
-                    <div class="stat-sub">
-                        {move || {
-                            let s = stats.get().stats;
-                            format!("入 {} · 出 {} · 未完整报告 {} 次（历史来源不确定 {} 次）", fmt::num(s.input_tokens), fmt::num(s.output_tokens),s.usage.unknown_requests,s.usage.legacy_requests)
-                        }}
-                    </div>
-                </div>
-            </div>
+                <details class="overview-stat-details">
+                    <summary>"统计详情"</summary>
+                    <dl>
+                        <div><dt>"成功"</dt><dd>{move || fmt::num(stats.get().stats.ok)}</dd></div>
+                        <div><dt>"取消"</dt><dd>{move || fmt::num(stats.get().stats.canceled)}</dd></div>
+                        <div><dt>"客户端错误"</dt><dd>{move || fmt::num(stats.get().stats.client_errors)}</dd></div>
+                        <div><dt>"Token 合计"</dt><dd>{move || {let s=stats.get().stats;fmt::num(s.input_tokens+s.output_tokens)}}</dd></div>
+                        <div><dt>"输入 Token"</dt><dd>{move || fmt::num(stats.get().stats.input_tokens)}</dd></div>
+                        <div><dt>"输出 Token"</dt><dd>{move || fmt::num(stats.get().stats.output_tokens)}</dd></div>
+                        <div><dt>"未完整报告"</dt><dd>{move || format!("{} 次",fmt::num(stats.get().stats.usage.unknown_requests))}</dd></div>
+                        <div><dt>"历史来源不确定"</dt><dd>{move || format!("{} 次",fmt::num(stats.get().stats.usage.legacy_requests))}</dd></div>
+                    </dl>
+                </details>
+            </section>
 
             <nav class="overview-tabs" aria-label="总览分类">
                 {["最近调用","按类型","按渠道","按模型","按客户端","模型冷却"].into_iter().enumerate().map(|(i,label)| view! {
