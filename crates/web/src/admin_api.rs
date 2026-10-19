@@ -15,6 +15,15 @@ pub async fn request(method: &str, path: &str, body: Option<Value>) -> Result<Va
             if method == "GET" { "prices" } else { "price" },
             method == "GET",
         ))
+    } else if base == "/api/request-pricing" {
+        Some((
+            if method == "GET" {
+                "request_prices"
+            } else {
+                "request_price"
+            },
+            method == "GET",
+        ))
     } else if base == "/api/budgets" {
         Some(("budgets", true))
     } else if base == "/api/model-routing" {
@@ -88,6 +97,85 @@ pub fn integer(raw: &str, label: &str, positive: bool) -> Result<i64, String> {
             )
         })
 }
+/// Older token-only servers omit this field; explicit unknown units stay unknown.
+pub fn billing_unit(row: &Value) -> &'static str {
+    match row.get("billing_unit") {
+        Some(Value::String(s)) if s == "request" => "request",
+        Some(Value::String(s)) if s == "token" => "token",
+        None => "token",
+        _ => "unknown",
+    }
+}
+pub fn billing_unit_label(row: &Value) -> &'static str {
+    match billing_unit(row) {
+        "request" => "request（按次）",
+        "token" => "token",
+        _ => "未知单位",
+    }
+}
+pub fn billed_requests(row: &Value) -> String {
+    if billing_unit(row) == "request" {
+        text(row, "request_units")
+    } else {
+        "不适用".into()
+    }
+}
+pub fn billed_tokens(row: &Value) -> String {
+    if billing_unit(row) == "token" {
+        format!(
+            "{} / {}",
+            text(row, "input_tokens"),
+            text(row, "output_tokens")
+        )
+    } else {
+        "不适用".into()
+    }
+}
+fn partial_sum(rows: &[&Value], field: &str) -> String {
+    let mut sum = 0_i128;
+    let mut unknown = 0;
+    for row in rows {
+        if let Some(n) = row[field].as_i64() {
+            sum += i128::from(n);
+        } else {
+            unknown += 1;
+        }
+    }
+    if unknown == 0 {
+        sum.to_string()
+    } else if unknown == rows.len() {
+        format!("未知（{unknown} 笔）")
+    } else {
+        format!("{sum}（另 {unknown} 笔未知）")
+    }
+}
+/// Page-local totals only: unknown counts and money are never silently zero-filled.
+pub fn billing_page_summary(rows: &[Value]) -> Vec<String> {
+    let mut out = Vec::new();
+    for unit in ["token", "request", "unknown"] {
+        let group: Vec<_> = rows.iter().filter(|r| billing_unit(r) == unit).collect();
+        if group.is_empty() {
+            continue;
+        }
+        let quantity = match unit {
+            "token" => format!(
+                "输入 / 输出 token：{} / {}",
+                partial_sum(&group, "input_tokens"),
+                partial_sum(&group, "output_tokens")
+            ),
+            "request" => format!("收费次数：{}", partial_sum(&group, "request_units")),
+            _ => "用量单位未知".into(),
+        };
+        out.push(format!(
+            "当前页 {unit} 计费 {} 笔；{quantity}；扣款 / 成本 microUSD：{} / {}",
+            group.len(),
+            partial_sum(&group, "debit_micro"),
+            partial_sum(&group, "observed_cost_micro")
+        ));
+    }
+    out
+}
+
 pub const POLICY: &str = r#"{
   "allowed_models": null,
   "allowed_channels": null,
@@ -161,6 +249,38 @@ mod tests {
             protocols(r#"{"native":["messages","chat"],"allow_conversion":true}"#).unwrap();
         assert_eq!(config["native"][0], "messages");
         assert!(protocols(r#"{"native":["responses"]}"#).is_ok());
+    }
+    #[test]
+    fn billing_units_keep_request_counts_separate_from_tokens_and_unknown() {
+        let token = serde_json::json!({"billing_unit":"token","input_tokens":0,"output_tokens":7,"request_units":1,"debit_micro":0,"observed_cost_micro":0});
+        let request = serde_json::json!({"billing_unit":"request","request_units":1,"input_tokens":999,"debit_micro":750,"observed_cost_micro":750});
+        let zero = serde_json::json!({"billing_unit":"request","request_units":0,"debit_micro":0,"observed_cost_micro":0});
+        let unknown = serde_json::json!({"billing_unit":"request","request_units":null,"debit_micro":750,"observed_cost_micro":null});
+        assert_eq!(billed_tokens(&token), "0 / 7");
+        assert_eq!(billed_requests(&token), "不适用");
+        assert_eq!(billed_tokens(&request), "不适用");
+        assert_eq!(billed_requests(&request), "1");
+        assert_eq!(billed_requests(&zero), "0");
+        assert_eq!(billed_requests(&unknown), "未知");
+        let summary = billing_page_summary(&[token, request, zero, unknown]);
+        assert_eq!(summary.len(), 2);
+        assert!(summary[0].contains("输入 / 输出 token：0 / 7"));
+        assert!(summary[1].contains("收费次数：1（另 1 笔未知）"));
+        assert!(summary[1].contains("1500 / 750（另 1 笔未知）"));
+        assert!(!summary[1].contains("token"));
+        assert_eq!(billing_unit(&serde_json::json!({})), "token");
+        assert_eq!(
+            billing_unit(&serde_json::json!({"billing_unit":"future"})),
+            "unknown"
+        );
+        assert_eq!(
+            billing_unit(&serde_json::json!({"billing_unit":null})),
+            "unknown"
+        );
+        assert!(
+            billing_page_summary(&[serde_json::json!({"billing_unit":"request"})])[0]
+                .contains("收费次数：未知（1 笔）")
+        );
     }
     #[test]
     fn unknown_ledger_cost_is_not_zero() {

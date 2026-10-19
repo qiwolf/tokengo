@@ -17,10 +17,21 @@ use std::{
 const VERSION: u32 = 1;
 const DB_ID_KEY: &str = "billing_outbox_database_id";
 const MAX_INTENT_BYTES: u64 = 16 * 1024;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SettlementKind {
+    #[default]
+    Token,
+    Request,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Settlement {
     version: u32,
+    #[serde(default)]
+    kind: SettlementKind,
+    #[serde(default)]
+    request_units: Option<i64>,
     database_id: String,
     id: i64,
     attempt_id: String,
@@ -138,6 +149,10 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
     if intent.version != VERSION
         || intent.database_id != database_id
         || intent.id <= 0
+        || intent.request_units.is_some_and(|n| !(0..=1).contains(&n))
+        || (intent.kind == SettlementKind::Token && intent.request_units.is_some())
+        || (intent.kind == SettlementKind::Request
+            && (intent.input.is_some() || intent.output.is_some()))
         || intent.input.is_some_and(|n| n < 0)
         || intent.output.is_some_and(|n| n < 0)
         || intent.status == "reserved"
@@ -153,14 +168,22 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
     if path.file_name().and_then(|v| v.to_str()) != Some(format!("{}.json", intent.id).as_str()) {
         return Err(bad("billing intent filename does not match reservation"));
     }
-    let attempt: Option<String> = conn
+    let attempt: Option<(String, String)> = conn
         .query_row(
-            "SELECT attempt_id FROM billing_ledger WHERE id=?1",
+            "SELECT attempt_id,billing_unit FROM billing_ledger WHERE id=?1",
             [intent.id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    if attempt.as_deref() != Some(intent.attempt_id.as_str()) {
+    let expected_unit = if intent.kind == SettlementKind::Request {
+        "request"
+    } else {
+        "token"
+    };
+    if attempt
+        .as_ref()
+        .is_none_or(|(id, unit)| id != &intent.attempt_id || unit != expected_unit)
+    {
         return Err(bad("billing intent reservation does not match database"));
     }
     Ok(())
@@ -189,7 +212,15 @@ fn deliver(conn: &Connection, dir: &Path, path: &Path, intent: &mut Settlement) 
     intent.attempts = intent.attempts.saturating_add(1);
     intent.last_attempt_ms = Some(db::now_ms());
     atomic_write(dir, path, intent)?;
-    match db::billing::settle(conn, intent.id, intent.input, intent.output, &intent.status) {
+    let settled = match intent.kind {
+        SettlementKind::Token => {
+            db::billing::settle(conn, intent.id, intent.input, intent.output, &intent.status)
+        }
+        SettlementKind::Request => {
+            db::billing::settle_request(conn, intent.id, intent.request_units, &intent.status)
+        }
+    };
+    match settled {
         Ok(()) => remove(dir, path),
         Err(error) => {
             tracing::warn!(
@@ -208,6 +239,42 @@ pub fn settle(
     id: i64,
     input: Option<i64>,
     output: Option<i64>,
+    outcome: &str,
+) -> Result<()> {
+    settle_intent(
+        state,
+        id,
+        input,
+        output,
+        None,
+        SettlementKind::Token,
+        outcome,
+    )
+}
+/// Request-based settlements are persisted and replayed in the same durable outbox.
+pub fn settle_request(
+    state: &SharedState,
+    id: i64,
+    units: Option<i64>,
+    outcome: &str,
+) -> Result<()> {
+    settle_intent(
+        state,
+        id,
+        None,
+        None,
+        units,
+        SettlementKind::Request,
+        outcome,
+    )
+}
+fn settle_intent(
+    state: &SharedState,
+    id: i64,
+    input: Option<i64>,
+    output: Option<i64>,
+    request_units: Option<i64>,
+    kind: SettlementKind,
     outcome: &str,
 ) -> Result<()> {
     let conn = state.conn();
@@ -231,6 +298,8 @@ pub fn settle(
     let path = dir.join(format!("{id}.json"));
     let mut intent = Settlement {
         version: VERSION,
+        kind,
+        request_units,
         database_id,
         id,
         attempt_id,

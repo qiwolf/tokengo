@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 #[component]
 pub fn Billing(ctx: Ctx) -> impl IntoView {
-    view! {<div class="page admin-page"><PageHead title="账务" desc="整数 microUSD 预算、不可变价格版本与持久化逐次尝试账本。1 USD = 1,000,000 microUSD。"/><Budgets ctx=ctx/><Pricing ctx=ctx/><Usage ctx=ctx/></div>}
+    view! {<div class="page admin-page"><PageHead title="账务" desc="整数 microUSD 预算、不可变价格版本与持久化逐次尝试账本。1 USD = 1,000,000 microUSD。"/><Budgets ctx=ctx/><Pricing ctx=ctx/><RequestPricing ctx=ctx/><Usage ctx=ctx/></div>}
 }
 #[component]
 fn Budgets(ctx: Ctx) -> impl IntoView {
@@ -183,6 +183,89 @@ fn Pricing(ctx: Ctx) -> impl IntoView {
     </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><button class="primary" type="submit">"创建价格版本"</button></fieldset></form></div></section>}
 }
 #[component]
+fn RequestPricing(ctx: Ctx) -> impl IntoView {
+    let rows = RwSignal::new(Vec::<Value>::new());
+    let channel = RwSignal::new(String::new());
+    let model = RwSignal::new(String::new());
+    let price = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let error = RwSignal::new(String::new());
+    let message = RwSignal::new(String::new());
+    let load = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::request("GET", "/api/request-pricing", None).await {
+                Ok(v) => rows.set(api::rows(&v, "request_prices")),
+                Err(e) => {
+                    ctx.note_err(&e);
+                    error.set(e.message);
+                }
+            }
+            busy.set(false);
+        });
+    };
+    load(());
+    let save = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy.get_untracked() {
+            return;
+        }
+        let values = api::integer(&channel.get_untracked(), "渠道 ID", true)
+            .and_then(|c| api::integer(&price.get_untracked(), "按次价格", false).map(|p| (c, p)));
+        let (c, p) = match values {
+            Ok(v) => v,
+            Err(e) => {
+                error.set(e);
+                return;
+            }
+        };
+        let m = model.get_untracked().trim().to_string();
+        if m.is_empty() {
+            error.set("请填写逻辑模型名".into());
+            return;
+        }
+        busy.set(true);
+        error.set(String::new());
+        message.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::request(
+                "POST",
+                "/api/request-pricing",
+                Some(json!({"channel_id":c,"model":m,"micro_per_call":p})),
+            )
+            .await
+            {
+                Ok(v) => {
+                    rows.update(|all| all.insert(0, v["request_price"].clone()));
+                    message.set("新按次价格版本已创建；旧账本保留原快照。".into());
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    error.set(e.message);
+                }
+            }
+            busy.set(false);
+        });
+    };
+    view! {<section class="card"><header class="card-head"><h2>"按请求收费价格版本"</h2><button class="ghost" disabled=move||busy.get() on:click=move |_|load(())>"刷新按次价格"</button></header><div class="card-body">
+    <p class="muted small">"Search / Fetch 按请求计费，单位为整数 microUSD / 次；独立于 token 价格。按渠道 ID + 逻辑模型匹配最新版本，0 表示明确免费。未知用量仍显示未知；预占或估算扣款不表示已确认收费次数。最多展示最近 1000 个版本。"</p>
+    <div class="table-wrap"><table><thead><tr><th>"版本 / 渠道 / 模型"</th><th>"价格 microUSD / 次"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
+        let label=format!("v{} / #{} / {}",api::text(&r,"id"),api::text(&r,"channel_id"),api::text(&r,"model"));let amount=api::text(&r,"micro_per_call");
+        view!{<tr><td data-label="版本 / 来源">{label}</td><td data-label="microUSD / 次">{amount}</td><td data-label="操作"><button class="ghost" disabled=move||busy.get() on:click=move |_|{channel.set(api::text(&r,"channel_id"));model.set(api::text(&r,"model"));price.set(api::text(&r,"micro_per_call"));message.set("已填入旧值，保存会创建新版本。".into());}>"复制为新版本"</button></td></tr>}
+    }).collect_view()}</tbody></table></div>
+    <p role="status">{move||if busy.get(){"正在请求按次价格…"}else if rows.get().is_empty(){"暂无按次价格，可填写下方表单创建。"}else{""}}</p>
+    <form on:submit=save><fieldset disabled=move||busy.get()><div class="form-grid">
+    <label for="request-price-channel">"渠道 ID"</label><input id="request-price-channel" required type="text" inputmode="numeric" prop:value=channel aria-describedby="request-price-error" on:input=move|e|channel.set(event_target_value(&e))/>
+    <label for="request-price-model">"逻辑模型名"</label><input id="request-price-model" required type="text" prop:value=model aria-describedby="request-price-error" on:input=move|e|model.set(event_target_value(&e))/>
+    <label for="request-price-micro">"价格（microUSD / 次）"</label><input id="request-price-micro" required type="text" inputmode="numeric" prop:value=price aria-describedby="request-price-error" on:input=move|e|price.set(event_target_value(&e))/>
+    </div><p id="request-price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><button class="primary" type="submit">"创建按次价格版本"</button></fieldset></form>
+    </div></section>}
+}
+#[component]
 fn Usage(ctx: Ctx) -> impl IntoView {
     let user = RwSignal::new(String::new());
     let key = RwSignal::new(String::new());
@@ -263,9 +346,11 @@ fn Usage(ctx: Ctx) -> impl IntoView {
     <label for="usage-limit">"每页条数（1..200）"</label><input id="usage-limit" required type="text" inputmode="numeric" prop:value=count aria-describedby="usage-error" on:input=move|e|count.set(event_target_value(&e))/>
     </div><button class="primary" type="submit">"查询 / 返回最新页"</button></fieldset></form>
     <p id="usage-error" role="alert">{move||error.get()}</p><p role="status">{move||if busy.get(){"正在加载账本…"}else if loaded.get()&&rows.get().is_empty(){"当前条件下没有记录。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"ID / 请求 / 来源"</th><th>"身份 / 模型"</th><th>"状态 / 用量依据"</th><th>"输入 / 输出 token"</th><th>"扣款 / 成本 / 预占 microUSD"</th><th>"快照"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
-        let origin=format!("{} / 请求 {} / 渠道 {}",api::text(&r,"id"),api::text(&r,"request_id"),api::text(&r,"channel_id"));let who=format!("用户 {} / key {} / {}",api::text(&r,"user_id"),api::text(&r,"key_id"),api::text(&r,"model"));let state=format!("{} / {} / {}{}",api::text(&r,"status"),api::text(&r,"outcome"),api::text(&r,"usage_certainty"),if r["overrun"]==true{" / 超额"}else{""});let tokens=format!("{} / {}",api::text(&r,"input_tokens"),api::text(&r,"output_tokens"));let money=format!("{} / {} / {}",api::text(&r,"debit_micro"),api::text(&r,"observed_cost_micro"),api::text(&r,"reserved_micro"));let detail=api::pretty(&r);
-        view!{<tr><td data-label="记录">{origin}</td><td data-label="身份 / 模型">{who}</td><td data-label="状态">{state}</td><td data-label="token">{tokens}</td><td data-label="扣款 / 成本 / 预占">{money}</td><td data-label="快照"><details><summary>"查看完整账本快照"</summary><pre class="admin-json">{detail}</pre></details></td></tr>}
+    <div aria-live="polite">{move||api::billing_page_summary(&rows.get()).into_iter().map(|line|view!{<p class="muted small">{line}</p>}).collect_view()}</div>
+    <p class="muted small">"汇总仅针对当前筛选的本页尝试，非全账户总额。按次收费 0 / 1 / 未知分别保留；token 列对按次项目不适用。"</p>
+    <div class="table-wrap"><table><thead><tr><th>"ID / 请求 / 来源"</th><th>"身份 / 模型"</th><th>"状态 / 用量依据"</th><th>"计费单位 / 收费次数"</th><th>"输入 / 输出 token"</th><th>"扣款 / 成本 / 预占 microUSD"</th><th>"快照"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
+        let origin=format!("{} / 请求 {} / 渠道 {}",api::text(&r,"id"),api::text(&r,"request_id"),api::text(&r,"channel_id"));let who=format!("用户 {} / key {} / {}",api::text(&r,"user_id"),api::text(&r,"key_id"),api::text(&r,"model"));let state=format!("{} / {} / {}{}",api::text(&r,"status"),api::text(&r,"outcome"),api::text(&r,"usage_certainty"),if r["overrun"]==true{" / 超额"}else{""});let tokens=api::billed_tokens(&r);let units=format!("{} / {}",api::billing_unit_label(&r),api::billed_requests(&r));let money=format!("{} / {} / {}",api::text(&r,"debit_micro"),api::text(&r,"observed_cost_micro"),api::text(&r,"reserved_micro"));let detail=api::pretty(&r);
+        view!{<tr><td data-label="记录">{origin}</td><td data-label="身份 / 模型">{who}</td><td data-label="状态">{state}</td><td data-label="计费单位 / 收费次数">{units}</td><td data-label="token">{tokens}</td><td data-label="扣款 / 成本 / 预占">{money}</td><td data-label="快照"><details><summary>"查看完整账本快照"</summary><pre class="admin-json">{detail}</pre></details></td></tr>}
     }).collect_view()}</tbody></table></div>
     <button class="ghost" disabled=move||busy.get()||cursor.get().is_none()||rows.get().is_empty() on:click=move |_|{if let Some(id)=cursor.get_untracked(){fetch(format!("{}&before_id={id}",active_query.get_untracked()),true);}}>"较早一页"</button><p class="muted small">"翻页沿用最近一次查询条件；修改筛选后请点查询。空页表示已到末尾。"</p>
     </div></section>}

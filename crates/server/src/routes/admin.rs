@@ -548,6 +548,9 @@ struct ReadyChannel {
 
 fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<Option<ReadyChannel>, ApiError> {
     let conn = state.conn();
+    if !crate::protocol_config::background_probe_allowed(&conn,id.0)? {
+        return Err(ApiError::bad_request("OAuth and standalone tools require authenticated, metered verification; use the OAuth account catalog or the normal VKey endpoint"));
+    }
     let Some(row) = channels::get(&conn, id)? else {
         return Ok(None);
     };

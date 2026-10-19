@@ -41,6 +41,8 @@ use crate::db::requests::Status;
 use crate::db::{model_routes, channels, requests, now_ms};
 use crate::routes::ApiError;
 use crate::SharedState;
+#[cfg(test)]
+mod oauth_tests;
 
 /// 对外端点。只有三个（依据：3 天 10 万次请求里向量 86%、对话 14%，其余 41 个端点 0 次）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub enum EndpointKind {
     Messages,
     Embeddings,
     Rerank,
+    Search,
+    Fetch,
 }
 
 /// 上游在 `Retry-After` 里要求等的时长超过这个数（毫秒），就认定在这条渠道上耗下去
@@ -67,6 +71,7 @@ impl EndpointKind {
         match self { Self::Chat=>Some(Protocol::Chat), Self::Responses=>Some(Protocol::Responses), Self::Messages=>Some(Protocol::Messages), _=>None }
     }
     pub fn is_generation(self)->bool {self.protocol().is_some()}
+    pub fn tool_kind(self)->Option<crate::search_tools::ToolKind> {match self {Self::Search=>Some(crate::search_tools::ToolKind::Search),Self::Fetch=>Some(crate::search_tools::ToolKind::Fetch),_=>None}}
     fn has_image(self,body:&Value)->bool {self.protocol().is_some_and(|p|crate::protocol::has_image(p,body))}
     /// 打上游时接在 base_url 后面的路径。
     pub fn path(self) -> &'static str {
@@ -76,6 +81,8 @@ impl EndpointKind {
             EndpointKind::Messages => "messages",
             EndpointKind::Embeddings => "embeddings",
             EndpointKind::Rerank => "rerank",
+            EndpointKind::Search => "tools/search",
+            EndpointKind::Fetch => "tools/fetch",
         }
     }
 
@@ -86,6 +93,8 @@ impl EndpointKind {
             EndpointKind::Messages => "/v1/messages",
             EndpointKind::Embeddings => "/v1/embeddings",
             EndpointKind::Rerank => "/v1/rerank",
+            EndpointKind::Search => "/v1/tools/search",
+            EndpointKind::Fetch => "/v1/tools/fetch",
         }
     }
 
@@ -95,6 +104,7 @@ impl EndpointKind {
             EndpointKind::Chat | EndpointKind::Responses | EndpointKind::Messages => tokengo_shared::ModelKind::Chat,
             EndpointKind::Embeddings => tokengo_shared::ModelKind::Embeddings,
             EndpointKind::Rerank => tokengo_shared::ModelKind::Rerank,
+            EndpointKind::Search | EndpointKind::Fetch => tokengo_shared::ModelKind::Unknown,
         }
     }
 }
@@ -180,8 +190,11 @@ fn push_entry(
 
 /// Authorization covers the logical name and the physical source, including unknown prices.
 pub fn permitted_candidate(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str,channel:i64)->Result<bool,ApiError> {
+    permitted_candidate_for(c,auth,name,channel,EndpointKind::Chat)
+}
+fn permitted_candidate_for(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str,channel:i64,endpoint:EndpointKind)->Result<bool,ApiError> {
     if !auth.permits_model(name) {return Ok(false);}
-    let paid=crate::db::billing::price(c,name,channel)?.is_none_or(|p|p.input_micro_per_million>0 || p.output_micro_per_million>0);
+    let paid=if endpoint.tool_kind().is_some() {crate::db::billing::request_price(c,name,channel)?.is_none_or(|p|p.micro_per_call>0)}else{crate::db::billing::price(c,name,channel)?.is_none_or(|p|p.input_micro_per_million>0 || p.output_micro_per_million>0)};
     Ok(auth.permits_channel(channel,paid))
 }
 pub fn permitted_model(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str)->Result<bool,ApiError> {
@@ -219,6 +232,7 @@ fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
         .ok_or_else(||ApiError::bad_request("Total output token bound overflow"))
 }
 fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError> {
+    if endpoint.tool_kind().is_some() {return Ok((0,0));}
     let input=i64::try_from(serde_json::to_vec(body).map_err(|e|ApiError::bad_request(e.to_string()))?.len())
         .ok().and_then(|n|n.checked_add(256)).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
     Ok((input,output_bound(body,endpoint)?))
@@ -287,9 +301,14 @@ fn validate_input_audio(v: &Value) -> Result<(), ApiError> {
 }
 
 fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>)->Result<(i64,i64),ApiError> {
+    billing_bound_with_context(body,endpoint,price,None)
+}
+
+fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (mut input,mut output)=admission_bound(body,endpoint)?;
     if has_input_audio(body) || endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
-        input=price.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history or audio requires a configured maximum input context bound"))?.max_input_tokens;
+        input=price.map(|p|p.max_input_tokens).or(context.map(|v|v.0)).filter(|n|*n>0)
+            .ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history or audio requires a configured maximum input context bound"))?;
     }
     if price.is_none() && endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
         body[if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"}]=Value::from(4096);
@@ -307,7 +326,22 @@ fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::
             return Err(ApiError::new(StatusCode::BAD_REQUEST,"billing_token_limit","Request exceeds configured billing token bounds"));
         }
     }
+    if let Some((max_input,max_output))=context {
+        if input>max_input || output>max_output {return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","Request exceeds configured source token bounds"));}
+    }
     Ok((input,output))
+}
+
+/// Subscription preview cannot enforce an output cap. Reserve the full verified
+/// provider output ceiling and keep unknown monetary prices unknown.
+fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
+    let (max_input,max_output)=context.filter(|(i,o)|*i>0&&*o>0).ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"source_limits_required","ChatGPT plan requests require verified full provider context and output bounds"))?;
+    let (mut input,_)=admission_bound(body,EndpointKind::Responses)?;
+    if crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses,body) || crate::protocol::has_image(crate::protocol::Protocol::Responses,body) {input=max_input;}
+    if input>max_input || price.is_some_and(|p|input>p.max_input_tokens||max_output>p.max_output_tokens) {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","ChatGPT plan request exceeds configured source or billing token bounds"));
+    }
+    Ok((input,max_output))
 }
 fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),ApiError> {
     fn unsupported_media(v:&Value,allow_audio:bool)->bool {
@@ -340,6 +374,17 @@ fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),
     if let Some(tools)=body.get("tools").and_then(Value::as_array) {
         if tools.len()>128 || tools.iter().any(|t|!client_tool(endpoint,t,0)) {
             return Err(ApiError::bad_request("Hosted or unknown tool types require separate metering; use client function tools and disable hosted web search"));
+        }
+    }
+    if endpoint==EndpointKind::Responses {
+        if let Some(input)=body.get("input").and_then(Value::as_array) {
+            for item in input {
+                if matches!(item["type"].as_str(),Some("tool_search_call"|"tool_search_output")) {return Err(ApiError::bad_request("Provider tool search requires separate metering and is not enabled"));}
+                if item["type"]=="additional_tools" {
+                    let tools=item.get("tools").and_then(Value::as_array).ok_or_else(||ApiError::bad_request("Expected additional_tools definitions"))?;
+                    if tools.len()>128 || tools.iter().any(|tool|!client_tool(endpoint,tool,0)) {return Err(ApiError::bad_request("Hosted or unknown additional_tools require separate metering"));}
+                }
+            }
         }
     }
     Ok(())
@@ -391,7 +436,7 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vis
         let mut names: Vec<String> = Vec::new();
         for id in &route.declared_by {
             if let Some(auth) = auth {
-                if !permitted_candidate(&conn, auth, &route.name, id.0)? { continue; }
+                if !permitted_candidate_for(&conn, auth, &route.name, id.0,endpoint)? { continue; }
             }
             if let Some(l) = channels::get(&conn, *id)? {
                 names.push(l.name);
@@ -487,6 +532,10 @@ fn load_auto_plan(
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
 pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
+    if let Some(kind)=req.endpoint.tool_kind() {
+        if req.stream || model_routes::is_auto(&req.model) {return Err(ApiError::bad_request("Search and Fetch require a non-streaming explicit route"));}
+        crate::search_tools::normalize_request(kind,&req.body).map_err(ApiError::bad_request)?;
+    }
     // 路由不出去（模型名没配置 / 组停用了 / 组里没有可用渠道）时，**也要留一条账**。
     //
     // 为什么：面板「请求」页是用户排障的第一站（他就是从那里问出「为什么客户端连不上」的）。
@@ -518,7 +567,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let conn = state.conn();
         let mut authorized = Vec::new();
         for entry in plan_all.entries.drain(..) {
-            if permitted_candidate(&conn, auth, &entry.name, entry.channel.id.0)? { authorized.push(entry); }
+            if permitted_candidate_for(&conn, auth, &entry.name, entry.channel.id.0,req.endpoint)? { authorized.push(entry); }
         }
         plan_all.entries = authorized;
         if plan_all.entries.is_empty() {
@@ -640,7 +689,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     guard.identify(req.auth.as_ref())?;
 
     if let Some(auth) = &req.auth {
-        let (mut input, output) = admission_bound(&req.body, req.endpoint).map_err(|error|{guard.reject(&error);error})?;
+        let (mut input, mut output) = admission_bound(&req.body, req.endpoint).map_err(|error|{guard.reject(&error);error})?;
+        for candidate in &plan.entries {
+            if let Some((_,bound))=crate::oauth::context_bounds(&state.conn(),candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))? {output=output.max(bound);}
+        }
         let opaque_input=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
         let audio_input=has_input_audio(&req.body);
         if audio_input && !plan.entries.iter().any(|entry|entry.protocols.native_input_audio && entry.protocols.native.contains(&crate::protocol::Protocol::Chat)) {
@@ -652,6 +704,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             for candidate in &plan.entries {
                 if audio_input && !candidate.protocols.native_input_audio {continue;}
                 if let Some(p)=crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)? {maximum=Some(maximum.unwrap_or(0).max(p.max_input_tokens));}
+                if let Some((bound,_))=crate::oauth::context_bounds(&c,candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))? {maximum=Some(maximum.unwrap_or(0).max(bound));}
             }
             let tpm_limited=auth.effective_policy().tpm.is_some() || auth.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|p|p.effective_policy().tpm.is_some()));
             if opaque_input || audio_input || tpm_limited {
@@ -713,6 +766,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let Some(Candidate { name, channel, revision, protocols,binding_generation }) = plan.entries.get(entry_idx) else {
             continue;
         };
+        let tool_caps=if let Some(kind)=req.endpoint.tool_kind() {
+            let caps=crate::search_tools::load(&state.conn(),channel.id.0)?;
+            if !caps.permits(kind) {last_policy_error=Some(ApiError::bad_request("Source does not explicitly declare this standalone tool capability"));continue;}
+            Some(caps)
+        }else{None};
 
         if has_input_audio(&req.body) && (req.endpoint!=EndpointKind::Chat || !protocols.native_input_audio || !protocols.native.contains(&crate::protocol::Protocol::Chat)) {
             last_policy_error=Some(ApiError::bad_request("Source does not declare native Chat input_audio"));continue;
@@ -740,13 +798,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             }
         }
         let upstream_path=upstream_protocol.map(|p|p.path()).unwrap_or(req.endpoint.path());
-        let prepared=match (req.endpoint.protocol(),upstream_protocol) {
+        let prepared=if let Some(kind)=req.endpoint.tool_kind() {crate::search_tools::normalize_request(kind,&req.body).map_err(ApiError::bad_request)?}else{match (req.endpoint.protocol(),upstream_protocol) {
             (Some(from),Some(to))=>match crate::protocol::convert_request(from,to,&req.body) {
                 Ok(body)=>body,
                 Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue;}
             },
             _=>req.body.clone(),
-        };
+        }};
         // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
         let permit = match pre_permits.remove(&channel.id.0) {
             Some(p) => Some(p),
@@ -786,7 +844,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
         // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
         let adapted = tokengo_shared::strip_fields(&prepared, &channel.drop_fields);
-        let mut body = rewrite_model(&adapted, &sent_model);
+        let mut body = if let Some(kind)=req.endpoint.tool_kind() {crate::search_tools::normalize_request(kind,&adapted).map_err(ApiError::bad_request)?}else{rewrite_model(&adapted, &sent_model)};
         let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
         let cached_cap = crate::db::settings::get(&state.conn(), &cap_key).ok().flatten()
             .and_then(|s| s.parse::<u64>().ok());
@@ -839,7 +897,21 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
             guard.settle_billing("retry_or_fallback");
             guard.usage = Usage::default();
+            guard.request_units=None;
+            guard.request_billing=req.endpoint.tool_kind().is_some();
             if !crate::db::faults::current(&state.conn(),&cooldown.account)? {break;}
+            let oauth_remaining=Duration::from_millis(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64).max(1));
+            let oauth=match tokio::time::timeout(oauth_remaining,crate::oauth::credentials(&state,channel.id.0)).await {
+                Ok(Ok(value))=>value,
+                _=>{last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"oauth_unavailable","ChatGPT authorization is unavailable; reauthorize this account in administration"));continue 'channels;}
+            };
+            if let Some(credential)=&oauth {
+                if upstream_protocol!=Some(crate::protocol::Protocol::Responses) || credential.binding_generation!=*binding_generation {
+                    let error=ApiError::bad_request("OAuth source binding changed; retry with current source configuration");guard.reject(&error);return Err(error);
+                }
+                crate::protocol::collect::prepare_request(&mut body,credential.reasoning_effort.as_deref(),credential.service_tier.as_deref())
+                    .map_err(|note|{let error=ApiError::bad_request(note);guard.reject(&error);error})?;
+            }
             let live_generation:i64=state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
             if live_generation!=*binding_generation {let error=ApiError::bad_request("Source configuration changed during request; retry with current configuration"); guard.reject(&error); return Err(error);}
             {
@@ -858,17 +930,24 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 let c = state.conn();
                 let current = crate::db::identity::context(&c, auth.key_id)?
                     .ok_or_else(|| ApiError::unauthorized("Key revoked, expired or user disabled")).map_err(|error|{guard.reject(&error);error})?;
-                if !current.permits_model(&req.model) || !permitted_candidate(&c, &current, name, channel.id.0)? {
+                if !current.permits_model(&req.model) || !permitted_candidate_for(&c, &current, name, channel.id.0,req.endpoint)? {
                     let error=ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Source permission changed");guard.reject(&error);return Err(error);
                 }
                 let price = crate::db::billing::price(&c, name, channel.id.0)?;
-                let (input, output) = billing_bound(&mut body, match upstream_protocol {Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,None=>req.endpoint}, price.as_ref()).map_err(|error|{guard.reject(&error);error})?;
+                let context=oauth.as_ref().and_then(|credential|credential.max_input_tokens.zip(credential.max_output_tokens));
+                let bounds=if req.endpoint.tool_kind().is_some(){Ok((0,0))}else if oauth.is_some() {subscription_bound(&body,price.as_ref(),context)}else {billing_bound(&mut body, match upstream_protocol {Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,None=>req.endpoint}, price.as_ref())};
+                let (input, output) = bounds.map_err(|error|{guard.reject(&error);error})?;
                 body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
                 let attempt_id = format!("{}:{}",request_id,ordinal);
-                let reservation = match price {
+                let reservation = if req.endpoint.tool_kind().is_some() {
+                    match crate::db::billing::request_price(&c,name,channel.id.0)? {
+                        Some(p)=>crate::db::billing::reserve_request(&c,current.user_id,current.key_id,request_id,&attempt_id,&p),
+                        None=>{last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Standalone tools require a configured per-request price"));continue 'channels;}
+                    }
+                }else{match price {
                     Some(p) => crate::db::billing::reserve(&c,current.user_id,current.key_id,request_id,&attempt_id,&p,input,output),
                     None => crate::db::billing::reserve_unpriced(&c,current.user_id,current.key_id,request_id,&attempt_id,channel.id.0,name),
-                };
+                }};
                 let id = match reservation {
                     Ok(id)=>id,
                     Err(e)=>{
@@ -888,14 +967,21 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 // Origin excludes URL credentials, paths, query parameters and fragments.
                 let source=serde_json::json!({"channel_id":channel.id.0,"channel_name":channel.name,
                     "origin":reqwest::Url::parse(&channel.base_url).ok().map(|u|u.origin().ascii_serialization()),
-                    "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol()});
-                if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2 WHERE id=?1",rusqlite::params![id,source.to_string()]) {
+                    "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol(),
+                    "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision)});
+                if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2,input_bound=?3,output_bound=?4 WHERE id=?1",rusqlite::params![id,source.to_string(),input,output]) {
                     if crate::db::billing::release(&c,id,"not_sent").is_ok(){guard.reservation=None;}
                     return Err(ApiError::from(crate::db::DbError::from(e)));
                 }
             }
+            if let (Some(kind),Some(caps))=(req.endpoint.tool_kind(),tool_caps.as_ref()) {
+                if !state.tool_rates.admit(&caps.account_scope,kind,caps.qps) {
+                    guard.request_units=Some(0);guard.settle_billing("source_rate_limited_before_send");
+                    last_policy_error=Some(ApiError::new(StatusCode::TOO_MANY_REQUESTS,"source_rate_limit","Standalone tool account reached its configured local request rate"));continue 'channels;
+                }
+            }
             // A later real source attempt supersedes an earlier representational mismatch.
-            if last_policy_error.as_ref().is_some_and(|error|error.kind=="protocol_not_supported") {last_policy_error=None;}
+            if last_policy_error.as_ref().is_some_and(|error|matches!(error.kind,"protocol_not_supported"|"oauth_unavailable")) {last_policy_error=None;}
             tried_any = true;
             last_channel = channel.id;
             guard.note_served(name);
@@ -909,14 +995,17 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 request_id,ordinal,channel_id:channel.id.0,model_name:name.clone(),upstream_model:sent_model.clone(),
                 outcome:"canceled".into(),http_status:None,duration_ms:0,error:Some("客户端取消当前尝试".into()),first_byte_ms:None,
             },t0));
+            let mut oauth_channel=channel.clone();
+            if let Some(credential)=&oauth {oauth_channel.base_url=credential.api_base.clone();oauth_channel.headers.clear();}
+            let outbound_secret=oauth.as_ref().map(|credential|credential.access_token.as_str()).or_else(||plan.secret(channel.id));
             let outcome = state
                 .upstream
                 .call(
-                    channel,
-                    plan.secret(channel.id),
+                    &oauth_channel,
+                    outbound_secret,
                     upstream_path,
                     body_bytes.clone(),
-                    req.stream,
+                    req.stream || oauth.is_some(),
                     attempt_timeout.min(Duration::from_millis(
                         (cfg.request_budget_ms as i64 - (now_ms() - started_ms)).max(1) as u64,
                     )),
@@ -942,9 +1031,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             };
 
             let status = resp.status().as_u16();
+            if req.endpoint.tool_kind().is_some() && status!=200 {guard.request_units=Some(0);}
             let dur = now_ms() - t0;
             slow_previous = dur >= attempt_ms as i64 * 3 / 4;
-            match classify_status(status) {
+            let classification=if req.endpoint.tool_kind().is_some() && status==408 {AttemptOutcome::ChannelFault}else{classify_status(status)};
+            match classification {
                 AttemptOutcome::Success => {
                     // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
                     // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
@@ -1021,7 +1112,17 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     // （现网 4 天 9 次），那种必须当这条渠道的毛病去重试/换渠道 —— 不能先把
                     // 路由状态记成「这条渠道好了」，更不能把空泡泡原样丢给用户。
                     let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-                    let (resp, input, output, empty, usage) = if req.endpoint == EndpointKind::Rerank {
+                    let (resp, input, output, empty, usage) = if let Some(kind)=req.endpoint.tool_kind() {
+                        let (response,units,error)=buffer_tool_response(resp,kind).await;
+                        guard.request_units=units;
+                        (response,0,0,error,Usage::default())
+                    } else if oauth.is_some() {
+                        let left=attempt_ms.saturating_sub((now_ms()-t0).max(0) as u64)
+                            .min(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64));
+                        buffer_responses_stream(resp,req.endpoint.protocol().unwrap_or(crate::protocol::Protocol::Responses),
+                            pin_key.as_deref().zip(candidate_pin.as_ref()).map(|(owner,pin)|(&state,owner,pin)),
+                            Duration::from_millis(left),attempt_timeout,&mut guard).await
+                    } else if req.endpoint == EndpointKind::Rerank {
                         buffer_rerank_passthrough(resp, http, &req.body).await
                     } else {
                         buffer_passthrough(
@@ -1124,6 +1225,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             continue;
                         }
                     };
+                    if req.endpoint.tool_kind().is_some() {
+                        guard.request_units=Some(0);
+                        guard.settle_billing("tool_client_error");guard.active_attempt=None;
+                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"client_fault",Some(status),now_ms()-t0,Some("Standalone tool request rejected; source model health unchanged"));
+                        guard.finish(&state,Status::ClientError,Some(status),Some(channel.id.0),started_ms,Some(now_ms()-t0),0,0,false,Some("Standalone tool request rejected"));
+                        return Ok(err.into_response());
+                    }
                     guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
                     if let Some(fault)=crate::db::faults::classify(status,&err.body) {
                         let reason=fault.label();
@@ -1187,6 +1295,25 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     return Ok(err.into_response());
                 }
                 AttemptOutcome::ChannelFault => {
+                    // Tool QPS and URL security errors must not suspend model-account access.
+                    if req.endpoint.tool_kind().is_some() && matches!(status,401|402|403|404|429) {
+                        let remaining=attempt_ms.saturating_sub((now_ms()-t0).max(0) as u64).min(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64));
+                        let err=match read_error(resp,Duration::from_millis(remaining),attempt_timeout).await {
+                            Ok(err)=>err,
+                            Err(_)=>{
+                                let note="Standalone tool error body could not be read";
+                                guard.settle_billing("tool_error_unreadable");guard.active_attempt=None;
+                                record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"tool_error",Some(status),now_ms()-t0,Some(note));
+                                guard.finish(&state,Status::Failed,Some(502),Some(channel.id.0),started_ms,Some(now_ms()-t0),0,0,false,Some(note));
+                                return Err(ApiError::new(StatusCode::BAD_GATEWAY,"tool_error_unreadable",note));
+                            }
+                        };
+                        guard.request_units=Some(0);guard.settle_billing("tool_rejected");guard.active_attempt=None;
+                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"tool_rejected",Some(status),now_ms()-t0,Some("Standalone tool rejected request; no model-account suspension"));
+                        if matches!(status,401|402|429) {ordinal+=1;last_http=Some(err);last_fault=Some("Standalone tool source rejected the request".into());continue 'channels;}
+                        guard.finish(&state,Status::ClientError,Some(status),Some(channel.id.0),started_ms,Some(now_ms()-t0),0,0,false,Some("Standalone tool rejected request"));
+                        return Ok(err.into_response());
+                    }
                     let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
                         .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
                     let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
@@ -1611,6 +1738,61 @@ fn is_conversion_fault(note:&str)->bool {note.starts_with("protocol_conversion: 
 
 fn invalid_buffer(note: String) -> (Response, i64, i64, Option<String>, Usage) {
     (StatusCode::BAD_GATEWAY.into_response(), 0, 0, Some(note), Usage::default())
+}
+
+/// Subscription OAuth upstreams require SSE even when the downstream requests JSON.
+/// This remains inside the attempt guard: cancellation closes upstream and settles once.
+async fn buffer_responses_stream(
+    mut resp: reqwest::Response,
+    client: crate::protocol::Protocol,
+    provenance: Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
+    remaining: Duration,
+    idle: Duration,
+    guard: &mut RequestGuard,
+) -> (Response, i64, i64, Option<String>, Usage) {
+    let mut collector=crate::protocol::collect::ResponsesCollector::default();
+    let deadline=tokio::time::Instant::now()+remaining;
+    let result=loop {
+        let wait=deadline.saturating_duration_since(tokio::time::Instant::now()).min(idle);
+        let chunk=match tokio::time::timeout(wait,resp.chunk()).await {
+            Ok(Ok(chunk))=>chunk,
+            Ok(Err(_))=>break Err("Responses stream body read failed".to_string()),
+            Err(_)=>break Err("Responses stream collection deadline exceeded".to_string()),
+        };
+        let fed=match chunk {Some(chunk)=>collector.feed(&chunk),None=>break collector.finish()};
+        guard.usage=Usage {input:collector.observer.input,output:collector.observer.output};
+        if let Err(note)=fed {break Err(note);}
+        if collector.observer.done {break collector.finish();}
+    };
+    guard.usage=Usage {input:collector.observer.input,output:collector.observer.output};
+    let usage=guard.usage;
+    let fail=|note:String| {let mut invalid=invalid_buffer(note);invalid.4=usage;invalid};
+    let value=match result {Ok(v)=>v,Err(note)=>return fail(note)};
+    let converted=match crate::protocol::convert_response(crate::protocol::Protocol::Responses,client,&value) {
+        Ok(v)=>v,Err(note)=>return fail(conversion_fault(note)),
+    };
+    let bytes=match serde_json::to_vec(&converted) {Ok(b)=>b,Err(_)=>return fail("Invalid collected Responses JSON".into())};
+    if let Some((state,owner,pin))=provenance {
+        let mut artifacts=crate::protocol_sessions::ArtifactCollector::default();artifacts.value(&value);
+        if artifacts.persist(&state.conn(),owner,pin).is_err() {return fail("local_state: opaque artifact ownership could not be persisted".into());}
+    }
+    let response=Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE,"application/json")
+        .body(Body::from(bytes)).unwrap_or_else(|_|StatusCode::BAD_GATEWAY.into_response());
+    (response,usage.input.unwrap_or(0),usage.output.unwrap_or(0),None,usage)
+}
+
+async fn buffer_tool_response(mut resp:reqwest::Response,kind:crate::search_tools::ToolKind)->(Response,Option<i64>,Option<String>) {
+    let status=resp.status();let mut bytes=Vec::new();
+    loop {match resp.chunk().await {
+        Ok(Some(chunk))=>{if bytes.len().saturating_add(chunk.len())>16*1024*1024 {return (StatusCode::BAD_GATEWAY.into_response(),None,Some("Standalone tool body exceeds 16 MiB".into()));}bytes.extend_from_slice(&chunk);},
+        Ok(None)=>break,
+        Err(_)=>return (StatusCode::BAD_GATEWAY.into_response(),None,Some("Standalone tool response body interrupted".into())),
+    }}
+    let value:Value=match serde_json::from_slice(&bytes) {Ok(v)=>v,Err(_)=>return (StatusCode::BAD_GATEWAY.into_response(),None,Some("Invalid standalone tool JSON response".into()))};
+    match crate::search_tools::response_units(kind,status.as_u16(),&value) {
+        Ok(units)=>{let response=Response::builder().status(status).header(header::CONTENT_TYPE,"application/json").body(Body::from(bytes)).unwrap_or_else(|_|StatusCode::BAD_GATEWAY.into_response());(response,Some(units as i64),None)},
+        Err(note)=>(StatusCode::BAD_GATEWAY.into_response(),None,Some(note)),
+    }
 }
 
 /// 重排：整段读下来再回给客户端；上游 `document` 为 null 时按 index 回填请求里的原文。
@@ -2126,6 +2308,8 @@ struct RequestGuard {
     admission: Option<crate::admission::AdmissionPermit>,
     reservation: Option<i64>,
     billing_nonchat: bool,
+    request_billing: bool,
+    request_units: Option<i64>,
     usage: Usage,
     active_attempt:Option<(requests::AttemptArgs,i64)>,
     streamed: bool,
@@ -2151,6 +2335,8 @@ impl RequestGuard {
             admission: None,
             reservation: None,
             billing_nonchat: false,
+            request_billing: false,
+            request_units: None,
             usage: Usage::default(),
             active_attempt:None,
             streamed: false,
@@ -2171,7 +2357,8 @@ impl RequestGuard {
     }
     fn settle_billing(&mut self, outcome: &str) {
         if let Some(id)=self.reservation.take() {
-            if let Err(e)=crate::billing_writer::settle(&self.state,id,self.usage.input,self.usage.output.or_else(||self.billing_nonchat.then_some(0)),outcome) {
+            let result=if self.request_billing {crate::billing_writer::settle_request(&self.state,id,self.request_units,outcome)}else{crate::billing_writer::settle(&self.state,id,self.usage.input,self.usage.output.or_else(||self.billing_nonchat.then_some(0)),outcome)};
+            if let Err(e)=result {
                 // The durable hold remains reserved; it cannot be spent twice. Startup reconciles it.
                 tracing::error!(reservation_id=id,"Billing settlement pending reconciliation: {e}");
             }
@@ -2323,6 +2510,22 @@ mod tests {
         assert!(output_bound(&serde_json::json!({"max_output_tokens":0}),EndpointKind::Responses).is_err());
     }
     #[test]
+    fn input_additional_tools_cannot_hide_hosted_tools_or_provider_tool_search() {
+        for tool in [serde_json::json!({"type":"web_search"}),serde_json::json!({"type":"namespace","name":"hidden","tools":[{"type":"file_search"}]})] {
+            let body=serde_json::json!({"input":[{"type":"additional_tools","role":"developer","tools":[tool]}]});assert!(validate_native_cost_and_state(EndpointKind::Responses,&body).is_err());
+        }
+        let body=serde_json::json!({"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"function","name":"sum","parameters":{"type":"object"}}]}]});assert!(validate_native_cost_and_state(EndpointKind::Responses,&body).is_ok());
+        assert!(validate_native_cost_and_state(EndpointKind::Responses,&serde_json::json!({"input":[{"type":"tool_search_output","tools":[]}]})).is_err());
+    }
+    #[test]
+    fn subscription_context_bounds_do_not_invent_a_token_price() {
+        let mut body=serde_json::json!({"model":"m","input":[{"type":"reasoning","encrypted_content":"synthetic-opaque"}],"max_output_tokens":31});
+        assert!(billing_bound(&mut body,EndpointKind::Responses,None).is_err());
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Responses,None,Some((131072,4096))).unwrap(),(131072,31));
+        assert_eq!(body["max_output_tokens"],31);
+        assert!(billing_bound_with_context(&mut body,EndpointKind::Responses,None,Some((131072,30))).is_err());
+    }
+    #[test]
     fn native_usage_includes_cached_input_and_nested_final_response() {
         assert_eq!(usage_from_value(&serde_json::json!({"usage":{"input_tokens":3,"output_tokens":0,"cache_read_input_tokens":5,"cache_creation_input_tokens":7}})),(15,0));
         assert_eq!(usage_from_value(&serde_json::json!({"response":{"usage":{"input_tokens":8,"output_tokens":4}}})),(8,4));
@@ -2408,3 +2611,32 @@ mod tests {
         assert_eq!(EndpointKind::Rerank.as_str(), "/v1/rerank");
     }
 }
+    #[tokio::test]
+    async fn stream_only_responses_collect_json_without_waiting_for_eof_and_keep_failure_usage() {
+        use axum::routing::post;
+        let item=serde_json::json!({"type":"message","id":"msg_test","status":"completed","role":"assistant","content":[{"type":"output_text","text":"collected","annotations":[]}]});
+        let completed=format!("data: {}\n\ndata: {}\n\n",serde_json::json!({"type":"response.output_item.done","output_index":0,"item":item}),serde_json::json!({"type":"response.completed","response":{"id":"resp_test","object":"response","status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3}}}));
+        let failed=format!("data: {}\n\n",serde_json::json!({"type":"response.failed","response":{"status":"failed","usage":{"input_tokens":9,"output_tokens":2}}}));
+        for (wire,expected_ok,expected_input) in [(completed,true,7),(failed,false,9)] {
+            let app=axum::Router::new().route("/responses",post(move || {let wire=wire.clone();async move {
+                let stream=futures_util::stream::unfold(Some(wire),|chunk|async move {match chunk {Some(chunk)=>Some((Ok::<_,std::convert::Infallible>(Bytes::from(chunk)),None)),None=>{std::future::pending::<()>().await;None}}});
+                ([("content-type","text/event-stream")],Body::from_stream(stream))
+            }}));
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
+            let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
+            let response=reqwest::Client::new().post(format!("http://{address}/responses")).send().await.unwrap();
+            let dir=std::env::temp_dir().join(format!("tokengo-oauth-collect-{}",uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let state=crate::AppState::init(crate::Config{db_path:dir.join("state.db"),master_key_path:dir.join("master.key").to_string_lossy().into_owned(),..Default::default()}).unwrap();
+            let id=requests::start(&state.conn(),"responses","test",None,false).unwrap();
+            let mut guard=RequestGuard::new(state.clone(),id,now_ms());
+            let (out,input,output,error,usage)=tokio::time::timeout(Duration::from_secs(1),buffer_responses_stream(response,crate::protocol::Protocol::Chat,None,Duration::from_millis(300),Duration::from_millis(100),&mut guard)).await.unwrap();
+            assert_eq!(usage.input,Some(expected_input));assert_eq!(guard.usage.input,Some(expected_input));
+            if expected_ok {
+                assert!(error.is_none());assert_eq!((input,output),(7,3));
+                let bytes=axum::body::to_bytes(out.into_body(),65536).await.unwrap();let value:Value=serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(value["choices"][0]["message"]["content"],"collected");assert_eq!(value["usage"]["prompt_tokens"],7);
+            } else {assert!(error.is_some());assert_eq!(out.status(),StatusCode::BAD_GATEWAY);assert_eq!(usage.output,Some(2));}
+            drop(guard);server.abort();std::fs::remove_dir_all(dir).ok();
+        }
+    }

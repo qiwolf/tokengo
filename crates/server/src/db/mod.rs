@@ -169,6 +169,7 @@ mod tests {
             "users",
             "audit_events",
             "billing_prices",
+            "billing_request_prices",
             "billing_budgets",
             "billing_ledger",
             "billing_audit",
@@ -176,6 +177,10 @@ mod tests {
             "quota_events",
             "protocol_sessions",
             "protocol_artifacts",
+            "oauth_hosts",
+            "oauth_accounts",
+            "oauth_pending",
+            "oauth_channel_bindings",
         ];
         let actual: std::collections::BTreeSet<_> = got.iter().map(String::as_str).collect();
         let expected: std::collections::BTreeSet<_> = expected.into_iter().collect();

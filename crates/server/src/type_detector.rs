@@ -30,6 +30,7 @@ fn valid(kind: EndpointKind, body: &str) -> bool {
         EndpointKind::Messages=>crate::protocol::validate_response(crate::protocol::Protocol::Messages,&v).is_ok(),
         EndpointKind::Embeddings => v["data"].as_array().map(|a| a.iter().any(|x| x["embedding"].as_array().map(|e| !e.is_empty() && e.iter().all(|n| n.is_number())).unwrap_or(false))).unwrap_or(false),
         EndpointKind::Rerank => v["results"].as_array().map(|a| a.iter().any(|x| x["index"].is_u64() && x["relevance_score"].is_number())).unwrap_or(false),
+        EndpointKind::Search | EndpointKind::Fetch => false,
     }
 }
 
@@ -44,6 +45,7 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
             if r.kind.is_set() || r.kind_conflict { continue; }
             for id in r.channels {
                 let Some(row) = channels::get(&conn,id)? else { continue; };
+                if !crate::protocol_config::background_probe_allowed(&conn,id.0)? {continue;}
                 if crate::db::faults::has_fault(&conn,id.0,Some(&r.name))? {continue;}
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 format!("{:?}",row).hash(&mut hasher);

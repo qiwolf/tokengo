@@ -44,3 +44,6 @@ DISABLE_PROMPT_CACHING=1
 仓库外 `review/route-c/ops/client_chat_conversion.py` 在临时数据库、临时客户端 HOME/配置目录、固定合成密钥和 loopback mock 中运行，未访问生产来源或读取真实客户端密钥。外层 macOS sandbox 仅允许 loopback 网络并拒绝 securityd。Codex 内层 sandbox 与该外层 seatbelt 嵌套会报 `sandbox_apply: Operation not permitted`；测试关闭了内层 sandbox，仍保留外层隔离。这是受控工具执行环境配置，不是生产客户端 sandbox 建议。
 
 最终证据保存在仓库外 `review/route-c/evidence/{codex,claude}-chat-conversion-final.json`。通过条件同时要求：CLI exit 0、恰好两轮 Chat 上游请求、正确工具 ID、真实工具 stdout marker、最终答复 marker、无来源协议错误。只有最终文本或 HTTP 200 不算通过。
+
+
+转换到 Chat 的流式请求会显式发送 `stream_options.include_usage=true`，请求上游原生用量。仅收到模型实际报告的 meter 才标 reported；源仍未报告时保持 unknown，不用 Messages/Responses 转换目标的零占位值结算。原生 Chat 请求保持原样。

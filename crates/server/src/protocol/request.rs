@@ -543,6 +543,11 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
             result[key] = v.clone();
         }
     }
+    // Responses and Messages carry stream meters in their native terminal events.
+    // Ask a converted Chat source for its real meter instead of relying on target placeholders.
+    if to==Protocol::Chat && result["stream"]==true {
+        result["stream_options"]=json!({"include_usage":true});
+    }
     let mut cap = None;
     for key in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
         if let Some(v) = body.get(key) {
@@ -796,6 +801,9 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
         return vec![];
     }
     let mut notes = vec![];
+    if to==Protocol::Chat && body["stream"]==true {
+        notes.push("converted Chat stream requests source usage; missing source meters remain unknown");
+    }
     if from == Protocol::Responses {
         if body.get("client_metadata").is_some() {
             notes.push("client_metadata tracing omitted; values not forwarded or retained");

@@ -136,3 +136,10 @@ pub fn probe_endpoint(
         Protocol::Messages => EndpointKind::Messages,
     })
 }
+
+/// OAuth and standalone paid tools must use the authenticated, metered executor.
+pub fn background_probe_allowed(c:&rusqlite::Connection,id:i64)->db::Result<bool> {
+    let oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[id],|r|r.get(0))?;
+    let tools=crate::search_tools::load(c,id)?;
+    Ok(!oauth&&!tools.search&&!tools.fetch)
+}

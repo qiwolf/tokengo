@@ -1,6 +1,9 @@
 //! tokengo 服务端库。二进制入口只有 `main.rs`（起监听），实体都在这里，
 //! 方便集成测试直接构建整套 app。
 
+pub mod oauth;
+pub mod search_tools;
+pub mod source_rates;
 pub mod config;
 pub mod capability_detector;
 pub mod model_registry;
@@ -45,6 +48,8 @@ pub fn app(state: SharedState) -> Router {
         .nest("/api", routes::admin::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
+        .merge(routes::oauth::router())
+        .merge(search_tools::router())
         .merge(routes::billing::router())
         .merge(litellm_import::router())
         // 面板静态资源 + SPA 回退

@@ -4,6 +4,7 @@ use serde_json::Value;
 mod request;
 mod response;
 pub mod sse;
+pub mod collect;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
@@ -50,6 +51,13 @@ mod tests {
             assert_eq!(convert_request(p, p, &v).unwrap(), v);
             assert_eq!(convert_response(p, p, &v).unwrap(), v);
         }
+    }
+    #[test]
+    fn converted_chat_stream_requests_real_usage_but_native_stream_is_unchanged() {
+        for (source,body) in [(Protocol::Responses,json!({"model":"m","input":"hello","stream":true})),(Protocol::Messages,json!({"model":"m","messages":[{"role":"user","content":"hello"}],"max_tokens":31,"stream":true}))] {
+            let converted=convert_request(source,Protocol::Chat,&body).unwrap();assert_eq!(converted["stream_options"]["include_usage"],true);
+        }
+        let native=json!({"model":"m","messages":[{"role":"user","content":"hello"}],"stream":true});assert_eq!(convert_request(Protocol::Chat,Protocol::Chat,&native).unwrap(),native);
     }
     #[test]
     fn text_tools_and_results_round_trip_all_protocol_pairs() {

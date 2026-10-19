@@ -432,4 +432,6 @@ END;
     (27, include_str!("../admission.sql")),
     (28, include_str!("gateway_identity.sql")),
     (29, concat!(include_str!("protocols.sql"), "\n", include_str!("protocol_state.sql"))),
+    (30, include_str!("oauth.sql")),
+    (31, include_str!("search_billing.sql")),
 ];

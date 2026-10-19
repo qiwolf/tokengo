@@ -36,6 +36,8 @@ pub fn router() -> Router<SharedState> {
         .route("/messages", post(messages))
         .route("/embeddings", post(embeddings))
         .route("/rerank", post(rerank))
+        .route("/tools/search", post(search))
+        .route("/tools/fetch", post(fetch))
         .route("/models", get(models))
 }
 
@@ -126,6 +128,17 @@ async fn responses(
 ) -> Result<Response, ApiError> {
     forward_native(key,state,headers,peer,body,EndpointKind::Responses).await
 }
+async fn forward_tool(key:GatewayKey,state:SharedState,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes,endpoint:EndpointKind)->Result<Response,ApiError> {
+    let mut value:Value=serde_json::from_slice(&body).map_err(|_|ApiError::bad_request("Tool request requires valid JSON"))?;
+    let map=value.as_object_mut().ok_or_else(||ApiError::bad_request("Tool request requires a JSON object"))?;
+    let default=if endpoint==EndpointKind::Search {"deepseek-search"}else{"deepseek-fetch"};
+    let model=match map.get("model") {None=>default.to_string(),Some(Value::String(name)) if !name.trim().is_empty()&&name.len()<=256&&!name.chars().any(char::is_control)=>name.clone(),_=>return Err(ApiError::bad_request("Invalid tool route name"))};
+    if model_routes::is_auto(&model) {return Err(ApiError::bad_request("Search and Fetch require an explicit tool route"));}
+    crate::search_tools::normalize_request(endpoint.tool_kind().unwrap(),&value).map_err(ApiError::bad_request)?;
+    gateway::forward(state,ForwardRequest{endpoint,model,body:value,stream:false,client_ip:client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string())),session_namespace:key.namespace,auth:Some(key.auth),explicit_session:None,user_agent:headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string)}).await
+}
+async fn search(key:GatewayKey,State(state):State<SharedState>,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes)->Result<Response,ApiError>{forward_tool(key,state,headers,peer,body,EndpointKind::Search).await}
+async fn fetch(key:GatewayKey,State(state):State<SharedState>,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes)->Result<Response,ApiError>{forward_tool(key,state,headers,peer,body,EndpointKind::Fetch).await}
 async fn messages(
     MessagesKey(key): MessagesKey, State(state): State<SharedState>, headers: HeaderMap,
     peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,

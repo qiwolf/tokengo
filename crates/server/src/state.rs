@@ -47,6 +47,8 @@ impl ModelLoads {
 }
 
 pub struct AppState {
+    pub tool_rates: crate::source_rates::SourceRates,
+    pub oauth: crate::oauth::OAuthRuntime,
     pub admission: crate::admission::AdmissionState,
     pub auth_slots: Arc<tokio::sync::Semaphore>,
     pub model_loads:Arc<ModelLoads>,
@@ -208,6 +210,8 @@ impl AppState {
         }
 
         let state = Arc::new(Self {
+            tool_rates: Default::default(),
+            oauth: crate::oauth::OAuthRuntime::default(),
             admission: crate::admission::AdmissionState::default(),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             model_loads:Arc::new(ModelLoads::default()),
