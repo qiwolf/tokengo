@@ -235,16 +235,17 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     let save_policy=move |p:crate::model::AutoPolicy|{wasm_bindgen_futures::spawn_local(async move {match api::save_auto_policy(&p).await {Ok(())=>{policy.set(p);reload();},Err(e)=>ctx.say(e.message)}});};
     let move_model=move |name:String,up:bool|{wasm_bindgen_futures::spawn_local(async move {match api::move_model(&name,up).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
     let reset=move |name:String,id:Option<i64>|{if !web_sys::window().and_then(|w|w.confirm_with_message("重置冷却并允许立即试用？不会删除历史失败或评分。").ok()).unwrap_or(false){return;}wasm_bindgen_futures::spawn_local(async move {match api::reset_model_cooldown(&name,id).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
+    let toggle_model=move |name:String,enabled:bool|{wasm_bindgen_futures::spawn_local(async move {match api::set_model_enabled(&name,enabled).await{Ok(())=>{ctx.say(if enabled{"模型已启用"}else{"模型已停用"});reload();},Err(e)=>ctx.say(e.message)}});};
     let channel_name=move |id:i64|chans.get().iter().find(|c|c.id==id).map(|c|c.name.clone()).unwrap_or_else(||format!("渠道 #{id}"));
     view!{
         <div class="page model-observatory">
             <PageHead title="模型" desc="实时运行表现与自动选择"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
             {move ||err.get().map(|e|view!{<div class="banner bad">{e}</div>})}
             <section class="route-spotlight">
-                <div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div>
-                <div class="policy-controls">{[("sequence","顺序"),("balanced","均衡"),("fastest","最快"),("stable","最稳定")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
-                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
-                    <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button>
+                <div class="auto-header"><div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div><div class="auto-header-actions">                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
+                    <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button></div></div>
+                <div class="policy-controls">{[("sequence","顺序优先"),("balanced","轮流调用"),("fastest","速度优先"),("stable","稳定优先"),("idle","空闲优先")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
+
                 </div>
                 {move ||{
                     let a=auto.get();
@@ -252,7 +253,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     view!{<div class="route-selections">{[("chat","对话"),("embeddings","嵌入"),("rerank","重排")].into_iter().filter_map(|(kind,label)|{
                         let names=auto_list(&a,kind);if names.is_empty(){return None;}
                         let first=names[0].clone();let rest=names.join(" → ");
-                        Some(view!{<div class="route-selection"><small>{label}</small><b>{first}</b><span class="muted small">{move || match policy.get().strategy.as_str(){"sequence"=>"从第一模型开始，失败才切换","balanced"=>"轮流分配，失败换下一模型","fastest"=>"优先响应更快的模型",_=>"优先近期更稳定的模型"}}</span><details><summary>"候选顺序"</summary><p>{rest}</p></details></div>})
+                        Some(view!{<div class="route-selection"><small>{label}</small><b>{first}</b><span class="muted small">{move || match policy.get().strategy.as_str(){"sequence"=>"从第一模型开始，失败才切换","balanced"=>"轮流分配，失败换下一模型","fastest"=>"优先响应更快的模型","idle"=>"优先当前在途请求更少的模型",_=>"优先近期更稳定的模型"}}</span><details><summary>"候选顺序"</summary><p>{rest}</p></details></div>})
                     }).collect_view()}</div>}.into_any()
                 }}
             </section>
@@ -266,21 +267,21 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                 if list.is_empty(){return view!{<div class="model-empty">"当前分类暂无匹配模型"</div>}.into_any();}
                 list.into_iter().map(|r|{
                     let reorder_name=r.name.clone();let reorder_down=r.name.clone();let reset_name=r.name.clone();
+                    let toggle_name=r.name.clone();let model_enabled=r.enabled;
                     let key=r.name.clone();let opened=open.get().as_deref()==Some(&key);let s=r.runtime.clone();
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
-                    let status=if r.routed{"已配置"}else{"无可用渠道"};
+                    let status=if !r.enabled{"已停用"}else if r.routed{"已配置"}else{"无可用渠道"};
                     let source=kind_source_label(&r.kind_source);
                     let (context,context_title)=context_badge(&r);
-                    let channels=r.channels.iter().map(|id|channel_name(*id)).collect::<Vec<_>>().join("、");
+
                     let route_detail=chans.get().into_iter().filter(|c|r.declared_by.contains(&c.id)).map(|c|{
                         let upstream=c.models.iter().find(|m|tokengo_shared::same_model_name(&m.model,&r.name)).and_then(|m|m.upstream.clone()).unwrap_or(r.name.clone());format!("{} → {}",c.name,upstream)
                     }).collect::<Vec<_>>().join("\n");
-                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="score-number"><b>{score}</b><small>{confidence}</small></div></header>
+                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"已启用"}else{"已停用"}}</button><div class="score-number"><b>{score}</b><small>{confidence}</small></div></div></header>
                         <div class="model-telemetry"><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div>
-                        <div class="model-cooling">{r.cooldowns.iter().map(|c|{let id=c.channel_id;let name=r.name.clone();let remaining=(c.until_ms.max(c.lease_until)-updated.get()).max(0);view!{<div><span>{format!("{} · {} · 连续失败 {}",channel_name(id),if remaining>0{format!("冷却剩余 {}",fmt::span(remaining))}else if c.failures>0{"待试用".into()}else{"可用".into()},c.failures)}</span>{(c.failures>0).then(||view!{<button on:click=move |_|reset(name.clone(),Some(id))>"重置冷却"</button>})}</div>}}).collect_view()}</div>
+                        <div class="model-status-row"><div class="model-cooling">{r.declared_by.iter().map(|id|{let c=r.cooldowns.iter().find(|c|c.channel_id==*id);let failures=c.map(|c|c.failures).unwrap_or(0);let remaining=c.map(|c|(c.until_ms.max(c.lease_until)-updated.get()).max(0)).unwrap_or(0);let label=if remaining>0{format!("冷却剩余 {}",fmt::span(remaining))}else if failures>0{"待试用".into()}else if r.channels.contains(id){"可用".into()}else{"未启用".into()};view!{<div><span>{format!("{} · {} · 连续失败 {}",channel_name(*id),label,failures)}</span></div>}}).collect_view()}</div><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
-                        <footer><span>{channels}</span><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></footer>
                         {opened.then(||view!{<div class="model-detail-grid">
                             <section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>

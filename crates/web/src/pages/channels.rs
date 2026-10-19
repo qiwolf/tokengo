@@ -45,6 +45,11 @@ const TAB_BASIC: &str = "basic";
 const TAB_HEADERS: &str = "headers";
 const TAB_MODELS: &str = "models";
 
+fn catalog_model_kind<'a>(m:&'a UpstreamModel,known:&'a [crate::model::NameRoute])->&'a str {
+ let kind=m.kind.as_deref().filter(|k|!k.is_empty()).or_else(||known.iter().find(|r|tokengo_shared::same_model_name(&r.name,&m.id)).map(|r|r.kind.as_str())).unwrap_or("");
+ match kind {"chat"|"embeddings"|"rerank"|"image"|"audio"|"video"=>kind,_=>"unknown"}
+}
+
 /// 按关键字过滤上游报的模型名（大小写不敏感），最多取 `limit` 个。
 pub(crate) fn filter_catalog(all: &[UpstreamModel], filter: &str, limit: usize) -> Vec<UpstreamModel> {
     let needle = filter.trim().to_lowercase();
@@ -192,8 +197,14 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 打开弹窗先读库把它显示出来 —— 不用为了看一眼清单又去骚扰一次上游。
     let cat_at = RwSignal::new(0i64);
     let pull_filter = RwSignal::new(String::new());
+    let catalog_kind=RwSignal::new("all".to_string());
+    let known_kinds=RwSignal::new(Vec::<crate::model::NameRoute>::new());
+    leptos::task::spawn_local(async move {if let Ok(r)=api::model_routes().await {known_kinds.set(r.models);}});
+    let visible_catalog=move ||{
+        let known=known_kinds.get();let selected=catalog_kind.get();
+        pulled.get().into_iter().filter(|m|selected=="all" || catalog_model_kind(m,&known)==selected).collect::<Vec<_>>()
+    };
     // 「加一个自己的名字」输入框里正打着的字
-    let manual = RwSignal::new(String::new());
     // 模型那一段的结构变化（勾/取消/加/删/拉到清单）后 +1 —— 只有它会重排那一列。
     // **打字不重排**，否则正在输入的框会丢焦点。
     let mver = RwSignal::new(0u32);
@@ -228,7 +239,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         cat_at.set(0);
         pull_msg.set(None);
         pull_filter.set(String::new());
-        manual.set(String::new());
         m_open.set(None);
         mver.update(|v| *v += 1);
     };
@@ -582,44 +592,14 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
             match api::pull_channel_models(id).await {
                 Ok(r) => {
                     pulling.set(false);
-                    let mut s = String::new();
-                    s.push_str(if r.ok { "问到清单了" } else { "没问到清单" });
-                    if r.ok {
-                        s.push_str(&format!("：{} 个模型", r.count));
-                    }
-                    if let Some(u) = &r.url {
-                        s.push_str(&format!("；打的地址 {u}"));
-                    }
-                    if let Some(code) = r.http_status {
-                        s.push_str(&format!("；HTTP {code}"));
-                    }
-                    if let Some(ms) = r.latency_ms {
-                        s.push_str(&format!("；{}", fmt::dur(ms)));
-                    }
-                    if let Some(n) = &r.note {
-                        // 成功时 note 是"拉到 N 个模型名"，前面写过了
-                        if !(r.ok && n.starts_with("拉到")) {
-                            s.push_str(&format!("；{n}"));
-                        }
-                    }
+                    let mut s=if r.ok {format!("已获取 {} 个模型",r.count)}else{"获取失败".into()};
                     if r.ok {
                         cat_at.set(r.fetched_at);
-                        s.push_str("；已记住这一份：下次打开这条渠道不用再问一遍");
-                        // 上游改名/下线是常事，一次问答看不出漂移 —— 把它跟上次的比出来。
-                        if !r.added.is_empty() {
-                            s.push_str(&format!(
-                                "；比上次多了 {}：{}",
-                                r.added.len(),
-                                r.added.join("、")
-                            ));
-                        }
-                        if !r.removed.is_empty() {
-                            s.push_str(&format!(
-                                "；比上次少了 {}：{}（上游可能改名或下线了）",
-                                r.removed.len(),
-                                r.removed.join("、")
-                            ));
-                        }
+                        if let Some(ms)=r.latency_ms{s.push_str(&format!(" · {}",fmt::dur(ms)));}
+                        if !r.added.is_empty() || !r.removed.is_empty(){s.push_str(&format!(" · 新增 {} / 减少 {}",r.added.len(),r.removed.len()));}
+                    } else {
+                        if let Some(code)=r.http_status{s.push_str(&format!(" · HTTP {code}"));}
+                        if let Some(note)=&r.note{s.push_str(&format!("：{note}"));}
                     }
                     pull_msg.set(Some((s, r.ok)));
                     pull_filter.set(String::new());
@@ -647,7 +627,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 「全选当前显示的」：把清单里现在显示的那些名字都加进模型表。
     let select_shown = move |_| {
         let names: Vec<String> =
-            filter_catalog(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT)
+            filter_catalog(&visible_catalog(), &pull_filter.get_untracked(), SHOW_LIMIT)
                 .into_iter()
                 .map(|m| m.id)
                 .collect();
@@ -672,7 +652,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 「取消当前显示的勾选」：只动清单里这次报的、现在显示着的那些。
     let unselect_shown = move |_| {
         let names: Vec<String> =
-            filter_catalog(&pulled.get_untracked(), &pull_filter.get_untracked(), SHOW_LIMIT)
+            filter_catalog(&visible_catalog(), &pull_filter.get_untracked(), SHOW_LIMIT)
                 .into_iter()
                 .map(|m| m.id)
                 .collect();
@@ -690,29 +670,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         } else {
             ctx.say(format!("取消了 {removed} 条（这些名字这条渠道不再认）"));
         }
-    };
-
-    // 「加一个自己的名字」：客户端打的名字跟上游不一样时用（比如虚拟组名 auto）。
-    let add_manual = move |_| {
-        let name = manual.get_untracked().trim().to_string();
-        if name.is_empty() {
-            ctx.say("先填一个客户端里写的名字");
-            return;
-        }
-        let added = {
-            let mut v = f_models.get_untracked();
-            let ok = add_mapping(&mut v, &name);
-            f_models.set(v);
-            ok
-        };
-        if !added {
-            ctx.say(format!("「{name}」已经在模型表里了"));
-            return;
-        }
-        manual.set(String::new());
-        m_open.set(Some(name.clone()));
-        mver.update(|v| *v += 1);
-        ctx.say(format!("加了「{name}」—— 它发给上游的名字在「详情」里填（不填就同名发出去）"));
     };
 
     view! {
@@ -884,7 +841,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                 };
                 view! {
                     <div class="modal-backdrop">
-                        <div class="modal">
+                        <div class="modal channel-editor">
                             <div class="modal-head">
                                 <h2>{if editing { "编辑渠道" } else { "新建渠道" }}</h2>
                                 <span class="muted small">
@@ -1089,6 +1046,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 })
                                         }}
 
+                                        <nav class="catalog-kind-tabs">{[("all","全部"),("chat","对话"),("embeddings","嵌入"),("rerank","重排"),("image","图像"),("audio","音频"),("video","视频"),("unknown","待识别")].into_iter().map(|(k,label)|view!{<button class:active=move ||catalog_kind.get()==k on:click=move |_|catalog_kind.set(k.into())>{label}<small>{move ||{let known=known_kinds.get();pulled.get().iter().filter(|m|k=="all"||catalog_model_kind(m,&known)==k).count()}}</small></button>}).collect_view()}</nav>
                                         <div class="pull-head">
                                             <input
                                                 type="text"
@@ -1096,13 +1054,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 placeholder="按关键字过滤，如 deepseek"
                                                 on:input=move |ev| pull_filter.set(event_target_value(&ev))
                                             />
-                                            <button class="ghost" on:click=select_shown>"全选当前显示的"</button>
-                                            <button class="ghost" on:click=unselect_shown>"取消当前显示的勾选"</button>
+                                            <button class="ghost" on:click=select_shown>"全选当前"</button>
+                                            <button class="ghost" on:click=unselect_shown>"取消当前"</button>
                                             <span class="muted small">
                                                 {move || {
                                                     let total = pulled.get().len();
                                                     let shown = filter_catalog(
-                                                            &pulled.get_untracked(),
+                                                            &visible_catalog(),
                                                             &pull_filter.get_untracked(),
                                                             SHOW_LIMIT,
                                                         )
@@ -1111,7 +1069,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                     // 所有勾过的名字（含 auto 这类不在清单里的），于是「勾了 2 个」
                                                     // 会显示成「认 3 个」（用户 2026-10-18 报的）。
                                                     let shown_names = filter_catalog(
-                                                        &pulled.get_untracked(),
+                                                        &visible_catalog(),
                                                         &pull_filter.get_untracked(),
                                                         SHOW_LIMIT,
                                                     );
@@ -1153,7 +1111,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 // 结构性的东西：清单 + 过滤 + mver（勾/取消/加/删之后重排）。
                                                 // 打字**不**在这儿重排 —— 输入框在「详情」里，重排会丢焦点。
                                                 mver.get();
-                                                let catalog = pulled.get();
+                                                let catalog = visible_catalog();
                                                 let filter = pull_filter.get();
                                                 // 这份清单只放**上游报回来的名字**（用户 2026-10-18：
                                                 // 上游没有的名字不许混进来 —— 虚拟组名 auto 这类会让人
@@ -1166,7 +1124,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 if names.is_empty() {
                                                     return view! {
                                                         <p class="muted small">
-                                                            "还没有模型名。点上面的「获取上游模型」，或者用下面「加一个自己的名字」自己填一个。"
+                                                            "还没有模型名，请先获取上游模型。"
                                                         </p>
                                                     }.into_any();
                                                 }
@@ -1184,15 +1142,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let n_ck = name.clone();
                                                         let n_add = name.clone();
                                                         let n_del_ck = name.clone();
-                                                        let n_del_btn = name.clone();
                                                         let n_open = name.clone();
                                                         let n_close_btn = name.clone();
                                                         let n_close_body = name.clone();
                                                         let n_field = name.clone();
-                                                        let n_up = name.clone();
                                                         let n_vis_ck = name.clone();
                                                         let n_vis_ch = name.clone();
-                                                        let n_drop = name.clone();
                                                         let n_test = name.clone();
                                                         let cur = f_models
                                                             .get_untracked()
@@ -1200,8 +1155,6 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                             .find(|m| m.model.trim() == name.trim());
                                                         let cur_up =
                                                             cur.as_ref().and_then(|m| m.upstream.clone()).unwrap_or_default();
-                                                        let cur_drop =
-                                                            cur.as_ref().map(|m| m.drop_fields.clone()).unwrap_or_default();
                                                         let open_me = move |_| {
                                                             if m_open.get_untracked().as_deref()
                                                                 == Some(n_open.as_str())
@@ -1326,12 +1279,9 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                     // 里面的 on:input 是 move 闭包，不克隆的话
                                                                     // 这个块就成 FnOnce 了（Leptos 要它能反复跑）。
                                                                     let n_field = n_field.clone();
-                                                                    let n_up = n_up.clone();
                                                                     let n_vis_ck = n_vis_ck.clone();
                                                                     let n_vis_ch = n_vis_ch.clone();
-                                                                    let n_drop = n_drop.clone();
                                                                     let n_test = n_test.clone();
-                                                                    let n_del_btn = n_del_btn.clone();
                                                                     // 箭头右边那个名字要跟着输入框走 —— 用一个只更新
                                                                     // 这个文本节点的闭包，别让它把整块详情重排（会丢焦点）
                                                                     let map_field = n_field.clone();
@@ -1352,28 +1302,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                     }}
                                                                                 </code>
                                                                             </div>
-                                                                            <label class="m-f">
-                                                                                <span>"上游实际叫的名字"</span>
-                                                                                <input type="text" prop:value=cur_up.clone()
-                                                                                    placeholder="不填 = 跟客户端打的一样"
-                                                                                    on:input=move |ev| {
-                                                                                        let s = event_target_value(&ev);
-                                                                                        f_models
-                                                                                            .update(|v| {
-                                                                                                if let Some(x) = v
-                                                                                                    .iter_mut()
-                                                                                                    .find(|x| x.model.trim() == n_up.trim())
-                                                                                                {
-                                                                                                    x.upstream = if s.trim().is_empty() {
-                                                                                                        None
-                                                                                                    } else {
-                                                                                                        Some(s)
-                                                                                                    };
-                                                                                                }
-                                                                                            });
-                                                                                    } />
-                                                                            </label>
-                                                                            <RegistryIdentity channel=match form.get_untracked() { Form::Edit(id)=>Some(id), _=>None } model=n_field.clone() upstream=cur_up.clone() ctx=ctx />
+                                                                            <ContextCapacity channel=match form.get_untracked() { Form::Edit(id)=>Some(id), _=>None } model=n_field.clone() upstream=cur_up.clone() ctx=ctx />
                                                                             <div class="m-f">
                                                                                 <span>"能看图"</span>
                                                                                 <label class="pick" title="这个模型收不收得下图片（带图的请求只发给勾了的渠道）">
@@ -1444,38 +1373,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                     _ => ().into_any(),
                                                                                 }
                                                                             }}
-                                                                            <label class="m-f">
-                                                                                <span>"要丢的字段"</span>
-                                                                                <input type="text" prop:value=cur_drop.clone()
-                                                                                    placeholder="留空 = 一个都不丢（如 reasoning_effort）"
-                                                                                    title="发上游之前跟这个模型名一起把这些字段删掉：有的上游收下参数却直接回 400（opencode 的 beam-free 不认 reasoning_effort），不删每次都会失败。多个用逗号分隔；只在顶层删，别的一个字节都不动。"
-                                                                                    on:input=move |ev| {
-                                                                                        let s = event_target_value(&ev);
-                                                                                        f_models
-                                                                                            .update(|v| {
-                                                                                                if let Some(x) = v
-                                                                                                    .iter_mut()
-                                                                                                    .find(|x| x.model.trim() == n_drop.trim())
-                                                                                                {
-                                                                                                    x.drop_fields = s;
-                                                                                                }
-                                                                                            });
-                                                                                    } />
-                                                                            </label>
-                                                                            <div class="m-actions">
-                                                                                <button class="ghost danger" on:click=move |_| {
-                                                                                    f_models
-                                                                                        .update(|v| {
-                                                                                            drop_mapping(v, &n_del_btn);
-                                                                                        });
-                                                                                    m_open.set(None);
-                                                                                    mver.update(|v| *v += 1);
-                                                                                    ctx.say("删掉了这一条 —— 记得点「保存」");
-                                                                                }>"删掉这一条"</button>
-                                                                                <span class="muted small">
-                                                                                    "客户端名字在这儿改不了：要换名字就删掉这条、用下面「加一个自己的名字」再加一条。"
-                                                                                </span>
-                                                                            </div>
+
                                                                         </div>
                                                                     }.into_any()
                                                                 }}
@@ -1488,32 +1386,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             }}
                                         </div>
 
-                                        <section class="m-list">
-                                            <h3>"已保存的自定义映射 · 上下文"</h3>
-                                            <small>"不混入上游清单；配置立即保存，关闭渠道表单不会撤销上下文设置。"</small>
-                                            {move || {
-                                                mver.get();
-                                                let catalog=pulled.get_untracked();
-                                                let channel=match form.get_untracked() {Form::Edit(id)=>Some(id),_=>None};
-                                                f_models.get_untracked().into_iter().filter(|m|!catalog.iter().any(|e|e.id==m.model)).map(|m| {
-                                                    view!{<details><summary>{format!("{} → {} · 上下文详情",m.model,m.upstream.as_deref().filter(|s|!s.trim().is_empty()).unwrap_or(&m.model))}</summary>
-                                                        <RegistryIdentity channel=channel model=m.model upstream=m.upstream.unwrap_or_default() ctx=ctx />
-                                                    </details>}
-                                                }).collect_view()
-                                            }}
-                                        </section>
-                                        <div class="pull-bar">
-                                            <input
-                                                type="text"
-                                                prop:value=move || manual.get()
-                                                placeholder="客户端里写的名字，如 auto"
-                                                on:input=move |ev| manual.set(event_target_value(&ev))
-                                            />
-                                            <button class="ghost" on:click=add_manual>"加一个自己的名字"</button>
-                                            <span class="muted small">
-                                                "客户端打的名字跟上游不一样时用它（比如虚拟组名 auto）—— 加完在「详情」里填上游实际叫什么。"
-                                            </span>
-                                        </div>
+
+
                                     }.into_any()
                                 }}
                             </div>
@@ -1663,20 +1537,19 @@ mod tests {
 // ─────────── 渠道页加模型 = 顺手建组（2026-10-18，按用户要求改） ───────────
 
 #[component]
-fn RegistryIdentity(channel: Option<i64>, model: String, upstream: String, ctx: Ctx) -> impl IntoView {
+fn ContextCapacity(channel: Option<i64>, model: String, upstream: String, ctx: Ctx) -> impl IntoView {
     let upstream = if upstream.trim().is_empty() { model.clone() } else { upstream };
     let model = StoredValue::new(model);
     let upstream = StoredValue::new(upstream);
-    let query = RwSignal::new(String::new());
     let data = RwSignal::new(serde_json::Value::Null);
     let capacity = RwSignal::new(String::new());
     let message = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let load = move || {
-        let Some(id) = channel else { message.set("请先保存渠道与模型映射，再打开详情关联".into()); return; };
+        let Some(id) = channel else { message.set("请先保存模型映射，再设置上下文".into()); return; };
         busy.set(true);
         leptos::task::spawn_local(async move {
-            match api::registry(id, &model.get_value(), &upstream.get_value(), &query.get_untracked()).await {
+            match api::context_capacity(id, &model.get_value(), &upstream.get_value()).await {
                 Ok(v) => { capacity.set(v["override_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default()); data.set(v); message.set(String::new()); },
                 Err(e) => { ctx.note_err(&e); message.set(e.message); }
             }
@@ -1684,16 +1557,6 @@ fn RegistryIdentity(channel: Option<i64>, model: String, upstream: String, ctx: 
         });
     };
     load();
-    let save = move |identity: Option<String>| {
-        let Some(id) = channel else { return; };
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            match api::associate_registry(id, &model.get_value(), &upstream.get_value(), identity.as_deref()).await {
-                Ok(()) => load(),
-                Err(e) => { ctx.note_err(&e); message.set(e.message); busy.set(false); }
-            }
-        });
-    };
     let save_capacity = move |clear:bool| {
         let Some(id)=channel else {return;};
         let tokens=if clear {None} else {
@@ -1710,34 +1573,14 @@ fn RegistryIdentity(channel: Option<i64>, model: String, upstream: String, ctx: 
     };
     view! {
         <div class="m-f">
-            <span>"渠道上下文 · 用户确认"</span>
-            <small>"按渠道与实际发送的上游名保存，所有指向同一上游的别名共用；优先于上游声明与登记标称值。只填写已确认的容量，不推测模型身份。"</small>
+            <span>"上下文长度（tokens）"</span>
             <p>{move || data.get()["override_tokens"].as_i64().map(|n|format!("当前用户确认：{n} tokens（优先）")).unwrap_or_else(||"尚无用户确认容量".into())}</p>
             <div class="row">
                 <input type="number" min="1" step="1" placeholder="正整数 tokens" prop:value=move ||capacity.get() on:input=move |ev|capacity.set(event_target_value(&ev)) />
-                <button disabled=move ||busy.get() on:click=move |_|save_capacity(false)>"保存用户确认容量"</button>
-                <button disabled=move ||busy.get() || data.get()["override_tokens"].is_null() on:click=move |_|save_capacity(true)>"清除用户确认容量"</button>
-            </div>
-            <span>"标称上下文 · models.dev 身份关联"</span>
-            <small>"只关联此渠道已保存的客户端名与上游映射，不改实际发送的上游名；修改上游后请先保存并重开详情。登记值不是渠道容量实测，渠道声明优先。"</small>
-            <p>{move || {
-                let d=data.get();
-                let identity=d["identity"].as_str().unwrap_or("未人工关联（仅精确上游 ID 匹配）");
-                let tokens=d["tokens"].as_i64().map(|n|format!("{n} tokens")).unwrap_or_else(||"未知".into());
-                let declared=d["upstream_context"].as_i64().map(|n|format!("；渠道上游声明 {n} tokens（优先）")).unwrap_or_default();
-                format!("关联身份：{identity}；models.dev 标称：{tokens}{declared}；{}",d["reason"].as_str().unwrap_or("尚未加载"))
-            }}</p>
-            <div class="row">
-                <input type="search" placeholder="搜索登记精确 ID（最多显示 100 项）" prop:value=move ||query.get() on:input=move |ev|query.set(event_target_value(&ev)) />
-                <button disabled=move ||busy.get() on:click=move |_|load()>"搜索登记 ID"</button>
-                <button disabled=move ||busy.get() || data.get()["identity"].is_null() on:click=move |_|save(None)>"清除关联"</button>
+                <button disabled=move ||busy.get() on:click=move |_|save_capacity(false)>"保存"</button>
+                <button disabled=move ||busy.get() || data.get()["override_tokens"].is_null() on:click=move |_|save_capacity(true)>"清除"</button>
             </div>
             <p class="bad-text">{move ||message.get()}</p>
-            <div class="registry-results">{move || data.get()["entries"].as_array().cloned().unwrap_or_default().into_iter().map(|entry| {
-                let id=entry["id"].as_str().unwrap_or_default().to_string();
-                let label=format!("关联 {} · {} tokens",id,entry["tokens"]);
-                view!{<button disabled=move ||busy.get() on:click=move |_|save(Some(id.clone()))>{label}</button>}
-            }).collect_view()}</div>
         </div>
     }
 }

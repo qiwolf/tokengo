@@ -75,13 +75,14 @@ fn router_inner() -> Router<SharedState> {
         .route("/channels/{id}/models", post(channels_models))
         .route("/channels/{id}/catalog", get(channel_catalog))
         .route("/channels/{id}/registry", get(registry_get).put(registry_set))
-        .route("/channels/{id}/context", put(context_override_set))
+        .route("/channels/{id}/context", get(context_override_get).put(context_override_set))
         .route("/channels/{id}/vision-test", post(channels_vision_test))
         // 「模型名 → 用途」：面板「模型」页以渠道里勾过的名字为行，用途读这张表
         .route("/channels/{id}/move", post(channels_move))
         .route("/model-kinds", get(model_kinds_list))
         .route("/auto-policy", get(auto_policy_get).put(auto_policy_save))
         .route("/model-order/move", post(model_order_move))
+        .route("/model-enabled", put(model_enabled_save))
         .route("/model-cooldown/reset", post(model_cooldown_reset))
         .route("/models/{name}/kind", put(models_set_kind))
         // 面板「模型」页要的全部事实（一名字一行 + 它后面那串渠道 + 路由状态 + auto 的候选）。
@@ -387,6 +388,12 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.models.iter().any(|m|m.upstream.as_deref().is_some_and(|u|!u.trim().is_empty() && u.trim()!=m.model.trim())) {
+        return Err(ApiError::bad_request("不支持自定义模型映射，请使用上游原名"));
+    }
+    if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
+        return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
+    }
     let conn = state.conn();
     // 四条写入（主行 + 密钥 + 请求头 + 模型名）必须一起成或一起败，
     // 否则会留下"名字在、请求头丢了"的半截渠道。
@@ -420,6 +427,12 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.models.iter().any(|m|m.upstream.as_deref().is_some_and(|u|!u.trim().is_empty() && u.trim()!=m.model.trim())) {
+        return Err(ApiError::bad_request("不支持自定义模型映射，请使用上游原名"));
+    }
+    if body.models.iter().any(|m|tokengo_shared::normalize_model_name(&m.model)=="auto") {
+        return Err(ApiError::bad_request("auto 是自动路由入口，不能保存为渠道模型，请勾选真实模型"));
+    }
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
     crate::db::in_tx(&conn, |c| {
@@ -761,6 +774,10 @@ fn registry_mapping(conn: &rusqlite::Connection, id: i64, model: &str, upstream:
 
 #[derive(Deserialize)]
 struct ContextOverrideWrite { model: String, upstream: String, tokens: Option<i64> }
+async fn context_override_get(_auth:PanelAuth,State(state):State<SharedState>,Path(id):Path<i64>,Query(query):Query<RegistryQuery>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();let mapping=registry_mapping(&c,id,&query.model,&query.upstream)?;
+ Ok(Json(serde_json::json!({"override_tokens":crate::model_registry::context_override(&c,tokengo_shared::ChannelId(id),&mapping)?})))
+}
 async fn context_override_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<ContextOverrideWrite>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn=state.conn();
     let mapping=registry_mapping(&conn,id,&body.model,&body.upstream)?;
@@ -834,6 +851,7 @@ async fn channel_catalog(
         "models": entries.iter().map(|e| e.model.clone()).collect::<Vec<_>>(),
         "info": entries.iter().map(|e| serde_json::json!({
             "id": e.model,
+            "kind": e.kind,
             "owned_by": e.owned_by,
             "context_window": e.context_window,
             "price_note": e.price_note,
@@ -1069,6 +1087,13 @@ fn extract_reply(body: &str) -> String {
 /// 对外清单按模型组算，两处各算各的就会漂移（v0.11.0 起只有这一份）。
 ///
 /// `auto` 三类的候选各给一份：面板上点开 auto 就能看见「这一刻会挑中谁」。
+#[derive(Deserialize)]struct ModelEnabledBody {model:String,enabled:bool}
+async fn model_enabled_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<ModelEnabledBody>)->Result<Json<serde_json::Value>,ApiError>{
+ let c=state.conn();if model_routes::routes_for(&c,&body.model)?.is_none(){return Err(ApiError::not_found("模型未勾选"));}
+ model_routes::set_enabled(&c,&body.model,body.enabled)?;
+ Ok(Json(serde_json::json!({"ok":true,"enabled":body.enabled})))
+}
+
 async fn auto_policy_get(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();Ok(Json(serde_json::json!({"policy":crate::db::policy::get(&c)?,"order":crate::db::policy::ordered(&c)?})))}
 async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
 #[derive(Deserialize)]struct OrderMove{model:String,up:bool}
@@ -1091,6 +1116,7 @@ async fn model_routes_list(
             names.retain(|n|model_routes::channels_for(&conn,n).unwrap_or_default().iter().any(|c|crate::db::policy::peek(&conn,c.id.0,n,c.upstream_model(n),now_ms()).ok().flatten().is_none()));
             let mut p=crate::db::policy::get(&conn).unwrap_or_default();p.explore=false;
             let _=crate::db::policy::rank(&conn,&mut names,&p,state.auto_sequence.load(std::sync::atomic::Ordering::Relaxed),99);
+            if p.strategy=="idle" {state.model_loads.preview(&mut names);}
             names
         };
         serde_json::json!({
@@ -1114,6 +1140,7 @@ async fn model_routes_list(
             };
             serde_json::json!({
                 "name": r.name,
+                "enabled": r.enabled,
                 "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),
                 "score_window_ms": crate::db::scores::WINDOW_MS,

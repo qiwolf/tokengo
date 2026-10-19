@@ -357,4 +357,17 @@ END;
         channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
         upstream_model TEXT NOT NULL, context_window INTEGER NOT NULL CHECK(context_window>0),
         PRIMARY KEY(channel_id,upstream_model));"#),
+    (19,r#"
+DELETE FROM channel_models WHERE LOWER(TRIM(model_name))='auto';
+DELETE FROM registry_associations WHERE LOWER(TRIM(model_name))='auto';
+DELETE FROM model_type_checks WHERE LOWER(TRIM(model_name))='auto';
+DELETE FROM model_vision_checks WHERE LOWER(TRIM(model_name))='auto';
+"#),
+    (20,r#"
+DELETE FROM registry_associations;
+DELETE FROM model_type_checks WHERE EXISTS (SELECT 1 FROM channel_models m WHERE m.channel_id=model_type_checks.channel_id AND m.model_name=model_type_checks.model_name AND TRIM(COALESCE(m.upstream_model,''))<>'' AND TRIM(m.upstream_model)<>TRIM(m.model_name));
+DELETE FROM model_vision_checks WHERE EXISTS (SELECT 1 FROM channel_models m WHERE m.channel_id=model_vision_checks.channel_id AND m.model_name=model_vision_checks.model_name AND TRIM(COALESCE(m.upstream_model,''))<>'' AND TRIM(m.upstream_model)<>TRIM(m.model_name));
+DELETE FROM channel_models WHERE TRIM(COALESCE(upstream_model,''))<>'' AND TRIM(upstream_model)<>TRIM(model_name);
+UPDATE channel_models SET upstream_model=NULL;
+"#),
 ];
