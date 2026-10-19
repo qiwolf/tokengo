@@ -330,13 +330,22 @@ pub async fn settings() -> Result<SettingsResp, ApiErr> {
     typed("GET", "/api/settings", None).await
 }
 
-pub async fn set_gateway_key(key: &str) -> Result<(), ApiErr> {
-    call("PUT", "/api/settings", Some(json!({ "gateway_key": key }))).await.map(|_| ())
+pub async fn gateway_keys() -> Result<Vec<GatewayKey>, ApiErr> {
+    let r: GatewayKeysResp = typed("GET", "/api/gateway-keys", None).await?;
+    Ok(r.keys)
 }
 
-/// 取对外 key 的明文（面板「复制」用）。
-pub async fn reveal_gateway_key() -> Result<String, ApiErr> {
-    let v = call("GET", "/api/settings/gateway-key", None).await?;
+pub async fn create_gateway_key(name: &str) -> Result<GatewayKey, ApiErr> {
+    typed("POST", "/api/gateway-keys", Some(json!({ "name": name }))).await
+}
+
+pub async fn delete_gateway_key(id: i64) -> Result<(), ApiErr> {
+    call("DELETE", &format!("/api/gateway-keys/{id}"), None).await.map(|_| ())
+}
+
+/// Only a user-requested copy fetches plaintext; lists contain metadata only.
+pub async fn reveal_gateway_key(id: i64) -> Result<String, ApiErr> {
+    let v = call("GET", &format!("/api/gateway-keys/{id}/reveal"), None).await?;
     v.get("gateway_key")
         .and_then(|x| x.as_str())
         .map(str::to_string)
@@ -344,13 +353,6 @@ pub async fn reveal_gateway_key() -> Result<String, ApiErr> {
             message: "服务端没回 key".into(),
             status: 0,
         })
-}
-
-pub async fn generate_gateway_key() -> Result<String, ApiErr> {
-    #[derive(Deserialize)]
-    struct R { gateway_key: String }
-    let r: R = typed("POST", "/api/settings/generate-gateway-key", None).await?;
-    Ok(r.gateway_key)
 }
 
 // ───────────────────────── 账目维护 ─────────────────────────

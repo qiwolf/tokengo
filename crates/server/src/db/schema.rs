@@ -370,4 +370,18 @@ DELETE FROM model_vision_checks WHERE EXISTS (SELECT 1 FROM channel_models m WHE
 DELETE FROM channel_models WHERE TRIM(COALESCE(upstream_model,''))<>'' AND TRIM(upstream_model)<>TRIM(model_name);
 UPDATE channel_models SET upstream_model=NULL;
 "#),
+    (21, r#"
+CREATE TABLE gateway_keys (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ name TEXT NOT NULL, hint TEXT NOT NULL, created_at_ms INTEGER NOT NULL,
+ key_hash TEXT NOT NULL, nonce BLOB, cipher BLOB,
+ selector TEXT UNIQUE, is_default INTEGER NOT NULL DEFAULT 0,
+ legacy_sealed TEXT);
+CREATE UNIQUE INDEX gateway_keys_default ON gateway_keys(is_default) WHERE is_default=1;
+INSERT INTO gateway_keys(name,hint,created_at_ms,key_hash,is_default,legacy_sealed)
+ SELECT 'Legacy', 'Legacy key (hash only; cannot reveal)', CAST(strftime('%s','now') AS INTEGER)*1000,
+ value, 1, (SELECT value FROM settings WHERE key='gateway_key_sealed')
+ FROM settings WHERE key='gateway_key_hash' AND value<>'';
+DELETE FROM settings WHERE key IN ('gateway_key_hash','gateway_key_sealed');
+"#),
 ];

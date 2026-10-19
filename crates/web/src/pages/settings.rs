@@ -1,7 +1,4 @@
-//! 设置：对外 key、面板口令、退出。
-//!
-//! 对外 key 是**客户端的凭证**，改了要同步改客户端 —— 保存按钮旁边把这句话写明，
-//! 不然会有人手一滑把在跑的客户端全打 401。
+//! 设置：对外密钥、面板口令与账目维护。
 
 use leptos::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -49,11 +46,143 @@ use crate::pages::PageHead;
 use crate::Ctx;
 
 #[component]
+fn GatewayKeys(ctx: Ctx) -> impl IntoView {
+    let keys = RwSignal::new(Vec::<crate::model::GatewayKey>::new());
+    let name = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let loaded = RwSignal::new(false);
+    let error = RwSignal::new(None::<String>);
+    let manual = RwSignal::new(None::<(i64, String)>);
+    let refresh = move || {
+        if busy.get_untracked() { return; }
+        busy.set(true);
+        manual.set(None);
+        error.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::gateway_keys().await {
+                Ok(rows) => { keys.set(rows); loaded.set(true); }
+                Err(e) => { ctx.note_err(&e); error.set(Some(e.message)); }
+            }
+            busy.set(false);
+        });
+    };
+    refresh();
+
+    let create = move |_| {
+        if busy.get_untracked() || !loaded.get_untracked() { return; }
+        let value = name.get_untracked().trim().to_string();
+        if value.is_empty() { return; }
+        busy.set(true);
+        error.set(None);
+        manual.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::create_gateway_key(&value).await {
+                Ok(row) => {
+                    keys.update(|rows| rows.push(row));
+                    name.set(String::new());
+                    ctx.say("密钥已生成，原有密钥不受影响；点该行「复制」即可使用");
+                }
+                Err(e) => { ctx.note_err(&e); error.set(Some(format!("生成失败：{}", e.message))); }
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <section class="card gateway-keys">
+            <header class="card-head">
+                <h2>"对外 API 密钥"</h2>
+                <p class="muted small">"客户端使用 Authorization: Bearer 密钥 接入网关。可分别为不同客户端生成命名密钥；新增不会更换或停用原有密钥。"</p>
+            </header>
+            <div class="card-body">
+                <div class="toolbar">
+                    <label for="gateway-key-name">"名称"</label>
+                    <input id="gateway-key-name" placeholder="例如：手机、电脑" prop:value=name
+                        disabled=move || busy.get()
+                        on:input=move |ev| name.set(event_target_value(&ev)) />
+                    <button class="primary" on:click=create
+                        disabled=move || busy.get() || !loaded.get() || name.get().trim().is_empty()>"生成密钥"</button>
+                    <button class="ghost" on:click=move |_| refresh() disabled=move || busy.get()>"刷新密钥"</button>
+                </div>
+                <Show when=move || busy.get()><p class="muted small" role="status">"正在处理…"</p></Show>
+                {move || error.get().map(|message| view! { <div class="banner bad" role="alert">{message}</div> })}
+                <Show when=move || loaded.get() && keys.get().is_empty()>
+                    <p class="muted">"还没有对外密钥。填入名称后生成一把即可。"</p>
+                </Show>
+                <For each=move || keys.get() key=|row| row.id children=move |row| {
+                    let id = row.id;
+                    let delete_name = row.name.clone();
+                    let copy = move |_| {
+                        if busy.get_untracked() { return; }
+                        busy.set(true);
+                        error.set(None);
+                        manual.set(None);
+                        wasm_bindgen_futures::spawn_local(async move {
+                            match api::reveal_gateway_key(id).await {
+                                Ok(key) => {
+                                    if copy_text(&key).await {
+                                        ctx.say("密钥已复制到剪贴板");
+                                    } else {
+                                        manual.set(Some((id, key)));
+                                        ctx.say("浏览器阻止了自动复制，请手动复制该行下方的密钥");
+                                    }
+                                }
+                                Err(e) => { ctx.note_err(&e); error.set(Some(format!("复制失败：{}", e.message))); }
+                            }
+                            busy.set(false);
+                        });
+                    };
+                    let delete = move |_| {
+                        if busy.get_untracked() { return; }
+                        let confirmed = web_sys::window().and_then(|w| w.confirm_with_message(
+                            &format!("删除密钥「{delete_name}」？删除后立即失效，使用它的客户端将无法访问网关。其他密钥不受影响。此操作无法撤销。")
+                        ).ok()).unwrap_or(false);
+                        if !confirmed { return; }
+                        busy.set(true);
+                        error.set(None);
+                        manual.set(None);
+                        wasm_bindgen_futures::spawn_local(async move {
+                            match api::delete_gateway_key(id).await {
+                                Ok(()) => {
+                                    keys.update(|rows| rows.retain(|row| row.id != id));
+                                    ctx.say("密钥已删除，立即失效；其他密钥不受影响");
+                                }
+                                Err(e) => { ctx.note_err(&e); error.set(Some(format!("删除失败：{}", e.message))); }
+                            }
+                            busy.set(false);
+                        });
+                    };
+                    view! {
+                        <article class="panel" style="margin-top:12px;overflow-wrap:anywhere" data-key-id=id>
+                            <div class="toolbar">
+                                <strong>{row.name}</strong>
+                                <code>{row.hint.unwrap_or_else(|| "（无提示）".into())}</code>
+                                <span class="muted small">{format!("创建于 {}", fmt::ts(row.created_at_ms))}</span>
+                                <span class="spacer"></span>
+                                <button class="ghost" on:click=copy disabled=move || busy.get()>"复制"</button>
+                                <button class="ghost danger" on:click=delete disabled=move || busy.get()>"删除"</button>
+                            </div>
+                            {move || manual.get().filter(|(key_id, _)| *key_id == id).map(|(_, key)| view! {
+                                <div class="banner" style="margin-top:8px">
+                                    <label>"自动复制失败，请手动复制（关闭后隐藏）"
+                                        <input readonly prop:value=key style="width:100%;user-select:all" />
+                                    </label>
+                                    <button class="ghost" on:click=move |_| manual.set(None)>"关闭"</button>
+                                </div>
+                            })}
+                        </article>
+                    }
+                } />
+            </div>
+        </section>
+    }
+}
+
+#[component]
 pub fn Settings(ctx: Ctx) -> impl IntoView {
     let logs_open=RwSignal::new(false);
     let info = RwSignal::new(crate::model::SettingsResp::default());
     let err = RwSignal::new(None::<String>);
-    let generated = RwSignal::new(None::<String>);
     let old_pw = RwSignal::new(String::new());
     let new_pw = RwSignal::new(String::new());
 
@@ -120,49 +249,6 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    let generate_key = move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
-            match api::generate_gateway_key().await {
-                Ok(k) => {
-                    generated.set(Some(k.clone()));
-                    ctx.say(format!("已生成新 key：{}（已填入下方，可复制）", k));
-                    reload();
-                }
-                Err(e) => {
-                    ctx.note_err(&e);
-                    ctx.say(format!("生成失败：{}", e.message));
-                }
-            }
-        });
-    };
-
-    // 复制：**任何时候都能用** —— 有刚生成的就直接复制，没有就向服务端取明文
-    // （明文用主密钥加密存在库里，面板只给掩码）。用户的要求就是「生成一次，以后随时复制」。
-    let copy_key = move |_| {
-        let already = generated.get_untracked();
-        wasm_bindgen_futures::spawn_local(async move {
-            let key = match already {
-                Some(k) => Some(k),
-                None => match api::reveal_gateway_key().await {
-                    Ok(k) => Some(k),
-                    Err(e) => {
-                        ctx.note_err(&e);
-                        ctx.say(e.message.clone());
-                        None
-                    }
-                },
-            };
-            if let Some(k) = key {
-                if copy_text(&k).await {
-                    ctx.say("对外 key 已复制到剪贴板");
-                } else {
-                    generated.set(Some(k));
-                    ctx.say("浏览器阻止了自动复制，请长按下方 key 手动复制");
-                }
-            }
-        });
-    };
-
     let change_pw = move |_| {
         let o = old_pw.get_untracked();
         let n = new_pw.get_untracked();
@@ -202,52 +288,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
-            <section class="card">
-                <header class="card-head">
-            <h2>"对外 key"</h2>
-            <p class="muted small">
-                "客户端连网关用的那个 key（" <code>"Authorization: Bearer …"</code>
-                "）。**生成一次就行**：明文用主密钥加密存在库里，下面点「复制」随时能取（不用反复生成）。"
-                "换 key 会让旧 key 立刻失效，记得同步改客户端。"
-            </p>
-                </header>
-                <div class="card-body">
-            <div class="panel">
-                <div class="form-grid">
-                    <label>"当前 key 提示"</label>
-                    <div>
-                        <code>{move || info.get().gateway_key_hint.unwrap_or_else(|| "（没设置）".into())}</code>
-                    </div>
-                </div>
-                {move || generated.get().map(|k| view! {
-                    <div class="banner ok" style="margin-top:8px;word-break:break-all">
-                        "可复制的 key：" <code style="user-select:all">{k}</code>
-                        "　（已存下来，以后随时点「复制」都能取，不用再生成）"
-                    </div>
-                })}
-                <div class="modal-foot">
-                    <span class="muted small">
-                        "当前 key："
-                        <code>{move || info.get().gateway_key_hint.clone().unwrap_or_else(|| "（还没设）".into())}</code>
-                    </span>
-                    <span class="spacer"></span>
-                    <button class="ghost" on:click=generate_key>"生成新 key"</button>
-                    <button class="primary" on:click=copy_key>"复制"</button>
-                </div>
-                {move || if info.get().gateway_key_hint.is_some() && !info.get().gateway_key_copyable {
-                    view! {
-                        <div class="muted small" style="margin-top:6px">
-                            "这把 key 是旧版生成的（库里只有哈希、取不回明文）：点一次「生成新 key」换一把，"
-                            "之后就随时能复制了（换完记得把客户端里的 key 也更新一下）。"
-                        </div>
-                    }
-                        .into_any()
-                } else {
-                    ().into_any()
-                }}
-            </div>
-                </div>
-            </section>
+            <GatewayKeys ctx=ctx />
 
             <section class="card">
                 <header class="card-head">

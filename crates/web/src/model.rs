@@ -492,6 +492,19 @@ pub struct VisionTest {
     pub note: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GatewayKey {
+    pub id: i64,
+    pub name: String,
+    pub hint: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GatewayKeysResp {
+    pub keys: Vec<GatewayKey>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct SettingsResp {
     pub routing_config: RoutingCfg,
@@ -553,6 +566,22 @@ pub fn endpoint_label(e: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gateway_key_list_and_created_metadata_parse_without_plaintext() {
+        let list: GatewayKeysResp = serde_json::from_str(
+            r#"{"keys":[{"id":1,"name":"Original key","hint":"sk-…","created_at_ms":0},{"id":2,"name":"Phone","hint":"sk-…","created_at_ms":123}]}"#,
+        ).unwrap();
+        assert_eq!(list.keys.len(), 2);
+        assert_eq!(list.keys[0].id, 1);
+        let created: GatewayKey = serde_json::from_str(
+            r#"{"id":3,"name":"Laptop","hint":"sk-…","created_at_ms":456}"#,
+        ).unwrap();
+        assert_eq!(created.name, "Laptop");
+        assert_eq!(created.created_at_ms, 456);
+        let empty: GatewayKeysResp = serde_json::from_str(r#"{"keys":[]}"#).unwrap();
+        assert!(empty.keys.is_empty());
+    }
 
     #[test]
     fn real_server_json_parses() {

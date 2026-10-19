@@ -113,66 +113,25 @@ pub fn active_count(conn: &Connection) -> Result<i64> {
     )?)
 }
 
-/// 对外统一 key：客户端拿它连网关。
-///
-/// 存两样：**哈希**（每请求校验用的快路径）与**用主密钥加密的明文**（面板上「复制」用）。
-/// 明文可回显是用户明确要求的 —— 只存哈希的话，key 丢了只能重新生成，
-/// 旧的当场失效，客户端全要重配。密文是 `nonce_hex:cipher_hex`。
+/// Compatibility settings operations affect only the designated default row.
+/// Named sibling credentials are never rotated, and settings are never an auth fallback.
 pub fn set_gateway_key(conn: &Connection, sb: &SecretBox, key: &str) -> Result<()> {
-    if key.trim().is_empty() {
-        return Err(DbError::Other("网关 key 不能为空".into()));
-    }
-    let h = hash_password(key)?;
-    let (nonce, cipher) = sb
-        .seal(key)
-        .map_err(|e| DbError::Other(format!("加密网关 key 失败：{e}")))?;
-    crate::db::in_tx(conn, |c| {
-        super::settings::set(c, super::settings::GATEWAY_KEY_HASH, &h)?;
-        super::settings::set(
-            c,
-            super::settings::GATEWAY_KEY_SEALED,
-            &format!("{}:{}", hex::encode(nonce), hex::encode(cipher)),
-        )
-    })
+    super::gateway_keys::set_default(conn, sb, key)
 }
 
-/// 读出对外 key 的明文（面板「复制」用）。老库只存过哈希 → None。
 pub fn gateway_key_plain(conn: &Connection, sb: &SecretBox) -> Result<Option<String>> {
-    let Some(raw) = super::settings::get(conn, super::settings::GATEWAY_KEY_SEALED)? else {
-        return Ok(None);
-    };
-    let Some((n, c)) = raw.split_once(':') else {
-        return Ok(None);
-    };
-    let nonce = hex::decode(n).map_err(|_| DbError::Other("网关 key 密文坏了（nonce）".into()))?;
-    let cipher = hex::decode(c).map_err(|_| DbError::Other("网关 key 密文坏了（cipher）".into()))?;
-    match sb.open(&nonce, &cipher) {
-        Ok(k) => Ok(Some(k)),
-        Err(e) => {
-            tracing::warn!("网关 key 解不开（主密钥换过？）：{e}");
-            Ok(None)
-        }
+    match super::gateway_keys::default_id(conn)? {
+        Some(id) => super::gateway_keys::reveal(conn, sb, id),
+        None => Ok(None),
     }
 }
 
 pub fn check_gateway_key(conn: &Connection, key: &str) -> Result<bool> {
-    if key.trim().is_empty() {
-        return Ok(false);
-    }
-    match super::settings::get(conn, super::settings::GATEWAY_KEY_HASH)? {
-        None => Ok(false),
-        Some(h) => Ok(verify_password(key, &h)),
-    }
+    super::gateway_keys::check(conn, key)
 }
 
-/// 界面/日志里展示用的掩码。能解出明文就给真 key 的掩码（`tk-7bff…c3d9`），
-/// 老库只有哈希时才退回旧文案。
-pub fn gateway_key_hint(conn: &Connection, sb: &SecretBox) -> Result<Option<String>> {
-    match gateway_key_plain(conn, sb)? {
-        Some(k) => Ok(Some(mask_key(&k))),
-        None => Ok(super::settings::get(conn, super::settings::GATEWAY_KEY_HASH)?
-            .map(|_| "（老 key 只存了哈希、看不到明文：点「生成新 key」换一把就能一直复制）".to_string())),
-    }
+pub fn gateway_key_hint(conn: &Connection, _sb: &SecretBox) -> Result<Option<String>> {
+    super::gateway_keys::default_hint(conn)
 }
 
 /// key 的掩码：留头 7 位与尾 4 位，中间打点。
@@ -313,10 +272,7 @@ mod tests {
         let conn = open_in_memory().unwrap();
         super::super::settings::set(&conn, super::super::settings::GATEWAY_KEY_HASH, "$argon2id$x").unwrap();
         assert!(gateway_key_plain(&conn, &sb()).unwrap().is_none());
-        assert!(gateway_key_hint(&conn, &sb())
-            .unwrap()
-            .unwrap()
-            .contains("生成新 key"));
+        assert!(gateway_key_hint(&conn, &sb()).unwrap().is_none());
     }
 
     #[test]

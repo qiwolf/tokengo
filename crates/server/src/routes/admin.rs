@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
 use crate::db::{
-    catalog, channels, kinds, maintenance, model_routes, now_ms, requests, routing, sessions,
+    catalog, channels, gateway_keys, kinds, maintenance, model_routes, now_ms, requests, routing, sessions,
     settings,
 };
 use crate::SharedState;
@@ -97,6 +97,9 @@ fn router_inner() -> Router<SharedState> {
         .route("/logs/live", get(logs_live))
         .route("/logs/level", get(logs_level_get).put(logs_level_set))
         .route("/timeline", get(|| async { unbuilt(5, "GET /api/timeline") }))
+        .route("/gateway-keys", get(gateway_keys_list).post(gateway_keys_create))
+        .route("/gateway-keys/{id}/reveal", get(gateway_keys_reveal))
+        .route("/gateway-keys/{id}", axum::routing::delete(gateway_keys_delete))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/settings/generate-gateway-key", post(generate_gateway_key))
         // 面板「复制」按钮走这里：拿到明文（要面板会话）。
@@ -166,7 +169,7 @@ async fn auth_status(
     let conn = state.conn();
     let has_password = sessions::has_panel_password(&conn)?;
     let gateway_key_set =
-        settings::get(&conn, settings::GATEWAY_KEY_HASH)?.is_some();
+        gateway_keys::any(&conn)?;
     Ok(Json(serde_json::json!({
         // 没设过口令 = 首次使用，面板该弹"设置口令"而不是"登录"
         "needs_setup": !has_password,
@@ -199,7 +202,7 @@ async fn auth_setup(
     // 用户偏好：沿用惯用的短口令，不保留自动生成的长随机串。没传才自动生成。
     let (key, generated) = match body.gateway_key.as_deref() {
         Some(k) if !k.trim().is_empty() => (k.trim().to_string(), false),
-        _ => (format!("tk-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]), true),
+        _ => (gateway_keys::generate(), true),
     };
     sessions::set_gateway_key(&conn, &state.secrets, &key)?;
     // 换 key 必须把校验快路径忘掉，否则旧 key 还能用最多一个缓存周期
@@ -215,7 +218,7 @@ async fn auth_setup(
         // 只在这一次回答里回显明文 key（用户得靠它去配客户端），之后库里只有哈希
         "gateway_key": key,
         "gateway_key_generated": generated,
-        "notice": "对外 key 只在这里回显这一次，请现在记下；库里只存哈希，之后拿不回明文。",
+        "notice": "Key is encrypted at rest and can be copied again from settings.",
     })))
 }
 
@@ -1603,7 +1606,7 @@ async fn generate_gateway_key(
     _auth: PanelAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let key = format!("tk-{}", &uuid::Uuid::new_v4().simple().to_string()[..24]);
+    let key = gateway_keys::generate();
     let conn = state.conn();
     sessions::set_gateway_key(&conn, &state.secrets, &key)?;
     state.forget_gateway_key();
@@ -1611,7 +1614,7 @@ async fn generate_gateway_key(
     Ok(Json(serde_json::json!({
         "ok": true,
         "gateway_key": key,
-        "notice": "新 key 已生效；正在用旧 key 的客户端会马上 401，请同步更新。",
+        "notice": "Default key replaced; other named keys are unchanged.",
     })))
 }
 
@@ -1726,4 +1729,33 @@ mod tests {
 
         assert!(client_ip(&axum::http::HeaderMap::new()).is_none());
     }
+}
+
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GatewayKeyBody { name: String }
+
+async fn gateway_keys_list(_auth: PanelAuth, State(state): State<SharedState>) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(serde_json::json!({"keys": gateway_keys::list(&state.conn())?})))
+}
+
+async fn gateway_keys_create(_auth: PanelAuth, State(state): State<SharedState>, Json(body): Json<GatewayKeyBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    gateway_keys::validate_name(&body.name).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let conn = state.conn();
+    let key = gateway_keys::generate();
+    let row = gateway_keys::create(&conn, &state.secrets, &body.name, &key, false)?;
+    Ok(Json(serde_json::to_value(row).map_err(|_|ApiError::internal("Cannot serialize gateway key"))?))
+}
+
+async fn gateway_keys_reveal(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, ApiError> {
+    let key = gateway_keys::reveal(&state.conn(), &state.secrets, id)?.ok_or_else(||ApiError::not_found("Key not found or hash-only legacy key cannot be revealed"))?;
+    Ok(Json(serde_json::json!({"gateway_key":key})))
+}
+
+async fn gateway_keys_delete(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, ApiError> {
+    let conn = state.conn();
+    if !gateway_keys::delete(&conn,id)? { return Err(ApiError::not_found("Key not found")); }
+    state.forget_gateway_key();
+    Ok(Json(serde_json::json!({"deleted":true})))
 }

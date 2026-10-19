@@ -170,6 +170,7 @@ impl AppState {
         }
 
         let secrets = SecretBox::load_or_init(Path::new(&cfg.master_key_path))?;
+        db::gateway_keys::hydrate_legacy(&conn, &secrets)?;
 
         let rcfg = db::routing::load_config(&conn)?;
         let mut router = RoutingRouter::new(rcfg);
@@ -216,22 +217,20 @@ impl AppState {
         }))
     }
 
-    /// 校验对外统一 key。
-    ///
-    /// 第一次真跑 argon2（安全边界没变），之后走内存快路径；换 key 之后必须调
-    /// `forget_gateway_key()`，否则旧 key 还能用最多一个缓存周期。
+    /// Validate a named gateway credential. DB -> cache serialization makes
+    /// revocation immediate for requests authenticating after deletion completes.
     pub fn check_gateway_key(&self, key: &str) -> bool {
         if key.trim().is_empty() {
             return false;
         }
+        // Lock order is always DB -> cache, including mutation handlers. Hold DB through
+        // cache fill so a completed delete can never be undone by a late verifier.
+        let conn = self.conn();
         let now = db::now_ms();
         if self.key_cache.hit(key, now) {
             return true;
         }
-        let ok = {
-            let conn = self.conn();
-            db::sessions::check_gateway_key(&conn, key).unwrap_or(false)
-        };
+        let ok = db::sessions::check_gateway_key(&conn, key).unwrap_or(false);
         if ok {
             self.key_cache.remember(key, now);
         }

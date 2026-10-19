@@ -34,7 +34,7 @@ async fn readyz(State(state): State<SharedState>) -> Json<serde_json::Value> {
             "database": if db_ok { "ok" } else { "fail" },
             "routing_models_tracked": routing_ok,
             "panel_password_set": db_ok && crate::db::sessions::has_panel_password(&state.conn()).unwrap_or(false),
-            "gateway_key_set": crate::db::settings::get(&state.conn(), crate::db::settings::GATEWAY_KEY_HASH).ok().flatten().is_some(),
+            "gateway_key_set": crate::db::gateway_keys::any(&state.conn()).unwrap_or(false),
         }
     }))
 }

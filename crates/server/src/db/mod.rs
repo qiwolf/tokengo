@@ -4,6 +4,7 @@
 //! 将来搬数据和对拍都方便。
 
 pub mod catalog;
+pub mod gateway_keys;
 pub mod kinds;
 pub mod channels;
 pub mod model_routes;
@@ -137,6 +138,7 @@ mod tests {
         let got = table_names(&conn);
         for want in [
             "attempts",
+            "gateway_keys",
             "channel_catalog",
             "channel_headers",
             "channel_models",
@@ -161,7 +163,7 @@ mod tests {
         ] {
             assert!(got.contains(&want.to_string()), "缺表 {want}，实际有 {got:?}");
         }
-        assert_eq!(got.len(), 22, "表数与设计不符：{got:?}");
+        assert_eq!(got.len(), 23, "表数与设计不符：{got:?}");
     }
 
     /// 关键反证：**免费模型目录相关的表一张都不该有。**
