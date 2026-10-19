@@ -894,6 +894,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     return Err(ApiError::from(crate::db::DbError::from(e)));
                 }
             }
+            // A later real source attempt supersedes an earlier representational mismatch.
+            if last_policy_error.as_ref().is_some_and(|error|error.kind=="protocol_not_supported") {last_policy_error=None;}
             tried_any = true;
             last_channel = channel.id;
             guard.note_served(name);
@@ -955,6 +957,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         let mut prepared=match prepare_stream(&mut resp,source,client,Duration::from_millis(left),attempt_timeout,&mut guard).await {
                             Ok(p)=>p,
                             Err(note)=>{
+                                if is_conversion_fault(&note) {
+                                    guard.settle_billing("protocol_fault");guard.active_attempt=None;
+                                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"protocol_fault",Some(status),now_ms()-t0,Some(&note));ordinal+=1;
+                                    last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"protocol_not_supported",note));
+                                    continue 'channels;
+                                }
                                 guard.settle_billing("precommit_fault");
                                 guard.active_attempt=None;
                     record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"channel_fault",Some(status),now_ms()-t0,Some(&note));
@@ -1036,6 +1044,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         guard.error_code=Some("state_unavailable".into());
                         guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,input,output,false,Some(note));
                         return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
+                    }
+                    if let Some(note)=empty.as_deref().filter(|note|is_conversion_fault(note)) {
+                        guard.settle_billing("protocol_fault");guard.active_attempt=None;
+                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"protocol_fault",Some(status),now_ms()-t0,Some(note));ordinal+=1;
+                        last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"protocol_not_supported",note));
+                        continue 'channels;
                     }
                     if let Some(note) = empty {
                         guard.settle_billing("empty_reply");
@@ -1560,7 +1574,7 @@ async fn buffer_passthrough(
                 if source!=client {
                     match crate::protocol::convert_response(source,client,&validated).and_then(|v|serde_json::to_vec(&v).map_err(|e|e.to_string())) {
                         Ok(b)=>out=Bytes::from(b),
-                        Err(note)=>{let mut invalid=invalid_buffer(note);invalid.4=usage;return invalid;}
+                        Err(note)=>{let mut invalid=invalid_buffer(conversion_fault(note));invalid.4=usage;return invalid;}
                     }
                 }
             }
@@ -1585,6 +1599,15 @@ async fn buffer_passthrough(
         usage,
     )
 }
+
+// A valid source may expose semantics the deliberately smaller conversion IR cannot represent.
+// Missing fields, malformed JSON, invalid tool snapshots and transport errors remain source faults.
+fn conversion_fault(note: String) -> String {
+    if note.starts_with("Unsupported ") || note.contains("cannot be converted") || note.contains("cannot be represented") || note.contains("cannot be streamed across protocols") || note.contains("semantics cannot be converted") {
+        format!("protocol_conversion: {note}")
+    } else { note }
+}
+fn is_conversion_fault(note:&str)->bool {note.starts_with("protocol_conversion: ")}
 
 fn invalid_buffer(note: String) -> (Response, i64, i64, Option<String>, Usage) {
     (StatusCode::BAD_GATEWAY.into_response(), 0, 0, Some(note), Usage::default())
@@ -1691,7 +1714,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
                 prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;
                 if let Some(note)=&prepared.observer.failed {return Err(format!("precommit upstream error: {note}"));}
-                let out=match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|format!("precommit conversion error: {note}"))?,None=>chunk.to_vec()};
+                let out=match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?,None=>chunk.to_vec()};
                 if prefix.len().saturating_add(out.len())>1<<20 {return Err("precommit prefix exceeds 1 MiB".into());}
                 prefix.extend_from_slice(&out);
                 if prepared.observer.done {
@@ -1705,7 +1728,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
                 prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;
-                if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|format!("precommit conversion error: {note}"))?);}
+                if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?);}
                 prepared.eof=true;
                 if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err("precommit empty or failed stream".into());}
                 break;
@@ -1746,7 +1769,7 @@ fn stream_passthrough(
                     st.artifacts.frames(&frames)?;
                     if let Some((owner,pin))=&st.provenance {st.artifacts.persist(&st.state.conn(),owner,pin).map_err(|_|"local_state: opaque artifact ownership persistence failed".to_string())?;}
                     Ok(())
-                }).and_then(|_| match st.transcoder.as_mut(){Some(t)=>t.feed(&chunk),None=>Ok(chunk.to_vec())});
+                }).and_then(|_| match st.transcoder.as_mut(){Some(t)=>t.feed(&chunk).map_err(conversion_fault),None=>Ok(chunk.to_vec())});
                 match out {
                     Ok(out)=>{st.delivered+=out.len();if st.observer.done {st.eof=true;} Some((Ok(Bytes::from(out)),st))},
                     Err(note)=>{
@@ -1764,11 +1787,11 @@ fn stream_passthrough(
                         Ok(())
                     }) {st.finish(Some(&note));return Some((Ok(stream_error(st.endpoint.protocol(),&note)),st));}
                 }
-                let tail=match st.transcoder.as_mut(){Some(t)=>t.finish(),None=>Ok(vec![])};
+                let tail=match st.transcoder.as_mut(){Some(t)=>t.finish().map_err(conversion_fault),None=>Ok(vec![])};
                 match tail {
                     Ok(tail) if !tail.is_empty()=>{st.eof=true;Some((Ok(Bytes::from(tail)),st))},
                     Ok(_)=>{st.finish(None);None},
-                    Err(note)=>{st.finish(Some(&note));Some((Err(std::io::Error::other(note)),st))}
+                    Err(note)=>{st.finish(Some(&note));if is_conversion_fault(&note){Some((Ok(stream_error(st.endpoint.protocol(),&note)),st))}else{Some((Err(std::io::Error::other(note)),st))}}
                 }
             },
             Ok(Err(_))=>{let note="上游流式连接异常中断；已输出内容不重试";st.finish(Some(note));Some((Err(std::io::Error::other(note)),st))},
@@ -1781,10 +1804,12 @@ fn stream_passthrough(
 }
 
 fn stream_error(protocol:Option<crate::protocol::Protocol>,note:&str)->Bytes {
-    let message=format!("Upstream stream failed after output: {note}");
+    let protocol_fault=is_conversion_fault(note);
+    let code=if protocol_fault {"protocol_not_supported"}else{"upstream_error"};
+    let message=if protocol_fault {format!("Response conversion is unsupported after output: {note}")}else{format!("Upstream stream failed after output: {note}")};
     let (event,data)=match protocol {
         Some(crate::protocol::Protocol::Messages)=>(Some("error"),serde_json::json!({"type":"error","error":{"type":"api_error","message":message}})),
-        Some(crate::protocol::Protocol::Responses)=>(Some("error"),serde_json::json!({"type":"error","code":"upstream_error","message":message})),
+        Some(crate::protocol::Protocol::Responses)=>(Some("error"),serde_json::json!({"type":"error","code":code,"message":message})),
         _=>(None,serde_json::json!({"error":{"type":"upstream_error","message":message}})),
     };
     Bytes::from(crate::protocol::sse::Frame{event:event.map(str::to_string),data:data.to_string()}.encode())
@@ -1844,9 +1869,11 @@ impl StreamState {
             None
         };
         let local_fault=note.is_some_and(|note|note.starts_with("local_state:"));
+        let protocol_fault=note.is_some_and(is_conversion_fault);
+        if protocol_fault {guard.error_code=Some("protocol_not_supported".into());guard.settle_billing("protocol_fault");}
         if local_fault {guard.error_code=Some("state_unavailable".into());}
-        else {self.cooldown.finish(complete && !empty,note.unwrap_or(""),0);}
-        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if local_fault {"local_fault"}else if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string).or_else(||self.adaptation_note.clone()),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
+        else if !protocol_fault {self.cooldown.finish(complete && !empty,note.unwrap_or(""),0);}
+        let args=requests::AttemptArgs{request_id:self.request_id,ordinal:self.ordinal,channel_id:self.channel_id,model_name:self.model_name.clone(),upstream_model:self.upstream_model.clone(),outcome:if local_fault {"local_fault"}else if protocol_fault {"protocol_fault"}else if complete && !empty {"success"}else{"channel_fault"}.into(),http_status:None,duration_ms:now_ms()-self.attempt_started,error:note.map(str::to_string).or_else(||self.adaptation_note.clone()),first_byte_ms:self.first_byte_ms.map(|ms| (ms+self.started_ms-self.attempt_started).max(0))};
         match self.state.db.try_lock(){Ok(c)=>{if requests::add_attempt_args(&c,&args).is_err(){self.state.enqueue_write(crate::state::WriteJob::Attempt(args));}},Err(_)=>self.state.enqueue_write(crate::state::WriteJob::Attempt(args))}
 
         if complete && !empty {
