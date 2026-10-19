@@ -417,10 +417,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 每条渠道的「门口闸机」：同时最多几发（面板上按渠道配，0 = 不限）。
     // 满了**不硬压上去**（现网 503「bridge busy」151 次就是这么来的）：先换别的渠道；
     // 所有渠道都满，才在门口排队等一个名额，等到再重跑一遍。排队有预算上限，不会挂死。
-    let mut pre_permits: HashMap<i64, tokio::sync::OwnedSemaphorePermit> = HashMap::new();
+    let mut pre_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     'pass: loop {
         let mut tried_any = false;
-        let mut busy: Vec<(i64, Arc<tokio::sync::Semaphore>)> = Vec::new();
+        let mut busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
 
     'channels: for entry_idx in order.iter().copied() {
         let Some(Candidate { name, channel }) = plan.entries.get(entry_idx) else {
@@ -1098,7 +1098,7 @@ fn stream_passthrough(
     request_id: i64,
     started_ms: i64,
     channel_id: i64,
-    gate: Option<tokio::sync::OwnedSemaphorePermit>,
+    gate: Option<crate::state::ChannelPermit>,
     endpoint: EndpointKind,
     ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket, load_ticket:crate::state::ModelLoadTicket, idle_timeout:Duration,
 ) -> Response {
@@ -1170,7 +1170,7 @@ struct StreamState {
     idle_timeout: Duration,
     /// 这条渠道的并发名额。**流式期间一直握着**：不然名额一还，
     /// 明明还在往外吐字的那条流就不算数了，上游照样被打爆。
-    _gate: Option<tokio::sync::OwnedSemaphorePermit>,
+    _gate: Option<crate::state::ChannelPermit>,
 }
 
 impl StreamState {

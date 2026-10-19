@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::Connection;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 use tokengo_shared::routing::Router as RoutingRouter;
 
 use crate::config::Config;
@@ -62,7 +62,7 @@ pub struct AppState {
     /// 请求路径上抢不到库锁的活先丢这儿，由后台落账员补写（见 `WriteJob`）。
     writer: WriteQueue,
     /// 每条渠道的「门口闸机」：同时最多几发（渠道 id → 闸机 + 当前配置的上限）。
-    channel_gates: Mutex<HashMap<i64, (Arc<Semaphore>, u32)>>,
+    channel_gates: Mutex<HashMap<i64, Arc<ChannelGate>>>,
     /// 最近的运行日志（内存里那份，面板「日志」页读它）。
     /// 用 OnceLock：服务启动时先建 state、再装订阅者，装完把这一格填上；
     /// 测试里不装，取值时就地造一个空的 —— 两边都不用改代码。
@@ -431,21 +431,51 @@ impl AppState {
     /// 同一把 key 上同时压太多发，上游直接 429/503（现网 4 天 503「bridge busy」151 次）。
     /// 面板上改上限时：调大立刻补名额；调小不强夺已经在跑的名额（等它们自己还回来），
     /// 所以刚调小的一瞬间可能略微超出新上限，之后自然收敛。
-    pub fn channel_gate(&self, id: i64, limit: u32) -> Option<Arc<Semaphore>> {
-        if limit == 0 {
-            return None;
-        }
+    pub fn channel_gate(&self, id: i64, limit: u32) -> Option<Arc<ChannelGate>> {
         let mut gates = self.channel_gates.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = gates
-            .entry(id)
-            .or_insert_with(|| (Arc::new(Semaphore::new(limit as usize)), limit));
-        if entry.1 < limit {
-            // 名额是守恒的（跑着的 + 空着的 = 当前上限），所以补「差值」就够，
-            // 不能按空位补 —— 那样跑得越满、补得越多，上限直接被顶穿。
-            entry.0.add_permits((limit - entry.1) as usize);
+        let gate = gates.entry(id).or_insert_with(|| Arc::new(ChannelGate {
+            counts: Mutex::new((0, limit)), changed: Notify::new(),
+        })).clone();
+        gate.counts.lock().unwrap_or_else(|e| e.into_inner()).1 = limit;
+        gate.changed.notify_waiters();
+        Some(gate)
+    }
+
+}
+
+/// Keep in-flight ownership independent of capacity, so shrinking never mints permits.
+pub struct ChannelGate {
+    counts: Mutex<(u32, u32)>,
+    changed: Notify,
+}
+pub struct ChannelPermit(Arc<ChannelGate>);
+impl Drop for ChannelPermit {
+    fn drop(&mut self) {
+        self.0.counts.lock().unwrap_or_else(|e| e.into_inner()).0 -= 1;
+        self.0.changed.notify_waiters();
+    }
+}
+impl ChannelGate {
+    pub fn try_acquire_owned(self: Arc<Self>) -> Result<ChannelPermit, ()> {
+        let mut counts = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        if counts.1 != 0 && counts.0 >= counts.1 { return Err(()); }
+        counts.0 += 1;
+        drop(counts);
+        Ok(ChannelPermit(self))
+    }
+    pub async fn acquire_owned(self: Arc<Self>) -> Result<ChannelPermit, ()> {
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Ok(permit) = self.clone().try_acquire_owned() { return Ok(permit); }
+            notified.await;
         }
-        entry.1 = limit;
-        Some(entry.0.clone())
+    }
+    #[cfg(test)]
+    fn available_permits(&self) -> usize {
+        let counts = self.counts.lock().unwrap();
+        counts.1.saturating_sub(counts.0) as usize
     }
 }
 
@@ -652,7 +682,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let st = AppState::init(test_cfg(&dir)).unwrap();
 
-        assert!(st.channel_gate(1, 0).is_none(), "0 = 不限，不拦");
+        assert!(st.channel_gate(1, 0).is_some(), "unlimited requests still own tracked slots");
 
         let gate = st.channel_gate(2, 2).unwrap();
         let a = gate.clone().try_acquire_owned().unwrap();
@@ -673,6 +703,33 @@ mod tests {
         let bigger = st.channel_gate(2, 5).unwrap();
         assert_eq!(bigger.available_permits(), 5);
 
+        let smaller = st.channel_gate(2, 1).unwrap();
+        assert_eq!(smaller.available_permits(), 1);
+        let held = smaller.clone().try_acquire_owned().unwrap();
+        st.channel_gate(2, 3);
+        st.channel_gate(2, 1);
+        assert_eq!(smaller.available_permits(), 0);
+        assert!(smaller.clone().try_acquire_owned().is_err());
+        drop(held);
+        assert_eq!(smaller.available_permits(), 1);
+        for limit in [10, 2, 3, 1] { st.channel_gate(2, limit); }
+        assert_eq!(smaller.available_permits(), 1);
+
+        let unlimited = st.channel_gate(2, 0);
+        assert!(unlimited.is_some());
+        let held = smaller.clone().try_acquire_owned().unwrap();
+        st.channel_gate(2, 1);
+        assert!(smaller.clone().try_acquire_owned().is_err());
+        drop(held);
+        assert_eq!(smaller.available_permits(), 1);
+
+        let held: Vec<_> = (0..5).map(|_| {
+            st.channel_gate(2, 5).unwrap().try_acquire_owned().unwrap()
+        }).collect();
+        st.channel_gate(2, 2);
+        assert!(smaller.clone().try_acquire_owned().is_err());
+        drop(held);
+        assert_eq!(smaller.available_permits(), 2);
         std::fs::remove_dir_all(&dir).ok();
     }
 
