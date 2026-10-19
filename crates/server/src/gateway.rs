@@ -568,7 +568,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             channel.id.0,
                             permit,
                             req.endpoint,
-                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(), cooldown, load_ticket,
+                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(), cooldown, load_ticket, attempt_timeout,
                         ));
                     }
 
@@ -1078,7 +1078,7 @@ fn stream_passthrough(
     channel_id: i64,
     gate: Option<tokio::sync::OwnedSemaphorePermit>,
     endpoint: EndpointKind,
-    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket, load_ticket:crate::state::ModelLoadTicket,
+    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket, load_ticket:crate::state::ModelLoadTicket, idle_timeout:Duration,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
@@ -1093,27 +1093,33 @@ fn stream_passthrough(
         channel_id,
         state,
         delivered: 0,
+        idle_timeout,
         _gate: gate,
     };
     let stream = unfold(st, |mut st| async move {
-        match st.resp.chunk().await {
-            Ok(Some(chunk)) => {
+        match tokio::time::timeout(st.idle_timeout, st.resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
                 if st.first_byte_ms.is_none() && !chunk.is_empty() { st.first_byte_ms=Some(now_ms()-st.started_ms); }
                 st.scanner.feed(&chunk);
                 st.delivered += chunk.len();
                 Some((Ok::<Bytes, std::io::Error>(chunk), st))
             }
-            Ok(None) => {
-                st.finish(true);
+            Ok(Ok(None)) => {
+                st.finish(None);
                 None
             }
-            Err(e) => {
-                st.finish(false);
+            Ok(Err(e)) => {
+                st.finish(Some("上游流式连接异常中断；已输出内容不重试"));
                 tracing::warn!("流式响应中途断了：{e}");
                 Some((
                     Err(std::io::Error::other(format!("上游断流：{e}"))),
                     st,
                 ))
+            }
+            Err(_) => {
+                let note = format!("上游流式空闲超时：连续 {} 毫秒未收到数据；已输出内容不重试", st.idle_timeout.as_millis());
+                st.finish(Some(&note));
+                Some((Err(std::io::Error::new(std::io::ErrorKind::TimedOut, note)), st))
             }
         }
     });
@@ -1139,30 +1145,32 @@ struct StreamState {
     channel_id: i64,
     state: SharedState,
     delivered: usize,
+    idle_timeout: Duration,
     /// 这条渠道的并发名额。**流式期间一直握着**：不然名额一还，
     /// 明明还在往外吐字的那条流就不算数了，上游照样被打爆。
     _gate: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl StreamState {
-    /// `complete`：上游把流发完了（true）还是中途断了（false）。
+    /// `transport_error` distinguishes idle/transport failure from a clean EOF.
     ///
     /// 流完了但**一块真内容都没有**也算失败：客户端刚才收到的是一个空泡泡，
     /// 我们虽然改不了已经发出去的字节，但账要记对、原因要写清（不然只能看到一条"成功"）。
-    fn finish(&mut self, complete: bool) {
+    fn finish(&mut self, transport_error: Option<&str>) {
         let Some(mut guard) = self.guard.take() else {
             return;
         };
+        if transport_error.is_none() { self.scanner.finish_eof(); }
         let (input, output) = self.scanner.totals();
         let ended = self.scanner.terminal();
-        let complete = complete && ended && !self.scanner.error;
+        let complete = transport_error.is_none() && ended && !self.scanner.error;
         let empty = complete && !self.scanner.saw_payload();
-        let note = if self.scanner.error {
+        let note = if let Some(error) = transport_error {
+            Some(error)
+        } else if self.scanner.error {
             Some("上游流式返回错误事件，已发出去的内容收不回来")
         } else if !ended {
             Some("上游流式缺少结束标记，回答可能未完成；已输出内容不重试")
-        } else if !complete {
-            Some("上游流式中途断了，已发出去的内容收不回来")
         } else if empty {
             Some("上游流里一个字都没说（没 content、没 tool_calls、没推理内容）")
         } else {
@@ -1316,6 +1324,12 @@ impl SseScanner {
                 self.output = o;
             }
         }
+    }
+
+    fn finish_eof(&mut self) {
+        // Accept a final SSE data line even when its trailing newline is absent.
+        let tail = std::mem::take(&mut self.pending);
+        if !tail.is_empty() { self.line(&tail); }
     }
 
     fn terminal(&self) -> bool {

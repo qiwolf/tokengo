@@ -69,7 +69,6 @@ impl Upstream {
         let mut rb = self
             .client
             .post(&url)
-            .timeout(timeout)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::ACCEPT, "application/json")
             .body(body);
@@ -79,9 +78,16 @@ impl Upstream {
         for (name, value) in build_headers(channel, secret, uuid, now_ms, session) {
             rb = rb.header(name, value);
         }
-        rb.send().await.map_err(|e| ChannelFault {
-            message: fault_message(&url, &e),
-        })
+        if !stream {
+            return rb.timeout(timeout).send().await.map_err(|e| ChannelFault {
+                message: fault_message(&url, &e),
+            });
+        }
+        // A reqwest request timeout also covers the body. Streaming needs a
+        // header deadline here and a fresh idle deadline for each body read.
+        tokio::time::timeout(timeout, rb.send()).await
+            .map_err(|_| ChannelFault { message: format!("等待上游响应超时：{url}") })?
+            .map_err(|e| ChannelFault { message: fault_message(&url, &e) })
     }
 
     /// 探活用：只取状态码，不关心正文（正文可能很大）。

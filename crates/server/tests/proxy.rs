@@ -37,6 +37,8 @@ enum Reply {
     Status(u16, &'static str),
     /// SSE 流（带一段中文与 usage）
     Sse,
+    TimedSse(Vec<(u64, &'static str)>),
+    BrokenSse,
     /// 先睡一会儿再回 200 —— 用来测"客户端中途断开"
     Slow(u64),
     /// 先睡一会儿再回**正经内容**（量并发用它：`Slow` 回的是空 choices，会被当成空回复重试）
@@ -240,6 +242,27 @@ async fn mock_handler(
         Reply::Slow(ms) => {
             tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
             axum::Json(json!({"choices": [], "usage": {}})).into_response()
+        }
+        Reply::BrokenSse => {
+            let stream = futures_util::stream::unfold(0, |n| async move {
+                match n {
+                    0 => Some((Ok(Bytes::from_static(STREAM_TEXT.as_bytes())), 1)),
+                    1 => {tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                        Some((Err(std::io::Error::other("mock broken connection")), 2))},
+                    _ => None,
+                }
+            });
+            Response::builder().header("content-type", "text/event-stream")
+                .body(axum::body::Body::from_stream(stream)).unwrap()
+        }
+        Reply::TimedSse(chunks) => {
+            let stream = futures_util::stream::unfold(chunks.into_iter(), |mut chunks| async move {
+                let (delay, text) = chunks.next()?;
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                Some((Ok::<_, std::io::Error>(Bytes::from_static(text.as_bytes())), chunks))
+            });
+            Response::builder().header("content-type", "text/event-stream")
+                .body(axum::body::Body::from_stream(stream)).unwrap()
         }
         Reply::Sse => Response::builder()
             .status(StatusCode::OK)
@@ -3587,4 +3610,94 @@ async fn in_flight_request_is_running_and_records_upstream_before_completion() {
     f.state.drain_writes();
     let row=tokengo_server::db::requests::recent(&f.state.conn(),1).unwrap().remove(0);
     assert_eq!(row.status,"ok"); assert_eq!(row.channel_id,Some(ch.0));
+}
+
+
+fn stream_deadline(f: &Fixture, ms: u64) {
+    f.state.routing().cfg.attempt_timeout_ms = ms;
+}
+
+const STREAM_TEXT: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"text\"}}]}\n\n";
+
+#[tokio::test]
+async fn active_stream_outlives_attempt_deadline_and_accepts_final_line_without_newline() {
+    let f=fixture();f.with_key();stream_deadline(&f, 300);
+    let m=start_mock(Reply::TimedSse(vec![(0,STREAM_TEXT),(180,STREAM_TEXT),(180,STREAM_TEXT),(180,"data: [DONE]")])).await;
+    let id=f.add_channel("active",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    let start=std::time::Instant::now();
+    let (status,body,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","stream":true,"messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);assert!(start.elapsed().as_millis()>300);
+    assert!(body.ends_with(b"data: [DONE]"));assert_eq!(m.count(),1);
+    assert_eq!(f.request_rows()[0].0,"ok");
+    let r=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().remove(0);
+    assert_eq!(r.channel_id,id.0);assert_eq!(r.failures,0);assert_eq!(r.until_ms,0);
+}
+
+#[tokio::test]
+async fn idle_stream_times_out_once_and_reports_idle_not_missing_marker() {
+    let f=fixture();f.with_key();stream_deadline(&f,150);
+    let m=start_mock(Reply::TimedSse(vec![(0,STREAM_TEXT),(600,"data: [DONE]\n\n")])).await;
+    let id=f.add_channel("idle",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    let req=axum::http::Request::builder().method("POST").uri(CHAT)
+        .header("authorization",format!("Bearer {KEY}"))
+        .body(axum::body::Body::from(json!({"model":"mock-chat","stream":true,"messages":[]}).to_string())).unwrap();
+    let response=app(f.state.clone()).oneshot(req).await.unwrap();
+    assert!(axum::body::to_bytes(response.into_body(),1<<20).await.is_err());
+    let rows=f.request_rows();assert_eq!(rows[0].0,"failed");
+    let note=rows[0].5.as_deref().unwrap();assert!(note.contains("空闲超时"),"{note}");assert!(!note.contains("缺少结束标记"));
+    assert_eq!(m.count(),1);assert_eq!(f.attempts().len(),1);
+    let r=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().remove(0);
+    assert_eq!(r.failures,1);assert_eq!(r.until_ms,0);
+}
+
+#[tokio::test]
+async fn dropping_stream_body_is_canceled_without_cooldown_failure() {
+    let f=fixture();f.with_key();stream_deadline(&f,150);
+    let m=start_mock(Reply::TimedSse(vec![(0,STREAM_TEXT),(600,"data: [DONE]\n\n")])).await;
+    let id=f.add_channel("cancel",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    let req=axum::http::Request::builder().method("POST").uri(CHAT).header("authorization",format!("Bearer {KEY}"))
+        .body(axum::body::Body::from(json!({"model":"mock-chat","stream":true,"messages":[]}).to_string())).unwrap();
+    let response=app(f.state.clone()).oneshot(req).await.unwrap();
+    let mut body=response.into_body().into_data_stream();
+    use futures_util::StreamExt;
+    assert!(body.next().await.unwrap().is_ok());drop(body);
+    assert_eq!(f.request_rows()[0].0,"canceled");
+    let r=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().remove(0);
+    assert_eq!((r.failures,r.until_ms,r.lease_until),(0,0,0));
+}
+
+
+#[tokio::test]
+async fn streaming_headers_still_have_a_deadline() {
+    let f=fixture();f.with_key();stream_deadline(&f,100);
+    let m=start_mock(Reply::Slow(500)).await;
+    let id=f.add_channel("headers",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    let (_,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","stream":true,"messages":[]})).await;
+    let rows=f.request_rows();assert_eq!(rows[0].0,"failed");
+    assert!(rows[0].5.as_deref().unwrap().contains("等待上游响应超时"));assert_eq!(m.count(),1);
+}
+
+#[tokio::test]
+async fn stream_keeps_receiving_after_thirty_seconds() {
+    let f=fixture();f.with_key();stream_deadline(&f,30_000);
+    let m=start_mock(Reply::TimedSse(vec![(0,STREAM_TEXT),(11_000,STREAM_TEXT),(11_000,STREAM_TEXT),(10_000,"data: [DONE]\n\n")])).await;
+    let id=f.add_channel("long",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    let (s,body,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","stream":true,"messages":[]})).await;
+    assert_eq!(s,StatusCode::OK);assert!(body.ends_with(b"data: [DONE]\n\n"));
+    assert_eq!(f.request_rows()[0].0,"ok");assert_eq!(m.count(),1);
+}
+
+
+#[tokio::test]
+async fn broken_stream_reports_transport_failure_once() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::BrokenSse).await;
+    let id=f.add_channel("broken",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    let req=axum::http::Request::builder().method("POST").uri(CHAT).header("authorization",format!("Bearer {KEY}"))
+        .body(axum::body::Body::from(json!({"model":"mock-chat","stream":true,"messages":[]}).to_string())).unwrap();
+    let response=app(f.state.clone()).oneshot(req).await.unwrap();
+    assert!(axum::body::to_bytes(response.into_body(),1<<20).await.is_err());
+    let rows=f.request_rows();assert_eq!(rows[0].0,"failed");
+    assert!(rows[0].5.as_deref().unwrap().contains("连接异常中断"));
+    assert_eq!(m.count(),1);assert_eq!(f.attempts().len(),1);
+    assert_eq!(tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap()[0].failures,1);
 }
