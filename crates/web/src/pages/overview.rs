@@ -165,7 +165,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     <div class="stat-value">
                         {move || {
                             let s = stats.get().stats;
-                            fmt::pct(s.ok, s.total)
+                            fmt::pct(s.ok, s.ok+s.failed+s.client_errors)
                         }}
                     </div>
                     <div class="stat-sub">{move || format!("成功 {}", fmt::num(stats.get().stats.ok))}</div>
@@ -273,10 +273,10 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     {move || {
                         let st=stats.get().stats;
                         let items:Vec<(String,String,String,String)>=match category.get() {
-                            1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.requests)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},fmt::num(k.input_tokens+k.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
+                            1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.ok+k.failed+k.client_errors)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},fmt::num(k.input_tokens+k.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
                             2=>st.by_channel.into_iter().map(|c| (channel_name(Some(c.channel_id)),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {}",fmt::dur(c.avg_ms)),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
-                            3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.requests)),format!("Token {}",fmt::num(m.input_tokens+m.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
-                            4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.requests)),format!("Token {}",fmt::num(c.input_tokens+c.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
+                            3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.ok+m.failed+m.client_errors)),format!("Token {}",fmt::num(m.input_tokens+m.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
+                            4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.ok+c.failed+c.client_errors)),format!("Token {}",fmt::num(c.input_tokens+c.output_tokens)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
                             5=>st.errors.into_iter().map(|e| (e.error.lines().next().unwrap_or("未记录原因").chars().take(90).collect(),format!("{} 次",e.count),String::new(),e.error)).collect(),
                             _=>Vec::new(),
                         };
@@ -417,10 +417,11 @@ mod tests {
             label: "向量".into(),
             requests: 8,
             ok: 7,
+            failed:1,
             ..Default::default()
         };
         assert_eq!(k.success_rate(), 87.5);
-        k.requests = 0;
+        k.requests = 0; k.ok=0; k.failed=0;
         assert_eq!(k.success_rate(), 0.0, "没请求时面板显示「—」，不该算出个百分比");
         // 全成功 / 全失败两个边界
         k.requests = 3;

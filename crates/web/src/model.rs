@@ -283,8 +283,8 @@ pub struct KindStat {
 impl KindStat {
     /// 成功率（%）。分母是「打进来几次」，与总览四张卡一个口径。
     pub fn success_rate(&self) -> f64 {
-        if self.requests > 0 {
-            (self.ok as f64 / self.requests as f64 * 1000.0).round() / 10.0
+        if self.ok+self.failed+self.client_errors > 0 {
+            (self.ok as f64 / (self.ok+self.failed+self.client_errors) as f64 * 1000.0).round() / 10.0
         } else {
             0.0
         }
