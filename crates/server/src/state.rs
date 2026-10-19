@@ -36,7 +36,18 @@ fn kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKind> {
     }
 }
 
+#[derive(Default)]
+pub struct ModelLoads(pub Mutex<HashMap<String,usize>>);
+pub struct ModelLoadTicket {loads:Arc<ModelLoads>,key:String}
+impl Drop for ModelLoadTicket {fn drop(&mut self){let mut m=self.loads.0.lock().unwrap_or_else(|e|e.into_inner());if let Some(n)=m.get_mut(&self.key){*n=n.saturating_sub(1);if *n==0 {m.remove(&self.key);}}}}
+impl ModelLoads {
+ pub fn acquire(self:&Arc<Self>,name:&str)->ModelLoadTicket {let key=tokengo_shared::normalize_model_name(name);*self.0.lock().unwrap_or_else(|e|e.into_inner()).entry(key.clone()).or_default()+=1;ModelLoadTicket{loads:self.clone(),key}}
+ pub fn select(self:&Arc<Self>,names:&mut [String],explored:bool)->Option<ModelLoadTicket>{let mut m=self.0.lock().unwrap_or_else(|e|e.into_inner());if !explored {names.sort_by_key(|n|m.get(&tokengo_shared::normalize_model_name(n)).copied().unwrap_or(0));}let key=tokengo_shared::normalize_model_name(names.first()?);*m.entry(key.clone()).or_default()+=1;Some(ModelLoadTicket{loads:self.clone(),key})}
+ pub fn preview(&self,names:&mut [String]){let m=self.0.lock().unwrap_or_else(|e|e.into_inner());names.sort_by_key(|n|m.get(&tokengo_shared::normalize_model_name(n)).copied().unwrap_or(0));}
+}
+
 pub struct AppState {
+    pub model_loads:Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
     pub db: Mutex<Connection>,
     pub routing: Mutex<RoutingRouter>,
@@ -188,6 +199,7 @@ impl AppState {
         }
 
         Ok(Arc::new(Self {
+            model_loads:Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),
             db: Mutex::new(conn),
             routing: Mutex::new(router),
@@ -687,4 +699,13 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+#[cfg(test)]mod model_load_tests {
+ use super::*;
+ #[test]fn idle_selection_reserves_atomically_and_releases_on_drop(){
+ let l=Arc::new(ModelLoads::default());let mut names=vec!["a".into(),"b".into()];let a=l.select(&mut names,false).unwrap();assert_eq!(names[0],"a");
+ let mut names=vec!["a".into(),"b".into()];let b=l.select(&mut names,false).unwrap();assert_eq!(names[0],"b");drop(a);drop(b);assert!(l.0.lock().unwrap().is_empty());
+ }
+ #[test]fn direct_traffic_counts_and_exploration_stays_first(){let l=Arc::new(ModelLoads::default());let _t=l.acquire("a");let mut names=vec!["a".into(),"b".into()];l.preview(&mut names);assert_eq!(names[0],"b");let mut names=vec!["a".into(),"b".into()];let _e=l.select(&mut names,true);assert_eq!(names[0],"a");}
 }

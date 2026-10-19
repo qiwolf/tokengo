@@ -7,7 +7,7 @@ use super::{Result,settings,model_routes,scores};
 pub struct Policy { pub strategy:String,pub explore:bool }
 impl Default for Policy {fn default()->Self{Self{strategy:"sequence".into(),explore:false}}}
 pub fn get(c:&Connection)->Result<Policy>{Ok(settings::get(c,"auto_policy")?.and_then(|v|serde_json::from_str(&v).ok()).unwrap_or_default())}
-pub fn save(c:&Connection,p:&Policy)->Result<()>{if !["sequence","balanced","fastest","stable"].contains(&p.strategy.as_str()){return Err(super::DbError::Other("不支持的路由策略".into()));}settings::set(c,"auto_policy",&serde_json::to_string(p).unwrap())}
+pub fn save(c:&Connection,p:&Policy)->Result<()>{if !["sequence","balanced","fastest","stable","idle"].contains(&p.strategy.as_str()){return Err(super::DbError::Other("不支持的路由策略".into()));}settings::set(c,"auto_policy",&serde_json::to_string(p).unwrap())}
 pub fn ordered(c:&Connection)->Result<Vec<String>>{
  let routes=model_routes::list(c)?;let mut names:Vec<_>=routes.into_iter().map(|r|r.name).collect();
  let saved:Vec<String>=settings::get(c,"auto_order")?.and_then(|s|serde_json::from_str(&s).ok()).unwrap_or_default();

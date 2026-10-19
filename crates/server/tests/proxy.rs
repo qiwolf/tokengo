@@ -3470,3 +3470,14 @@ async fn admin_can_save_policy_move_order_and_reset_cooldown() {
  let(s,_)=post_with_token(&f,"/api/model-cooldown/reset",&token,json!({"model":"a","channel_id":ch.0})).await;assert_eq!(s,StatusCode::OK);
  assert_eq!(tokengo_server::db::policy::rows(&f.state.conn(),"a").unwrap()[0].failures,0);
 }
+
+#[tokio::test]
+async fn idle_auto_skips_loaded_model_and_releases_request_occupancy(){
+ let f=fixture();f.with_key();let m=start_mock(Reply::Ok).await;
+ f.add_channel("same",&m.base,ChannelSpec{models:vec![("a".into(),None),("b".into(),None)],..Default::default()});
+ tokengo_server::db::policy::save(&f.state.conn(),&tokengo_server::db::policy::Policy{strategy:"idle".into(),explore:false}).unwrap();
+ let busy=f.state.model_loads.acquire("a");
+ let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"b");
+ drop(busy);
+ let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"a");assert!(f.state.model_loads.0.lock().unwrap().is_empty());
+}

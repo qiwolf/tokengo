@@ -116,6 +116,7 @@ struct Plan {
     /// 每条渠道「同时最多几发」（渠道 id → 上限；0 或缺席 = 不限）。
     caps: HashMap<i64, u32>,
     explored:Option<String>,
+    load_ticket:Option<(String,crate::state::ModelLoadTicket)>,
 }
 
 impl Plan {
@@ -175,6 +176,7 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vis
         secrets: HashMap::new(),
         caps: HashMap::new(),
         explored:None,
+        load_ticket:None,
     };
     for channel in model_routes::channels_for(&conn, &route.name)? {
         if !channel.routable() {
@@ -220,6 +222,7 @@ fn load_auto_plan(
         secrets: HashMap::new(),
         caps: HashMap::new(),
         explored:None,
+        load_ticket:None,
     };
     let mut candidates =
         model_routes::auto_candidates(conn, endpoint.as_model_kind(), wants_vision, now_ms())?;
@@ -249,6 +252,7 @@ fn load_auto_plan(
     // Exploration must never select a model whose every matching channel is cooling.
     candidates.retain(|name|model_routes::channels_for(conn,name).unwrap_or_default().iter().any(|c|crate::db::policy::peek(conn,c.id.0,name,c.upstream_model(name),now_ms()).ok().flatten().is_none()));
     plan.explored=crate::db::policy::rank(conn,&mut candidates,&config,sequence,draw)?;
+    if config.strategy=="idle" {if let Some(t)=state.model_loads.select(&mut candidates,plan.explored.is_some()){plan.load_ticket=Some((candidates[0].clone(),t));}}
     for name in candidates {
         for channel in model_routes::channels_for(conn, &name)? {
             if !channel.routable() || (wants_vision && !channel.vision) {
@@ -294,7 +298,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 看不出来发生了什么（上游 FreeLLMAPI 也是这个规矩，它连"一个能看图的
     // 模型都没启用"都要单独回一个 422，而不是等上游报错）。
     // `auto` 的候选在挑的时候就只挑能看图的模型，这里再按渠道筛一遍。
-    let plan = if wants_vision {
+    let mut plan = if wants_vision {
         let mut p = plan_all;
         p.entries.retain(|e| e.channel.vision);
         p
@@ -436,6 +440,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let sent=channel.upstream_model(name);
         let generation={let c=state.conn();crate::db::policy::claim(&c,channel.id.0,name,sent,now_ms())?};
         let Some(generation)=generation else {continue;};
+        let load_ticket=match plan.load_ticket.take(){Some((n,t)) if tokengo_shared::same_model_name(&n,name)=>t,other=>{drop(other);state.model_loads.acquire(name)}};
         let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false};
         tried_any = true;
         last_channel = channel.id;
@@ -541,7 +546,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             channel.id.0,
                             permit,
                             req.endpoint,
-                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(), cooldown,
+                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(), cooldown, load_ticket,
                         ));
                     }
 
@@ -1039,12 +1044,12 @@ fn stream_passthrough(
     channel_id: i64,
     gate: Option<tokio::sync::OwnedSemaphorePermit>,
     endpoint: EndpointKind,
-    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket,
+    ordinal:u32, model_name:String, upstream_model:String, attempt_started:i64, adaptation_note:Option<String>, cooldown:CooldownTicket, load_ticket:crate::state::ModelLoadTicket,
 ) -> Response {
     let status = resp.status();
     let ctype = content_type(&resp).unwrap_or_else(|| "text/event-stream".to_string());
     let st = StreamState {
-        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,cooldown,
+        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,cooldown,_model_load:load_ticket,
         resp,
         scanner: SseScanner::default(),
         endpoint,
@@ -1087,6 +1092,7 @@ fn stream_passthrough(
 }
 
 struct StreamState {
+    _model_load:crate::state::ModelLoadTicket,
     cooldown:CooldownTicket,
     request_id:i64,ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,
     adaptation_note:Option<String>,
