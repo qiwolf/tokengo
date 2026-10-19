@@ -241,10 +241,10 @@ pub fn Models(ctx:Ctx)->impl IntoView {
             <PageHead title="模型" desc="实时运行表现与自动选择"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
             {move ||err.get().map(|e|view!{<div class="banner bad">{e}</div>})}
             <section class="route-spotlight">
-                <div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div>
+                <div class="auto-header"><div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div><div class="auto-header-actions">                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
+                    <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button></div></div>
                 <div class="policy-controls">{[("sequence","顺序优先"),("balanced","轮流调用"),("fastest","速度优先"),("stable","稳定优先"),("idle","空闲优先")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
-                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
-                    <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button>
+
                 </div>
                 {move ||{
                     let a=auto.get();
