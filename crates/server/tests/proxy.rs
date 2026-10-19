@@ -3618,6 +3618,73 @@ async fn in_flight_request_is_running_and_records_upstream_before_completion() {
 
 
 #[tokio::test]
+async fn direct_model_cooling_matches_auto_without_upstream_calls() {
+    let f=fixture();f.with_key();let m=start_mock(Reply::Status(500,"down")).await;
+    let id=f.add_channel("down",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    let before=m.count();
+    let (s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(s,StatusCode::SERVICE_UNAVAILABLE);assert_eq!(m.count(),before);
+}
+
+#[tokio::test]
+async fn review_documents_remaining_header_and_usage_boundaries() {
+    let f=fixture(); f.with_key();
+    let m=start_mock(Reply::Status(200,r#"{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}"#)).await;
+    let id=f.add_channel("boundary",&m.base,ChannelSpec {
+        headers:vec![("X-API-Key".into(),"review-synthetic-secret".into())],..Default::default()
+    });f.serve("mock-chat",&[id]);
+    let raw:String=f.state.conn().query_row("SELECT value FROM channel_headers WHERE channel_id=?1",[id.0],|r|r.get(0)).unwrap();
+    assert_eq!(raw,"review-synthetic-secret");
+    let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+    let (status,list)=get_with_token(&f,"/api/channels",&token).await;
+    assert_eq!(status,StatusCode::OK);
+    assert_eq!(list["channels"][0]["headers"][0]["value"],"review-synthetic-secret");
+    let (status,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"mock-chat","messages":[]})).await;
+    assert_eq!(status,StatusCode::OK);f.state.drain_writes();
+    let row=&f.request_rows()[0];assert_eq!((row.2,row.3),(0,0));
+    println!("remaining boundaries: synthetic header plaintext in DB/admin API; absent usage stored as 0/0");
+}
+
+#[tokio::test(flavor="multi_thread", worker_threads=4)]
+async fn fixed_delay_real_http_four_concurrency_levels_balance_the_ledger() {
+    let f=fixture();f.with_key();
+    let m=start_mock(Reply::SlowOk(200)).await;
+    let id=f.add_channel("load",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    assert!(f.state.check_gateway_key(KEY));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let server=tokio::spawn({let state=f.state.clone();async move {axum::serve(listener,app(state)).await.unwrap()}});
+    let client=reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut total=0;
+    for concurrency in [16,32,64,128] {
+        let gate=Arc::new(tokio::sync::Semaphore::new(concurrency));
+        let started=std::time::Instant::now();
+        let jobs=(0..concurrency*4).map(|_| {
+            let client=client.clone();let gate=gate.clone();
+            async move {
+                let _permit=gate.acquire_owned().await.unwrap();
+                let t=std::time::Instant::now();
+                let r=client.post(format!("http://{addr}/v1/chat/completions")).bearer_auth(KEY)
+                    .json(&json!({"model":"mock-chat","messages":[]})).send().await.unwrap();
+                assert_eq!(r.status(),StatusCode::OK);let v:Value=r.json().await.unwrap();
+                assert!(v["choices"].is_array());t.elapsed().as_millis()
+            }
+        });
+        let mut timings=futures_util::future::join_all(jobs).await;timings.sort_unstable();
+        println!("concurrency={concurrency} requests={} errors=0 p50={}ms p95={}ms elapsed={}ms",timings.len(),timings[timings.len()/2],timings[timings.len()*95/100],started.elapsed().as_millis());
+        total+=concurrency*4;
+    }
+    f.state.drain_writes();
+    let conn=f.state.conn();
+    let (requests,ok,running):(i64,i64,i64)=conn.query_row("SELECT count(*),sum(status='ok'),sum(status='running') FROM requests",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    let attempts:i64=conn.query_row("SELECT count(*) FROM attempts",[],|r|r.get(0)).unwrap();
+    assert_eq!((requests,ok,running,attempts),(total as i64,total as i64,0,total as i64));
+    println!("ledger requests={requests} ok={ok} running={running} attempts={attempts}");
+    server.abort();
+}
+
+#[tokio::test]
 async fn sessions_respect_explicit_id_and_gateway_key_namespace() {
     let f=fixture(); f.with_key();
     let m=start_mock(Reply::Ok).await;

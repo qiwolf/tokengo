@@ -454,7 +454,7 @@ impl AppState {
         });
     }
 
-    /// 这条渠道的「门口闸机」。`limit == 0` 表示不限，返回 `None`（不拦）。
+    /// Return the channel gate, including unlimited mode so existing in-flight calls remain tracked.
     ///
     /// 每个渠道一把闸机、上限按渠道配：上游免费额度多数是**按凭据**限并发的，
     /// 同一把 key 上同时压太多发，上游直接 429/503（现网 4 天 503「bridge busy」151 次）。

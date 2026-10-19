@@ -90,7 +90,7 @@ impl Upstream {
             .map_err(|e| ChannelFault { message: fault_message(&url, &e) })
     }
 
-    /// 探活用：只取状态码，不关心正文（正文可能很大）。
+    /// Successful probes consume a bounded body and validate the endpoint structure.
     #[allow(clippy::too_many_arguments)]
     pub async fn probe(
         &self,
@@ -608,6 +608,25 @@ pub fn new_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Validate the endpoint structure without rewriting provider-specific fields.
+pub(crate) fn validate_response(v: &serde_json::Value, path: &str) -> Result<(), String> {
+    if tokengo_shared::empty_chat_reply(v) {
+        return Err("上游回了 200 但一句话都没说（空回复）".into());
+    }
+    let valid = match path.trim_start_matches('/') {
+        "chat/completions" => v.get("choices").and_then(|x| x.as_array())
+            .is_some_and(|c| !c.is_empty() && !tokengo_shared::empty_chat_reply(v)),
+        "embeddings" => v.get("data").and_then(|x| x.as_array())
+            .is_some_and(|items| !items.is_empty() && items.iter().all(|x|
+                x.get("embedding").is_some_and(|e| e.is_array() || e.is_string()))),
+        "rerank" => v.get("results").and_then(|x| x.as_array())
+            .is_some_and(|items| items.iter().all(|x| x.get("index").and_then(|i| i.as_u64()).is_some()
+                && x.get("relevance_score").and_then(|i| i.as_f64()).is_some())),
+        _ => false,
+    };
+    if valid { Ok(()) } else { Err(format!("invalid or empty upstream {path} response")) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,23 +918,4 @@ mod tests {
         assert_eq!(cat.len(), MAX_MODEL_IDS);
         assert_eq!(seen, MAX_MODEL_IDS + 5, "截断前一共多少条要数得出来");
     }
-}
-
-/// Validate the endpoint structure without rewriting provider-specific fields.
-pub(crate) fn validate_response(v: &serde_json::Value, path: &str) -> Result<(), String> {
-    if tokengo_shared::empty_chat_reply(v) {
-        return Err("上游回了 200 但一句话都没说（空回复）".into());
-    }
-    let valid = match path.trim_start_matches('/') {
-        "chat/completions" => v.get("choices").and_then(|x| x.as_array())
-            .is_some_and(|c| !c.is_empty() && !tokengo_shared::empty_chat_reply(v)),
-        "embeddings" => v.get("data").and_then(|x| x.as_array())
-            .is_some_and(|items| !items.is_empty() && items.iter().all(|x|
-                x.get("embedding").is_some_and(|e| e.is_array() || e.is_string()))),
-        "rerank" => v.get("results").and_then(|x| x.as_array())
-            .is_some_and(|items| items.iter().all(|x| x.get("index").and_then(|i| i.as_u64()).is_some()
-                && x.get("relevance_score").and_then(|i| i.as_f64()).is_some())),
-        _ => false,
-    };
-    if valid { Ok(()) } else { Err(format!("invalid or empty upstream {path} response")) }
 }
