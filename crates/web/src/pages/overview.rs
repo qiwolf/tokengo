@@ -247,7 +247,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                             <div class="recent-main">
                                                 <span class=format!("tag {css}")>{label}</span>
                                                 <b class="recent-model">{actual_model(&r)}</b>
-                                                <span class="recent-duration">{fmt::dur(r.latency_ms)}</span>
+                                                <span class="recent-duration">{if r.status=="running" {"进行中…".into()} else {fmt::dur(r.latency_ms)}}</span>
                                             </div>
                                         }
                                     })}
@@ -270,7 +270,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                             <header><h3>{format!("请求 #{id}")}</h3></header>
                                             <Show when=move || detail_busy.get()><p class="muted">"加载详情…"</p></Show>
                                             {move || detail_error.get().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
-                                            {move || detail.get().filter(|d|d.request.id==id).map(|d| view! { <RequestDetailView detail=d/> })}
+                                            {move || detail.get().filter(|d|d.request.id==id).map(|mut d| {if let Some(r)=recent.with(|rows|rows.iter().find(|r|r.id==id).cloned()){d.request=r;} view! { <RequestDetailView detail=d/> }})}
                                         </section>
                                     </Show>
                                 </article>
@@ -391,6 +391,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
 
 fn actual_model(r:&LogRow)->String {
     if !r.served_model.trim().is_empty(){r.served_model.clone()}
+    else if r.status=="running" {"等待调用上游".into()}
     else if r.channel_id.is_none(){"未调用上游".into()}
     else if r.model.eq_ignore_ascii_case("auto"){"实际模型未记录".into()}
     else {r.model.clone()}
@@ -403,8 +404,8 @@ fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
     let label=match r.error_code.as_deref(){Some("model_not_configured")=>"模型未配置",Some("vision_not_ready")=>"视觉未就绪",Some("models_cooling")=>"模型冷却中",Some("auto_no_candidate")=>"无可用候选",Some("request_invalid")=>"请求参数错误",_=>status_label(&r.status).0};
     let fields=vec![
         ("实际模型",actual),("请求入口",r.model.clone()),("结果",label.into()),
-        ("请求时间",fmt::ts(r.ts_ms)),("总耗时",fmt::dur(r.latency_ms)),
-        ("首字节延迟",if r.channel_id.is_none(){"不适用".into()}else{r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}),
+        ("请求时间",fmt::ts(r.ts_ms)),("总耗时",if r.status=="running" {"进行中…".into()}else{fmt::dur(r.latency_ms)}),
+        ("首字节延迟",if r.status=="running" {"等待上游响应".into()}else if r.channel_id.is_none(){"不适用".into()}else{r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}),
         ("输入 Token",fmt::num(r.input_tokens)),("输出 Token",fmt::num(r.output_tokens)),
         ("输出方式",if r.streamed{"流式"}else{"非流式"}.into()),
         ("HTTP 状态",r.http_status.map(|n|n.to_string()).unwrap_or_else(||"未记录".into())),
@@ -434,6 +435,8 @@ mod tests {
     fn actual_model_never_presents_auto_as_executed_model(){
         let mut r=crate::model::LogRow::default();r.model="auto".into();
         assert_eq!(super::actual_model(&r),"未调用上游");
+        r.status="running".into();assert_eq!(super::actual_model(&r),"等待调用上游");
+        r.status="failed".into();
         r.channel_id=Some(3);assert_eq!(super::actual_model(&r),"实际模型未记录");
         r.served_model="real-model".into();assert_eq!(super::actual_model(&r),"real-model");
     }

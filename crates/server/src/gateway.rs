@@ -454,7 +454,6 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         // （auto 时每个候选各不相同 —— auto 挑中的是谁，上游看到的就是谁的名字）
         let sent_model = channel.upstream_model(name).to_string();
         // 账上记下「真正被叫的是谁」：面板上看得见 auto 这一发走了哪个模型
-        guard.note_served(name);
         if plan.explored.as_deref()==Some(name.as_str()) {let c=state.conn();let _=c.execute("UPDATE requests SET explored=1 WHERE id=?1",[request_id]);}
 
         // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
@@ -510,6 +509,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 return Ok(gateway_timeout(&plan, &req.model));
             }
 
+            guard.note_served(name);
+            guard.channel_id = Some(channel.id.0);
+            state.enqueue_write(crate::state::WriteJob::Progress(requests::ProgressArgs {
+                request_id, channel_id: channel.id.0, served_model: name.clone(), streamed: req.stream,
+            }));
             let t0 = now_ms();
             let uuid = crate::upstream::new_uuid();
             let outcome = state
@@ -1390,6 +1394,7 @@ pub fn record_client_app(state:&SharedState,id:i64,agent:Option<&str>) {
 }
 
 struct RequestGuard {
+    channel_id: Option<i64>,
     state: SharedState,
     request_id: i64,
     started_ms: i64,
@@ -1408,6 +1413,7 @@ impl RequestGuard {
             request_id,
             started_ms,
             done: false,
+            channel_id: None,
             served_model: None,
             error_code:None,
         }
@@ -1445,7 +1451,7 @@ impl RequestGuard {
             request_id: self.request_id,
             status,
             http_status,
-            channel_id,
+            channel_id: channel_id.or(self.channel_id),
             latency_ms: now_ms() - started_ms,
             first_byte_ms,
             input_tokens,
@@ -1479,7 +1485,7 @@ impl Drop for RequestGuard {
             request_id: self.request_id,
             status: Status::Canceled,
             http_status: None,
-            channel_id: None,
+            channel_id: self.channel_id,
             latency_ms: now_ms() - self.started_ms,
             first_byte_ms: None,
             input_tokens: 0,

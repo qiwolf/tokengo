@@ -3561,3 +3561,30 @@ async fn model_switch_controls_direct_auto_and_listing_without_deleting_mapping(
 
 #[tokio::test]
 async fn channel_api_rejects_custom_alias(){let f=fixture();let t=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();let(s,_)=post_with_token(&f,"/api/channels",&t,json!({"name":"x","base_url":"http://x","models":[{"model":"alias","upstream":"real"}]})).await;assert_eq!(s,StatusCode::BAD_REQUEST);}
+
+#[tokio::test]
+async fn in_flight_request_is_running_and_records_upstream_before_completion() {
+    let f=fixture(); f.with_key();
+    let m=start_mock(Reply::SlowOk(500)).await;
+    let ch=f.add_channel("delayed", &m.base, ChannelSpec::default());
+    f.serve("mock-chat", &[ch]);
+    let call=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[{"role":"user","content":"hello"}]}));
+    let sample=async {
+        for _ in 0..100 {if m.count()>0 {break;} tokio::time::sleep(std::time::Duration::from_millis(5)).await;}
+        assert_eq!(m.count(),1);
+        f.state.drain_writes();
+        let c=f.state.conn();
+        let row=tokengo_server::db::requests::recent(&c,1).unwrap().remove(0);
+        assert_eq!(row.status,"running");
+        assert_eq!(row.channel_id,Some(ch.0));
+        assert_eq!(row.served_model,"mock-chat");
+        let stats=tokengo_server::db::requests::stats_since(&c,0).unwrap();
+        assert_eq!(stats.failed,0);
+        assert_eq!(stats.by_model[0].model,"mock-chat");
+    };
+    let (result,())=tokio::join!(call,sample);
+    assert_eq!(result.0,StatusCode::OK);
+    f.state.drain_writes();
+    let row=tokengo_server::db::requests::recent(&f.state.conn(),1).unwrap().remove(0);
+    assert_eq!(row.status,"ok"); assert_eq!(row.channel_id,Some(ch.0));
+}

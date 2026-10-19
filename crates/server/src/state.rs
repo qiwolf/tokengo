@@ -85,6 +85,7 @@ pub struct AppState {
 /// 由后台落账员（`spawn_writer`）补写；请求该成功就成功。
 #[derive(Debug)]
 pub enum WriteJob {
+    Progress(crate::db::requests::ProgressArgs),
     /// 请求收尾。
     Finish(crate::db::requests::FinishArgs),
     /// 一次渠道尝试。
@@ -160,6 +161,8 @@ impl AppState {
 
     pub fn init(cfg: Config) -> anyhow::Result<Arc<Self>> {
         let conn = db::open(&cfg.db_path)?;
+        let interrupted = db::requests::recover_interrupted(&conn)?;
+        if interrupted > 0 { tracing::warn!(interrupted, "已收尾重启前中断的请求"); }
         tracing::info!("数据库 {} 就绪", cfg.db_path.display());
 
         // 把库切成「增量回收」模式。这一步必须在库还小的时候做（改这个属性要整库重写），
@@ -363,11 +366,14 @@ impl AppState {
         let mut done = 0usize;
         let mut retry: Vec<WriteJob> = Vec::new();
         for job in keep {
+            // Preserve progress order even if another request currently holds the DB.
+            if !retry.is_empty() { retry.push(job); continue; }
             let Ok(conn) = self.db.try_lock() else {
                 retry.push(job);
                 continue;
             };
             let ok = match &job {
+                WriteJob::Progress(a) => crate::db::requests::progress_args(&conn, a).is_ok(),
                 WriteJob::Finish(a) => crate::db::requests::finish_args(&conn, a).is_ok(),
                 WriteJob::Attempt(a) => crate::db::requests::add_attempt_args(&conn, a).is_ok(),
                 WriteJob::State(g) => {

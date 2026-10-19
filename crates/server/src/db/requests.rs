@@ -44,10 +44,30 @@ pub fn start(
 ) -> Result<i64> {
     conn.execute(
         "INSERT INTO requests (ts_ms, endpoint, model, status, client_ip, has_image)
-         VALUES (?1, ?2, ?3, 'failed', ?4, ?5)",
+         VALUES (?1, ?2, ?3, 'running', ?4, ?5)",
         params![now_ms(), endpoint, model, client_ip, has_image as i64],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Outbound progress is queued in order and cannot overwrite a terminal record.
+#[derive(Debug, Clone)]
+pub struct ProgressArgs {
+    pub request_id: i64,
+    pub channel_id: i64,
+    pub served_model: String,
+    pub streamed: bool,
+}
+
+pub fn progress_args(conn: &Connection, a: &ProgressArgs) -> Result<()> {
+    conn.execute("UPDATE requests SET channel_id=?2, served_model=?3, streamed=?4 WHERE id=?1 AND status='running'",
+        params![a.request_id,a.channel_id,a.served_model,a.streamed])?;
+    Ok(())
+}
+
+/// Only called once at process initialization, before accepting requests.
+pub fn recover_interrupted(conn: &Connection) -> Result<usize> {
+    Ok(conn.execute("UPDATE requests SET status='failed', error='服务重启，请求被中断', error_code='server_interrupted', latency_ms=MAX(0,?1-ts_ms) WHERE status='running'", [now_ms()])?)
 }
 
 /// 一次「请求结束」的落账参数。
@@ -137,7 +157,7 @@ pub fn finish(
     error: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "UPDATE requests SET status = ?2, http_status = ?3, channel_id = ?4, latency_ms = ?5,
+        "UPDATE requests SET status = ?2, http_status = ?3, channel_id = COALESCE(?4, channel_id), latency_ms = ?5,
                 first_byte_ms = ?6, input_tokens = ?7, output_tokens = ?8,
                 streamed = ?9, error = ?10
           WHERE id = ?1",
@@ -663,13 +683,29 @@ mod tests {
     }
 
     #[test]
-    fn default_status_is_failed_so_a_crash_still_counts_as_a_failure() {
+    fn new_requests_are_running_until_finished() {
         let conn = open_in_memory().unwrap();
         let id = start(&conn, "/v1/chat/completions", "auto", None, false).unwrap();
-        // 进程崩了没来得及调 finish —— 记录不能显示成"成功"
+        // In-flight requests are not failures.
         let rows = recent(&conn, 1).unwrap();
-        assert_eq!(rows[0].status, "failed");
+        assert_eq!(rows[0].status, "running");
         assert_eq!(rows[0].id, id);
+    }
+
+    #[test]
+    fn interrupted_recovery_and_late_progress_preserve_terminal_records() {
+        let c=open_in_memory().unwrap();
+        let running=start(&c,"chat","a",None,false).unwrap();
+        let ok=start(&c,"chat","b",None,false).unwrap();
+        c.execute("UPDATE requests SET status='ok' WHERE id=?1",[ok]).unwrap();
+        assert_eq!(recover_interrupted(&c).unwrap(),1);
+        assert_eq!(recover_interrupted(&c).unwrap(),0);
+        progress_args(&c,&ProgressArgs{request_id:running,channel_id:7,served_model:"late".into(),streamed:false}).unwrap();
+        progress_args(&c,&ProgressArgs{request_id:ok,channel_id:7,served_model:"late".into(),streamed:false}).unwrap();
+        let rows=recent(&c,2).unwrap();
+        assert!(rows.iter().all(|r|r.channel_id.is_none()));
+        assert_eq!(rows.iter().find(|r|r.id==ok).unwrap().status,"ok");
+        assert_eq!(rows.iter().find(|r|r.id==running).unwrap().error_code.as_deref(),Some("server_interrupted"));
     }
 
     #[test]
