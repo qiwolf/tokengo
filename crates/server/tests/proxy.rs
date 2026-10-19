@@ -3618,6 +3618,23 @@ async fn in_flight_request_is_running_and_records_upstream_before_completion() {
 
 
 #[tokio::test]
+async fn sessions_respect_explicit_id_and_gateway_key_namespace() {
+    let f=fixture(); f.with_key();
+    let m=start_mock(Reply::Ok).await;
+    let id=f.add_channel("session",&m.base,ChannelSpec {
+        headers:vec![("x-session".into(),"{{session_id}}".into())],..Default::default()
+    }); f.serve("mock-chat",&[id]);
+    let other=tokengo_server::db::gateway_keys::generate();
+    tokengo_server::db::gateway_keys::create(&f.state.conn(),&f.state.secrets,"other",&other,false).unwrap();
+    for (key,sid) in [(KEY,"a"),(KEY,"b"),(other.as_str(),"a"),(KEY,"a")] {
+        let (s,_,_)=post(&f,CHAT,Some(key),json!({"model":"mock-chat","session_id":sid,"messages":[{"role":"user","content":"hello"}]})).await;
+        assert_eq!(s,StatusCode::OK);
+    }
+    let ids:Vec<_>=m.seen().iter().map(|s|s.custom.iter().find(|(n,_)|n=="x-session").unwrap().1.clone()).collect();
+    assert_ne!(ids[0],ids[1]); assert_ne!(ids[0],ids[2]); assert_eq!(ids[0],ids[3]);
+}
+
+#[tokio::test]
 async fn retry_budget_caps_attempt_headers_but_not_active_streams() {
     let f=fixture(); f.with_key();
     { let mut r=f.state.routing(); r.cfg.attempt_timeout_ms=1000; r.cfg.request_budget_ms=120; }

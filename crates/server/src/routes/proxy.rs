@@ -40,7 +40,7 @@ pub fn router() -> Router<SharedState> {
 // ───────────────────────── 鉴权 ─────────────────────────
 
 /// 对外 key 的门。放在 handler 参数里即生效。
-pub struct GatewayKey;
+pub struct GatewayKey { namespace: String }
 
 impl FromRequestParts<SharedState> for GatewayKey {
     type Rejection = ApiError;
@@ -76,7 +76,7 @@ impl FromRequestParts<SharedState> for GatewayKey {
             );
             return Err(ApiError::unauthorized("对外 key 不对"));
         }
-        Ok(GatewayKey)
+        Ok(GatewayKey { namespace: tokengo_shared::short_hash(key) })
     }
 }
 
@@ -103,6 +103,7 @@ async fn chat_completions(
             body: value,
             stream,
             client_ip: ip_raw.clone(),
+            session_namespace: _key.namespace,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -139,6 +140,7 @@ async fn embeddings(
             body: value,
             stream,
             client_ip: ip_raw.clone(),
+            session_namespace: _key.namespace,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -175,6 +177,7 @@ async fn rerank(
             body: value,
             stream,
             client_ip: ip_raw.clone(),
+            session_namespace: _key.namespace,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )

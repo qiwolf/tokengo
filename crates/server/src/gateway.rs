@@ -89,6 +89,7 @@ impl EndpointKind {
 
 /// 一次转发的输入。
 pub struct ForwardRequest {
+    pub session_namespace: String,
     pub endpoint: EndpointKind,
     pub model: String,
     /// 原样的请求体（只改 `model` 一处，别的一个字节都不动）。
@@ -405,7 +406,11 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 同一段对话稳定不变的会话 ID（自定义头 `{{session_id}}` 用）。
     // **按客户端原样的请求体算一次**：改成上游的模型名之后再算，同一个客户端模型名
     // 落到不同渠道会得出不同的会话 ID，上游看到的就不再是"同一段对话"了。
-    let session = tokengo_shared::session_id_from_body(&req.body);
+    let explicit = ["session_id", "conversation_id"].iter()
+        .find_map(|field| req.body.get(field).and_then(Value::as_str).filter(|id| !id.is_empty()))
+        .map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")));
+    let session = explicit.or_else(|| tokengo_shared::session_id_from_body(&req.body))
+        .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
 
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
