@@ -3481,3 +3481,10 @@ async fn idle_auto_skips_loaded_model_and_releases_request_occupancy(){
  drop(busy);
  let(s,_,_)=post(&f,CHAT,Some(KEY),json!({"model":"auto","messages":[]})).await;assert_eq!(s,StatusCode::OK);assert_eq!(m.seen().last().unwrap().model,"a");assert!(f.state.model_loads.0.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn reserved_auto_cannot_be_saved_as_channel_model(){
+ let f=fixture();let token=tokengo_server::db::sessions::create_session(&f.state.conn(),None).unwrap();
+ let(s,_)=post_with_token(&f,"/api/channels",&token,json!({"name":"old","base_url":"http://x","models":[{"model":"auto"}]})).await;
+ assert_eq!(s,StatusCode::BAD_REQUEST);
+}

@@ -357,4 +357,10 @@ END;
         channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
         upstream_model TEXT NOT NULL, context_window INTEGER NOT NULL CHECK(context_window>0),
         PRIMARY KEY(channel_id,upstream_model));"#),
+    (19,r#"
+DELETE FROM channel_models WHERE LOWER(TRIM(model_name))='auto';
+DELETE FROM registry_associations WHERE LOWER(TRIM(model_name))='auto';
+DELETE FROM model_type_checks WHERE LOWER(TRIM(model_name))='auto';
+DELETE FROM model_vision_checks WHERE LOWER(TRIM(model_name))='auto';
+"#),
 ];
