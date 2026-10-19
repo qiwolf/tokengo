@@ -30,12 +30,16 @@ pub fn is_auto(name: &str) -> bool {
     normalize_model_name(name) == AUTO_NAME
 }
 
+pub fn enabled(conn:&Connection,name:&str)->Result<bool>{Ok(super::settings::get(conn,&format!("model_enabled:{}",normalize_model_name(name)))?.as_deref()!=Some("false"))}
+pub fn set_enabled(conn:&Connection,name:&str,value:bool)->Result<()>{super::settings::set(conn,&format!("model_enabled:{}",normalize_model_name(name)),if value{"true"}else{"false"})}
+
 /// 一个模型名 + 它现在的全部事实。**面板与对外清单共用这一份**，别在各处重算 ——
 /// 各算各的就会漂移（以前就是这样：「模型」页按名字算、对外清单按组算）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NameRoute {
     /// 展示拼写：按渠道顺序第一个勾它的写法（归一后同一个名字只留一行）。
     pub name: String,
+    pub enabled:bool,
     pub kind: ModelKind,
     pub kind_source: KindSource,
     pub kind_conflict: bool,
@@ -58,7 +62,7 @@ pub struct NameRoute {
 impl NameRoute {
     /// 现在有没有渠道能用（没有 = 客户端打这个名字会 404）。
     pub fn routed(&self) -> bool {
-        !self.channels.is_empty()
+        self.enabled && !self.channels.is_empty()
     }
 
     /// 能不能吃图片输入。**只有对话类才谈这个**：向量 / 重排 / 图像 / 视频 / 音频
@@ -93,6 +97,7 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
                     let k = kind_of.iter().find(|k| same_model_name(&k.name, raw));
                     out.push(NameRoute {
                         name: raw.to_string(),
+                        enabled:enabled(conn,raw)?,
                         kind: k.map(|k| k.kind).unwrap_or_default(),
                         kind_source: k.map(|k| k.source).unwrap_or_default(),
                         kind_conflict: false,
@@ -221,6 +226,7 @@ pub fn routes_for(conn: &Connection, name: &str) -> Result<Option<NameRoute>> {
 /// 落到能看图的模型、在 B 渠道上是纯文本，是常事。
 pub fn channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
     let mut out = Vec::new();
+    if !enabled(conn,name)? {return Ok(out);}
     for l in channels::list(conn)? {
         let Some(m) = l
             .models

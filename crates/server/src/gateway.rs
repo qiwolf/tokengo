@@ -169,6 +169,7 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vis
             "模型「{model}」这里没有：去面板「渠道」页把这个模型名勾上 —— 勾上才认（勾选就是白名单）"
         )));
     };
+    if !route.enabled {return Err(ApiError::new(StatusCode::FORBIDDEN,"model_disabled",format!("模型「{model}」已停用")));}
     let mut plan = Plan {
         route: route.name.clone(),
         auto: false,

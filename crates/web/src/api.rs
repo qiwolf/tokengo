@@ -470,3 +470,5 @@ pub async fn set_context_override(channel:i64,model:&str,upstream:&str,tokens:Op
     call("PUT",&format!("/api/channels/{channel}/context"),Some(json!({"model":model,"upstream":upstream,"tokens":tokens}))).await?;
     Ok(())
 }
+
+pub async fn set_model_enabled(model:&str,enabled:bool)->Result<(),ApiErr>{call("PUT","/api/model-enabled",Some(json!({"model":model,"enabled":enabled}))).await.map(|_|())}
