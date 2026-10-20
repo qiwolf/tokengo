@@ -9,6 +9,7 @@
 //! 这一层了（一个模型名 = 渠道里勾了它的那些渠道），面板只剩「模型」一页看它。
 
 pub mod channels;
+pub mod custom_probes;
 pub mod provider_channels;
 pub mod provider_keys;
 pub mod model_reasoning;
@@ -33,6 +34,7 @@ pub enum Page {
     Overview,
     Channels,
     Models,
+    Probes,
     Users,
     Billing,
     Settings,
@@ -47,6 +49,7 @@ impl Page {
         Page::Overview,
         Page::Channels,
         Page::Models,
+        Page::Probes,
         Page::Users,
         Page::Billing,
         Page::Settings,
@@ -64,6 +67,7 @@ impl Page {
             Page::Overview => "overview",
             Page::Channels => "channels",
             Page::Models => "models",
+            Page::Probes => "probes",
             Page::Users => "users",
             Page::Billing => "billing",
             Page::Settings => "settings",
@@ -77,6 +81,7 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
+            Page::Probes => "探针",
             Page::Users => "用户",
             Page::Billing => "账务",
             Page::Settings => "设置",
@@ -90,7 +95,8 @@ impl Page {
             Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
-            Page::Users => "用户身份、虚拟密钥及其权限和限流。",
+            Page::Probes => "配置渠道与模型的定时检查，查看结果和响应速度。",
+            Page::Users => "管理用户资料、模型授权、限额与 API Key。",
             Page::Billing => "预算、价格版本和持久化的逐次尝试账本。",
             Page::Settings => "网关密钥、运行参数与维护。",
             Page::Strategies=>"私有虚拟模型与顺序、错误码和时段调用策略。",Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人密钥元数据与用量。",Page::Account=>"当前登录账号与密码。",
@@ -197,7 +203,7 @@ mod tests {
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
         // 总览 · 渠道 · 模型 · 用户 · 账务 · 设置
-        assert_eq!(Page::ALL.len(), 6);
+        assert_eq!(Page::ALL.len(), 7);
         assert!(!Page::ALL.contains(&Page::Accounts));
         assert_eq!(Page::Users.title(), "用户");
     }
