@@ -10,10 +10,18 @@
 - `POST /api/oauth/complete`：`{attempt_id,state,code?,client_id?,error?}`。state十分钟有效、一次消费；拒绝错误state；验证正确state的denied回调消费attempt并400，不换token。初始注册必须使用callback签发client ID，后续签发ID不得替换选中账号ID。结果只有账号元数据。
 - `GET /api/oauth/accounts`：账号状态/身份/到期/版本和scope，无token。
 - `GET /api/oauth/accounts/{id}/models`：用该账号的新鲜token访问官方模型目录，返回最大1MiB/4096项目录，保留来源提供的上下文信息，不暴露token；目录缺上界时必须保留未知，不能凭模型名猜测。Sign in with ChatGPT 的正式目录是顶层`models`数组、标识为`slug`，保留全部原始元数据、visibility及顺序；显示选择器时仅展示`visibility=list`，请求模型使用原`slug`。普通API的`object=list/data/id`只作为明确独立兼容形状接受，两形状混合、重复标识、畸形上界或递归凭据字段均拒绝，不把模型目录当成token价格。
-- `GET/PUT/DELETE /api/oauth/channels/{id}`：查询、绑定、解绑。PUT为`{account_id,reasoning_effort?,service_tier?,max_input_tokens?,max_output_tokens?}`。effort限low/medium/high，tier限priority/auto/default。独立context bounds为1..16777216；只配置完整pair时`context_bounds`返回已配置边界。
+- `GET/PUT/DELETE /api/oauth/channels/{id}`：查询、绑定、解绑。PUT为`{account_id,reasoning_effort?,service_tier?,max_input_tokens?,max_output_tokens?}`。此旧连接级 effort 兼容枚举限 low/medium/high，tier 限 priority/auto/default；新模型不使用该旧 effort 枚举选择档位，改用下述每模型原生参数配置。独立context bounds为1..16777216；只配置完整pair时`context_bounds`返回已配置边界。
 - `POST /api/oauth/accounts/{id}/revoke`：立即停用并清除本地token，增加所绑定渠道generation；按discovery的官方revocation endpoint尝试终止远程会话，响应明确`remote_revocation_confirmed`。失败时只能确认本地退出，需到ChatGPT设置断开应用；账号/client/host映射保留。
 
 绑定要求来源base为官方API，无旧channel secret或自定义headers；不自动删除旧凭据。绑定设原生Responses，可允许已有文本/函数协议转换；不代表任何请求语义都能转换。更换账号、修改defaults/bounds或解绑使来源generation改变；同账号access/refresh轮转只改credential revision，不改变来源身份。一个账号可绑定多个渠道，仍共享同一会话及刷新锁。
+
+## 新模型的原生推理档位
+
+获取授权账号目录时，会将其明确声明的 `supported_reasoning_levels` / `default_reasoning_level` 等安全能力元数据缓存到仍绑定同一账号及来源身份的连接。缓存不存完整目录正文或凭据，不对同品牌其他连接套用；只声明 reasoning boolean 不会生成 low/high 等档位。新增模型缺缓存时由面板读取目录，手动“刷新能力元数据”同样只读目录。
+
+在服务商模型行展开“连接与推理参数”，即可选择该连接上游明确声明的档位，或保留“使用服务商默认”。`PUT /api/channels/{id}/models/reasoning` 的 `default_effort:null` 明确不注入档位，覆盖旧连接绑定的 effort 默认；客户端显式 `reasoning.effort` / `reasoning_effort` 仍优先。档位值不局限于旧绑定枚举，但必须符合当前目录或明确人工确认的值；元数据变更使已选默认不再有效时要求重新确认，不静默恢复旧默认。
+
+模型名使用当前目录中的标准名称，旧档位别名只作为兼容配置保留。目录声明不证明该档位已做真实推理，也不证明加密/签名语义可跨协议转换；详见[服务商与模型合同](provider-channels.md)及[公开验收状态](acceptance-status.md)。
 
 ## 凭据与并发
 
@@ -35,7 +43,7 @@ Token response的`earliest_refresh_at`按Unix秒解析，内部时间统一毫�
 
 可在受限服务环境文件中设置 `TOKENGO_OPENAI_PROXY=http://proxy-host:port`。它只作用于独立的 OpenAI 授权/目录/撤销客户端与订阅推理连接池，其他模型保持原连接池。未设置时沿用原默认网络行为；不需要设置全局 HTTP_PROXY 或修改共享网络。代理配置错误只返回固定错误信息，不打印 URL 或可能包含的代理凭据。
 
-回归使用独立合成RSA测试密钥、loopback JWKS/token/revocation/catalog服务；没有调用真实授权或读旧CLI认证。测试覆盖非法JWT、一次性state、跨账号、并发轮转/跨runtime CAS、刷新取消/撤销、重启保留、密文存储和管理权限。测试用api_base覆盖仅在cfg(test)编译；生产端点固定，不能经API/环境配置任意host。
+自动化回归使用独立合成RSA测试密钥、loopback JWKS/token/revocation/catalog服务；回归本身没有调用真实授权或读旧CLI认证。另行进行的真实授权、有限客户端与转换验证见[公开验收状态](acceptance-status.md)，不能将合成回归与真实推理结果混为一项。测试覆盖非法JWT、一次性state、跨账号、并发轮转/跨runtime CAS、刷新取消/撤销、重启保留、密文存储和管理权限。测试用api_base覆盖仅在cfg(test)编译；生产端点固定，不能经API/环境配置任意host。
 
 官方依据：[模型目录与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[注册与登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)、[token字段](https://developers.openai.com/siwc/token-sharing-open-source/token-reference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 

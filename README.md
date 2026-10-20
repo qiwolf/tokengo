@@ -2,8 +2,9 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-本 fork 基于上游 v0.34.0，已加入用户与虚拟密钥（VKey）、预算及逐尝试账本、逻辑模型与有序 fallback、Chat / Responses / Messages 原生入口和文本/函数工具转换。另提供 DeepSeek Search/Fetch 按次计费、原生 Chat 语音输入与独立 OpenAI OAuth。具体配置和限制见[身份与计量](docs/identity-metering.md)、[模型路由](docs/logical-routing.md)、[协议与客户端](docs/protocols.md)、[Search/Fetch](docs/deepseek-search-fetch.md)、[OAuth](docs/openai-oauth.md)和[部署指南](docs/deployment.md)。功能存在不等于任意供应商、订阅或客户端均已验收。
+本 fork 基于上游 v0.34.0，使用 Rust / Axum / SQLite 与 Leptos / WebAssembly 构建个人或小团队网关。已实现多 API 用户、多 VKey、预算与持久账本、有序 fallback、三协议原生入口，以及独立的控制台账号体系。最新分支增加服务商渠道、非破坏模型开关和原生推理档位元数据管理。
 
+本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](docs/acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准，未另行发布新版本或 tag。更新内容见 [CHANGELOG](CHANGELOG.md)。
 Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
 
 ## 中文使用指南
@@ -14,9 +15,38 @@ Cargo 版本号保留上游 **v0.34.0**；本分支的实际功能以提交及�
 
 提供 Chat、Responses、Messages、向量、重排、模型清单与独立 Search/Fetch 接口。源协议、转换、图像及内联语音能力须显式配置，不按模型名猜测。流式提交前可切换允许的备用源，提交后不重放；取消、未知用量与来源错误分别记录。
 
-管理面板包括总览、渠道、模型、用户、账务和设置；日志从排障入口访问。用户/VKey 支持权限与限额，账务支持版本价格、预算及账本；不是多实例共享配额服务。
+管理面板包括总览、服务商渠道、模型、API 用户、面板账号、账务和设置；普通账号进入独立本人门户。控制台账号与调用 API 的用户/VKey 是不同身份。总览显示真实请求指标、运行中请求及按类型/渠道/模型/客户端分组，账务显示价格、预算与逐尝试账本。当前以指标和明细列表为主，不把尚未实现的完整成本趋势图或 BI 分析称为现有能力；本地配额也不是多实例共享配额服务。
 
 当前转换只覆盖可保真的文本与客户端函数工具。原生签名/不透明状态有归属约束，不能跨协议搬运；Responses 要求完整历史重放。未实现 Gemini 原生协议、独立音视频/文件 API 或任意订阅转换。官方 OAuth 预览也不接受部分普通 API 参数，详见对应文档。
+
+### 服务商渠道、模型与原生参数
+
+渠道页先显示服务商名称，再展开该服务商的已配置模型；原连接仍保留独立 ID、地址、凭据、协议、OAuth 绑定、并发、价格及 fallback 引用。本轮整理方案为六个服务商组，这不是内置的固定目录或数量上限；新安装需显式归属旧连接，不按同一域名或相似名称自动合并。
+
+在服务商内启用/停用模型会原子更新明确列出的连接范围，停用保留上游模型名、视觉能力及字段配置。模型页默认汇总公开、启用且可路由的模型，停用项与兼容隐藏项可筛选恢复。服务商内模型开关、连接开关、整个服务商开关及全局逻辑模型开关各有不同作用域。
+
+推理档位通过 `reasoning.effort`（Responses）或 `reasoning_effort`（Chat）表达，`service_tier` 是独立参数；客户端显式值优先。新增/编辑模型读取普通来源目录或绑定 OAuth 账号的官方目录，具体 levels、默认值及来源照实展示，不自动发送付费推理。“支持推理”这一 boolean 不足以推断档位；未知保持未知，允许明确人工确认并标记来源。目录声明未经推理实测，跨协议支持以接入协议为准。
+
+本轮标准 GPT 展示使用 `gpt-6.1-sol`、`gpt-6-luna`、`gpt-5.6-luna`，不把 low/high 拼成新模型。实际可用名称和档位仍以当前授权账号目录为准。已有十个档位兼容别名可显式隐藏，从 `/v1/models` 与 auto 排除但保留直接请求、历史及内部引用；不按后缀自动删改。完整配置见 [服务商渠道](docs/provider-channels.md)。
+
+例如向 `POST /v1/responses` 发送下列原生请求；使用前确认该账号目录开放该模型及 low 档位。`service_tier` 若受支持应作为独立顶层字段配置，不由推理档位推断。
+
+```json
+{"model":"gpt-6-luna","stream":true,"store":false,"reasoning":{"effort":"low"},"input":[{"role":"user","content":"Hello"}]}
+```
+
+### 账号、VKey、fallback 与账务
+
+- 控制台使用账号与密码登录，同源 HttpOnly cookie 恢复会话；不再要求浏览器手填或保存登录 token。初始管理员名为 `admin`，本人可确认当前密码后改登录名或密码，成功撤销全部会话。普通面板账号由管理员关联 API 用户，仅看本人密钥元数据与用量；停用面板账号不等于停用 API 用户/VKey。见 [账号合同](docs/account-login.md)。
+- 一个 API 用户可有多个 VKey，按模型、原连接、付费权限及限额隔离；父级限制与预算不能被子密钥绕过。客户端用 VKey，不用面板密码或供应商密钥。见 [身份与计量](docs/identity-metering.md)。
+- 逻辑模型的有序 fallback、重试、冷却及并发限制遵守权限和预算。流式输出提交前可切源，提交后不重放；不是对任意不同模型能力的无损替换。见 [模型路由](docs/logical-routing.md)。
+- Token 与 Search/Fetch 按次账本分开，未知用量/未定价不冒充 0。价格版本、原子预占和持久结算 outbox 保留审计证据，供应商最终账单仍需对账。
+
+### 协议与有限验收范围
+
+Chat / Responses / Messages 有原生入口及受限文本/客户端函数工具转换；明文推理与部分原生请求字段可在可表示路径转换。签名、加密推理、不透明状态和供应商角色差异不能据此宣称无损全兼容。DeepSeek 原生 Responses 的 developer 语义、Messages 忽略参数及 OpenAI OAuth 预览字段限制须分别遵循 [协议文档](docs/protocols.md)。
+
+独立 [DeepSeek Search/Fetch](docs/deepseek-search-fetch.md) 已有有限真实请求与按次入账验证，不会自动接管 Claude Code/Codex 的内置搜索工具，也不以本地价格代替供应商最终发票。[独立 OpenAI OAuth](docs/openai-oauth.md) 已有实际授权、目录、有限文本、受控单工具客户端循环及指定转换流验证；这不代表任意订阅、模型、参数或完整 Claude/Codex 功能集均通过。新增服务商分组与档位 UI 本轮依靠隔离浏览器及合成目录验收，未为其追加付费推理。
 
 ### 构建与启动
 
@@ -44,13 +74,12 @@ TOKENGO_LOG_DIR=./logs \
 
 ### 首次配置和客户端接入
 
-1. 打开 http://127.0.0.1:3160/ui/ ，在本机先初始化面板口令，保存网关密钥，再开放访问。
-2. 在“渠道”填写上游基础地址与提供商密钥。若完整接口为 `/v1/chat/completions`，基础地址一般填写到 `/v1`，不要填写整个接口路径。
-3. 在渠道内添加或勾选服务的模型名，必要时填写客户端名到上游模型名的映射；确认渠道已启用。
-4. 根据实际能力设置用途和图片输入支持，不按名字猜。模型页不是另一个独立模型提供商。
-5. 在“用户”创建调用用户及虚拟密钥，设置模型/渠道范围、付费权限及限额；需要计费时在“账务”配置价格和预算。客户端使用虚拟密钥，不是面板口令或上游提供商密钥。
-6. 客户端基础地址填写 `http://127.0.0.1:3160/v1`，模型填写已配置的客户端模型名。
-
+1. 打开 http://127.0.0.1:3160/ui/ ，首次设置管理员密码并安全保存一次性显示的网关密钥，再开放访问。显示名称留空使用默认“管理员”。
+2. 在“渠道”创建服务商，将已有未分组连接显式归属，或在该服务商的高级设置中新建连接。连接名称是内部标识；填写真实协议对应的基础地址与供应商凭据。
+3. 获取真实模型目录，在连接内启用需要的标准模型，必要时设置对外名到上游名的映射；确认父服务商、连接及模型均已启用。新增目录元数据不是推理实测。
+4. 依据实际声明配置用途、图片能力与原生参数；未知能力先确认，不按模型名猜测。
+5. 在“API 用户”创建调用用户和 VKey，设置模型/连接范围、付费权限及限额；需要货币预算时先配置真实价格。需要浏览器登录的普通用户，再在“面板账号”明确关联其 API 用户。
+6. 客户端基础地址填写 `http://127.0.0.1:3160/v1`，使用 VKey 和当前目录中允许的对外模型名。
 ```sh
 export TOKENGO_API_KEY='YOUR_GATEWAY_KEY'
 curl http://127.0.0.1:3160/v1/models \
@@ -108,11 +137,10 @@ curl -N http://127.0.0.1:3160/v1/chat/completions \
 ```sh
 cargo test --locked --workspace
 cargo test --locked --workspace -- --test-threads=1
-cargo check -p tokengo-web --target wasm32-unknown-unknown
+cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 ```
 
-v0.34.0 公开副本串行全仓 **403 项通过、1 项忽略**。首次默认并行运行有一项进行中进度断言失败；单项复跑和串行全仓通过，原因未最终定位，不宣称默认并行测试已全绿。测试不能代表已验证所有提供商、浏览器或部署环境。本地 HTTP 夹具被代理拦截时，请取消测试进程的代理环境变量。
-
+测试范围包括本地 HTTP/流式夹具、权限、计量、持久恢复、协议及前端纯函数。测试和隔离浏览器通过不代表全部真实供应商或生产环境已验收；以精确提交的 CI 结果和[公开验收状态](docs/acceptance-status.md)为准，不把旧版本测试数量当作当前结论。本地 HTTP 夹具被代理拦截时，请取消测试进程的代理环境变量。
 公开仓库保留脱敏历史，不公开内部报告、机器专用脚本、数据库、日志、真实凭据及编译产物。历史 README 对应旧版本；不以历史内存数字承诺当前版本性能。
 
 通过 GitHub Issues 提交版本、复现步骤与脱敏错误，不要上传口令、密钥、数据库或敏感请求内容。这里未公布专用的私密安全报告邮箱，不要公开含凭据或敏感利用细节的信息。修复应补回归测试，面板修改还应检查 WASM 编译。
@@ -121,82 +149,4 @@ v0.34.0 公开副本串行全仓 **403 项通过、1 项忽略**。首次默认�
 
 ---
 
-## English Quick Reference
-
-
-Self-hosted OpenAI-compatible LLM gateway written in Rust, with a Rust/WASM administration panel.
-
-## Current Version
-
-v0.34.0 separates the non-streaming completion deadline from the streaming idle timeout. Recent versions also isolate explicit upstream account faults and permit a single recovery trial, while retaining live running-request progress and startup recovery for interrupted requests.
-
-Recent updates also include model/channel cooldown visibility, configurable model context limits, upstream capability metadata and named gateway API keys.
-
-## Features
-
-- Chat completions and SSE streaming, embeddings, reranking and model discovery.
-- Custom upstream channels, model aliases and templated request headers.
-- Priority routing, retries, failover, recovery and per-channel concurrency limits.
-- Request accounting, runtime logs, model capability metadata and image-input routing.
-- SQLite storage, encrypted upstream credentials and authenticated administration.
-- Leptos web panel with no npm build dependency.
-
-## Build
-
-Requires Rust 1.98 or newer and a native C toolchain for bundled SQLite.
-Install Trunk using the official instructions at https://trunkrs.dev/ for the web panel.
-
-```sh
-cargo build --locked --release -p tokengo-server
-cargo test --locked --workspace
-rustup target add wasm32-unknown-unknown
-cd crates/web
-trunk build --release
-cd ../..
-```
-
-## Run
-
-From the repository root after building the server and panel:
-
-```sh
-TOKENGO_LISTEN=127.0.0.1:3160 \
-TOKENGO_DB=./tokengo.db \
-TOKENGO_MASTER_KEY_FILE=./master.key \
-TOKENGO_WEB_DIR=./crates/web/dist \
-TOKENGO_LOG_DIR=./logs \
-./target/release/tokengo-server
-```
-
-Open http://127.0.0.1:3160/ui/ and complete first-time setup. Set your own panel password and gateway API key. Add upstream channels and credentials, then select the models each channel serves. Clients use the gateway key, not an upstream key.
-
-```sh
-curl http://127.0.0.1:3160/v1/models \
-  -H 'Authorization: Bearer YOUR_GATEWAY_API_KEY'
-```
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | /v1/chat/completions | Chat and streaming chat |
-| POST | /v1/embeddings | Embeddings |
-| POST | /v1/rerank | Reranking |
-| GET | /v1/models | Configured model list |
-| GET | /livez | Liveness |
-| GET | /readyz | Database readiness |
-
-For deployment, copy the release executable and panel files to your server. Set a persistent working directory and the environment variables above. Bind to loopback behind an HTTPS reverse proxy; initialize the administrator account before exposing the service. Use a supervisor such as systemd for automatic restarts.
-
-Back up SQLite using a consistent SQLite backup, together with master.key. Losing the master key makes stored upstream credentials unreadable. Never commit the database, key file, logs or real credentials. Logs can contain request metadata; restrict access and choose retention settings appropriately.
-
-## Source Layout
-
-- crates/server: Axum gateway, storage, accounting and administration API.
-- crates/shared: Shared types and routing logic.
-- crates/web: Leptos panel compiled to WebAssembly.
-- crates/cli: Routing command-line demonstration.
-
-This public repository retains sanitized development history. Private deployment reports, machine-specific scripts and operational data are intentionally excluded. Historical README snapshots describe earlier versions, not current setup instructions. No production binaries or credentials are distributed here.
-
-## License
-
-MIT. See LICENSE and NOTICE for attribution, including FreeLLMAPI, which informed compatibility behavior.
+完整英文说明、请求示例及通用 systemd 模板见 [README.en.md](README.en.md)。

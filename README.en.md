@@ -10,21 +10,53 @@ This fork builds on upstream **v0.34.0** and retains that Cargo version. Use the
 
 The fork provides native Chat, Responses and Messages endpoints, strict text/client-function conversion in all six directions, embeddings, reranking, model listing and standalone DeepSeek Search/Fetch. Users, scoped virtual keys, ancestor quotas, ordered fallback, versioned prices, budgets and durable per-attempt accounting share one executor. Configure source capabilities explicitly; a model name is not evidence of support.
 
-See [protocols and clients](docs/protocols.md), [identity and metering](docs/identity-metering.md), [routing](docs/logical-routing.md), [Search/Fetch](docs/deepseek-search-fetch.md), [independent OpenAI OAuth](docs/openai-oauth.md), and [deployment](docs/deployment.md). Implementation and local tests do not establish acceptance by every real provider, subscription or CLI.
+See the [changelog](CHANGELOG.md), [provider channels](docs/provider-channels.md), [panel accounts](docs/account-login.md), [protocols and clients](docs/protocols.md), [identity and metering](docs/identity-metering.md), [routing](docs/logical-routing.md), [Search/Fetch](docs/deepseek-search-fetch.md), [independent OpenAI OAuth](docs/openai-oauth.md), and [deployment](docs/deployment.md). Implementation and local tests do not establish acceptance by every real provider, subscription or CLI.
 
 Conversion rejects semantics it cannot represent. Responses requires full input replay; native signatures and opaque state have ownership restrictions. Native Chat inline audio is an explicit source capability, but separate audio/video/file APIs, native Gemini and arbitrary subscription conversion are not implemented. The official OAuth preview rejects some ordinary API generation fields; review its specific limitations.
+
+This branch implements these features; production acceptance is tracked in the [public acceptance status and limits](docs/acceptance-status.md). The Cargo version remains **0.34.0**. No new release or tag is implied by the development branch or this README.
+
+## Provider Channels and Native Parameters
+
+Channels now presents an explicit provider identity above its connections. Connections retain their original IDs, URLs, credentials, protocols, OAuth bindings, concurrency, pricing and fallback references. The current grouping plan organizes existing sources into six providers; this is a configurable deployment arrangement, not a hard-coded provider catalog or limit. Assign ungrouped connections explicitly rather than inferring identity from hostnames or model names.
+
+A provider's model switch atomically updates the explicitly listed connections. Disabling preserves aliases and capability configuration. The Models page defaults to public, enabled, routable models; disabled and compatibility-hidden items can be restored through explicit filters. Provider, connection, per-connection model and global logical-model switches have distinct scopes.
+
+Reasoning is a native parameter: `reasoning.effort` for Responses or `reasoning_effort` for Chat, independent of `service_tier`. Explicit client values take precedence. Adding/editing models reads a normal upstream catalog or the bound OAuth account's official catalog without paid inference. Levels, defaults and provenance follow actual metadata. A reasoning boolean does not establish effort levels; unknown remains unknown, with explicit manual confirmation available and labeled as such. Catalog declarations are not inference tests; cross-protocol support depends on the configured protocol.
+
+The standard GPT display names are `gpt-6.1-sol`, `gpt-6-luna` and `gpt-5.6-luna`, subject to the current account's catalog and access. Effort levels are not separate models. Ten existing effort aliases can remain as explicitly hidden compatibility entries: excluded from `/v1/models` and auto, while direct requests, history and internal references remain intact. No suffix-based renaming or deletion is performed.
+
+For example, send the following to `POST /v1/responses` only if the current account catalog offers this model and effort. A supported `service_tier` is a separate top-level field, not inferred from reasoning effort.
+
+```json
+{"model":"gpt-6-luna","stream":true,"store":false,"reasoning":{"effort":"low"},"input":[{"role":"user","content":"Hello"}]}
+```
+
+## Accounts, Keys and Observability
+
+Panel login uses a username, password and same-origin HttpOnly cookie, separate from API users and virtual keys. The initial administrator is `admin`; changing its login name or password requires the current password and revokes all sessions. Administrators create ordinary panel accounts explicitly linked to an API user. Their portal shows only safe key metadata and their own usage. Disabling a panel account does not disable API users or VKeys.
+
+Multiple VKeys per API user support model/connection/paid-source permissions, quotas and ancestor restrictions. Ordered fallback respects those controls and budgets. A stream may fail over before output is committed; committed output is never replayed on another source. See [identity and metering](docs/identity-metering.md) and [logical routing](docs/logical-routing.md).
+
+The overview shows real request metrics, active progress and grouping by type, connection, model and client. Billing exposes immutable prices, budgets and per-attempt ledgers. The current dashboard emphasizes metrics and detail lists; it is not a complete cost-trend charting or general BI suite. Token and request-unit billing remain separate, and missing usage or unpriced costs are not displayed as known zero.
+
+## Verification Boundaries
+
+Native protocol support is not semantic equivalence across providers. Text/client-function conversion and representable plaintext reasoning/request fields are limited subsets; signatures, encrypted reasoning, opaque state and role differences remain constrained. See [protocols](docs/protocols.md), including DeepSeek's native compatibility differences and the OAuth preview's field restrictions.
+
+Standalone DeepSeek Search/Fetch has limited real-request and request-unit accounting verification. It does not automatically implement CLI hosted search, and configured ledger prices do not replace the provider's final invoice. Independent OpenAI OAuth has actual authorization, catalog, limited text, controlled single-tool CLI and specific converted-stream verification. Those results do not certify every account, model, effort, parameter or all Claude Code/Codex features. This provider/effort UI update uses isolated browser fixtures and catalog metadata, with no additional paid inference.
 
 ## Features
 
 - Configure upstream URLs, credentials, model aliases and custom request headers.
-- Pull upstream model catalogs and manage which models each channel serves.
+- Explicit provider grouping, independent connections, catalog metadata and non-destructive model switches.
 - Priority routing, retries, failover, recovery, automatic selection and channel concurrency limits.
 - Separate non-streaming completion deadlines and streaming inactivity timeouts.
 - Route image input only to channels marked as capable; do not silently discard images.
-- Named gateway API keys, authenticated administration and encrypted stored upstream secrets.
+- API users and VKeys, separate panel accounts with cookie login, and encrypted stored upstream secrets.
 - Request/attempt accounting, running-request progress, runtime logs and retention controls.
 - Track missing usage separately from explicitly reported zero usage.
-- Overview, channels, models, users, billing and settings, with a separate diagnostic log entry.
+- Administrator console and scoped user portal, with responsive light/dark layouts and a separate diagnostic log entry.
 - User/key/ancestor permissions and quotas, immutable token/request prices, durable settlement and unknown-cost reporting.
 - Independent OAuth enrollment and rotating encrypted credentials; standalone Search/Fetch with request-unit accounting.
 
@@ -61,12 +93,12 @@ TOKENGO_LOG_DIR=./logs \
 
 Open http://127.0.0.1:3160/ui/ and initialize your administrator password before making the service public. A persistent master key is created on first startup; the process must be able to write it. Preserve it with the database.
 
-1. Complete first-time setup and store the gateway key securely.
-2. Add an upstream in Channels. Supply its OpenAI-compatible base URL and upstream credentials. For a provider whose endpoint is `/v1/chat/completions`, the base URL normally ends in `/v1`, not `/chat/completions`.
-3. Add/select the model names served by that channel. Set the upstream model name when it differs from the client-facing name.
-4. Set the model purpose (chat, embeddings or rerank) and image capability as appropriate. A name alone is not evidence of capability.
-5. In Users, create a user and virtual key with appropriate model/channel and paid-source permissions and quotas. Configure prices and budgets in Billing when needed. Panel passwords, virtual keys and upstream credentials are distinct.
-6. Point your client at `http://127.0.0.1:3160/v1`, using a gateway key and a configured model name.
+1. Complete first-time setup and safely save the once-displayed gateway key. An omitted display name uses the administrator default.
+2. Create a provider in Channels. Explicitly assign old connections or add a connection under its advanced settings; its name identifies a connection, not a second provider. Set the URL for its actual native protocol and supply credentials.
+3. Fetch catalog metadata and enable the desired standard model names. Configure upstream aliases when needed. The provider, connection and model must all be enabled.
+4. Configure purpose, input capability and native defaults only from actual declarations or explicit confirmation; unknown capability is not guessed from a name.
+5. In API Users, create API users and VKeys with suitable scopes and quotas. Configure real prices before using monetary budgets. Create a separate linked Panel Account when a user needs browser access.
+6. Point the client at `http://127.0.0.1:3160/v1` with a VKey and an allowed configured model name.
 
 ## Environment Variables
 
@@ -114,6 +146,10 @@ curl http://127.0.0.1:3160/v1/rerank \
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | /v1/chat/completions | Chat and SSE streaming |
+| POST | /v1/responses | Native Responses or an explicitly permitted conversion |
+| POST | /v1/messages | Native Messages or an explicitly permitted conversion |
+| POST | /v1/tools/search | Standalone DeepSeek Search |
+| POST | /v1/tools/fetch | Standalone DeepSeek Fetch |
 | POST | /v1/embeddings | Embeddings |
 | POST | /v1/rerank | Reranking |
 | GET | /v1/models | Configured model list |
@@ -163,10 +199,10 @@ Before upgrading, save a complete backup of database, key, executable, panel and
 ```sh
 cargo test --locked --workspace
 cargo test --locked --workspace -- --test-threads=1
-cargo check -p tokengo-web --target wasm32-unknown-unknown
+cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 ```
 
-For the v0.34.0 public snapshot, serial workspace tests passed **403 tests, with 1 ignored**. The initial parallel run failed one running-request timing assertion; its isolated rerun and the serial workspace run passed. The parallel failure has not been conclusively diagnosed. These results do not certify every provider, browser or deployment. Unset proxy environment variables when running local HTTP fixtures if your proxy intercepts loopback traffic.
+Tests cover local HTTP/SSE fixtures, permissions, accounting, recovery, protocols and frontend logic. Passing fixtures or isolated browser acceptance does not certify all real providers or a deployment. Check the exact commit's CI and [public acceptance status](docs/acceptance-status.md) instead of treating a historical test count as current proof. Unset proxy environment variables if a proxy intercepts loopback fixtures.
 
 ## Troubleshooting
 
