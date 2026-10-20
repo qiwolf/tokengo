@@ -495,13 +495,23 @@ pub fn create_key(
         key(c, c.last_insert_rowid())?.ok_or_else(|| DbError::Other("Key disappeared".into()))?;
     Ok((row, secret))
 }
+/// Only an explicit owner pause can be undone through self-service.
+pub fn self_paused(c: &Connection, key: &VKey) -> Result<bool> {
+    Ok(super::settings::get(c,&format!("self_paused_key:{}",key.id))?.as_deref()==Some(key.user_id.to_string().as_str()))
+}
+pub fn clear_self_pause(c: &Connection, id: i64) -> Result<()> {
+    c.execute("DELETE FROM settings WHERE key=?1",[format!("self_paused_key:{id}")])?;
+    Ok(())
+}
 pub fn update_key(c: &Connection, row: &VKey) -> Result<()> {
     row.policy.validate()?;
     validate_name(&row.name)?;
+    if row.enabled || row.revoked_at.is_some() { clear_self_pause(c,row.id)?; }
     c.execute("UPDATE gateway_keys SET name=?2,enabled=?3,revoked_at=?4,expires_at=?5,policy_json=?6 WHERE id=?1",params![row.id,row.name,row.enabled,row.revoked_at,row.expires_at,serde_json::to_string(&row.policy).unwrap()])?;
     Ok(())
 }
 pub fn revoke(c: &Connection, id: i64) -> Result<bool> {
+    clear_self_pause(c,id)?;
     Ok(c.execute(
         "UPDATE gateway_keys SET enabled=0,revoked_at=COALESCE(revoked_at,?2) WHERE id=?1",
         params![id, now_ms()],

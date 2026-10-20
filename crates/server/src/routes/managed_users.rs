@@ -89,6 +89,12 @@ fn user_view(c: &Connection, u: &identity::User) -> db::Result<Value> {
 fn key_view(c: &Connection, k: &identity::VKey) -> db::Result<Value> {
     let mut value = serde_json::to_value(k).map_err(dbbad)?;
     value["budget"] = json!(budget(c, "key", k.id)?);
+    let paused=identity::self_paused(c,k)?;
+    let user_valid=identity::user(c,k.user_id)?.is_some_and(|u|u.enabled);
+    let parent_valid=if let Some(parent)=k.parent_key_id { identity::context(c,parent)?.is_some_and(|a|a.user_id==k.user_id) } else { true };
+    let capacity=k.enabled || identity::keys(c,k.user_id)?.iter().filter(|key|key.enabled && key.revoked_at.is_none() && key.expires_at.is_none_or(|t|t>db::now_ms())).count()<MAX_ACTIVE_KEYS;
+    value["self_paused"]=json!(paused);
+    value["can_enable"]=json!(user_valid && parent_valid && capacity && k.revoked_at.is_none() && k.expires_at.is_none_or(|t|t>db::now_ms()) && (k.enabled || paused));
     Ok(value)
 }
 // Called only inside the caller's atomic user/key write. Preserve all counters.
@@ -482,8 +488,19 @@ async fn own_update(
     let mut row = identity::key(&c, id)?
         .filter(|k| k.user_id == u.id)
         .ok_or_else(|| ApiError::not_found("密钥不存在"))?;
-    if row.revoked_at.is_some() || body.enabled == Some(true) {
+    let was_enabled=row.enabled;
+    let was_self_paused=identity::self_paused(&c,&row)?;
+    if row.revoked_at.is_some() {
         return Err(forbidden());
+    }
+    if body.enabled==Some(true) {
+        if (!row.enabled && !was_self_paused) || row.expires_at.is_some_and(|t|t<=db::now_ms()) { return Err(forbidden()); }
+        if let Some(parent)=row.parent_key_id {
+            if identity::context(&c,parent)?.is_none_or(|a|a.user_id!=u.id) { return Err(forbidden()); }
+        }
+        let active=identity::keys(&c,u.id)?.iter().filter(|k|k.enabled && k.revoked_at.is_none() && k.expires_at.is_none_or(|t|t>db::now_ms())).count();
+        if !row.enabled && active>=MAX_ACTIVE_KEYS { return Err(invalid("活动密钥已达32把，请先停用或撤销其他密钥")); }
+        row.enabled=true;
     }
     if let Some(p) = body.policy {
         p.validate().map_err(invalid)?;
@@ -533,6 +550,10 @@ async fn own_update(
     }
     let value = credentials::atomic(&c, || {
         identity::update_key(&c, &row)?;
+        if body.enabled==Some(false) && was_enabled && !body.revoke {
+            db::settings::set(&c,&format!("self_paused_key:{id}"),&u.id.to_string())?;
+        }
+        if body.revoke { identity::clear_self_pause(&c,id)?; }
         if let Some(limit) = body.limit_micro {
             set_budget(
                 &c,

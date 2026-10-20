@@ -320,7 +320,7 @@ async fn self_service_enforces_csrf_scope_and_only_narrows_keys() {
         )
         .await
         .0,
-        StatusCode::FORBIDDEN
+        StatusCode::OK
     );
     assert_eq!(
         f.req("DELETE", &path, Some(&a), None, true, None, json!({}))
@@ -855,4 +855,48 @@ async fn delete_user_requires_csrf_and_rolls_back_unsettled_user() {
     assert!(db::identity::user(&f.state.conn(),id).unwrap().unwrap().enabled);
     assert!(!db::lifecycle::archived_user(&f.state.conn(),id).unwrap());
     assert_eq!(f.admin("DELETE","/api/managed-users/999999",json!(null)).await.0,StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn self_paused_key_can_resume_but_admin_disabled_expired_and_revoked_keys_cannot() {
+    let f=Fixture::new();let(s,v,_)=f.admin("POST","/api/managed-users",json!({"username":"pause-owner","display_name":"Pause owner","password":PASSWORD})).await;assert_eq!(s,StatusCode::OK,"{v}");
+    let user=v["user"]["id"].as_i64().unwrap();let(_,cookie)=f.login("pause-owner",PASSWORD).await;
+    let(s,v,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"pause key"})).await;assert_eq!(s,StatusCode::OK,"{v}");let id=v["key"]["id"].as_i64().unwrap();let secret=v["secret"].as_str().unwrap().to_string();let path=format!("/api/account/keys/{id}");let admin_path=format!("/api/vkeys/{id}");
+    let(s,v,_)=f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":false})).await;assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(v["key"]["self_paused"],true);assert_eq!(v["key"]["can_enable"],true);assert!(f.state.authenticate_context(secret.clone()).await.is_none());
+    // Metadata editing a paused key must retain the owner's ability to resume it.
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"name":"edited while paused"})).await.1["key"]["can_enable"],true);
+    let(s,v,_)=f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await;assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(v["key"]["enabled"],true);assert_eq!(v["key"]["self_paused"],false);assert!(f.state.authenticate_context(secret.clone()).await.is_some());
+    f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":false})).await;
+    // An explicit administrator pause clears even a pre-existing owner pause.
+    assert_eq!(f.admin("PATCH",&admin_path,json!({"enabled":false})).await.0,StatusCode::OK);
+    let(s,v,_)=f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":false})).await;assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(v["key"]["can_enable"],false);assert_eq!(v["key"]["self_paused"],false);
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::FORBIDDEN);
+    f.admin("PATCH",&admin_path,json!({"enabled":true})).await;f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":false})).await;
+    f.admin("PATCH",&admin_path,json!({"expires_at":1})).await;
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::FORBIDDEN);
+    f.admin("PATCH",&admin_path,json!({"expires_at":null,"enabled":true})).await;f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":false})).await;
+    assert_eq!(f.req("DELETE",&path,Some(&cookie),None,true,None,json!({})).await.0,StatusCode::OK);
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::FORBIDDEN);
+    assert!(db::settings::get(&f.state.conn(),&format!("self_paused_key:{id}")).unwrap().is_none());
+    // User deletion removes owner-pause markers while keeping key/history IDs.
+    let(_,v,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"deleted user key"})).await;let second=v["key"]["id"].as_i64().unwrap();
+    f.req("PATCH",&format!("/api/account/keys/{second}"),Some(&cookie),None,true,None,json!({"enabled":false})).await;
+    assert_eq!(f.admin("DELETE",&format!("/api/managed-users/{user}"),json!(null)).await.0,StatusCode::OK);
+    assert!(db::settings::get(&f.state.conn(),&format!("self_paused_key:{second}")).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn resuming_self_paused_key_enforces_parent_and_active_key_capacity() {
+    let f=Fixture::new();let(_,v,_)=f.admin("POST","/api/managed-users",json!({"username":"pause-parent","display_name":"Pause parent","password":PASSWORD})).await;let user=v["user"]["id"].as_i64().unwrap();let(_,cookie)=f.login("pause-parent",PASSWORD).await;
+    let(parent,child)={let c=f.state.conn();let(parent,_)=db::identity::create_key(&c,user,"parent",&Default::default(),None,None).unwrap();let(child,_)=db::identity::create_key(&c,user,"child",&Default::default(),None,Some(parent.id)).unwrap();(parent.id,child.id)};
+    let path=format!("/api/account/keys/{child}");f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":false})).await;
+    f.admin("PATCH",&format!("/api/vkeys/{parent}"),json!({"enabled":false})).await;
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::FORBIDDEN);
+    f.admin("PATCH",&format!("/api/vkeys/{parent}"),json!({"enabled":true})).await;
+    {let c=f.state.conn();for i in 0..31 {db::identity::create_key(&c,user,&format!("capacity {i}"),&Default::default(),None,None).unwrap();}}
+    let(s,v,_)=f.req("GET","/api/account/keys",Some(&cookie),None,false,None,json!(null)).await;assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(v["keys"].as_array().unwrap().iter().find(|k|k["id"]==child).unwrap()["can_enable"],false);
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::BAD_REQUEST);
+    let other=db::identity::keys(&f.state.conn(),user).unwrap().into_iter().find(|k|k.id!=child&&k.id!=parent).unwrap().id;
+    f.req("PATCH",&format!("/api/account/keys/{other}"),Some(&cookie),None,true,None,json!({"enabled":false})).await;
+    assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::OK);
 }

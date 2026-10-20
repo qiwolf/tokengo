@@ -295,6 +295,7 @@ pub fn archive_user(c: &Connection, id: i64, actor: i64) -> Result<()> {
         .query_map([id], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     c.execute("UPDATE users SET enabled=0,policy_json=?2 WHERE id=?1",params![id,json!({"allowed_models":[],"allowed_channels":[],"allow_paid":false,"admin_access":false}).to_string()])?;
+    c.execute("DELETE FROM settings WHERE key IN (SELECT 'self_paused_key:'||id FROM gateway_keys WHERE user_id=?1)",[id])?;
     c.execute("UPDATE gateway_keys SET enabled=0,revoked_at=COALESCE(revoked_at,?2),policy_json=?3 WHERE user_id=?1",params![id,now_ms(),json!({"allowed_models":[],"allowed_channels":[],"allow_paid":false}).to_string()])?;
     c.execute("DELETE FROM panel_accounts WHERE user_id=?1", [id])?;
     c.execute("DELETE FROM credential_affinity WHERE user_id=?1", [id])?;

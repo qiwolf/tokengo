@@ -303,6 +303,7 @@ async fn update_key(
     }
     db::in_tx(&c, |c| {
         identity::update_key(c, &row)?;
+        if body.enabled.is_some() || body.revoke { identity::clear_self_pause(c,id)?; }
         identity::audit(
             c,
             _admin.0.as_ref(),

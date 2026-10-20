@@ -129,7 +129,12 @@ pub fn reveal(conn: &Connection, sb: &SecretBox, id: i64) -> Result<Option<Strin
 }
 
 pub fn delete(conn: &Connection, id: i64) -> Result<bool> {
-    Ok(conn.execute("DELETE FROM gateway_keys WHERE id=?1", [id])? > 0)
+    let remove=|conn:&Connection| -> Result<bool> {
+        let removed=conn.execute("DELETE FROM gateway_keys WHERE id=?1",[id])?>0;
+        super::identity::clear_self_pause(conn,id)?;
+        Ok(removed)
+    };
+    if conn.is_autocommit() { super::in_tx(conn,remove) } else { remove(conn) }
 }
 
 /// SHA-256 is appropriate for a newly generated 244-bit random credential; legacy
