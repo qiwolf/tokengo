@@ -13,6 +13,16 @@ fn status_patch(key: &Value, personal: bool) -> Result<(i64, Value, bool), Strin
 fn key_path(personal: bool,id:i64)->String {
     if personal {format!("/api/account/keys/{id}")}else{format!("/api/vkeys/{id}")}
 }
+/// A Key task replaces its host panel when embedded, rather than stacking dialogs.
+#[component]
+fn KeyEditorSurface(open: RwSignal<bool>, busy: RwSignal<bool>, embedded: bool, children: ChildrenFn) -> impl IntoView {
+    let children = StoredValue::new(children);
+    if embedded {
+        view!{<Show when=move||open.get()><div class="user-key-editor"><header class="user-key-editor-head"><h3>"API Key 设置"</h3><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|open.set(false)>"返回 API Key 列表"</button></header>{move||children.with_value(|render| render())}</div></Show>}.into_any()
+    } else {
+        view!{<super::ModuleDialog open=open busy=busy title="API Key 设置".to_string()>{children.with_value(|render| render())}</super::ModuleDialog>}.into_any()
+    }
+}
 #[component]
 pub fn KeyManager(
     ctx: Ctx,
@@ -20,11 +30,15 @@ pub fn KeyManager(
     models: RwSignal<Vec<String>>,
     channels: RwSignal<Vec<(i64, String)>>,
     #[prop(default = false)] personal: bool,
+    #[prop(default = false)] embedded: bool,
+    #[prop(optional)] editor_active: Option<RwSignal<bool>>,
     #[prop(optional)] form_busy: Option<RwSignal<bool>>,
 ) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
     let editor_open = RwSignal::new(false);
+    Effect::new(move |_| { if let Some(active)=editor_active { active.set(editor_open.get()); } });
+    on_cleanup(move || { if let Some(active)=editor_active { active.set(false); } });
     let name = RwSignal::new(String::new());
     let draft = RwSignal::new(policy::default_policy());
     let base = RwSignal::new(policy::default_policy());
@@ -341,12 +355,12 @@ pub fn KeyManager(
             busy.set(false);
         });
     };
-    view! {<section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
+    view! {<Show when=move||!embedded||!editor_open.get()><section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
     <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"各 Key 共享用户总额度，设置 Key 上限不会增加总额度。最多32把活动 Key；已有密钥保留。"</p></Show>
     <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，点击新建 API Key 开始。"}else{""}}</p>
     <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限和额度限制"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button></td></tr>}}).collect_view()}</tbody></table></div>
     <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
-    <super::ModuleDialog open=editor_open busy=busy title="API Key 设置".to_string()>
+    </Show><KeyEditorSurface open=editor_open busy=busy embedded=embedded>
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
     <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
     <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label>
@@ -355,7 +369,7 @@ pub fn KeyManager(
     <div class="account-actions"><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset><div class="account-actions"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></form>
     <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p>
     {move||secret.get().map(|s|view!{<div class="one-time-key" role="status"><h3>"请立即保存 API Key"</h3><p>"关闭后无法再次查看。未写入浏览器持久存储。"</p><code class="one-time-secret">{s}</code><button class="ghost" type="button" on:click=move |_|secret.set(None)>"已保存，隐藏明文"</button></div>})}
-    </super::ModuleDialog>}
+    </KeyEditorSurface>}
 }
 
 #[cfg(test)]

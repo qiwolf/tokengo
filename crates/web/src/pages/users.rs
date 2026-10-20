@@ -17,6 +17,47 @@ fn login_required(creating: bool, has_login: bool, open_login: bool) -> bool {
     creating || (!has_login && open_login)
 }
 
+/// One draft is shared by every section; switching sections never rebuilds it.
+#[derive(Clone, Debug, PartialEq)]
+struct UserDraft {
+    username: String,
+    name: String,
+    password: String,
+    enabled: bool,
+    policy: Value,
+    limit: String,
+}
+impl UserDraft {
+    fn from_user(user: &Value) -> Self {
+        Self {
+            username: login_username(user).unwrap_or_default(),
+            name: api::text(user, "name"), password: String::new(),
+            enabled: user["enabled"] == true, policy: user["policy"].clone(),
+            limit: user["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default(),
+        }
+    }
+    fn payload(&self, creating: bool, has_login: bool, open_login: bool) -> Result<Value, String> {
+        policy::validate(&self.policy)?;
+        if self.name.trim().is_empty() { return Err("请填写显示名称。".into()); }
+        if login_required(creating, has_login, open_login) {
+            if !account_api::valid_username(self.username.trim()) { return Err("登录名需为3–64位字母、数字、点、下划线或连字符。".into()); }
+            if !account_api::valid_password(&self.password) { return Err("初始密码需为12–256字节。".into()); }
+        } else if !self.password.is_empty() && !account_api::valid_password(&self.password) {
+            return Err("新密码需为12–256字节；留空不修改。".into());
+        }
+        let mut body = json!({"display_name":self.name.trim(),"policy":self.policy,"limit_micro":policy::optional_limit(&self.limit)?});
+        if creating {
+            body["username"] = json!(self.username.trim()); body["password"] = json!(self.password);
+        } else {
+            body["enabled"] = json!(self.enabled);
+            if has_login && !self.password.is_empty() { body["password"] = json!(self.password); }
+        }
+        Ok(body)
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UserSection { Profile, Access, Limits, Keys }
+
 #[component]
 pub fn Users(ctx: Ctx) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Value>::new());
@@ -26,7 +67,8 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     let delete_open=RwSignal::new(false);
     let owner = RwSignal::new(None::<i64>);
     let editing = RwSignal::new(false);
-    let keys_open = RwSignal::new(false);
+    let section = RwSignal::new(UserSection::Profile);
+    let key_editor_active = RwSignal::new(false);
     let open_login = RwSignal::new(false);
     let username = RwSignal::new(String::new());
     let name = RwSignal::new(String::new());
@@ -98,7 +140,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         selected.set(None);
         owner.set(None);
         editing.set(true);
-        keys_open.set(false);
+        section.set(UserSection::Profile);
         open_login.set(false);
         username.set(String::new());
         name.set(String::new());
@@ -108,6 +150,36 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         limit.set(String::new());
         error.set(String::new());
         notice.set(String::new());
+    };
+    Effect::new(move |_| {
+        if !editing.get() {
+            password.set(String::new()); open_login.set(false); section.set(UserSection::Profile);
+            if let Some(row) = selected.get_untracked() {
+                let saved = UserDraft::from_user(&row);
+                username.set(saved.username); name.set(saved.name); enabled.set(saved.enabled);
+                draft.set(saved.policy); limit.set(saved.limit);
+            }
+        }
+    });
+    let toggle_user = move |row: Value| {
+        if busy.get_untracked() { return; }
+        let Some(id) = row["id"].as_i64() else { return; };
+        let next = row["enabled"] != true;
+        if !next && !web_sys::window().and_then(|w|w.confirm_with_message("停用此用户后，将禁止其登录和全部 API 调用。历史数据与 Key 保留。确认停用？").ok()).unwrap_or(false) { return; }
+        busy.set(true); error.set(String::new()); list_error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::request("PATCH", &format!("/api/managed-users/{id}"), Some(json!({"enabled":next}))).await {
+                Ok(v) => {
+                    if selected.get_untracked().is_some_and(|u|u["id"].as_i64()==Some(id)) {
+                        selected.set(Some(v["user"].clone())); enabled.set(next);
+                    }
+                    notice.set(if next {"用户已启用，可登录和调用授权模型。"} else {"用户已停用，登录及 API 调用已禁止。"}.into());
+                    revision.update(|r|*r+=1);
+                }
+                Err(e) => { ctx.note_err(&e); error.set(e.message.clone()); list_error.set(e.message); }
+            }
+            busy.set(false);
+        });
     };
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -119,33 +191,10 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         let creating = existing.is_none();
         let needs_login = login_required(creating, has_login, open_login.get_untracked());
         let pw = password.get_untracked();
-        let result = (|| -> Result<Value, String> {
-            policy::validate(&draft.get_untracked())?;
-            if name.get_untracked().trim().is_empty() {
-                return Err("请填写显示名称。".into());
-            }
-            if needs_login {
-                if !account_api::valid_username(username.get_untracked().trim()) {
-                    return Err("登录名需为3–64位字母、数字、点、下划线或连字符。".into());
-                }
-                if !account_api::valid_password(&pw) {
-                    return Err("初始密码需为12–256字节。".into());
-                }
-            } else if !pw.is_empty() && !account_api::valid_password(&pw) {
-                return Err("新密码需为12–256字节；留空不修改。".into());
-            }
-            let mut b = json!({"display_name":name.get_untracked().trim(),"policy":draft.get_untracked(),"limit_micro":policy::optional_limit(&limit.get_untracked())?});
-            if creating {
-                b["username"] = json!(username.get_untracked().trim());
-                b["password"] = json!(pw);
-            } else {
-                b["enabled"] = json!(enabled.get_untracked());
-                if has_login && !pw.is_empty() {
-                    b["password"] = json!(pw);
-                }
-            }
-            Ok(b)
-        })();
+        let result = UserDraft {
+            username: username.get_untracked(), name: name.get_untracked(), password: pw.clone(),
+            enabled: enabled.get_untracked(), policy: draft.get_untracked(), limit: limit.get_untracked(),
+        }.payload(creating, has_login, open_login.get_untracked());
         let body = match result {
             Ok(v) => v,
             Err(e) => {
@@ -229,43 +278,59 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             busy.set(false);
         });
     };
-    view! {<div class="page admin-page users-page"><PageHead title="用户" desc="管理登录账号、模型权限和消费上限；用户登录后可自行创建 API Key。"/>
-    <Show when=move||!editing.get()>
-    <section class="card"><header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
-    <div class="card-body"><div class="policy-limits"><label class="account-field"><span>"搜索用户 / 登录名"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><label class="account-check"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用用户"</label></div>
-    <p role="status">{move||notice.get()}</p><p role="alert">{move||list_error.get()}</p><p role="status">{move||if loading.get(){"正在读取用户…"}else if rows.get().is_empty(){"还没有用户，点击新建用户即可开始。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"用户"</th><th>"登录账号"</th><th>"状态 / 额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||api::rows(u,"accounts").iter().any(|a|api::text(a,"username").to_lowercase().contains(&query)))}).map(|u|{
-        let id=u["id"].as_i64().unwrap_or(0);
-        let n=api::text(&u,"name");
-        let names=api::rows(&u,"accounts").iter().filter_map(|a|a["username"].as_str()).collect::<Vec<_>>().join("、");
-        let names=if names.is_empty(){"未设置登录".into()}else{names};
-        let state=if u["enabled"]==true{"已启用"}else{"已停用"};
-        let quota=policy::budget_label(&u["budget"]);
-        let delete_row=u.clone();let can_delete=id!=1;
-        view!{<tr><td data-label="用户"><strong>{n}</strong></td><td data-label="登录账号">{names}</td><td data-label="状态 / 额度">{state}<div class="muted small">{quota}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{
-            owner.set(Some(id));username.set(login_username(&u).unwrap_or_default());name.set(api::text(&u,"name"));password.set(String::new());enabled.set(u["enabled"]==true);draft.set(u["policy"].clone());limit.set(u["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);keys_open.set(false);editing.set(true);
-        }>"管理"</button><button type="button" class="ghost danger" disabled=move||busy.get()||!can_delete title=if can_delete{"删除用户并撤销其登录和 API Key，保留账务历史"}else{"管理员身份请在账号安全中管理"} on:click=move |_|{delete_target.set(Some(delete_row.clone()));error.set(String::new());delete_open.set(true);}>"删除用户"</button></td></tr>}
-    }).collect_view()}</tbody></table></div>
-    <p class="account-help">{move||roots.get().first().map(|a|format!("管理员 {} 的登录名和密码在账号安全中管理。",api::text(a,"username"))).unwrap_or_default()}</p><button type="button" class="text-link" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></div></section></Show>
-    <Show when=move||editing.get()>
-    <div class="user-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{editing.set(false);keys_open.set(false);owner.set(None);password.set(String::new());}>"返回用户列表"</button></div>
-    <section class="card"><header class="card-head"><h2>{move||selected.get().map(|v|format!("管理用户：{}",api::text(&v,"name"))).unwrap_or_else(||"新建用户".into())}</h2><Show when=move||selected.get().is_some_and(|u|u["id"].as_i64()!=Some(1))><button type="button" class="ghost danger" disabled=move||busy.get() on:click=move |_|{delete_target.set(selected.get_untracked());error.set(String::new());delete_open.set(true);}>"删除用户"</button></Show></header>
-    <Show when=move||selected.get().is_some()><nav class="user-section-nav" aria-label="用户管理功能"><button type="button" class="ghost" aria-pressed=move||(!keys_open.get()).to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(false)>"账号与授权"</button><button type="button" class="ghost" aria-pressed=move||keys_open.get().to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(true)>"API Key"</button></nav></Show>
-    <Show when=move||!keys_open.get()><div class="card-body"><form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()>
-    <section class="user-form-section" aria-labelledby="user-account-heading"><h3 id="user-account-heading">"登录与基本资料"</h3>
-    <Show when=move||selected.get().is_some_and(|u|login_username(&u).is_none())><div class="user-login-state"><p>"此用户未设置登录账号，现有 API Key 仍按原有权限使用。"</p><label class="account-check"><input type="checkbox" prop:checked=open_login on:change=move|e|{open_login.set(event_target_checked(&e));password.set(String::new());username.set(String::new());}/>"为此用户开通登录"</label></div></Show>
-    <div class="policy-limits"><Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><label class="account-field"><span>"登录账号"</span><input type="text" minlength="3" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" required=true readonly=move||selected.get().is_some_and(|u|login_username(&u).is_some()) prop:value=username on:input=move|e|username.set(event_target_value(&e))/></label></Show><label class="account-field"><span>"显示名称"</span><input type="text" required maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label></div>
-    <Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><crate::account_ui::PasswordField id="user-password" label="设置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/>
-    <p id="user-help" class="account-help">{move||if selected.get().is_none()||open_login.get(){"请输入登录账号及至少12字节的初始密码，保存后即可登录。"}else{"登录账号已设置；密码留空表示不修改。填写新密码会退出此用户现有的登录会话。"}}</p></Show>
-    <label class="account-check"><input type="checkbox" disabled=move||selected.get().is_none() prop:checked=enabled on:change=move|e|enabled.set(event_target_checked(&e))/>"启用用户"</label><p class="account-help">"停用后，此用户将无法登录或调用模型，历史记录和 Key 会保留。"</p></section>
-    <section class="user-form-section" aria-labelledby="user-policy-heading"><h3 id="user-policy-heading">"模型授权与调用限制"</h3><PolicyEditor policy=draft models=models channels=channels prefix="user" admin=true/></section>
-    <section class="user-form-section" aria-labelledby="user-budget-heading"><h3 id="user-budget-heading">"消费额度"</h3><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空表示不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按实际用量和模型价格累计费用。留空不限，0 表示无付费额度；此处设置的是金额，不是 Token 数量或月度套餐。"</p></section>
-    <p id="user-error" role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p><div class="user-actions"><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button><button type="button" class="ghost" on:click=move |_|{editing.set(false);owner.set(None);password.set(String::new());}>"取消"</button></div></fieldset></form></div></Show>
+    view! {<div class="page admin-page users-page">
+    <style>{include_str!("../../users.css")}</style>
+    <PageHead title="用户" desc="管理账号、授权与消费上限；用户可自行管理 API Key。"/>
+    <section class="card users-directory">
+        <header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
+        <div class="card-body">
+        <div class="users-toolbar"><label class="account-field"><span>"搜索显示名称或登录账号"</span><input type="search" placeholder="搜索用户" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><label class="account-check"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"包含已停用用户"</label></div>
+        <Show when=move||!notice.get().is_empty()><p class="banner good" role="status">{move||notice.get()}</p></Show>
+        <Show when=move||!list_error.get().is_empty()><p class="banner bad" role="alert">{move||list_error.get()}</p></Show>
+        <Show when=move||loading.get()><p role="status">"正在读取用户…"</p></Show>
+        <div class="table-wrap"><table class="users-table"><thead><tr><th>"显示名称"</th><th>"登录账号"</th><th>"状态"</th><th>"消费额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||login_username(u).unwrap_or_default().to_lowercase().contains(&query))}).map(|u|{
+            let id=u["id"].as_i64().unwrap_or(0);
+            let n=api::text(&u,"name");
+            let account=login_username(&u).unwrap_or_else(||"未开通登录".into());
+            let active=u["enabled"]==true;
+            let quota=policy::budget_label(&u["budget"]);
+            let delete_row=u.clone(); let status_row=u.clone(); let can_delete=id!=1;
+            view!{<tr><td data-label="显示名称"><strong>{n}</strong></td><td data-label="登录账号">{account}</td><td data-label="状态"><span class=if active {"badge good"}else{"badge"}>{if active {"已启用"}else{"已停用"}}</span></td><td data-label="消费额度"><span class="users-quota">{quota}</span></td><td data-label="操作"><div class="users-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|{
+                let saved=UserDraft::from_user(&u); owner.set(Some(id)); username.set(saved.username);name.set(saved.name);password.set(String::new());enabled.set(saved.enabled);draft.set(saved.policy);limit.set(saved.limit);selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);section.set(UserSection::Profile);editing.set(true);
+            }>"管理"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|toggle_user(status_row.clone())>{if active {"停用"}else{"启用"}}</button><button type="button" class="ghost danger" disabled=move||busy.get()||!can_delete title=if can_delete{"删除用户，撤销登录和 API Key，保留历史"}else{"保留的管理员身份不可删除"} on:click=move |_|{delete_target.set(Some(delete_row.clone()));error.set(String::new());delete_open.set(true);}>"删除"</button></div></td></tr>}
+        }).collect_view()}</tbody></table></div>
+        <Show when=move||!loading.get()&&rows.get().iter().all(|u|{let q=search.get().trim().to_lowercase();(!show_disabled.get()&&u["enabled"]!=true)||(!q.is_empty()&&!api::text(u,"name").to_lowercase().contains(&q)&&!login_username(u).unwrap_or_default().to_lowercase().contains(&q))})><p class="users-empty">"没有符合条件的用户。可调整筛选或新建用户。"</p></Show>
+        <footer class="users-directory-footer"><span>{move||roots.get().first().map(|a|format!("管理员 {} 的登录信息在账号安全中维护。",api::text(a,"username"))).unwrap_or_default()}</span><button type="button" class="ghost" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></footer>
+        </div>
     </section>
-    <Show when=move||keys_open.get()&&owner.get().is_some()><KeyManager ctx=ctx owner=owner models=models channels=channels form_busy=busy/></Show>
-    </Show><super::ModuleDialog open=delete_open busy=busy title="删除用户".to_string()>
-        <p>{move||delete_target.get().map(|u|format!("确定删除用户“{}”？",api::text(&u,"name"))).unwrap_or_default()}</p>
-        <p>"此操作会撤销该用户的登录会话和全部 API Key，移除其调用策略及授权。历史请求和账单会保留用于核对。删除后不能从用户列表恢复。"</p>
+    <super::ModuleDialog open=editing busy=busy title="用户设置".to_string()>
+    <div class="user-workspace">
+        <Show when=move||!key_editor_active.get()><header class="user-identity"><div><h3>{move||selected.get().map(|v|api::text(&v,"name")).unwrap_or_else(||"新建用户".into())}</h3><p>{move||selected.get().map(|v|login_username(&v).map(|s|format!("登录账号：{s}")).unwrap_or_else(||"尚未开通登录 · 已有 Key 与历史保留".into())).unwrap_or_else(||"设置账号并分配权限，保存后用户即可登录。".into())}</p></div><Show when=move||selected.get().is_some()><span class=move||if enabled.get(){"badge good"}else{"badge"}>{move||if enabled.get(){"已启用"}else{"已停用"}}</span><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{if let Some(u)=selected.get_untracked(){toggle_user(u)}}>{move||if enabled.get(){"停用用户"}else{"启用用户"}}</button></Show></header>
+        <nav class="user-workspace-nav" aria-label="用户设置分区">{[(UserSection::Profile,"基本资料"),(UserSection::Access,"模型授权"),(UserSection::Limits,"限流与额度"),(UserSection::Keys,"API Key")].into_iter().map(|(tab,label)|view!{
+            <button type="button" class="ghost" aria-pressed=move||(section.get()==tab).to_string() disabled=move||busy.get()||(tab==UserSection::Keys&&selected.get().is_none()) title=if tab==UserSection::Keys{"创建用户后可管理其 API Key"}else{""} on:click=move |_|section.set(tab)>{label}</button>
+        }).collect_view()}</nav></Show>
+        <Show when=move||section.get()!=UserSection::Keys>
+        <form class="account-form user-workspace-form" on:submit=save novalidate>
+        <fieldset disabled=move||busy.get()||loading.get()>
+        <div class="user-workspace-panel">
+        <Show when=move||section.get()==UserSection::Profile>
+            <h3>"基本资料"</h3>
+            <Show when=move||selected.get().is_some_and(|u|login_username(&u).is_none())><div class="user-login-state"><p>"此用户暂未开通登录，已有 API Key 继续使用原权限。"</p><label class="account-check"><input type="checkbox" prop:checked=open_login on:change=move|e|{open_login.set(event_target_checked(&e));password.set(String::new());username.set(String::new());}/>"为此用户开通登录"</label></div></Show>
+            <div class="user-profile-grid"><Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><label class="account-field"><span>"登录账号"</span><input type="text" minlength="3" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" readonly=move||selected.get().is_some_and(|u|login_username(&u).is_some()) prop:value=username on:input=move|e|username.set(event_target_value(&e))/></label></Show><label class="account-field"><span>"显示名称"</span><input type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label></div>
+            <Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><crate::account_ui::PasswordField id="user-password" label="设置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/><p id="user-help" class="account-help">{move||if selected.get().is_none()||open_login.get(){"请输入至少12字节的初始密码。"}else{"密码留空不修改；设置新密码将退出此用户现有登录会话。登录账号创建后不可在此修改。"}}</p></Show>
+        </Show>
+        <Show when=move||section.get()==UserSection::Access><h3>"模型授权"</h3><PolicyEditor policy=draft models=models channels=channels prefix="user-access" admin=true show_limits=false/></Show>
+        <Show when=move||section.get()==UserSection::Limits><h3>"限流与额度"</h3><PolicyEditor policy=draft models=models channels=channels prefix="user-limits" admin=true show_access=false/><label class="account-field user-budget-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按实际用量与模型价格累计费用。留空不限，0 表示无付费额度；此处是累计金额，不是月度套餐或 Token 余额。"</p></Show>
+        </div>
+        <Show when=move||!error.get().is_empty()><p id="user-error" class="banner bad" role="alert">{move||error.get()}</p></Show><Show when=move||!notice.get().is_empty()><p class="banner good" role="status">{move||notice.get()}</p></Show>
+        <footer class="user-workspace-footer"><span>"保存会同时应用基本资料、授权和额度。"</span><div class="user-actions"><button type="button" class="ghost" on:click=move |_|editing.set(false)>"取消"</button><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button></div></footer>
+        </fieldset></form>
+        </Show>
+        <Show when=move||editing.get()&&section.get()==UserSection::Keys&&owner.get().is_some()><Show when=move||!key_editor_active.get()><p class="account-help">"Key 操作独立保存；其他分区的草稿保留，返回后可继续编辑。"</p></Show><KeyManager ctx=ctx owner=owner models=models channels=channels form_busy=busy embedded=true editor_active=key_editor_active/></Show>
+    </div>
+    </super::ModuleDialog>
+    <super::ModuleDialog open=delete_open busy=busy title="删除用户".to_string()>
+        <p>{move||delete_target.get().map(|u|format!("确定删除用户“{}”？",api::text(&u,"name"))).unwrap_or_default()}</p><p>"将撤销该用户的登录和全部 API Key，移除调用策略与授权。历史请求与账单保留；删除后不能从列表恢复。"</p>
         <p class="banner bad" role="alert">{move||error.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|delete_open.set(false)>"取消"</button><button type="button" class="danger" disabled=move||busy.get() on:click=delete_user>"确认删除用户"</button></div>
     </super::ModuleDialog></div>}
 }
@@ -293,4 +358,56 @@ mod tests {
         assert!(!login_required(false, true, true));
         assert!(login_required(true, false, false));
     }
+    fn saved_user() -> Value {
+        json!({"id":7,"name":"Andy","enabled":true,
+            "accounts":[{"username":"andy-login"}],
+            "policy":{"allowed_models":["legacy-hidden"],"allowed_channels":[],"allow_paid":false,"admin_access":true,"rpm":3,"tpm":null,"max_concurrent":2},
+            "budget":{"limit_micro":12345678}})
+    }
+    #[test]
+    fn cross_section_save_keeps_identity_acl_limits_and_zero_budget() {
+        let saved = saved_user();
+        let mut form = UserDraft::from_user(&saved);
+        // Profile, access and quota edits share one draft; no tab supplies defaults.
+        form.name = "Changed".into();
+        form.policy["rpm"] = json!(9);
+        form.limit = "0".into();
+        let body = form.payload(false, true, false).unwrap();
+        assert_eq!(body["display_name"], "Changed");
+        assert_eq!(body["policy"]["allowed_models"], json!(["legacy-hidden"]));
+        assert_eq!(body["policy"]["allowed_channels"], json!([]));
+        assert_eq!(body["policy"]["admin_access"], true);
+        assert_eq!(body["policy"]["allow_paid"], false);
+        assert_eq!(body["policy"]["rpm"], 9);
+        assert_eq!(body["limit_micro"], 0);
+        assert!(body.get("password").is_none());
+        assert!(body.get("username").is_none());
+    }
+    #[test]
+    fn cancelling_reloads_saved_snapshot_and_forgets_password() {
+        let saved = saved_user();
+        let original = UserDraft::from_user(&saved);
+        let mut dirty = original.clone();
+        dirty.name = "Unsaved".into(); dirty.password = "temporary-password".into();
+        dirty.policy["allowed_models"] = Value::Null; dirty.limit.clear();
+        assert_ne!(dirty, original);
+        // This is the same restoration used by Cancel, dialog Close and Escape.
+        dirty = UserDraft::from_user(&saved);
+        assert_eq!(dirty, original);
+        assert!(dirty.password.is_empty());
+        assert_eq!(dirty.username, "andy-login");
+        assert_eq!(dirty.limit, "12.345678");
+    }
+    #[test]
+    fn historical_user_edit_does_not_silently_create_login_or_grants() {
+        let mut saved = saved_user(); saved["accounts"] = json!([]);
+        saved["policy"]["allowed_models"] = json!([]);
+        let form = UserDraft::from_user(&saved);
+        let body = form.payload(false, false, false).unwrap();
+        assert!(body.get("username").is_none());
+        assert!(body.get("password").is_none());
+        assert_eq!(body["policy"]["allowed_models"], json!([]));
+        assert!(form.payload(false, false, true).is_err());
+    }
+
 }

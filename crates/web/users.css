@@ -1,0 +1,62 @@
+/* Focused user management; scoped so other modules keep their own layout. */
+.users-page .users-toolbar { display:flex; align-items:flex-end; gap:24px; flex-wrap:wrap; margin-bottom:16px; }
+.users-page .users-toolbar > .account-field { width:384px; max-width:100%; margin:0; }
+.users-page .users-toolbar > .account-check { min-height:40px; margin:0; }
+.users-page .user-actions, .users-page .users-row-actions { display:flex; align-items:center; gap:8px; margin:0; flex-wrap:wrap; }
+.users-page .users-table td { padding:12px 16px; vertical-align:middle; }
+.users-page .users-table .users-quota { display:block; max-width:256px; font-size:12px; color:var(--fg-2); line-height:1.5; }
+.users-page .users-table td:last-child { width:1%; white-space:nowrap; }
+.users-page .users-row-actions { flex-wrap:nowrap; }
+.users-page .users-row-actions button { min-width:64px; }
+.users-page .users-empty { padding:24px 0; color:var(--fg-2); text-align:center; }
+.users-page .users-directory-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); font-size:12px; color:var(--fg-2); }
+.users-page .module-dialog:has(.user-workspace) { width:min(896px,calc(100% - 32px)); }
+.users-page .module-dialog:has(.user-workspace) > .module-dialog-body { padding:0; }
+.user-workspace .user-identity { display:flex; gap:12px; align-items:center; padding:16px 24px; background:var(--bg-soft); }
+.user-workspace .user-identity > div { flex:1; min-width:0; }
+.user-workspace .user-identity h3 { margin:0; font-size:18px; overflow-wrap:anywhere; }
+.user-workspace .user-identity p { margin:4px 0 0; font-size:12px; color:var(--fg-2); overflow-wrap:anywhere; }
+.user-workspace .user-workspace-nav { display:flex; gap:8px; padding:12px 24px; border-bottom:1px solid var(--line); overflow-x:auto; }
+.user-workspace .user-workspace-nav button { flex:1 0 auto; white-space:nowrap; }
+.user-workspace .user-workspace-nav button[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); color:var(--fg); font-weight:600; }
+.user-workspace .user-workspace-form { margin:0; max-width:none; }
+.user-workspace .user-workspace-form fieldset { margin:0; padding:0; border:0; min-width:0; }
+.user-workspace .user-workspace-panel { padding:24px; min-height:256px; }
+.user-workspace .user-workspace-panel > h3 { margin:0 0 16px; font-size:16px; }
+.user-workspace .user-profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.user-workspace .account-field { min-width:0; }
+.user-workspace .account-field input, .user-workspace .account-field select { width:100%; box-sizing:border-box; }
+.user-workspace .user-budget-field { max-width:384px; margin-top:24px; }
+.user-workspace .policy-options { max-height:192px; overflow-y:auto; overscroll-behavior:contain; margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:8px; }
+.user-workspace .policy-options .account-check { align-items:flex-start; padding:4px 0; overflow-wrap:anywhere; }
+.user-workspace .policy-editor > details { margin-top:16px; }
+.user-workspace .user-workspace-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; border-top:1px solid var(--line); padding:16px 24px; background:var(--bg-soft); }
+.user-workspace .user-workspace-footer > span { color:var(--fg-2); font-size:12px; max-width:384px; }
+.user-workspace .user-workspace-form > fieldset > .banner { margin:0 24px 16px; }
+.user-workspace > .account-help { margin:16px 24px; }
+.user-workspace > .card { border:0; border-radius:0; }
+@media(max-width:640px) {
+ .users-page .users-toolbar { gap:12px; }
+ .users-page .users-toolbar > .account-field { width:100%; }
+ .users-page .users-table td:last-child { width:auto; white-space:normal; }
+ .users-page .users-row-actions { flex-wrap:wrap; }
+ .users-page .users-directory-footer { align-items:flex-start; }
+ .users-page .module-dialog:has(.user-workspace) { width:calc(100% - 16px); }
+ .user-workspace .user-identity { padding:16px; flex-wrap:wrap; }
+ .user-workspace .user-identity > div { flex-basis:100%; }
+ .user-workspace .user-workspace-nav { padding:12px 16px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .user-workspace .user-workspace-nav button { min-width:0; }
+ .user-workspace .user-workspace-panel { padding:16px; }
+ .user-workspace .user-profile-grid { grid-template-columns:1fr; gap:12px; }
+ .user-workspace .user-workspace-footer { align-items:stretch; flex-direction:column; padding:16px; gap:12px; }
+ .user-workspace .user-workspace-footer .user-actions { display:grid; grid-template-columns:1fr 1fr; }
+ .user-workspace .user-workspace-form > fieldset > .banner { margin:0 16px 16px; }
+}
+
+.user-workspace .user-workspace-footer { position:sticky; bottom:0; z-index:2; }
+.user-workspace .user-key-editor { padding:24px; }
+.user-workspace .user-key-editor-head { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--line); }
+.user-workspace .user-key-editor-head h3 { margin:0; font-size:18px; }
+.user-workspace .user-key-editor > h3 { font-size:16px; }
+.user-workspace .user-key-editor .account-form { max-width:none; }
+@media(max-width:640px) { .user-workspace .user-key-editor { padding:16px; } .user-workspace .user-key-editor-head { flex-wrap:wrap; } }
