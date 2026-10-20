@@ -2,11 +2,26 @@
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 
-当前本地运行环境为 macOS arm64；部署辅助测试只验证文件、模拟服务控制和回环 HTTP。Linux 原生 release、完整 Trunk release、systemd 启动以及新 LXC SSH 验收，以实际 GitHub Actions 和目标机记录为准。不得把 macOS 二进制放入 Linux 交付包。
+GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台与安装/升级/回滚工具；容器部署见[容器指南](container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
+
+## 使用已发布的直接部署包
+
+从 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 下载同一版本的 `tokengo-<提交前12位>-linux-x86_64.tar.gz` 及其 `.sha256` 文件，在独立 Linux x86_64 主机执行（以实际文件名替换占位符）：
+
+```bash
+sha256sum --check tokengo-COMMIT-linux-x86_64.tar.gz.sha256
+tar -xzf tokengo-COMMIT-linux-x86_64.tar.gz
+cd tokengo-COMMIT-linux-x86_64
+python3 deploy/manage.py verify ../tokengo-COMMIT-linux-x86_64.tar.gz
+sudo python3 deploy/manage.py install ../tokengo-COMMIT-linux-x86_64.tar.gz
+sudo python3 /opt/tokengo/current/deploy/manage.py health
+```
+
+首次通过下文 SSH 隧道访问控制台完成账号设置，无需安装 Rust 或在目标机编译。目标机需具备 systemd、Python3、CA 证书及兼容 glibc（CI Ubuntu 24.04 基线为2.39；Debian13亦已单独部署验证）。已存在安装时使用后文 `upgrade`，不要重新初始化或覆盖主密钥。
 
 ## 构建同一提交的服务端与前端
 
-构建机使用 Ubuntu 24.04 x86_64（glibc 2.39 基线）、Rust 1.98.0、WASM target 和 Trunk 0.21.14。通用 CI 产物以此为兼容基线；本次实际目标是 Debian 13 x86_64 LXC，选择在目标容器原生构建。其他系统须验证 glibc 和架构兼容，不能直接假定可运行。SQLite 使用项目 bundled 模式，构建机仍需 C 编译器。
+构建机使用 Ubuntu 24.04 x86_64（glibc 2.39 基线）、Rust 1.98.0、WASM target 和 Trunk 0.21.14。通用 CI 产物以此为兼容基线；实际目标 Debian 13 x86_64 LXC 已有独立部署路径；本轮直接包使用同提交 Ubuntu CI 产物并在目标机验证。其他系统须验证 glibc 和架构兼容，不能直接假定可运行。SQLite 使用项目 bundled 模式，构建机仍需 C 编译器。
 
 ```bash
 sudo apt-get update
@@ -57,7 +72,7 @@ ssh -N -L 3160:127.0.0.1:3160 USER@HOST
 
 ## 停机备份、升级与失败回滚
 
-先暂停所有新旧入口的调用方、等待/取消活动请求，保持维护状态直到验收结束。服务目前没有承诺优雅流式排空；systemd 停止可能打断请求，账务保留已有 durable intent，并在启动时 replay/recover。不要在线分别复制 DB 与 outbox，也不要删除 dead-letter 来强行启动。
+先暂停所有新旧入口的调用方、等待/取消活动请求，保持维护状态直到验收结束。服务收到 SIGTERM/SIGINT 后停止接受新 HTTP 请求，默认等待在途请求120秒，然后最多10秒补写队列/账务 outbox；HTTP超时或补写失败非零退出。`TOKENGO_SHUTDOWN_TIMEOUT_SECS` 可设1～3600秒，默认 systemd `TimeoutStopSec=150`，增大预算时同时延长外层停止期限。后台探针没有全局静默保证；超时或强制停止仍可能打断请求，不能把退出当作所有账务已知的证明，已有 durable intent 在启动时 replay/recover。不要在线分别复制 DB 与 outbox，也不要删除 dead-letter 来强行启动。
 
 ```bash
 # 可单独制作停机快照，完成后保持停止，便于离机复制。

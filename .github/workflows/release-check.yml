@@ -62,6 +62,37 @@ jobs:
           cd "$RUNNER_TEMP/tokengo-release"
           sha256sum --check ./*.sha256
           python3 "$GITHUB_WORKSPACE/deploy/manage.py" verify ./*.tar.gz
+      - name: Build container from the verified Linux bundle
+        run: |
+          context="$RUNNER_TEMP/tokengo-container"
+          mkdir -p "$context/deploy/container" "$context/bundle"
+          cp Dockerfile LICENSE NOTICE .dockerignore "$context/"
+          cp deploy/container/healthcheck.sh "$context/deploy/container/"
+          tar -xzf "$RUNNER_TEMP"/tokengo-release/*.tar.gz --strip-components=1 -C "$context/bundle"
+          python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["commit"] == sys.argv[2]' "$context/bundle/manifest.json" "$GITHUB_SHA"
+          docker build --platform linux/amd64 --target release-runtime \
+            --build-arg VCS_REF="$GITHUB_SHA" -t "tokengo:sha-$GITHUB_SHA" "$context"
+      - name: Verify isolated container lifecycle and persistence
+        run: python3 deploy/container/smoke.py "tokengo:sha-$GITHUB_SHA"
+      - name: Export offline container image and checksum
+        run: |
+          mkdir -p "$RUNNER_TEMP/tokengo-image"
+          docker save "tokengo:sha-$GITHUB_SHA" | gzip > "$RUNNER_TEMP/tokengo-image/tokengo-$GITHUB_SHA-linux-amd64.tar.gz"
+          cp compose.yaml "$RUNNER_TEMP/tokengo-image/"
+          cp deploy/container.env.example "$RUNNER_TEMP/tokengo-image/"
+          cp docs/container-deployment.md "$RUNNER_TEMP/tokengo-image/"
+          docker image inspect "tokengo:sha-$GITHUB_SHA" --format '{{json .}}' | \
+            python3 -c 'import json,sys; x=json.load(sys.stdin); print(json.dumps({"source_commit": x["Config"]["Labels"]["org.opencontainers.image.revision"], "image_id": x["Id"], "os": x["Os"], "architecture": x["Architecture"]}, indent=2))' \
+            > "$RUNNER_TEMP/tokengo-image/image-manifest.json"
+          cd "$RUNNER_TEMP/tokengo-image"
+          sha256sum ./*.tar.gz compose.yaml container.env.example container-deployment.md image-manifest.json > image-SHA256SUMS
+      - name: Retain distributable image (no registry push or deployment)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tokengo-image-linux-amd64-${{ github.sha }}
+          path: ${{ runner.temp }}/tokengo-image/*
+          if-no-files-found: error
+          retention-days: 14
       - name: Retain reviewable bundle (no publishing or deployment)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

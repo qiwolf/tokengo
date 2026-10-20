@@ -4,7 +4,7 @@
 
 本 fork 基于上游 v0.34.0，使用 Rust / Axum / SQLite 与 Leptos / WebAssembly 构建个人或小团队网关。已实现多 API 用户、多 VKey、预算与持久账本、有序 fallback、三协议原生入口，以及独立的控制台账号体系。最新分支增加服务商渠道、非破坏模型开关和原生推理档位元数据管理。
 
-本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](docs/acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准，未另行发布新版本或 tag。更新内容见 [CHANGELOG](CHANGELOG.md)。
+本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](docs/acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准；fork 分发标签使用 `v0.34.0-qiwolf.N`，可下载版本以 GitHub Releases 为准。更新内容见 [CHANGELOG](CHANGELOG.md)。
 Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
 
 ## 中文使用指南
@@ -74,7 +74,11 @@ TOKENGO_LOG_DIR=./logs \
 ./target/release/tokengo-server
 ```
 
-服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。当前公开 Release 仅含源码说明，没有预编译生产程序或已发布容器镜像。
+服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.1` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径，不自动发布公共镜像仓库。
+
+### 容器部署与分发
+
+已提供源码多阶段 Dockerfile、非 root Compose、持久数据卷及同提交 Linux AMD64 离线镜像 CI 制品。首次设置与升级/备份步骤见[容器部署指南](docs/container-deployment.md)。不预装任何生产账号或来源凭据，也未自动发布公共镜像仓库。
 
 ### 首次配置和客户端接入
 

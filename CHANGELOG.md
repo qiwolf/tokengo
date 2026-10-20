@@ -1,8 +1,17 @@
 # 更新日志 / Changelog
 
-本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；下列 Unreleased 不代表已发布新 tag、预编译程序或完成生产升级。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
+本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## Unreleased — 2026-10-20
+## v0.34.0-qiwolf.1 — 2026-10-20
+
+本 fork 首次双版本分发：Linux AMD64 原生包与离线容器镜像，同一精确提交构建。完整历史功能及验证边界汇总如下。
+
+### 容器封装与分发
+
+- 新增固定 Rust/Trunk 工具链的源码多阶段 Dockerfile，以及复用已验证同提交 Linux 包的镜像构建路径。镜像包含服务端、CLI 和 WASM 控制台，运行用户为 UID/GID 10001。
+- 增加回环端口、只读根文件系统、持久数据卷、JSON 就绪检查与日志限额的 Compose 示例；CI 隔离验证首次设置、鉴权、WASM、主密钥权限、重启持久化及正常停止后归档离线 AMD64 镜像与校验和，不自动发布公共仓库或迁移现有生产部署。
+- 增加首次安装、卷/主密钥备份、离线分发、升级及配套数据库回滚说明。
+- 服务端响应 SIGTERM/SIGINT，默认最多120秒等待 HTTP 请求排空（可配置），再最多10秒补写账务；超时或补写失败非零退出，保留未决用量与持久 outbox 的恢复边界。systemd 与 Compose 停止窗口均调整为150秒，不声称后台探针全面静默。
 
 ### 并发记账与协议合同复核
 
@@ -43,4 +52,4 @@
 
 ---
 
-English readers: this unreleased update adds explicit provider groups with preserved connection identities, non-destructive model switches, native reasoning metadata/defaults, standard model names with explicitly hidden compatibility aliases, and account/password cookie login with a scoped user portal. Existing VKey, fallback, durable accounting, protocol and standalone tool features remain subject to their documented limits. Catalog capabilities are declarations, not paid inference tests; limited real-provider/client acceptance is not universal compatibility. Production acceptance is tracked in the [public status](docs/acceptance-status.md), and Cargo remains 0.34.0.
+English readers: this first fork distribution adds explicit provider groups with preserved connection identities, non-destructive model switches, native reasoning metadata/defaults, standard model names with explicitly hidden compatibility aliases, and account/password cookie login with a scoped user portal. Existing VKey, fallback, durable accounting, protocol and standalone tool features remain subject to their documented limits. Catalog capabilities are declarations, not paid inference tests; limited real-provider/client acceptance is not universal compatibility. Production acceptance is tracked in the [public status](docs/acceptance-status.md), and Cargo remains 0.34.0.

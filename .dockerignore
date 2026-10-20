@@ -1,0 +1,30 @@
+# Deny runtime data, credentials, Git history and local build output by default.
+**
+!Dockerfile
+!Cargo.toml
+!Cargo.lock
+!LICENSE
+!NOTICE
+!crates/
+!crates/**/
+!crates/**/*.rs
+!crates/**/*.toml
+!crates/**/*.sql
+!crates/**/*.html
+!crates/**/*.css
+!deploy/
+!deploy/container/
+!deploy/container/healthcheck.sh
+# Optional verified CI release bundle, used only with --target release-runtime.
+!bundle/
+!bundle/bin/
+!bundle/bin/tokengo-server
+!bundle/bin/tokengo
+!bundle/web/
+!bundle/web/**
+!bundle/manifest.json
+crates/**/dist/
+crates/**/target/
+crates/**/*.db*
+crates/**/.env*
+crates/**/master.key
