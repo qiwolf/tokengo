@@ -2109,3 +2109,10 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 .module-dialog-body > .card-body { padding: 0; }
 .module-dialog .provider-model-table td { vertical-align: middle; }
 @media(max-width:600px) { .module-dialog:has(.provider-model-table) { width: calc(100% - 16px); } }
+
+/* Keep model status and its action on one compact row at desktop widths. */
+@media(min-width:801px){
+ .table-wrap .provider-model-table :is(th,td):nth-child(1),.table-wrap .provider-model-table :is(th,td):nth-child(2){width:22%;}
+ .table-wrap .provider-model-table :is(th,td):nth-child(5){width:20%;}
+ .table-wrap .provider-model-table .model-state-actions{flex-wrap:nowrap;gap:6px;}
+}
