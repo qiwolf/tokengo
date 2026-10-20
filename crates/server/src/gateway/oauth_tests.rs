@@ -120,7 +120,7 @@ impl Fixture {
             .unwrap();
             id.0
         };
-        let tokens = json!({"access_token":"SYNTHETIC-OAUTH-ACCESS","refresh_token":"SYNTHETIC-REFRESH","id_token":"SYNTHETIC-ID","scopes":["chatgpt.tokens.use.direct","offline_access","resource.invoke"]});
+        let tokens = json!({"access_token":"SYNTHETIC-OAUTH-ACCESS","refresh_token":"SYNTHETIC-REFRESH","id_token":"e30.e30.c3ludGhldGlj","scopes":["chatgpt.tokens.use.direct","offline_access","resource.invoke"]});
         let (n, cipher) = state.secrets.seal(&tokens.to_string()).unwrap();
         state.conn().execute("INSERT INTO oauth_accounts(id,label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at,nonce,cipher) VALUES(1,'synthetic','https://auth.openai.com','subject','oaiapp_test','active','[]',?1,0,?2,?3)",rusqlite::params![now_ms()+3_600_000,n,cipher]).unwrap();
         crate::oauth::bind(

@@ -146,6 +146,18 @@ impl Upstream {
         Ok((status,Bytes::from(bytes)))
     }
 
+    /// OAuth diagnostics use the same subscription transport and native SSE collector as routing.
+    pub async fn custom_probe_oauth_request(&self,source:&Channel,credential:&crate::oauth::OAuthCredential,body:Bytes,timeout:Duration,limit:usize)->Result<(u16,Bytes),ChannelFault> {
+        let mut channel=source.clone();channel.base_url=credential.api_base.clone();channel.headers=crate::oauth::inference_headers(credential);
+        let fault=||ChannelFault{message:"OAuth diagnostic response unavailable".into()};
+        let mut response=self.call_via(&channel,Some(&credential.access_token),"responses",body,true,timeout,&new_uuid(),crate::db::now_ms(),None,true).await.map_err(|_|fault())?;
+        let code=response.status().as_u16();let sse=(200..300).contains(&code)&&response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v|v.to_str().ok()).is_some_and(|v|v.contains("text/event-stream"));
+        let mut count=0usize;let mut bytes=Vec::new();let mut collector=crate::protocol::collect::ResponsesCollector::default();
+        while let Some(chunk)=response.chunk().await.map_err(|_|fault())? {if chunk.len()>limit.saturating_sub(count){return Err(fault());}count+=chunk.len();if sse {collector.feed(&chunk).map_err(|_|fault())?;if collector.observer.done{break;}}else{bytes.extend_from_slice(&chunk);}}
+        if sse {bytes=serde_json::to_vec(&collector.finish().map_err(|_|fault())?).map_err(|_|fault())?;}
+        if bytes.len()>limit{return Err(fault());}Ok((code,Bytes::from(bytes)))
+    }
+
     /// Successful probes consume a bounded body and validate the endpoint structure.
     #[allow(clippy::too_many_arguments)]
     pub async fn probe(

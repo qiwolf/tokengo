@@ -2162,7 +2162,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 let mut oauth_channel = channel.clone();
                 if let Some(credential) = &oauth {
                     oauth_channel.base_url = credential.api_base.clone();
-                    oauth_channel.headers.clear();
+                    oauth_channel.headers=crate::oauth::inference_headers(credential);
                 }
                 let outbound_secret = oauth
                     .as_ref()
@@ -3394,7 +3394,7 @@ pub fn rewrite_model(body: &Value, model: &str) -> Value {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Usage { pub input: Option<i64>, pub output: Option<i64> }
 impl Usage {
-    fn read(v: &Value) -> Self {
+    pub(crate) fn read(v: &Value) -> Self {
         let v=v.get("response").or_else(||v.get("message")).filter(|v|v.is_object()).unwrap_or(v);
         let get = |names: [&str;2]| names.into_iter().find_map(|n| v.get("usage").and_then(|u|u.get(n)).and_then(Value::as_i64).filter(|n|*n>=0));
         let mut input=get(["prompt_tokens","input_tokens"]);

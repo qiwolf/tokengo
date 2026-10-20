@@ -23,6 +23,8 @@ enum SettlementKind {
     #[default]
     Token,
     Request,
+    DiagnosticToken,
+    DiagnosticRequest,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,8 +152,8 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
         || intent.database_id != database_id
         || intent.id <= 0
         || intent.request_units.is_some_and(|n| !(0..=1).contains(&n))
-        || (intent.kind == SettlementKind::Token && intent.request_units.is_some())
-        || (intent.kind == SettlementKind::Request
+        || (matches!(intent.kind,SettlementKind::Token|SettlementKind::DiagnosticToken) && intent.request_units.is_some())
+        || (matches!(intent.kind,SettlementKind::Request|SettlementKind::DiagnosticRequest)
             && (intent.input.is_some() || intent.output.is_some()))
         || intent.input.is_some_and(|n| n < 0)
         || intent.output.is_some_and(|n| n < 0)
@@ -175,7 +177,7 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let expected_unit = if intent.kind == SettlementKind::Request {
+    let expected_unit = if matches!(intent.kind,SettlementKind::Request|SettlementKind::DiagnosticRequest) {
         "request"
     } else {
         "token"
@@ -219,6 +221,7 @@ fn deliver(conn: &Connection, dir: &Path, path: &Path, intent: &mut Settlement) 
         SettlementKind::Request => {
             db::billing::settle_request(conn, intent.id, intent.request_units, &intent.status)
         }
+        SettlementKind::DiagnosticToken|SettlementKind::DiagnosticRequest=>db::billing::settle_diagnostic(conn,intent.id,intent.input,intent.output,intent.request_units,&intent.status),
     };
     match settled {
         Ok(()) => remove(dir, path),
@@ -267,6 +270,10 @@ pub fn settle_request(
         SettlementKind::Request,
         outcome,
     )
+}
+/// System diagnostics use the same fsynced intent/replay discipline as user billing.
+pub fn settle_diagnostic(state:&SharedState,id:i64,input:Option<i64>,output:Option<i64>,units:Option<i64>,request_based:bool,outcome:&str)->Result<()> {
+    settle_intent(state,id,input,output,units,if request_based{SettlementKind::DiagnosticRequest}else{SettlementKind::DiagnosticToken},outcome)
 }
 fn settle_intent(
     state: &SharedState,

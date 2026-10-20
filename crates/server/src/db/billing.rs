@@ -477,6 +477,47 @@ fn finish(
     c.commit()?;
     Ok(())
 }
+/// Internal diagnostic accounting never impersonates a user/VKey or allocates their budget.
+/// Pending rows are durable before dispatch; absent prices remain unknown, not free.
+#[allow(clippy::too_many_arguments)]
+pub fn reserve_diagnostic(conn:&Connection,attempt:&str,source:i64,model:&str,request_based:bool,subscription:bool,auth:&serde_json::Value,snapshot:&serde_json::Value)->Result<i64> {
+    if source<=0||model.trim().is_empty()||attempt.is_empty()||attempt.len()>256||auth["kind"]!="admin_diagnostic"||auth["subscription"]!=serde_json::json!(subscription) {return Err(bad("invalid diagnostic identity"));}
+    let c=tx(conn)?;
+    let existing=c.query_row(&format!("{LEDGER_SELECT} WHERE attempt_id=?1"),[attempt],ledger_row).optional()?;
+    if let Some(row)=existing {if row.user_id!=0||row.key_id!=0||row.request_id!=0||row.channel_id!=source||row.model!=tokengo_shared::normalize_model_name(model)||row.billing_unit!=if request_based{"request"}else{"token"}||row.auth_snapshot!=*auth||row.source_snapshot!=*snapshot{return Err(bad("diagnostic attempt identity conflict"));}c.commit()?;return Ok(row.id);}
+    let token_price=if request_based||subscription{None}else{price(&c,model,source)?};
+    let per_request=if request_based{request_price(&c,model,source)?}else{None};
+    c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,created_ms,billing_unit,request_price_id,request_price_snapshot,auth_snapshot,source_snapshot) VALUES(?1,0,0,0,?2,?3,?4,?5,0,0,0,?6,?7,?8,?9,?10,?11)",params![attempt,source,tokengo_shared::normalize_model_name(model),token_price.as_ref().map(|p|p.id),token_price.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("invalid diagnostic price"))?,now_ms(),if request_based{"request"}else{"token"},per_request.as_ref().map(|p|p.id),per_request.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("invalid diagnostic price"))?,auth.to_string(),snapshot.to_string()])?;
+    let id=c.last_insert_rowid();c.commit()?;Ok(id)
+}
+/// Refresh immutable dispatch evidence and price versions after credential refresh/queue waits.
+pub fn prepare_diagnostic_dispatch(conn:&Connection,id:i64,snapshot:&serde_json::Value)->Result<()> {
+    let c=tx(conn)?;let row=c.query_row(&format!("{LEDGER_SELECT} WHERE id=?1"),[id],ledger_row)?;
+    if row.user_id!=0||row.key_id!=0||row.request_id!=0||row.auth_snapshot["kind"]!="admin_diagnostic"||row.status!="reserved" {return Err(bad("invalid diagnostic dispatch"));}
+    let token=if row.billing_unit=="token"&&row.auth_snapshot["subscription"]!=true {price(&c,&row.model,row.channel_id)?}else{None};
+    let request=if row.billing_unit=="request" {request_price(&c,&row.model,row.channel_id)?}else{None};
+    c.execute("UPDATE billing_ledger SET source_snapshot=?2,price_id=?3,price_snapshot=?4,request_price_id=?5,request_price_snapshot=?6 WHERE id=?1",params![id,snapshot.to_string(),token.as_ref().map(|p|p.id),token.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("diagnostic price serialization"))?,request.as_ref().map(|p|p.id),request.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("diagnostic price serialization"))?])?;
+    c.commit()?;Ok(())
+}
+/// Idempotent system settlement. No allocation rows or user budget updates are permitted.
+pub fn settle_diagnostic(conn:&Connection,id:i64,input:Option<i64>,output:Option<i64>,units:Option<i64>,outcome:&str)->Result<()> {
+    if input.is_some_and(|n|n<0)||output.is_some_and(|n|n<0)||units.is_some_and(|n|!(0..=1).contains(&n))||outcome.is_empty()||outcome.len()>64||outcome=="reserved" {return Err(bad("invalid diagnostic settlement"));}
+    let c=tx(conn)?;
+    let row=c.query_row(&format!("{LEDGER_SELECT} WHERE id=?1"),[id],ledger_row).optional()?.ok_or_else(||bad("unknown diagnostic reservation"))?;
+    if row.user_id!=0||row.key_id!=0||row.request_id!=0||row.auth_snapshot["kind"]!="admin_diagnostic" {return Err(bad("diagnostic settlement identity mismatch"));}
+    if row.status!="reserved" {c.commit()?;return Ok(());}
+    let allocated:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM billing_allocations WHERE reservation_id=?1)",[id],|r|r.get(0))?;
+    if allocated {return Err(bad("system diagnostic must not hold user allocations"));}
+    if (row.billing_unit=="request"&&(input.is_some()||output.is_some()))||(row.billing_unit!="request"&&units.is_some()) {return Err(bad("diagnostic billing unit mismatch"));}
+    let not_sent=outcome=="not_sent";
+    let units=if not_sent&&row.billing_unit=="request"{Some(0)}else{units};
+    let subscription=row.auth_snapshot["subscription"]==true;
+    let observed=if not_sent||units==Some(0){Some(0)}else if subscription{None}else if row.billing_unit=="request"{match (&row.request_price_snapshot,units){(Some(p),Some(n))=>Some(p.micro_per_call.checked_mul(n).ok_or_else(||bad("diagnostic request cost overflow"))?),_=>None}}else{match(&row.price_snapshot,input,output){(Some(p),Some(i),Some(o))=>Some(cost(p,i,o)?),_=>None}};
+    let certainty=if not_sent{"not_sent"}else if subscription{"subscription"}else if observed.is_some(){"reported"}else if (row.billing_unit=="request"&&row.request_price_snapshot.is_none())||(row.billing_unit!="request"&&row.price_snapshot.is_none()){"unpriced"}else{"unknown"};
+    c.execute("UPDATE billing_ledger SET debit_micro=0,observed_cost_micro=?2,input_tokens=?3,output_tokens=?4,request_units=?5,usage_certainty=?6,status=?7,outcome=?7,settled_ms=?8 WHERE id=?1",params![id,observed,input,output,units,certainty,outcome,now_ms()])?;
+    c.commit()?;Ok(())
+}
+
 /// Outstanding sends may have reached the provider. Never release unknown cost at restart.
 pub fn recover(conn: &Connection) -> Result<usize> {
     let ids = {
@@ -494,7 +535,9 @@ pub fn recover(conn: &Connection) -> Result<usize> {
             [id],
             |r| r.get(0),
         )?;
-        if unit == "request" {
+        let diagnostic:bool=conn.query_row("SELECT user_id=0 AND key_id=0 AND request_id=0 AND json_extract(auth_snapshot,'$.kind')='admin_diagnostic' FROM billing_ledger WHERE id=?1",[id],|r|r.get(0))?;
+        if diagnostic {settle_diagnostic(conn,id,None,None,None,"restart_unknown")?;}
+        else if unit == "request" {
             settle_request(conn, id, None, "restart_unknown")?;
         } else {
             settle(conn, id, None, None, "restart_unknown")?;

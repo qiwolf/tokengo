@@ -127,6 +127,26 @@ pub struct OAuthCredential {
     pub service_tier: Option<String>,
     pub max_input_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
+    account_header: Option<String>,
+}
+/// Account headers come only from an ID token verified before encrypted storage.
+pub fn inference_headers(credential:&OAuthCredential)->Vec<(String,String)> {
+    let mut headers=vec![("originator".into(),"tokengo".into())];
+    if let Some(account)=&credential.account_header {headers.push(("chatgpt-account-id".into(),account.clone()));}
+    headers
+}
+fn account_header(id_token:&str)->Result<Option<String>> {
+    let payload=id_token.split('.').nth(1).ok_or(OAuthError("oauth_invalid_identity"))?;
+    let payload=URL_SAFE_NO_PAD.decode(payload).map_err(|_|OAuthError("oauth_invalid_identity"))?;
+    let claims:serde_json::Value=serde_json::from_slice(&payload).map_err(|_|OAuthError("oauth_invalid_identity"))?;
+    let Some(value)=claims.get("https://api.openai.com/auth").and_then(|v|v.get("chatgpt_account_id"))else{return Ok(None)};
+    let value=value.as_str().filter(|v|!v.is_empty()&&v.len()<=256&&!v.chars().any(char::is_control)).ok_or(OAuthError("oauth_invalid_identity"))?;
+    reqwest::header::HeaderValue::from_str(value).map_err(|_|OAuthError("oauth_invalid_identity"))?;
+    Ok(Some(value.into()))
+}
+pub fn credentials_current(state:&SharedState,channel:i64,credential:&OAuthCredential)->Result<bool> {
+    let c=state.conn();let current:Option<(i64,i64,i64,String,i64)>=storage(c.query_row("SELECT b.account_id,c.binding_generation,a.credential_revision,a.status,a.expires_at FROM oauth_channel_bindings b JOIN channels c ON c.id=b.channel_id JOIN oauth_accounts a ON a.id=b.account_id WHERE b.channel_id=?1",[channel],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional())?;
+    Ok(current.is_some_and(|(account,generation,revision,status,expiry)|account==credential.account_id&&generation==credential.binding_generation&&revision==credential.credential_revision&&status=="active"&&expiry>db::now_ms())&&storage(clean_source(&c,channel))?)
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Account {
@@ -705,6 +725,7 @@ pub async fn credentials(state: &SharedState, channel_id: i64) -> Result<Option<
         service_tier: current.service_tier,
         max_input_tokens: current.max_input_tokens,
         max_output_tokens: current.max_output_tokens,
+        account_header: account_header(&bundle.id_token)?,
     }))
 }
 async fn ensure_session(state: &SharedState, account_id: i64) -> Result<()> {
@@ -1060,6 +1081,7 @@ mod tests {
         release: tokio::sync::Notify,
         hold: std::sync::atomic::AtomicBool,
         catalog_json: Mutex<Option<Value>>,
+        probe_captures:Mutex<Vec<(axum::http::HeaderMap,Value)>>,
         hold_catalog: std::sync::atomic::AtomicBool,
     }
     impl Default for Mock {
@@ -1076,6 +1098,7 @@ mod tests {
                 release: Default::default(),
                 hold: Default::default(),
                 catalog_json: Mutex::new(None),
+                probe_captures:Mutex::new(vec![]),
                 hold_catalog: Default::default(),
             }
         }
@@ -1084,6 +1107,7 @@ mod tests {
         let variant = mock.variant.lock().unwrap().clone();
         let now = db::now_ms() / 1000;
         let mut claims = json!({"iss":ISSUER,"aud":"oaiapp_test","sub":mock.subject.lock().unwrap().clone(),"iat":now,"exp":now+3600,"email":"synthetic@example.invalid"});
+        claims["https://api.openai.com/auth"]=json!({"chatgpt_account_id":"synthetic-account-A"});
         if nonce {
             claims["nonce"] = json!(mock.nonce.lock().unwrap().clone());
         }
@@ -1160,6 +1184,11 @@ mod tests {
         assert!(form["token"].starts_with("SYNTHETIC-ROTATING"));
         axum::http::StatusCode::OK
     }
+    async fn probe_response(State(mock):State<Arc<Mock>>,headers:axum::http::HeaderMap,Json(body):Json<Value>)->impl axum::response::IntoResponse {
+        mock.probe_captures.lock().unwrap().push((headers,body));
+        let data=json!({"type":"response.completed","response":{"id":"resp_probe","object":"response","status":"completed","output":[{"type":"message","id":"msg_probe","role":"assistant","status":"completed","content":[{"type":"output_text","text":"probe-oauth-ok","annotations":[]}]}],"usage":{"input_tokens":7,"output_tokens":3}}});
+        ([("content-type","text/event-stream")],format!("event: response.completed\ndata: {data}\n\n"))
+    }
     struct Fixture {
         state: SharedState,
         mock: Arc<Mock>,
@@ -1193,6 +1222,7 @@ mod tests {
                 .route("/token", post(token))
                 .route("/jwks", get(jwks))
                 .route("/v1/models", get(catalog))
+                .route("/v1/responses",post(probe_response))
                 .route("/discovery", get(discovery))
                 .route("/revoke", post(revocation))
                 .with_state(mock.clone());
@@ -1278,6 +1308,34 @@ mod tests {
                 )
                 .unwrap();
         }
+    }
+    fn custom_probe(f:&Fixture,ch:i64)->String {
+        let c=f.state.conn();
+        db::channels::set_models(&c,tokengo_shared::ChannelId(ch),&[db::channels::ModelMapping::new("probe-local",Some("probe-wire".into()),false)]).unwrap();
+        db::provider_pool::backfill(&c,&f.state.secrets).unwrap();
+        let id=uuid::Uuid::new_v4().to_string();let value=json!({"id":id,"name":"OAuth real fixture","source_id":ch,"model":"probe-local","kind":"responses","input":"Reply probe-oauth-ok","max_tokens":8,"expected_status":200,"contains":"probe-oauth-ok","expected_dimensions":null,"timeout_ms":3000,"max_latency_ms":null,"interval_secs":60,"enabled":false,"version":1,"last_result":null,"next_run_at_ms":0});
+        db::settings::set(&c,&format!("custom_probe:{id}"),&value.to_string()).unwrap();id
+    }
+    #[tokio::test]
+    async fn custom_probe_oauth_native_sse_verified_headers_refresh_and_subscription_cost() {
+        let f=Fixture::new().await;f.state.oauth.test_api_base(&format!("{}/v1",f.mock.base.lock().unwrap()));
+        let account=f.authorize().await;let ch=f.channel(account.id);let id=custom_probe(&f,ch);f.due(account.id);
+        let result=crate::custom_probes::execute(&f.state,&id,false,db::now_ms()).await.unwrap();assert!(result.ok,"{}",result.note);
+        assert_eq!(f.mock.refreshes.load(Ordering::SeqCst),1);
+        let captures=f.mock.probe_captures.lock().unwrap();assert_eq!(captures.len(),1);let (headers,body)=&captures[0];
+        assert_eq!(headers["authorization"],"Bearer SYNTHETIC-ACCESS-1");assert_eq!(headers["chatgpt-account-id"],"synthetic-account-A");assert_eq!(headers["originator"],"tokengo");
+        assert_eq!(body["model"],"probe-wire");assert!(body["input"].is_array());assert_eq!(body["stream"],true);assert_eq!(body["store"],false);assert_eq!(body["reasoning"]["effort"],"low");assert_eq!(body["service_tier"],"priority");assert!(body.get("max_output_tokens").is_none());assert!(body.get("max_tokens").is_none());drop(captures);
+        let billing=result.billing.unwrap();assert_eq!(billing["input_tokens"],7);assert_eq!(billing["output_tokens"],3);assert!(billing["observed_cost_micro"].is_null());assert_eq!(billing["cost_status"],"subscription");
+        let c=f.state.conn();let rows=db::billing::usage(&c,&Default::default()).unwrap();assert_eq!(rows.len(),1);assert_eq!(rows[0].source_snapshot["oauth_credential_revision"],2);assert_eq!((rows[0].user_id,rows[0].key_id,rows[0].request_id),(0,0,0));assert_eq!(c.query_row("SELECT count(*) FROM billing_allocations",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+    #[tokio::test]
+    async fn custom_probe_oauth_expired_refresh_failure_revocation_and_binding_change_never_dispatch_stale_auth() {
+        let f=Fixture::new().await;f.state.oauth.test_api_base(&format!("{}/v1",f.mock.base.lock().unwrap()));let account=f.authorize().await;let ch=f.channel(account.id);let id=custom_probe(&f,ch);
+        f.due(account.id);f.mock.hold.store(true,Ordering::SeqCst);let state=f.state.clone();let run_id=id.clone();let task=tokio::spawn(async move{crate::custom_probes::execute(&state,&run_id,false,db::now_ms()).await.unwrap()});
+        tokio::time::timeout(Duration::from_secs(2),f.mock.entered.notified()).await.unwrap();unbind(&f.state,ch).unwrap();f.mock.release.notify_one();assert!(!task.await.unwrap().ok);assert!(f.mock.probe_captures.lock().unwrap().is_empty());
+        let ch=f.channel(account.id);let id=custom_probe(&f,ch);f.state.conn().execute("UPDATE oauth_accounts SET status='revoked' WHERE id=?1",[account.id]).unwrap();let result=crate::custom_probes::execute(&f.state,&id,false,db::now_ms()).await.unwrap();assert!(!result.ok);assert!(f.mock.probe_captures.lock().unwrap().is_empty());
+        f.state.conn().execute("UPDATE oauth_accounts SET status='active',expires_at=0,earliest_refresh_at=0 WHERE id=?1",[account.id]).unwrap();f.mock.hold.store(false,Ordering::SeqCst);*f.mock.variant.lock().unwrap()="signature".into();let result=crate::custom_probes::execute(&f.state,&id,false,db::now_ms()).await.unwrap();assert!(!result.ok);assert!(f.mock.probe_captures.lock().unwrap().is_empty());
+        let rows=db::billing::usage(&f.state.conn(),&Default::default()).unwrap();assert!(rows.iter().all(|r|r.status!="reserved"&&r.debit_micro==Some(0)));assert!(!serde_json::to_string(&result).unwrap().contains("SYNTHETIC"));
     }
     #[test]
     fn token_reply_rejects_header_unsafe_access_and_control_refresh_tokens() {

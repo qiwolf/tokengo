@@ -8,7 +8,7 @@ struct Mock {calls:Arc<AtomicUsize>,captures:Arc<Mutex<Vec<(String,String,String
 async fn upstream(State(mock):State<Mock>,OriginalUri(uri):OriginalUri,headers:HeaderMap,Json(body):Json<Value>)->Response {
     mock.calls.fetch_add(1,Ordering::SeqCst);
     mock.captures.lock().unwrap().push((uri.path().into(),headers.get("authorization").and_then(|h|h.to_str().ok()).unwrap_or("").into(),headers.get("x-api-key").and_then(|h|h.to_str().ok()).unwrap_or("").into(),body.clone()));
-    let input=body["input"].as_str().or_else(||body.pointer("/messages/0/content").and_then(Value::as_str)).unwrap_or("");
+    let input=body["input"].as_str().or_else(||body["query"].as_str()).or_else(||body.pointer("/messages/0/content").and_then(Value::as_str)).unwrap_or("");
     if input=="hold" {mock.started.notify_one();mock.release.notified().await;}
     if input=="timeout" {tokio::time::sleep(std::time::Duration::from_millis(1300)).await;}
     if input=="slowbody" {let bytes=bytes::Bytes::from_static(br#"{"choices":[{"message":{"role":"assistant","content":"probe-ok"}}]}"#);let stream=futures_util::stream::once(async move{tokio::time::sleep(std::time::Duration::from_millis(1300)).await;Ok::<_,std::io::Error>(bytes)});return Response::new(axum::body::Body::from_stream(stream));}
@@ -17,10 +17,12 @@ async fn upstream(State(mock):State<Mock>,OriginalUri(uri):OriginalUri,headers:H
     if input=="oversize" {return Json(json!({"choices":[{"message":{"role":"assistant","content":"x".repeat(300000)}}]})).into_response();}
     if input=="echo-only" {return Json(json!({"model":"needle","echo":"needle","choices":[{"message":{"role":"assistant","content":"different answer"}}]})).into_response();}
     match uri.path() {
+        "/v1/tools/search"=>if input=="invalid" {Json(json!({"query":"probe-ok","results":"invalid"})).into_response()}else if input=="empty" {Json(json!({"results":[]})).into_response()}else{Json(json!({"query":"echo-needle","results":[{"title":"actual-result","url":"https://result.invalid","snippet":"probe-ok","summary":"","content":"","rerank_score":0.9,"authority":1,"site_name":null,"site_icon":null,"date":null}]})).into_response()},
+        "/v1/tools/fetch"=>Json(json!({"title":"Fetched","content":"fetched-probe-ok","url":body["url"]})).into_response(),
         "/v1/embeddings"=>Json(json!({"object":"list","data":[{"index":0,"embedding":[0.1,0.2,0.3]}]})).into_response(),
         "/v1/messages"=>Json(json!({"id":"msg_fixture","type":"message","role":"assistant","model":"wire-model","content":[{"type":"text","text":"probe-ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}})).into_response(),
         "/v1/responses"=>Json(json!({"id":"resp_fixture","object":"response","status":"completed","output":[{"id":"msg_fixture","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"probe-ok","annotations":[]}]}]})).into_response(),
-        _=>Json(json!({"choices":[{"message":{"role":"assistant","content":"probe-ok"},"finish_reason":"stop"}]})).into_response(),
+        _=>Json(json!({"choices":[{"message":{"role":"assistant","content":"probe-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1}})).into_response(),
     }
 }
 struct Fixture {state:SharedState,base:String,token:String,source:i64,mock:Mock,tasks:Vec<tokio::task::JoinHandle<()>>}
@@ -44,7 +46,7 @@ impl Fixture {
     async fn run(&self,p:&Value)->Value {let(status,v)=self.req("POST",&format!("/api/custom-probes/{}/run",p["id"].as_str().unwrap()),json!(null)).await;assert_eq!(status,200,"{v}");v["result"].clone()}
 }
 fn protected(c:&rusqlite::Connection)->Vec<(String,Vec<Vec<String>>)> {
-    ["users","gateway_keys","channels","channel_models","channel_secrets","channel_headers","provider_credentials","provider_connections","requests","attempts","billing_ledger","billing_budgets","billing_prices","billing_request_prices","routing_state","model_cooldowns","channel_faults"].into_iter().map(|table|{let mut q=c.prepare(&format!("SELECT * FROM {table} ORDER BY rowid")).unwrap();let columns=q.column_count();let rows=q.query_map([],|row|Ok((0..columns).map(|i|format!("{:?}",row.get_ref(i).unwrap())).collect())).unwrap().collect::<rusqlite::Result<Vec<Vec<String>>>>().unwrap();(table.into(),rows)}).collect()
+    ["users","gateway_keys","channels","channel_models","channel_secrets","channel_headers","provider_credentials","provider_connections","requests","attempts","billing_budgets","billing_prices","billing_request_prices","routing_state","model_cooldowns","channel_faults"].into_iter().map(|table|{let mut q=c.prepare(&format!("SELECT * FROM {table} ORDER BY rowid")).unwrap();let columns=q.column_count();let rows=q.query_map([],|row|Ok((0..columns).map(|i|format!("{:?}",row.get_ref(i).unwrap())).collect())).unwrap().collect::<rusqlite::Result<Vec<Vec<String>>>>().unwrap();(table.into(),rows)}).collect()
 }
 #[tokio::test]
 async fn custom_probe_crud_optimistic_versions_persist_without_dispatch() {
@@ -59,8 +61,9 @@ async fn custom_probe_crud_optimistic_versions_persist_without_dispatch() {
 async fn custom_probe_native_shapes_mapping_contains_dimensions_and_no_ledger_or_fallback_writes() {
     let f=Fixture::new().await;let before=protected(&f.state.conn());
     for kind in ["chat","responses","messages","embeddings"] {let mut config=f.config();config["kind"]=json!(kind);if kind=="embeddings"{config["model"]=json!("local-vector");config["contains"]=Value::Null;config["expected_dimensions"]=json!(3);}let probe=f.create(config).await;let result=f.run(&probe).await;assert_eq!(result["ok"],true,"{kind}: {result}");assert_eq!(result["status"],200);}
+    {let c=f.state.conn();let rows=db::billing::usage(&c,&Default::default()).unwrap();assert_eq!(rows.len(),4);assert!(rows.iter().all(|r|r.user_id==0&&r.key_id==0&&r.request_id==0&&r.auth_snapshot["kind"]=="admin_diagnostic"&&r.status!="reserved"&&r.debit_micro==Some(0)));}
     let captures=f.mock.captures.lock().unwrap();assert_eq!(captures.len(),4);assert_eq!(captures[0].3["model"],"wire-model");assert_eq!(captures[0].3["max_tokens"],8);assert_eq!(captures[1].3["max_output_tokens"],8);assert_eq!(captures[1].3["store"],false);assert_eq!(captures[2].2,"fixed-upstream-secret");assert_eq!(captures[2].1,"");assert_eq!(captures[3].3["model"],"wire-vector");drop(captures);
-    assert_eq!(protected(&f.state.conn()),before,"custom probes must not alter history, identity or fallback state");
+    assert_eq!(protected(&f.state.conn()),before,"custom probes must not alter user accounting, identity or fallback state");
     let mut config=f.config();config["input"]=json!("echo-only");config["contains"]=json!("needle");assert_eq!(f.run(&f.create(config).await).await["ok"],false,"metadata or reflected input must not satisfy assistant output matcher");
     let mut config=f.config();config["kind"]=json!("embeddings");config["model"]=json!("local-vector");config["contains"]=Value::Null;config["expected_dimensions"]=json!(4);assert_eq!(f.run(&f.create(config).await).await["ok"],false);
 }
@@ -110,4 +113,38 @@ async fn custom_probe_root_only_csrf_and_invalid_configuration_do_not_dispatch()
     for(field,value)in [("max_tokens",json!(257)),("timeout_ms",json!(999)),("interval_secs",json!(59)),("model",json!("auto")),("source_id",json!(999999)),("input",json!("x".repeat(4097))),("kind",json!("search"))] {let mut config=f.config();config[field]=value;let(status,v)=f.req("POST","/api/custom-probes",config).await;assert_eq!(status,400,"{field}: {v}");}
     let mut wrong_kind=f.config();wrong_kind["kind"]=json!("embeddings");wrong_kind["contains"]=Value::Null;assert_eq!(f.req("POST","/api/custom-probes",wrong_kind).await.0,400);
     assert_eq!(f.mock.calls.load(Ordering::SeqCst),0);
+}
+#[tokio::test]
+async fn custom_probe_tools_normalize_match_units_qps_cost_and_missing_price() {
+    let f=Fixture::new().await;
+    tokengo_server::search_tools::save(&f.state.conn(),f.source,&tokengo_server::search_tools::ToolCapabilities{search:true,fetch:true,account_scope:"diagnostic-shared-tool-account".into(),qps:100}).unwrap();
+    let before=protected(&f.state.conn());let mut config=f.config();config["kind"]=json!("search");config["search_count"]=json!(3);config["need_content"]=json!(true);config["localization"]=json!("127.0.0.1");config["ori_question"]=json!("question");
+    let p=f.create(config.clone()).await;let r=f.run(&p).await;assert_eq!(r["ok"],true,"{r}");assert_eq!(r["billing"]["request_units"],1);assert!(r["billing"]["observed_cost_micro"].is_null());assert_eq!(r["billing"]["cost_status"],"unknown");
+    {let captures=f.mock.captures.lock().unwrap();let body=&captures.last().unwrap().3;assert_eq!(body["count"],3);assert_eq!(body["need_content"],true);assert_eq!(body["ori_question"],"question");assert!(body.get("model").is_none());assert!(body.get("max_tokens").is_none());}
+    db::billing::create_request_price(&f.state.conn(),&db::billing::RequestPrice{id:0,channel_id:f.source,model:"local-chat".into(),micro_per_call:1234},"test").unwrap();
+    let r=f.run(&p).await;assert_eq!(r["billing"]["observed_cost_micro"],1234);assert_eq!(r["billing"]["debit_micro"],0);
+    for(input,expected,units,cost)in [("empty",true,json!(0),json!(0)),("invalid",false,Value::Null,Value::Null),("error",true,json!(0),json!(0)),("timeout",false,Value::Null,Value::Null)] {
+        let mut cfg=config.clone();cfg["input"]=json!(input);cfg["contains"]=Value::Null;if input=="error"{cfg["expected_status"]=json!(429);}let r=f.run(&f.create(cfg).await).await;assert_eq!(r["ok"],expected,"{input}: {r}");assert_eq!(r["billing"]["request_units"],units);assert_eq!(r["billing"]["observed_cost_micro"],cost);
+    }
+    let mut reflected=config.clone();reflected["contains"]=json!("echo-needle");assert_eq!(f.run(&f.create(reflected).await).await["ok"],false,"search query echo must not satisfy content matcher");
+    let mut fetch=config.clone();fetch["kind"]=json!("fetch");fetch["input"]=json!("https://example.invalid/resource");fetch["contains"]=json!("fetched-probe-ok");assert_eq!(f.run(&f.create(fetch.clone()).await).await["ok"],true);
+    // Legitimate fetch URLs use the tool contract's 8192 character limit, not generation's 4096 bytes.
+    fetch["input"]=json!(format!("https://example.invalid/{}","x".repeat(5000)));assert_eq!(f.req("POST","/api/custom-probes",fetch.clone()).await.0,200);fetch["input"]=json!("https://user:password@example.invalid/");assert_eq!(f.req("POST","/api/custom-probes",fetch).await.0,400);
+    let(_,meta)=f.req("GET","/api/custom-probes",Value::Null).await;let target=meta["targets"].as_array().unwrap().iter().find(|v|v["source_id"]==f.source).unwrap();assert_eq!(target["search"],true);assert_eq!(target["fetch"],true);
+    // Shared production rate limiter admits one source request, so a diagnostic cannot bypass it.
+    tokengo_server::search_tools::save(&f.state.conn(),f.source,&tokengo_server::search_tools::ToolCapabilities{search:true,fetch:true,account_scope:"diagnostic-qps-one".into(),qps:1}).unwrap();
+    assert!(f.state.tool_rates.admit("diagnostic-qps-one",tokengo_server::search_tools::ToolKind::Search,1));let calls=f.mock.calls.load(Ordering::SeqCst);let r=f.run(&p).await;assert_eq!(r["ok"],false);assert_eq!(r["billing"]["usage_certainty"],"not_sent");assert_eq!(f.mock.calls.load(Ordering::SeqCst),calls);
+    let after=protected(&f.state.conn());for(table,rows)in before{if !matches!(table.as_str(),"billing_request_prices"|"channels"){assert_eq!(after.iter().find(|(t,_)|t==&table).unwrap().1,rows,"unexpected mutation to {table}");}}
+}
+#[tokio::test]
+async fn custom_probe_cancel_and_shared_key_gate_do_not_leave_reserved_or_revive_deleted_probe() {
+    let f=Fixture::new().await;let mut config=f.config();config["input"]=json!("hold");config["timeout_ms"]=json!(5000);let p=f.create(config).await;let id=p["id"].as_str().unwrap().to_string();
+    let state=f.state.clone();let run_id=id.clone();let task=tokio::spawn(async move{custom_probes::execute(&state,&run_id,false,db::now_ms()).await});f.mock.started.notified().await;task.abort();assert!(task.await.unwrap_err().is_cancelled());
+    {let c=f.state.conn();let rows=db::billing::usage(&c,&Default::default()).unwrap();assert_eq!(rows[0].status,"cancelled_unknown");assert!(rows[0].observed_cost_micro.is_none());assert_eq!(rows[0].debit_micro,Some(0));assert!(db::settings::get(&c,&format!("custom_probe_lease:{id}")).unwrap().is_none());}
+    f.mock.release.notify_one();
+    let source=db::provider_pool::source_credential(&f.state.conn(),f.source).unwrap().unwrap();let gate=f.state.credential_gate(source.id,1).unwrap();let held=gate.acquire_owned().await.unwrap();
+    // Set the pool cap to the same value used by the shared gateway gate.
+    f.state.conn().execute("UPDATE provider_credentials SET max_concurrent=1 WHERE id=?1",[source.id]).unwrap();
+    let p=f.create(f.config()).await;let calls=f.mock.calls.load(Ordering::SeqCst);let r=f.run(&p).await;assert_eq!(r["ok"],false);assert_eq!(r["billing"]["usage_certainty"],"not_sent");assert_eq!(f.mock.calls.load(Ordering::SeqCst),calls);drop(held);
+    assert_eq!(f.run(&p).await["ok"],true,"cancelled lease must not block a later run");
 }
