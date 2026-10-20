@@ -19,7 +19,7 @@ fn price_sources(ctx: Ctx) -> RwSignal<Vec<(i64,String)>> {
             for id in providers {
                 let keys=api::request("GET",&format!("/api/providers/{id}/credentials"),None).await?;
                 for (position,key) in api::rows(&keys,"credentials").iter().enumerate() {
-                    if let Some(source)=key["source_id"].as_i64(){labels.insert(source,crate::provider_api::credential_label(key,position));}
+                    if let Some(ids)=key["source_ids"].as_array(){for source in ids.iter().filter_map(Value::as_i64){labels.insert(source,crate::provider_api::credential_label(key,position));}}
                 }
             }
             Ok::<_,crate::api::ApiErr>(rows.into_iter().filter_map(|c|c["id"].as_i64().map(|id|(id,price_source_label(&c,labels.get(&id).map(String::as_str).unwrap_or("未命名上游 Key"))))).collect())
