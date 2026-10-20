@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod account_api;
+pub mod provider_api;
 pub mod account_ui;
 pub mod admin_api;
 pub mod fmt;

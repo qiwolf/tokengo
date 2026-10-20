@@ -720,6 +720,12 @@ async fn ensure_session(state: &SharedState, account_id: i64) -> Result<()> {
 /// Account-specific official model catalog. No token or arbitrary endpoint is accepted from callers.
 pub async fn models(state: &SharedState, account_id: i64) -> Result<serde_json::Value> {
     ensure_session(state, account_id).await?;
+    let source_snapshots = storage((|| -> db::Result<Vec<(i64,String)>> {
+        let c=state.conn();
+        let mut query=c.prepare("SELECT channel_id FROM oauth_channel_bindings WHERE account_id=?1")?;
+        let ids=query.query_map([account_id],|r|r.get::<_,i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        ids.into_iter().map(|id|Ok((id,crate::reasoning_capabilities::fingerprint(&c,id)?))).collect()
+    })())?;
     let bearer = tokens(state, account_id)?.access_token;
     let response = state
         .oauth
@@ -741,6 +747,20 @@ pub async fn models(state: &SharedState, account_id: i64) -> Result<serde_json::
     if catalog.to_string().contains(&bearer) {
         return Err(OAuthError("oauth_invalid_catalog"));
     }
+    // Cache only the parser's safe metadata projection, and only for connections
+    // still bound to this account after the awaited network/refresh work.
+    let parsed = crate::upstream::parse_model_catalog(&catalog.to_string());
+    let c = state.conn();
+    storage(db::in_tx(&c, |c| {
+        let mut query = c.prepare("SELECT channel_id FROM oauth_channel_bindings WHERE account_id=?1")?;
+        let ids = query.query_map([account_id], |r| r.get::<_,i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in ids {
+            if source_snapshots.iter().any(|(before,identity)|*before==id && crate::reasoning_capabilities::fingerprint(c,id).is_ok_and(|now|now==*identity)) {
+                db::catalog::replace(c, tokengo_shared::ChannelId(id), &parsed, db::now_ms())?;
+            }
+        }
+        Ok(())
+    }))?;
     Ok(catalog)
 }
 /// SIWC and ordinary API catalogs are distinct contracts, not interchangeable aliases.
@@ -1040,6 +1060,7 @@ mod tests {
         release: tokio::sync::Notify,
         hold: std::sync::atomic::AtomicBool,
         catalog_json: Mutex<Option<Value>>,
+        hold_catalog: std::sync::atomic::AtomicBool,
     }
     impl Default for Mock {
         fn default() -> Self {
@@ -1055,6 +1076,7 @@ mod tests {
                 release: Default::default(),
                 hold: Default::default(),
                 catalog_json: Mutex::new(None),
+                hold_catalog: Default::default(),
             }
         }
     }
@@ -1119,6 +1141,7 @@ mod tests {
             .to_str()
             .unwrap()
             .starts_with("Bearer SYNTHETIC-ACCESS-"));
+        if mock.hold_catalog.load(Ordering::SeqCst) {mock.entered.notify_one();mock.release.notified().await;}
         Json(mock.catalog_json.lock().unwrap().clone().unwrap_or_else(||
             json!({"object":"list","data":[{"id":"gpt-synthetic","context_window":32768,"max_output_tokens":4096}]})
         ))
@@ -1715,4 +1738,25 @@ mod tests {
             "legacy-model"
         );
     }
+    #[tokio::test]
+    async fn account_catalog_caches_safe_metadata_only_for_unchanged_current_bindings() {
+        let f=Fixture::new().await;
+        f.state.oauth.test_api_base(&format!("{}/v1",f.mock.base.lock().unwrap()));
+        let a=f.authorize().await;let ch=f.channel(a.id);
+        *f.mock.catalog_json.lock().unwrap()=Some(json!({"models":[{"slug":"source-model","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"xhigh"}],"default_reasoning_level":"low"}]}));
+        models(&f.state,a.id).await.unwrap();
+        let safe=crate::db::catalog::list(&f.state.conn(),tokengo_shared::ChannelId(ch)).unwrap();
+        assert_eq!(safe[0].model,"source-model");
+        assert_eq!(crate::reasoning_capabilities::for_model(&f.state.conn(),ch,"source-model").unwrap().levels,vec!["low","xhigh"]);
+        f.state.conn().execute("DELETE FROM channel_catalog WHERE channel_id=?1",[ch]).unwrap();
+        f.mock.hold_catalog.store(true,Ordering::SeqCst);
+        let state=f.state.clone();let task=tokio::spawn(async move{models(&state,a.id).await});
+        tokio::time::timeout(Duration::from_secs(3),f.mock.entered.notified()).await.unwrap();
+        unbind(&f.state,ch).unwrap();
+        f.mock.release.notify_one();
+        task.await.unwrap().unwrap();
+        assert!(crate::db::catalog::list(&f.state.conn(),tokengo_shared::ChannelId(ch)).unwrap().is_empty());
+        assert_eq!(crate::reasoning_capabilities::for_model(&f.state.conn(),ch,"source-model").unwrap().status,"unknown");
+    }
+
 }

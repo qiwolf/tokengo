@@ -313,6 +313,9 @@ async fn auth_change_password(
 fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json::Value {
     serde_json::json!({
         "id": l.id.0,
+        "provider_id":l.provider_id,
+        "provider_name":l.provider_name,
+        "provider_enabled":l.provider_enabled,
         "name": l.name,
         "base_url": l.base_url,
         "enabled": l.enabled,
@@ -326,6 +329,8 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "headers": l.headers.iter().map(|(n, _)| serde_json::json!({"name": n, "original_name": n, "value": "********", "action": "keep"})).collect::<Vec<_>>(),
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
+            "enabled":m.enabled,
+            "reasoning":crate::reasoning_capabilities::for_mapping(c,l.id.0,&m.model).ok(),
             "upstream": m.upstream,
             "vision": m.vision,
             "drop_fields": m.drop_fields_text(),
@@ -359,6 +364,8 @@ struct HeaderIn {
 
 #[derive(Deserialize)]
 struct ModelIn {
+    #[serde(default)]
+    enabled: Option<bool>,
     model: String,
     upstream: Option<String>,
     /// 这个模型名在这条渠道上能不能吃图片输入（面板上的「能看图」勾选）。
@@ -452,6 +459,7 @@ impl ChannelBody {
             let upstream = input.upstream.as_deref().map(str::trim)
                 .filter(|name| !name.is_empty()).map(str::to_string);
             let mut mapping = channels::ModelMapping::new(model, upstream, input.vision);
+            mapping.enabled = input.enabled.unwrap_or(true);
             mapping.drop_fields = channels::ModelMapping::drop_fields_from_text(&input.drop_fields);
             mappings.push(mapping);
         }
@@ -502,9 +510,10 @@ async fn channels_update(
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
-    let models = body.models()?;
+    let mut models = body.models()?;
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
+    if let Some(old)=channels::get(&conn,id)? {for (m,input) in models.iter_mut().zip(&body.models) {if input.enabled.is_none(){if let Some(was)=old.models.iter().find(|v|tokengo_shared::same_model_name(&v.model,&m.model)){m.enabled=was.enabled;}}}}
     let headers = body.headers(&conn, &state, Some(id))?;
     crate::db::in_tx(&conn, |c| {
         channels::update(
@@ -560,6 +569,7 @@ struct ProbeQuery {
 /// 探活和「拉上游模型清单」都要这一套。抽出来是因为这两件事的加载逻辑一模一样，
 /// 各写一份迟早会有一边忘了解密密钥（现象是"这条渠道明明有 key，面板却说没有"）。
 struct ReadyChannel {
+    source_identity:String,
     channel: tokengo_shared::Channel,
     secret: Option<String>,
     has_secret: bool,
@@ -576,6 +586,7 @@ fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<O
     };
     let secret = channels::secret(&conn, &state.secrets, id)?;
     Ok(Some(ReadyChannel {
+        source_identity:crate::reasoning_capabilities::fingerprint(&conn,id.0)?,
         channel: tokengo_shared::Channel {
             id: row.id,
             name: row.name.clone(),
@@ -621,6 +632,7 @@ async fn channels_probe(
         secret,
         has_secret,
         models,
+        ..
     } = ready;
 
     let model = models
@@ -711,7 +723,7 @@ async fn channels_models(
     let Some(ready) = ready_channel(&state, id)? else {
         return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
     };
-    let ReadyChannel { channel, secret, .. } = ready;
+    let ReadyChannel { channel, secret, source_identity, .. } = ready;
 
     let timeout = {
         let cfg = state.routing().cfg.clone();
@@ -784,18 +796,16 @@ async fn channels_models(
     let mut removed = Vec::new();
     let mut fetched_at = 0i64;
     if ok {
-        let before = {
-            let conn = state.conn();
-            catalog::list(&conn, channel.id)?
-        };
+        let conn = state.conn();
+        if channels::get(&conn,channel.id)?.is_none() || crate::reasoning_capabilities::fingerprint(&conn,channel.id.0)?!=source_identity {
+            return Err(ApiError::bad_request("Source configuration changed; refresh metadata again"));
+        }
+        let before = catalog::list(&conn, channel.id)?;
         let (a, r) = catalog::diff(&before, &catalog);
         added = a;
         removed = r;
         let now = now_ms();
-        {
-            let conn = state.conn();
-            crate::db::in_tx(&conn, |c| catalog::replace(c, channel.id, &catalog, now))?;
-        }
+        crate::db::in_tx(&conn, |c| catalog::replace(c, channel.id, &catalog, now))?;
         fetched_at = now;
         tracing::info!(
             "渠道 {id} 的上游模型清单已记住：{} 个（比上次多 {}、少 {}）",
@@ -928,6 +938,7 @@ async fn channel_catalog(
         "models": entries.iter().map(|e| e.model.clone()).collect::<Vec<_>>(),
         "info": entries.iter().map(|e| serde_json::json!({
             "id": e.model,
+            "reasoning":e.reasoning,
             "kind": e.kind,
             "owned_by": e.owned_by,
             "context_window": e.context_window,
@@ -1237,6 +1248,8 @@ async fn model_routes_list(
             };
             serde_json::json!({
                 "name": r.name,
+                "visible": ({let c=state.conn();model_routes::visible(&c,&r.name).unwrap_or(false)}),
+                "sources": ({let c=state.conn();crate::db::provider_channels::source_json(&c,&r.name).unwrap_or_default()}),
                 "enabled": r.enabled,
                 "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),

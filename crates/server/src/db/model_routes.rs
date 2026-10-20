@@ -31,6 +31,9 @@ pub fn is_auto(name: &str) -> bool {
 }
 
 pub fn enabled(conn:&Connection,name:&str)->Result<bool>{Ok(super::settings::get(conn,&format!("model_enabled:{}",normalize_model_name(name)))?.as_deref()!=Some("false"))}
+pub fn visible(conn:&Connection,name:&str)->Result<bool>{Ok(super::settings::get(conn,&format!("model_visible:{}",normalize_model_name(name)))?.as_deref()!=Some("false"))}
+pub fn set_visible(conn:&Connection,name:&str,value:bool)->Result<()>{super::settings::set(conn,&format!("model_visible:{}",normalize_model_name(name)),if value{"true"}else{"false"})}
+
 pub fn set_enabled(conn:&Connection,name:&str,value:bool)->Result<()>{super::settings::set(conn,&format!("model_enabled:{}",normalize_model_name(name)),if value{"true"}else{"false"})}
 
 /// 一个模型名 + 它现在的全部事实。**面板与对外清单共用这一份**，别在各处重算 ——
@@ -74,7 +77,7 @@ impl NameRoute {
 
 /// 这条渠道现在能不能收请求（启用了、也填了 base_url）。
 fn usable(l: &channels::ChannelRow) -> bool {
-    l.enabled && !l.base_url.trim().is_empty()
+    l.enabled && l.provider_enabled && !l.base_url.trim().is_empty()
 }
 
 /// 渠道里勾过的**所有**名字（归一后去重，不含保留名 auto），按名字排。
@@ -118,7 +121,7 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
             if !r.declared_by.contains(&l.id) {
                 r.declared_by.push(l.id);
             }
-            if usable(l) && !super::faults::blocked(conn,l.id.0,raw,super::now_ms())? {
+            if m.enabled && usable(l) && !super::faults::blocked(conn,l.id.0,raw,super::now_ms())? {
                 if !r.channels.contains(&l.id) {
                     r.channels.push(l.id);
                 }
@@ -135,12 +138,12 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
         let policy = super::route_policy::load(conn, &r.name)?;
         super::route_policy::order_ids(&policy, &mut r.channels);
         r.vision_channels = chans.iter().filter(|c| r.channels.contains(&c.id))
-            .any(|c| c.models.iter().any(|m| same_model_name(&m.model, &r.name) && m.vision));
+            .any(|c| c.models.iter().any(|m| same_model_name(&m.model, &r.name) && m.enabled && m.vision));
         let mut confirmed = Vec::new();
         let mut manual_used = false;
         let mut upstream_used = false;
         for ch in chans.iter().filter(|ch| usable(ch) && r.channels.contains(&ch.id)) {
-            for m in ch.models.iter().filter(|m| same_model_name(&m.model, &r.name)) {
+            for m in ch.models.iter().filter(|m| same_model_name(&m.model, &r.name) && m.enabled) {
                 let manual = crate::model_registry::context_override(conn, ch.id, m)?;
                 manual_used |= manual.is_some();
                 let value = manual.or_else(|| crate::capability_detector::mapped_context(&catalogs[&ch.id], m));
@@ -156,7 +159,7 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
         let mut reasons = Vec::new();
         let mut registry_used = false;
         for ch in chans.iter().filter(|ch| usable(ch) && r.channels.contains(&ch.id)) {
-            for m in ch.models.iter().filter(|m| same_model_name(&m.model, &r.name)) {
+            for m in ch.models.iter().filter(|m| same_model_name(&m.model, &r.name) && m.enabled) {
                 if let Some(tokens) = crate::model_registry::context_override(conn, ch.id, m)?.or_else(|| crate::capability_detector::mapped_context(&catalogs[&ch.id], m)) {
                     nominal.push(Some(tokens));
                 } else {
@@ -244,7 +247,7 @@ pub fn channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
             id: l.id,
             name: l.name,
             base_url: l.base_url,
-            enabled: l.enabled,
+            enabled: l.enabled && l.provider_enabled && m.enabled,
             priority: out.len() as i32,
             max_concurrent: l.max_concurrent,
             model_alias: alias,
@@ -292,6 +295,7 @@ pub fn auto_candidates(
     let stats=super::scores::all(conn,now_ms)?;
     let mut scored:Vec<(String,f64,i64)>=Vec::new();
     for r in list(conn)? {
+        if !visible(conn,&r.name)? {continue;}
         if super::route_policy::load(conn, &r.name)?.include_in_auto == Some(false) { continue; }
         if !r.routed() || !kind_serves(r.kind,want) || (want_vision && !r.can_see()) {continue;}
         let v=stats.get(&normalize_model_name(&r.name)).cloned().unwrap_or_default();
@@ -307,7 +311,7 @@ pub fn auto_candidates(
 /// 所以对外清单里要不要列 auto，由它说了算。
 pub fn auto_available(conn: &Connection) -> Result<bool> {
     for route in list(conn)? {
-        if route.routed() && super::route_policy::load(conn, &route.name)?.include_in_auto != Some(false) { return Ok(true); }
+        if route.routed() && visible(conn,&route.name)? && super::route_policy::load(conn, &route.name)?.include_in_auto != Some(false) { return Ok(true); }
     }
     Ok(false)
 }

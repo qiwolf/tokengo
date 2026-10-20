@@ -17,6 +17,7 @@ use crate::upstream::UpstreamModel;
 /// 库里记住的一条上游模型。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogEntry {
+    pub reasoning: crate::reasoning_capabilities::ReasoningCapabilities,
     pub model: String,
     pub kind: Option<String>,
     pub owned_by: Option<String>,
@@ -31,6 +32,7 @@ pub struct CatalogEntry {
 impl From<&UpstreamModel> for CatalogEntry {
     fn from(m: &UpstreamModel) -> Self {
         Self {
+            reasoning: m.reasoning.clone(),
             model: m.id.clone(),
             kind: m.kind.clone(),
             owned_by: m.owned_by.clone(),
@@ -100,6 +102,7 @@ pub fn replace(
         params![id.0, now_ms],
     )?;
     adopt_vision(conn, id)?;
+    crate::reasoning_capabilities::store_catalog(conn, id.0, catalog, now_ms)?;
     Ok(n)
 }
 
@@ -128,6 +131,7 @@ pub fn list(conn: &Connection, id: ChannelId) -> Result<Vec<CatalogEntry>> {
     )?;
     let rows = stmt.query_map([id.0], |r| {
         Ok(CatalogEntry {
+            reasoning: Default::default(),
             model: r.get(0)?,
             kind: r.get(6)?,
             owned_by: r.get(1)?,
@@ -137,7 +141,12 @@ pub fn list(conn: &Connection, id: ChannelId) -> Result<Vec<CatalogEntry>> {
             vision: r.get::<_, Option<i64>>(5)?.map(|v| v != 0),
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    let mut entries=rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let identity=crate::reasoning_capabilities::fingerprint(conn,id.0)?;
+    for entry in &mut entries {
+        entry.reasoning=crate::reasoning_capabilities::for_model_with_identity(conn,id.0,&entry.model,&identity)?;
+    }
+    Ok(entries)
 }
 
 /// 上次问上游是什么时候（毫秒；0 = 从来没问过）。
@@ -167,6 +176,7 @@ mod tests {
             price_note: None,
             is_free: false,
             vision: None,
+            reasoning: Default::default(),
         }
     }
 

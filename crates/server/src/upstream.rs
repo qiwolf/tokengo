@@ -229,6 +229,7 @@ const MAX_MODELS_BODY: usize = 2 * 1024 * 1024;
 /// 已经在视觉能力上栽过一次（deepseek 的 flash 能读图，有的 vision 名字反倒不能）。
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct UpstreamModel {
+    pub reasoning: crate::reasoning_capabilities::ReasoningCapabilities,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// 上游认的名字（客户端要发的就是它）。
@@ -505,6 +506,7 @@ fn to_upstream_model(entry: &serde_json::Value) -> Option<UpstreamModel> {
     }
     m.kind = declared_kind(o);
     m.vision = vision_of(o);
+    m.reasoning = crate::reasoning_capabilities::from_metadata(entry);
     Some(m)
 }
 

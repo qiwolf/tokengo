@@ -169,6 +169,15 @@ pub async fn pull_channel_models(id: i64) -> Result<ModelPull, ApiErr> {
     typed("POST", &format!("/api/channels/{id}/models"), None).await
 }
 
+/// Refresh metadata through the bound account when present; never sends inference.
+pub async fn refresh_channel_metadata(id:i64)->Result<ModelPull,ApiErr>{
+    let binding=call("GET",&format!("/api/oauth/channels/{id}"),None).await?;
+    if let Some(account)=binding.get("binding").and_then(|b|b.get("account_id")).and_then(|v|v.as_i64()) {
+        call("GET",&format!("/api/oauth/accounts/{account}/models"),None).await?;
+        channel_catalog(id).await
+    } else {pull_channel_models(id).await}
+}
+
 /// 这条渠道**上次**问到的上游模型清单（读库，不联网）。
 ///
 /// 面板打开编辑弹窗先读它：省一次上游请求（有的上游要花钱、有限流），

@@ -301,7 +301,7 @@ async fn models(
         let conn = state.conn();
         let mut servable = model_routes::servable(&conn)?;
         let mut allowed = Vec::new();
-        for model in servable.drain(..) { if gateway::permitted_model(&conn, &_key.auth, &model.name)? {allowed.push(model);} }
+        for model in servable.drain(..) { if model_routes::visible(&conn,&model.name)? && gateway::permitted_model(&conn, &_key.auth, &model.name)? {allowed.push(model);} }
         let servable=allowed;
         let auto_rows = if _key.auth.permits_model(model_routes::AUTO_NAME) && model_routes::auto_available(&conn)? {
             let now = crate::db::now_ms();

@@ -79,7 +79,7 @@ mod tests {
         for body in [
             json!({"model":"m","input":"hello","previous_response_id":"resp1"}),
             json!({"model":"m","input":"hello","conversation":"conv"}),
-            json!({"model":"m","input":"hello","reasoning":{"effort":"high"}}),
+            json!({"model":"m","input":"hello","reasoning":{"summary":"auto"}}),
             json!({"model":"m","input":"hello","surprise":1}),
         ] {
             assert!(convert_request(Protocol::Responses, Protocol::Chat, &body).is_err());

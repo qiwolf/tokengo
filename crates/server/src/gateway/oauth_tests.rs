@@ -233,3 +233,28 @@ async fn oauth_nonstream_conversion_native_stream_billing_and_explicit_limit_rej
     );
     assert_eq!(f.seen.seen.lock().unwrap().len(), 3);
 }
+
+#[tokio::test]
+async fn oauth_client_native_dials_override_connection_defaults_without_model_suffix_inference() {
+    let f=Fixture::new().await;
+    let response=f.send("responses",json!({"model":"gpt-test","input":"hello","reasoning":{"effort":"high"},"service_tier":"default"})).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let _=response.bytes().await.unwrap();
+    let seen=f.seen.seen.lock().unwrap();
+    assert_eq!(seen.len(),1);
+    assert_eq!(seen[0].1["model"],"source-model");
+    assert_eq!(seen[0].1["reasoning"]["effort"],"high");
+    assert_eq!(seen[0].1["service_tier"],"default");
+}
+
+#[tokio::test]
+async fn oauth_mapping_defaults_and_provider_default_supersede_legacy_binding_without_affecting_explicit_client() {
+    let f=Fixture::new().await;
+    let levels=vec!["low".to_owned(),"high".to_owned()];
+    {let c=f.state.conn();crate::reasoning_capabilities::configure(&c,f.channel,"gpt-test",Some(&levels),Some("high")).unwrap();}
+    let response=f.send("responses",json!({"model":"gpt-test","input":"hello"})).await;assert_eq!(response.status(),StatusCode::OK);let _=response.bytes().await.unwrap();
+    let response=f.send("responses",json!({"model":"gpt-test","input":"hello","reasoning":{"effort":"low"}})).await;assert_eq!(response.status(),StatusCode::OK);let _=response.bytes().await.unwrap();
+    {let c=f.state.conn();crate::reasoning_capabilities::configure(&c,f.channel,"gpt-test",Some(&levels),None).unwrap();}
+    let response=f.send("responses",json!({"model":"gpt-test","input":"hello"})).await;assert_eq!(response.status(),StatusCode::OK);let _=response.bytes().await.unwrap();
+    let seen=f.seen.seen.lock().unwrap();assert_eq!(seen.len(),3);assert_eq!(seen[0].1["reasoning"]["effort"],"high");assert_eq!(seen[1].1["reasoning"]["effort"],"low");assert!(seen[2].1.get("reasoning").is_none(),"explicit provider default must not resurrect old low binding");
+}

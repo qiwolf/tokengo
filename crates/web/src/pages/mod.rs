@@ -9,6 +9,8 @@
 //! 这一层了（一个模型名 = 渠道里勾了它的那些渠道），面板只剩「模型」一页看它。
 
 pub mod channels;
+pub mod provider_channels;
+pub mod model_reasoning;
 pub mod accounts;
 pub mod portal;
 pub mod users;

@@ -2,6 +2,7 @@
 //! 方便集成测试直接构建整套 app。
 
 pub mod oauth;
+pub mod reasoning_capabilities;
 pub mod search_tools;
 pub mod source_rates;
 pub mod openai_transport;
@@ -47,6 +48,7 @@ pub fn app(state: SharedState) -> Router {
         .nest("/v1", routes::proxy::router())
         // 面板管理面
         .nest("/api", routes::admin::router())
+        .merge(routes::providers::router())
         .merge(routes::accounts::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())

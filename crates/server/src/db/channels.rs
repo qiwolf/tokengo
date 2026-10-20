@@ -12,6 +12,7 @@ use crate::crypto::SecretBox;
 /// 用结构体而不是元组：这些字段一起读写，元组顺序错了不会报错、只会静默错位。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelMapping {
+    pub enabled: bool,
     /// 客户端打的名字（如 `BAAI/bge-m3` 或保留名 `auto`）。
     pub model: String,
     /// 发给上游的名字。None = 原样透传。
@@ -27,6 +28,7 @@ pub struct ModelMapping {
 impl ModelMapping {
     pub fn new(model: impl Into<String>, upstream: Option<String>, vision: bool) -> Self {
         Self {
+            enabled: true,
             model: model.into(),
             upstream,
             vision,
@@ -51,6 +53,9 @@ impl ModelMapping {
 /// 库里的一条渠道（不含明文密钥，只带"有没有配密钥"）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChannelRow {
+    pub provider_id: Option<i64>,
+    pub provider_name: Option<String>,
+    pub provider_enabled: bool,
     pub id: ChannelId,
     pub name: String,
     pub base_url: String,
@@ -92,6 +97,7 @@ const SELECT_CHANNEL: &str = "SELECT l.id, l.name, l.base_url, l.enabled, l.unwr
 
 fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
     Ok(ChannelRow {
+        provider_id:None, provider_name:None, provider_enabled:true,
         id: ChannelId(r.get(0)?),
         name: r.get(1)?,
         base_url: r.get(2)?,
@@ -106,6 +112,7 @@ fn row_to_channel(r: &Row<'_>) -> rusqlite::Result<ChannelRow> {
 }
 
 fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
+    if let Some((id,name,enabled))=super::provider_channels::membership(conn,channel.id.0)? {channel.provider_id=Some(id);channel.provider_name=Some(name);channel.provider_enabled=enabled;}
     let mut stmt = conn.prepare(
         "SELECT name, value FROM channel_headers WHERE channel_id = ?1 ORDER BY ordinal, id",
     )?;
@@ -114,12 +121,13 @@ fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
         .collect::<rusqlite::Result<_>>()?;
 
     let mut stmt = conn.prepare(
-        "SELECT model_name, upstream_model, vision, drop_fields FROM channel_models
+        "SELECT model_name, upstream_model, vision, drop_fields, enabled FROM channel_models
           WHERE channel_id = ?1 ORDER BY model_name",
     )?;
     channel.models = stmt
         .query_map([channel.id.0], |r| {
             Ok(ModelMapping {
+                enabled: r.get::<_,i64>(4)?!=0,
                 model: r.get(0)?,
                 upstream: r.get(1)?,
                 vision: r.get::<_, i64>(2)? != 0,
@@ -367,6 +375,7 @@ pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> 
         existing.sort_by(|a,b|a.model.cmp(&b.model));desired.sort_by(|a,b|a.model.cmp(&b.model));
         if existing.len()==desired.len() && existing.iter().zip(&desired).all(|(a,b)|a.model==b.model && a.upstream==b.upstream && a.drop_fields==b.drop_fields) {
             for (a,b) in existing.iter().zip(&desired) {
+                if a.enabled!=b.enabled {conn.execute("UPDATE channel_models SET enabled=?3 WHERE channel_id=?1 AND model_name=?2",params![id.0,b.model,b.enabled as i64])?;}
                 if a.vision!=b.vision {set_model_vision(conn,id,&b.model,b.vision)?;}
             }
             super::catalog::adopt_vision(conn,id)?;
@@ -377,14 +386,15 @@ pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> 
     conn.execute("DELETE FROM channel_models WHERE channel_id = ?1", [id.0])?;
     for m in models {
         conn.execute(
-            "INSERT INTO channel_models (channel_id, model_name, upstream_model, vision, drop_fields)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO channel_models (channel_id, model_name, upstream_model, vision, drop_fields, enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 id.0,
                 m.model.trim(),
                 m.upstream,
                 m.vision as i64,
-                m.drop_fields_text()
+                m.drop_fields_text(),
+                m.enabled as i64
             ],
         )?;
     }

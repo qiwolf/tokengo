@@ -27,8 +27,13 @@ pub struct HeaderPair {
     pub original_name: Option<String>,
 }
 
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]
+pub struct ReasoningCapability {#[serde(default)]pub status:String,#[serde(default)]pub levels:Vec<String>,pub default_effort:Option<String>,#[serde(default)]pub upstream_default:Option<String>,#[serde(default)]pub configured_default:bool,pub manual_levels:Option<Vec<String>>,#[serde(default)]pub source:String,#[serde(default)]pub reason:String}
+
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ModelPair {
+    #[serde(default,skip_serializing)] pub reasoning:Option<ReasoningCapability>,
+    #[serde(default="model_enabled_default")] pub enabled:bool,
     pub model: String,
     #[serde(default)]
     pub upstream: Option<String>,
@@ -44,6 +49,9 @@ pub struct ModelPair {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Channel {
+    #[serde(default)] pub provider_id:Option<i64>,
+    #[serde(default)] pub provider_name:Option<String>,
+    #[serde(default="model_enabled_default")] pub provider_enabled:bool,
     #[serde(default)]
     pub protocols: Option<serde_json::Value>,
     pub id: i64,
@@ -73,12 +81,17 @@ pub struct ChannelsResp {
     pub channels: Vec<Channel>,
 }
 
+#[derive(Debug,Clone,PartialEq,Default,Deserialize)]
+pub struct ModelSource {pub connection_id:i64,pub connection_name:String,pub provider_id:Option<i64>,pub provider_name:Option<String>,pub provider_enabled:bool,pub connection_enabled:bool,pub model_enabled:bool,#[serde(default)]pub reasoning:Option<ReasoningCapability>}
+
 /// 一个模型名（一行）—— 服务端 `/api/model-routes` 算好的全部事实。
 ///
 /// **一个名字 = 渠道里勾了它的那些渠道**（v0.11.0 起没有「模型组」这一层），
 /// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
+    #[serde(default="model_enabled_default")] pub visible:bool,
+    #[serde(default)] pub sources:Vec<ModelSource>,
     #[serde(default="model_enabled_default")]pub enabled:bool,
     #[serde(default)]pub total_calls:i64,
     #[serde(default)]pub exploration_count:i64,
@@ -441,6 +454,7 @@ pub struct ModelPull {
 /// 上游 `/v1/models` 里的一条。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct UpstreamModel {
+    #[serde(default)] pub reasoning:Option<ReasoningCapability>,
     #[serde(default)]pub kind:Option<String>,
     /// 上游认的名字。
     pub id: String,

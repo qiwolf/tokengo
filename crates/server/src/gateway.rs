@@ -939,11 +939,20 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 Ok(Ok(value))=>value,
                 _=>{last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"oauth_unavailable","ChatGPT authorization is unavailable; reauthorize this account in administration"));continue 'channels;}
             };
+            let mapping_reasoning_defaults = if let Some(native)=upstream_protocol {
+                match crate::reasoning_capabilities::apply_defaults_and_validate(&state.conn(),channel.id.0,name,&sent_model,native,&mut body) {
+                    Ok(value)=>value,
+                    Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
+                }
+            } else {false};
+            if mapping_reasoning_defaults {
+                body_bytes=Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
+            }
             if let Some(credential)=&oauth {
                 if upstream_protocol!=Some(crate::protocol::Protocol::Responses) || credential.binding_generation!=*binding_generation {
                     let error=ApiError::bad_request("OAuth source binding changed; retry with current source configuration");guard.reject(&error);return Err(error);
                 }
-                crate::protocol::collect::prepare_request(&mut body,credential.reasoning_effort.as_deref(),credential.service_tier.as_deref())
+                crate::protocol::collect::prepare_request(&mut body,if mapping_reasoning_defaults {None}else{credential.reasoning_effort.as_deref()},credential.service_tier.as_deref())
                     .map_err(|note|{let error=ApiError::bad_request(note);guard.reject(&error);error})?;
             }
             let live_generation:i64=state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
@@ -953,7 +962,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 let enabled=model_routes::channels_for(&c,name)?.into_iter().any(|candidate|candidate.id==channel.id && candidate.routable() && (!wants_vision || candidate.vision));
                 let kind=model_routes::routes_for(&c,name)?.map(|route|route.kind).unwrap_or_default();
                 let kind_ok=!plan.auto || kind==req.endpoint.as_model_kind() || (kind==tokengo_shared::ModelKind::Unknown && req.endpoint.is_generation());
-                let auto_ok=!plan.auto || crate::db::route_policy::load(&c,name)?.include_in_auto!=Some(false);
+                let auto_ok=!plan.auto || (crate::db::model_routes::visible(&c,name)? && crate::db::route_policy::load(&c,name)?.include_in_auto!=Some(false));
                 if !enabled || !kind_ok || !auto_ok {
                     last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Model or source routing permission changed while queued"));
                     continue 'channels;

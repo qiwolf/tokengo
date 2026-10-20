@@ -1,17 +1,6 @@
-//! 模型：一行 = 渠道里勾过的一个模型名（外加保留名 auto）。
-//!
-//! **v0.11.0 起没有「模型组」这一层了。** 一个模型名 = 渠道里勾了它的那些渠道：
-//! 勾上就出现、取消就消失，名字不用在这里建。先试哪条由**渠道顺序**决定（在「渠道」页调，
-//! 全站只有一份），这一页只把它显示出来。这样面板的「模型」页、客户端清单 `/v1/models`
-//! 和实际路由读的是同一份事实，不会再出现「挂着渠道却没人勾」的行。
-//!
-//! 用途（类型）只认两件事：**人在这一页选的**、以及**第一次真被打到时按端点学到的**。
-//! 绝不按名字猜（名字里带 embed / vl / tts 都不代表什么）。图像 / Video / 音频 这三种
-//! 网关暂时没有对应端点、学不出来，只能手选 —— 手选之后实测也不许覆盖。
-//!
-//! 保留名 `auto`：客户端打 `auto`（或不写模型名）时，网关在**你勾选过的**模型里
-//! 现场挑一个最优的发出去，失败换下一条。它不落库、不占渠道、也**不做兜底** ——
-//! 一个勾选过的模型都没有时，客户端清单里不出现 auto。
+//! 按服务端事实汇总对外逻辑模型，默认只显示公开、启用且可路由的模型。
+//! 停用与兼容隐藏项可显式筛选恢复；服务商来源与底层连接分开。
+//! 推理档位是原生参数，不按名称后缀合并或推断；运行评分与策略放高级区域。
 
 use leptos::prelude::*;
 
@@ -20,6 +9,9 @@ use crate::fmt;
 use crate::model::{AutoRoutes, Channel, NameRoute};
 use crate::pages::PageHead;
 use crate::Ctx;
+
+pub(crate) fn model_visible_in(r:&NameRoute,filter:&str)->bool {match filter {"all"=>true,"disabled"=>r.visible&&(!r.enabled||!r.routed),"hidden"=>!r.visible,_=>r.visible&&r.enabled&&r.routed}}
+pub(crate) fn source_labels(r:&NameRoute)->Vec<String>{let mut names=Vec::new();for s in &r.sources {let name=s.provider_name.clone().unwrap_or_else(||"未分组".into());if !names.contains(&name){names.push(name);}}names}
 
 /// 一档用途：分档按钮上写什么、这一档收哪些类型、配色。
 pub(crate) struct KindTab {
@@ -220,8 +212,8 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     let auto=RwSignal::new(AutoRoutes::default());
     let chans=RwSignal::new(Vec::<Channel>::new());
     let busy=RwSignal::new(false);let err=RwSignal::new(None::<String>);
-    let search=RwSignal::new(String::new());let tab=RwSignal::new("chat".to_string());
-    let sort_score=RwSignal::new(true);let open=RwSignal::new(None::<String>);let updated=RwSignal::new(0i64);
+    let visibility=RwSignal::new("enabled".to_string());let search=RwSignal::new(String::new());let tab=RwSignal::new("chat".to_string());
+    let sort_score=RwSignal::new(false);let open=RwSignal::new(None::<String>);let updated=RwSignal::new(0i64);
     let reload=move || {
         if busy.get_untracked(){return;} busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
@@ -238,9 +230,9 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     let channel_name=move |id:i64|chans.get().iter().find(|c|c.id==id).map(|c|c.name.clone()).unwrap_or_else(||format!("渠道 #{id}"));
     view!{
         <div class="page model-observatory">
-            <PageHead title="模型" desc="实时运行表现与自动选择"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
+            <PageHead title="模型" desc="汇总服务商中已启用且可路由的对外模型；推理档位作为参数，不另建模型名。"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
             {move ||err.get().map(|e|view!{<div class="banner bad">{e}</div>})}
-            <section class="route-spotlight">
+            <details class="model-advanced"><summary>"高级：自动选择与路由策略"</summary><section class="route-spotlight">
                 <div class="auto-header"><div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div><div class="auto-header-actions">                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
                     <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button></div></div>
                 <div class="policy-controls">{[("sequence","顺序优先"),("balanced","轮流调用"),("fastest","速度优先"),("stable","稳定优先"),("idle","空闲优先")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
@@ -256,30 +248,30 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     }).collect_view()}</div>}.into_any()
                 }}
             </section>
-            <div class="score-toolbar"><span>"运行评分 · 最近 2 小时"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
-            <nav class="kind-tabs">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) on:click=move |_|tab.set(key.into())>{k.title}<span class="tab-n">{move ||tab_counts(&build_rows(&routes.get()))[i]}</span></button>}}).collect_view()}</nav>
-            <div class="model-controls"><input type="search" placeholder="搜索模型名称" aria-label="搜索模型名称" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
+            </details><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
+            <nav class="kind-tabs">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) on:click=move |_|tab.set(key.into())>{k.title}<span class="tab-n">{move ||tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())).collect::<Vec<_>>()))[i]}</span></button>}}).collect_view()}</nav>
+            <div class="model-controls"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="all">"全部"</option></select><input type="search" placeholder="搜索模型名称" aria-label="搜索模型名称" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
             <div class="score-model-list">{move ||{
                 let needle=search.get().to_lowercase();let selected=tab.get();
-                let mut list:Vec<_>=routes.get().into_iter().filter(|r|tab_of(&r.kind)==selected && r.name.to_lowercase().contains(&needle)).collect();
+                let mut list:Vec<_>=routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&tab_of(&r.kind)==selected && r.name.to_lowercase().contains(&needle)).collect();
                 if ordering.get(){let names=order.get();list.sort_by_key(|r|names.iter().position(|n|n==&r.name).unwrap_or(usize::MAX));}else if sort_score.get(){list.sort_by(|a,b|b.runtime.score.unwrap_or(-1.0).total_cmp(&a.runtime.score.unwrap_or(-1.0)).then(a.name.cmp(&b.name)));}else{list.sort_by(|a,b|a.name.cmp(&b.name));}
                 if list.is_empty(){return view!{<div class="model-empty">"当前分类暂无匹配模型"</div>}.into_any();}
                 list.into_iter().map(|r|{
                     let reorder_name=r.name.clone();let reorder_down=r.name.clone();
-                    let toggle_name=r.name.clone();let channel_available=!r.channels.is_empty();let model_enabled=r.enabled && channel_available;
-                    let key=r.name.clone();let opened=open.get().as_deref()==Some(&key);let s=r.runtime.clone();
+                    let toggle_name=r.name.clone();let channel_available=!r.channels.is_empty();let model_enabled=r.enabled;
+                    let visible_name=r.name.clone();let key=r.name.clone();let opened=open.get().as_deref()==Some(&key);let s=r.runtime.clone();
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
                     let status=if !channel_available{"已停用（无可用渠道）"}else if !r.enabled{"已停用"}else{"已配置"};
                     let source=kind_source_label(&r.kind_source);
                     let (context,context_title)=context_badge(&r);
 
-                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=!channel_available role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"已启用"}else{"已停用"}}</button><div class="score-number"><b>{score}</b><small>{confidence}</small></div></div></header>
-                        <div class="model-telemetry"><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div>
-                        <div class="model-status-row"><div class="model-cooling">{r.declared_by.iter().map(|id|view!{<div>{channel_name(*id)}</div>}).collect_view()}</div><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></div>
+                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
+                        <details class="model-telemetry-detail"><summary>"运行统计"</summary><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></details>
+                        <div class="model-status-row"><div class="model-cooling">{let labels=source_labels(&r);if labels.is_empty(){vec!["未分组".to_string()]}else{labels}.into_iter().map(|n|view!{<div>{n}</div>}).collect_view()}<span class="muted small">{format!("{} 个可用连接",r.channels.len())}</span></div><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         {opened.then(||view!{<div class="model-detail-grid">
-                            <section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
+                            <section><h3>"展示与连接"</h3><p class="muted small">"隐藏仅从模型清单和 auto 排除，旧别名显式调用仍可用；全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>reload(),Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
                             <section><h3>"能力信息"</h3><dl><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
@@ -287,7 +279,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     </article>}
                 }).collect_view().into_any()
             }}</div>
-            <super::route_policy::RoutePolicy ctx=ctx/>
+            <details class="model-advanced"><summary>"高级：模型路由与回退约束"</summary><super::route_policy::RoutePolicy ctx=ctx/></details>
         </div>
     }
 }
@@ -308,6 +300,10 @@ mod tests {
         }
     }
 
+    #[test]
+    fn enabled_summary_excludes_hidden_and_unroutable_but_filters_restore_them(){let mut r=route("ordinary-name","chat",&[1],&[1]);r.enabled=true;r.visible=true;assert!(model_visible_in(&r,"enabled"));r.visible=false;assert!(!model_visible_in(&r,"enabled"));assert!(model_visible_in(&r,"hidden"));assert!(model_visible_in(&r,"all"));r.visible=true;r.routed=false;assert!(model_visible_in(&r,"disabled"));assert!(!model_visible_in(&r,"enabled"));}
+    #[test]
+    fn provider_sources_are_explicit_and_deduplicated(){let mut r=route("model","chat",&[1,2],&[1,2]);r.sources=vec![crate::model::ModelSource{provider_name:Some("官方".into()),..Default::default()},crate::model::ModelSource{provider_name:Some("官方".into()),..Default::default()},crate::model::ModelSource::default()];assert_eq!(source_labels(&r),vec!["官方","未分组"]);}
     #[test]
     fn context_badges_keep_unknowns_and_claims_honest() {
         let mut r = route("128k-in-name", "chat", &[1], &[1]);

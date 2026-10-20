@@ -1661,3 +1661,26 @@ html[data-theme="light"] {
 @media(prefers-reduced-motion:reduce) {
  .console-layout *,.account-auth * {animation:none!important;transition:none!important;scroll-behavior:auto!important;}
 }
+
+/* Provider overview reuses account console spacing, controls and mobile table labels. */
+.provider-create,.provider-edit{display:flex;align-items:end;gap:16px;flex-wrap:wrap;margin-bottom:24px;}
+.provider-create .account-field,.provider-edit .account-field{flex:1;min-width:240px;margin-bottom:0;}
+.provider-create button,.provider-edit button,.provider-assignment button,.provider-heading button{min-height:48px;}
+.provider-heading{display:flex;gap:16px;align-items:center;padding:24px;}
+.provider-heading>div:first-child{flex:1;min-width:0;}
+.provider-heading h2{font-size:20px;margin:0 0 8px;overflow-wrap:anywhere;}
+.provider-heading p{margin:0;}
+.provider-card{margin-bottom:24px;}
+.provider-advanced,.model-advanced{margin:24px 0;padding:16px;border:1px solid var(--line);border-radius:8px;}
+.provider-advanced>summary,.model-advanced>summary,.model-telemetry-detail>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600;}
+.provider-advanced[open]>summary,.model-advanced[open]>summary{margin-bottom:16px;}
+.provider-assignment{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 0;border-bottom:1px solid var(--line);}
+.provider-assignment strong{flex:1;min-width:160px;overflow-wrap:anywhere;}
+.provider-assignment select{min-height:48px;max-width:100%;}
+.provider-model-table td{overflow-wrap:anywhere;}
+.provider-model-table code{white-space:normal;}
+.model-telemetry-detail{padding:0 24px;}
+.model-controls select{min-height:48px;}
+@media(max-width:768px){.provider-heading{padding:16px;flex-wrap:wrap;}.provider-heading>div:first-child{flex-basis:100%;}.provider-create{display:block;}.provider-create button{margin-top:12px;width:100%;}.provider-assignment strong{flex-basis:100%;}.provider-assignment select{flex:1;min-width:0;}.provider-advanced{padding:12px;}.provider-model-table td button{white-space:normal;min-height:48px;}}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+.reasoning-config{border-top:1px solid var(--line);padding-top:24px;margin-top:24px;}.reasoning-config h3{font-size:16px;}.reasoning-config select{min-height:48px;}

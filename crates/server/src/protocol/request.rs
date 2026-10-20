@@ -559,6 +559,8 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "stop",
                 "stream_options",
                 "n",
+                "reasoning_effort",
+                "service_tier",
             ],
             Protocol::Responses => &[
                 "model",
@@ -577,6 +579,7 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "prompt_cache_key",
                 "reasoning",
                 "include",
+                "service_tier",
             ],
             Protocol::Messages => &[
                 "model",
@@ -594,7 +597,7 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
             ],
         },
     )?;
-    validate_cli_hints(from, body)?;
+    validate_cli_hints(from, to, body)?;
     if has_image(from, body) {
         return Err("Image conversion is not supported; use native protocol".into());
     }
@@ -636,6 +639,23 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
             }
             result[key] = v.clone();
         }
+    }
+    // These controls are wire-equivalent only for the Chat/Responses pair.
+    // Source-specific supported values are checked by the caller, never inferred here.
+    if from == Protocol::Chat && to == Protocol::Responses {
+        if let Some(effort) = body.get("reasoning_effort") {
+            result["reasoning"] = json!({"effort":effort});
+        }
+    } else if from == Protocol::Responses && to == Protocol::Chat {
+        if let Some(effort) = body.get("reasoning").and_then(|v| v.get("effort")) {
+            // Preserve the existing disabled CLI normalization contract.
+            if effort != "none" {
+                result["reasoning_effort"] = effort.clone();
+            }
+        }
+    }
+    if let Some(tier) = body.get("service_tier") {
+        result["service_tier"] = tier.clone();
     }
     // Responses and Messages carry stream meters in their native terminal events.
     // Ask a converted Chat source for its real meter instead of relying on target placeholders.
@@ -832,7 +852,40 @@ mod modern_cli_tests {
 
 /// Advisory fields are intentionally normalized only for cross-protocol requests.
 /// Empty/disabled reasoning never establishes support for provider reasoning state.
-fn validate_cli_hints(from: Protocol, body: &Value) -> Result<(), String> {
+fn control_token<'a>(value: &'a Value, name: &str) -> Result<&'a str, String> {
+    value
+        .as_str()
+        .filter(|v| {
+            (1..=32).contains(&v.len())
+                && v.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-')
+                })
+        })
+        .ok_or_else(|| format!("{name} must be a 1..32 character lowercase ASCII token"))
+}
+fn disabled_responses_reasoning(value: &Value) -> bool {
+    value.as_object().is_some_and(|object| {
+        object
+            .keys()
+            .all(|key| matches!(key.as_str(), "effort" | "summary"))
+            && object.values().all(|v| v.as_str() == Some("none"))
+    })
+}
+fn validate_cli_hints(from: Protocol, to: Protocol, body: &Value) -> Result<(), String> {
+    if let Some(tier) = body.get("service_tier") {
+        if from == Protocol::Messages || to == Protocol::Messages {
+            return Err("Service tier can only be converted between Chat and Responses".into());
+        }
+        control_token(tier, "service_tier")?;
+    }
+    if from == Protocol::Chat {
+        if let Some(effort) = body.get("reasoning_effort") {
+            if to != Protocol::Responses {
+                return Err("Chat reasoning effort can only be converted to Responses".into());
+            }
+            control_token(effort, "reasoning_effort")?;
+        }
+    }
     if from == Protocol::Responses {
         if let Some(value) = body.get("client_metadata") {
             object(value)?;
@@ -848,15 +901,20 @@ fn validate_cli_hints(from: Protocol, body: &Value) -> Result<(), String> {
         let mut explicitly_disabled = false;
         if let Some(value) = body.get("reasoning") {
             fields(value, &["effort", "summary"])?;
-            for parameter in ["effort", "summary"] {
-                if value
-                    .get(parameter)
-                    .is_some_and(|v| v.as_str() != Some("none"))
-                {
-                    return Err("Requested reasoning effort or summary cannot be converted; disable reasoning and summary for text/function conversion".into());
+            if let Some(summary) = value.get("summary") {
+                if summary.as_str() != Some("none") {
+                    return Err("Active reasoning summary cannot be converted".into());
                 }
             }
-            explicitly_disabled = true;
+            if let Some(effort) = value.get("effort") {
+                let effort = control_token(effort, "reasoning.effort")?;
+                if effort != "none" && to != Protocol::Chat {
+                    return Err(
+                        "Active Responses reasoning effort can only be converted to Chat".into(),
+                    );
+                }
+            }
+            explicitly_disabled = disabled_responses_reasoning(value);
         }
         if let Some(include) = body.get("include") {
             let items = include.as_array().ok_or("include must be an array")?;
@@ -912,11 +970,25 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
                 "prompt_cache_key hint omitted; gateway does not implement or claim cache affinity",
             );
         }
-        if body.get("reasoning").is_some() {
+        if body
+            .get("reasoning")
+            .is_some_and(disabled_responses_reasoning)
+        {
             notes.push("empty/disabled reasoning normalized to text/function mode; opaque reasoning is unsupported");
         }
-        if body.get("include").is_some() {
-            notes.push("empty include or disabled-reasoning encrypted include normalized; no opaque output is promised");
+        if body
+            .get("include")
+            .is_some_and(|v| v.as_array().is_some_and(Vec::is_empty))
+        {
+            notes.push("empty include normalized; no opaque output is promised");
+        } else if body.get("include").is_some()
+            && body
+                .get("reasoning")
+                .is_some_and(disabled_responses_reasoning)
+        {
+            notes.push(
+                "disabled-reasoning encrypted include normalized; no opaque output is promised",
+            );
         }
     }
     if from == Protocol::Messages && body.get("output_config").is_some() {
