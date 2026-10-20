@@ -164,7 +164,13 @@ fn effective_channel(c: &Channel, meta: &Value) -> Channel {
 }
 fn available_kinds(c: &Channel, known: Option<&str>, meta: &Value) -> Vec<String> {
     let mut list = kind_options(&effective_channel(c, meta), known);
-    if meta["credential_kind"]=="oauth" {list.retain(|k|k=="responses");return list;}
+    if meta["credential_kind"] == "oauth" {
+        list.retain(|k| k == "responses");
+        return list;
+    }
+    if meta["search"] == true || meta["fetch"] == true {
+        list.clear();
+    }
     for key in ["search", "fetch"] {
         if meta[key] == true {
             list.push(key.into());
@@ -184,6 +190,66 @@ fn source_choices(
         .and_then(|m| m["kind"].as_str())
         .or_else(|| kinds.get(name).map(String::as_str));
     available_kinds(c, known, meta)
+}
+fn source_option_label(c: &Channel, meta: &Value, fallback_credential: &str) -> String {
+    let mut names = meta["models"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m["name"].as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| {
+            c.models
+                .iter()
+                .filter(|m| m.enabled)
+                .map(|m| m.model.clone())
+                .collect()
+        });
+    names.dedup();
+    let names = if names.is_empty() {
+        "未配置本地模型".into()
+    } else {
+        names.join(" / ")
+    };
+    let mut kinds = meta["native_kinds"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(|k| kind_label(k).to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| {
+            native_kinds(c)
+                .iter()
+                .map(|k| kind_label(k).to_string())
+                .collect()
+        });
+    if meta["search"] == true || meta["fetch"] == true {
+        kinds.clear();
+    }
+    for kind in ["search", "fetch"] {
+        if meta[kind] == true {
+            kinds.push(kind_label(kind).into());
+        }
+    }
+    let kinds = if kinds.is_empty() {
+        "协议待确认".into()
+    } else {
+        kinds.join(" / ")
+    };
+    format!(
+        "{} · {} · {} · {} · {}",
+        type_label(meta),
+        names,
+        kinds,
+        meta["credential_label"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(fallback_credential),
+        c.base_url
+    )
 }
 fn type_label(meta: &Value) -> String {
     match meta["credential_kind"].as_str() {
@@ -253,7 +319,7 @@ fn cost_text(result: &Value) -> String {
     };
     let cost = b["observed_cost_micro"]
         .as_u64()
-        .map(|n| format!("{}.{:06} USD",n/1_000_000,n%1_000_000))
+        .map(|n| format!("{}.{:06} USD", n / 1_000_000, n % 1_000_000))
         .unwrap_or_else(|| {
             if b["cost_status"] == "subscription" {
                 "订阅成本未知".into()
@@ -618,7 +684,7 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
     <div class="custom-probe-table-wrap"><table class="custom-probe-table"><thead><tr><th>"名称 / 定时状态"</th><th>"供应方 · Key · 模型"</th><th>"最近结果"</th><th>"执行间隔"</th><th>"操作"</th></tr></thead><tbody>{move||probes.get().into_iter().map(|row|{let e=row.clone();let t=row.clone();let r=row.clone();let d=row.clone();let sid=row["source_id"].as_i64().unwrap_or(0);let c=channels.get().into_iter().find(|c|c.id==sid);let target=c.as_ref().map(|c|format!("{} · {}",c.provider_name.as_deref().unwrap_or("未分组接入"),labels.get().get(&sid).cloned().unwrap_or_else(||c.base_url.clone()))).unwrap_or_else(||"原接入已移除，请编辑修复".into());let meta=targets.get().get(&sid).cloned().unwrap_or(Value::Null);let credential_type=type_label(&meta);let enabled=row["enabled"]==true;view!{<tr><td><strong>{api::text(&row,"name")}</strong><span class="muted small">{if enabled{"定时已启用"}else{"定时已停用"}}</span></td><td><span>{target}</span><span class="muted small">{credential_type}</span><span class="muted small">{format!("{} · {}",api::text(&row,"model"),kind_label(row["kind"].as_str().unwrap_or("")))}</span></td><td class="custom-probe-result"><span>{result_text(&row["last_result"])}</span><span class="muted small">{result_when(&row["last_result"])}</span><span class="muted small">{cost_text(&row["last_result"])}</span></td><td>{format!("{} 秒",row["interval_secs"].as_u64().unwrap_or(0))}</td><td><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|edit(Some(e.clone()))>"编辑"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(r.clone(),"run")>"执行一次"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(t.clone(),"toggle")>{if enabled{"停用"}else{"启用"}}</button><button class="danger" disabled=move||busy.get() on:click=move |_|{selected.set(Some(d.clone()));error.set(String::new());deleting.set(true);}>"删除"</button></div></td></tr>}}).collect_view()}</tbody></table></div><Show when=move||probes.get().is_empty()&&!busy.get()><p class="muted">"暂无探针。点击“新增探针”选择需要检查的上游。"</p></Show>
     <ModuleDialog open=open title="配置自定义探针".into() busy=busy><div class="custom-probe-form"><Show when=move||!error.get().is_empty()><p role="alert" class="error">{move||error.get()}</p></Show><fieldset disabled=move||busy.get()><legend>"检查目标"</legend><p class="muted small">"请求类型与所选凭据的真实能力一致。OAuth 使用已绑定账号；搜索和网页提取使用专用工具接口。"</p><div class="custom-probe-fields"><ProbeField draft=draft field="name" label="探针名称"/>
     <label>"供应方"<select prop:value=move||provider.get() on:change=move|e|{provider.set(event_target_value(&e));draft.update(|d|{d["source_id"]=json!(0);d["model"]=json!("");});}><option value="">"请选择供应方"</option>{move||{let mut map=BTreeMap::new();for c in channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)){map.insert(c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into()),c.provider_name.unwrap_or_else(||"未分组接入".into()));}map.into_iter().map(|(id,name)|view!{<option value=id>{name}</option>}).collect_view()}}</select></label>
-    <label>"凭据 / API 地址"<select prop:value=move||draft.get()["source_id"].as_i64().unwrap_or(0).to_string() on:change=move|e|draft.update(|d|{let id=event_target_value(&e).parse::<i64>().unwrap_or(0);d["source_id"]=json!(id);d["model"]=json!("");d["kind"]=json!("");})><option value="0">"请选择接入"</option>{move||{let id=draft.get()["source_id"].as_i64().unwrap_or(0);(id>0&&!channels.get().iter().any(|c|c.id==id)).then(||view!{<option value=id.to_string()>"原接入已移除，请重新选择"</option>})}}{move||channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)).filter(|c|c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into())==provider.get()).map(|c|{let meta=targets.get().get(&c.id).cloned().unwrap_or(Value::Null);let label=format!("{} · {} · {}",type_label(&meta),meta["credential_label"].as_str().map(str::to_string).or_else(||labels.get().get(&c.id).cloned()).unwrap_or_else(||"上游凭据".into()),c.base_url);view!{<option value=c.id.to_string()>{label}</option>}}).collect_view()}</select></label>
+    <label>"凭据 / API 地址"<select prop:value=move||draft.get()["source_id"].as_i64().unwrap_or(0).to_string() on:change=move|e|draft.update(|d|{let id=event_target_value(&e).parse::<i64>().unwrap_or(0);d["source_id"]=json!(id);d["model"]=json!("");d["kind"]=json!("");})><option value="0">"请选择接入"</option>{move||{let id=draft.get()["source_id"].as_i64().unwrap_or(0);(id>0&&!channels.get().iter().any(|c|c.id==id)).then(||view!{<option value=id.to_string()>"原接入已移除，请重新选择"</option>})}}{move||channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)).filter(|c|c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into())==provider.get()).map(|c|{let meta=targets.get().get(&c.id).cloned().unwrap_or(Value::Null);let label=source_option_label(&c,&meta,&labels.get().get(&c.id).cloned().unwrap_or_else(||"上游凭据".into()));view!{<option value=c.id.to_string()>{label}</option>}}).collect_view()}</select></label>
     <label>{move||if matches!(draft.get()["kind"].as_str(),Some("search"|"fetch")){"本地模型（计费归属）"}else{"已配置模型"}}<select prop:value=move||draft.get()["model"].as_str().unwrap_or("").to_string() on:change=move|e|draft.update(|d|{let name=event_target_value(&e);d["model"]=json!(name.clone());let kinds=model_kinds.get_untracked();d["kind"]=json!(channels.get_untracked().iter().find(|c|Some(c.id)==d["source_id"].as_i64()).and_then(|c|source_choices(c,&name,&kinds,targets.get_untracked().get(&c.id).unwrap_or(&Value::Null)).first().cloned()).unwrap_or_default());})><option value="">"请选择模型"</option>{move||{let current=draft.get()["model"].as_str().unwrap_or("").to_string();let id=draft.get()["source_id"].as_i64().unwrap_or(0);(!current.is_empty()&&!channels.get().iter().any(|c|c.id==id&&c.models.iter().any(|m|m.model==current))).then(||view!{<option value=current.clone()>{format!("{}（原映射已移除）",current)}</option>})}}{move||channels.get().into_iter().find(|c|Some(c.id)==draft.get()["source_id"].as_i64()).map(|c|c.models.into_iter().filter(|m|m.enabled||draft.get()["model"].as_str()==Some(m.model.as_str())).map(|m|view!{<option value=m.model.clone()>{m.model.clone()}</option>}).collect_view())}</select></label>
     <label>"请求类型"<select prop:value=move||draft.get()["kind"].as_str().unwrap_or("chat").to_string() on:change=move|e|draft.update(|d|d["kind"]=json!(event_target_value(&e)))>{move||channels.get().into_iter().find(|c|Some(c.id)==draft.get()["source_id"].as_i64()).map(|c|source_choices(&c,draft.get()["model"].as_str().unwrap_or(""),&model_kinds.get(),targets.get().get(&c.id).unwrap_or(&Value::Null)).into_iter().map(|kind|{let label=kind_label(&kind);view!{<option value=kind>{label}</option>}}).collect_view())}</select></label><Show when=move||{let d=draft.get();!matches!(d["kind"].as_str(),Some("search"|"fetch"|"embeddings"))&&targets.get().get(&d["source_id"].as_i64().unwrap_or(0)).is_none_or(|t|t["credential_kind"]!="oauth")}><ProbeField draft=draft field="max_tokens" label="最大输出 Token" kind="number" hint="1–256；仅 API Key 对话请求使用"/></Show></div>
     <p class="custom-probe-target-note muted small">{move||draft.get()["source_id"].as_i64().and_then(|id|targets.get().get(&id).cloned()).map(|m|format!("{}{}",m["availability_note"].as_str().unwrap_or(""),m["cost_note"].as_str().map(|s|format!(" · {s}")).unwrap_or_default())).unwrap_or_default()}</p>
@@ -756,14 +822,14 @@ mod tests {
         let c = channel();
         let meta = json!({"credential_kind":"oauth","account_label":"订阅账户","native_kinds":["responses"],"search":false,"fetch":false});
         assert_eq!(available_kinds(&c, Some("chat"), &meta), vec!["responses"]);
-        assert!(available_kinds(&c,Some("embeddings"),&meta).is_empty());
+        assert!(available_kinds(&c, Some("embeddings"), &meta).is_empty());
         assert!(type_label(&meta).contains("OAuth"));
         assert!(type_label(&meta).contains("订阅账户"));
         let mut d = valid();
         d["kind"] = json!("responses");
         assert!(payload(&d, &[effective_channel(&c, &meta)]).is_ok());
         let tool =
-            json!({"credential_kind":"api_key","native_kinds":[],"search":true,"fetch":true});
+            json!({"credential_kind":"api_key","native_kinds":["chat"],"search":true,"fetch":true});
         assert_eq!(
             available_kinds(&c, Some("chat"), &tool),
             vec!["search", "fetch"]
@@ -799,5 +865,26 @@ mod tests {
         let known = json!({"billing":{"billing_unit":"request","request_units":1,"observed_cost_micro":123,"cost_status":"known"}});
         assert!(cost_text(&known).contains("1 次"));
         assert!(cost_text(&known).contains("0.000123 USD"));
+    }
+    #[test]
+    fn oauth_source_options_distinguish_mapped_models_without_internal_ids() {
+        let mut c = channel();
+        c.base_url = "https://api.openai.com/v1".into();
+        let meta = json!({"credential_kind":"oauth","account_label":"Tokengo","credential_label":"GPT OAuth","native_kinds":["responses"],"models":[{"name":"gpt-6.1-sol","kind":"chat"},{"name":"gpt-6.1-sol-medium","kind":"chat"}]});
+        let first = source_option_label(&c, &meta, "备用备注");
+        let mut second_meta = meta.clone();
+        second_meta["models"] = json!([{"name":"gpt-6.1-sol-low","kind":"chat"}]);
+        c.id = 29;
+        let second = source_option_label(&c, &second_meta, "备用备注");
+        assert_ne!(first, second);
+        assert!(first.contains("gpt-6.1-sol / gpt-6.1-sol-medium"));
+        assert!(second.contains("gpt-6.1-sol-low"));
+        assert!(first.contains("Responses 对话"));
+        assert!(!second.contains("连接"));
+        assert!(!second.contains("#29"));
+        assert!(
+            first.find("gpt-6.1-sol").unwrap() < first.find("GPT OAuth").unwrap(),
+            "mapping identity precedes repeated credential remarks"
+        );
     }
 }
