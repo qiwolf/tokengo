@@ -11,6 +11,26 @@ use crate::fmt;
 use crate::model::{Channel, HeaderPair, ModelPair, UpstreamModel};
 use crate::pages::PageHead;
 
+/// Form controls retain the complete stored protocol object and its native preference order.
+fn protocol_names(raw:&str)->Vec<String> {
+    serde_json::from_str::<serde_json::Value>(raw).ok().and_then(|v|v["native"].as_array().cloned()).unwrap_or_default().iter().filter_map(|v|v.as_str().map(str::to_string)).collect()
+}
+fn protocol_flag(raw:&str,field:&str)->bool {
+    serde_json::from_str::<serde_json::Value>(raw).ok().is_some_and(|v|v[field]==true)
+}
+enum ProtocolChange<'a>{Native(&'a str,bool),Primary(&'a str),Flag(&'a str,bool)}
+fn edit_protocol(raw:&str,change:ProtocolChange<'_>)->String {
+    let Ok(mut value)=serde_json::from_str::<serde_json::Value>(raw)else{return raw.into()};
+    if !value.is_object(){return raw.into()}
+    let mut native=protocol_names(raw);
+    match change {
+        ProtocolChange::Native(name,on)=>{if on {if !native.iter().any(|n|n==name){native.push(name.into());}}else{native.retain(|n|n!=name);}value["native"]=serde_json::json!(native);},
+        ProtocolChange::Primary(name)=>{if let Some(i)=native.iter().position(|n|n==name){let first=native.remove(i);native.insert(0,first);value["native"]=serde_json::json!(native);}},
+        ProtocolChange::Flag(name,on)=>{value[name]=serde_json::json!(on);},
+    }
+    value.to_string()
+}
+
 /// 上游清单一次最多显示这么多行（真有上游报上千个模型，全塞进 DOM 会卡）。
 const SHOW_LIMIT: usize = 200;
 
@@ -1123,10 +1143,13 @@ pub fn Connections(
                                                     on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
                                                 <span class="muted small">"停用后不会再往这家上游发请求"</span>
                                             </div>
-                                            <label for="channel-protocols">"原生协议与转换（JSON）"</label>
-                                            <div>
-                                                <textarea id="channel-protocols" rows="5" prop:value=f_protocols aria-describedby="channel-protocol-help channel-protocol-error" aria-invalid=move||crate::admin_api::protocols(&f_protocols.get()).is_err().to_string() on:input=move |ev|f_protocols.set(event_target_value(&ev))/>
-                                                <p id="channel-protocol-help" class="muted small">"native 填上游真实支持的 chat / responses / messages 数组（至少一个）。allow_conversion 为 true 时，未原生支持的协议会尝试转换为数组首项；仅支持明确限定的文本 / 函数工具子集。native_input_audio 可显式启用原生 Chat 内联 WAV/MP3 输入，必须配置最大输入上下文；不支持跨协议音频转换或音频输出。更改协议会使已有绑定会话失效，客户端需新建会话。默认只声明 chat，禁止转换。"</p>
+                                            <label>"上游原生协议"</label>
+                                            <div class="account-form" aria-describedby="channel-protocol-help channel-protocol-error">
+                                                <div class="account-actions">{[("chat","Chat Completions"),("responses","Responses"),("messages","Anthropic Messages")].into_iter().map(|(name,label)|view!{<label class="account-check"><input type="checkbox" prop:checked=move||protocol_names(&f_protocols.get()).iter().any(|n|n==name) disabled=move||mutating.get()||(name=="chat"&&protocol_flag(&f_protocols.get(),"native_input_audio")) on:change=move|e|{let on=event_target_checked(&e);f_protocols.update(|raw|*raw=edit_protocol(raw,ProtocolChange::Native(name,on)));}/>{label}</label>}).collect_view()}</div>
+                                                <label class="account-field"><span>"转换时优先使用的协议"</span><select disabled=move||mutating.get()||protocol_names(&f_protocols.get()).is_empty() prop:value=move||protocol_names(&f_protocols.get()).first().cloned().unwrap_or_default() on:change=move|e|{let name=event_target_value(&e);f_protocols.update(|raw|*raw=edit_protocol(raw,ProtocolChange::Primary(&name)));}>{move||protocol_names(&f_protocols.get()).into_iter().map(|name|view!{<option value=name.clone()>{name.clone()}</option>}).collect_view()}</select></label>
+                                                <label class="account-check"><input type="checkbox" disabled=move||mutating.get() prop:checked=move||protocol_flag(&f_protocols.get(),"allow_conversion") on:change=move|e|{let on=event_target_checked(&e);f_protocols.update(|raw|*raw=edit_protocol(raw,ProtocolChange::Flag("allow_conversion",on)));}/>"允许非原生协议转换"</label>
+                                                <label class="account-check"><input type="checkbox" disabled=move||mutating.get()||!protocol_names(&f_protocols.get()).iter().any(|n|n=="chat") prop:checked=move||protocol_flag(&f_protocols.get(),"native_input_audio") on:change=move|e|{let on=event_target_checked(&e);f_protocols.update(|raw|*raw=edit_protocol(raw,ProtocolChange::Flag("native_input_audio",on)));}/>"原生 Chat 支持 WAV / MP3 输入音频"</label>
+                                                <p id="channel-protocol-help" class="muted small">"至少选择一种上游实际支持的协议。客户端使用已勾选的协议时直接转发；未勾选的协议仅在允许转换时尝试转为所选优先协议，转换限于已支持的文本和函数工具。输入音频仅通过原生 Chat，并需配置最大输入上下文，不进行跨协议转换。更改协议会使已有绑定会话失效，客户端需新建会话。"</p>
                                                 <p id="channel-protocol-error" role="alert">{move||protocol_error.get()}</p>
                                             </div>
                                             <label>"响应解包"</label>
@@ -1642,6 +1665,28 @@ pub fn Connections(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_controls_preserve_flags_and_native_order() {
+        let raw=r#"{"native":["messages","responses"],"allow_conversion":true,"native_input_audio":false}"#;
+        let added=edit_protocol(raw,ProtocolChange::Native("chat",true));
+        assert_eq!(protocol_names(&added),vec!["messages","responses","chat"]);
+        assert!(protocol_flag(&added,"allow_conversion"));
+        let preferred=edit_protocol(&added,ProtocolChange::Primary("responses"));
+        assert_eq!(protocol_names(&preferred),vec!["responses","messages","chat"]);
+        let removed=edit_protocol(&preferred,ProtocolChange::Native("messages",false));
+        assert_eq!(protocol_names(&removed),vec!["responses","chat"]);
+        assert!(crate::admin_api::protocols(&removed).is_ok());
+    }
+    #[test]
+    fn protocol_controls_use_existing_audio_and_empty_protocol_validation() {
+        let raw=r#"{"native":["chat"],"allow_conversion":false}"#;
+        let audio=edit_protocol(raw,ProtocolChange::Flag("native_input_audio",true));
+        assert!(crate::admin_api::protocols(&audio).is_ok());
+        let empty=edit_protocol(&audio,ProtocolChange::Native("chat",false));
+        assert!(crate::admin_api::protocols(&empty).is_err());
+        assert_eq!(edit_protocol("broken",ProtocolChange::Flag("allow_conversion",true)),"broken");
+    }
 
     fn up(id: &str) -> UpstreamModel {
         UpstreamModel {
