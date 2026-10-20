@@ -1832,3 +1832,153 @@ html[data-theme="light"] {
 .upstream-model-choice-list { max-height:256px; overflow:auto; overscroll-behavior:contain; padding-inline:8px; }
 .upstream-model-choice-list .account-check { min-width:0; min-height:48px; overflow-wrap:anywhere; }
 .upstream-model-choice-list .account-check span { min-width:0; overflow-wrap:anywhere; }
+
+/* Upstream credential management uses one native modal and separate editing views. */
+dialog.provider-key-modal { width:min(960px,calc(100% - 32px)); max-width:calc(100% - 32px); max-height:calc(100dvh - 32px); margin:auto; padding:0; border:1px solid var(--line); border-radius:12px; color:var(--fg); background:var(--bg); overflow:hidden; box-sizing:border-box; }
+dialog.provider-key-modal[open] { display:flex; flex-direction:column; }
+dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
+.provider-key-modal-head { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 24px; border-bottom:1px solid var(--line); flex:0 0 auto; }
+.provider-key-modal-head h2 { margin:0; font-size:20px; }
+.provider-key-modal-body { padding:16px 24px; min-height:0; min-width:0; overflow-y:auto; overscroll-behavior:contain; }
+.provider-key-modal .provider-key-editor.account-form { margin-top:16px; padding-top:0; border-top:0; }
+.provider-key-modal .provider-key-row-actions { display:flex; flex-wrap:wrap; justify-content:flex-start; align-items:center; gap:8px; }
+.provider-key-modal table th,.provider-key-modal table td { text-align:left; padding:12px; vertical-align:top; }
+.provider-key-modal .provider-key-original { padding:16px; margin-block:16px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; min-width:0; }
+.provider-key-modal .provider-key-original input { font-family:ui-monospace,monospace; min-width:0; }
+.provider-key-modal button { min-height:48px; max-width:100%; white-space:normal; }
+.provider-key-modal .account-form fieldset { min-width:0; margin:0; padding:0; border:0; }
+@media(max-width:600px) { dialog.provider-key-modal { width:calc(100% - 16px); max-width:calc(100% - 16px); max-height:calc(100dvh - 16px); } .provider-key-modal-head,.provider-key-modal-body { padding:16px; } .provider-key-modal .provider-key-row-actions > button { flex:1 1 auto; } }
+
+
+/* Compact model cards */
+.score-model-list { align-items: stretch; }
+.score-model-list > .score-model {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 64px;
+  gap: 8px;
+  height: 216px;
+  padding: 16px;
+  align-self: stretch;
+  border-radius: 8px;
+}
+.score-model-list > .score-model.score-model-ordering {
+  grid-template-rows: minmax(0, 1fr) 64px 48px;
+  height: 272px;
+}
+.score-model > header { min-height: 0; gap: 12px; }
+.score-model > header h2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 20px;
+  height: 40px;
+  margin-bottom: 8px;
+}
+.score-model > header .model-badges { gap: 4px; max-height: 48px; overflow: hidden; }
+.score-model > header .model-badges .tag {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.console-layout .console-content .score-model > header .model-toggle,
+.console-layout .console-content .score-model > .model-status-row > button,
+.console-layout .console-content .score-model > .policy-controls > button {
+  min-height: 48px;
+  height: 48px;
+  padding: 8px 12px;
+  line-height: 20px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.score-model > header .model-toggle { width: 128px; }
+.score-model > .model-status-row {
+  align-items: center;
+  gap: 12px;
+  margin-top: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.score-model > .model-status-row > .model-cooling { flex: 1; font-size: 12px; }
+.score-model > .model-status-row .model-supplier-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 16px;
+  max-height: 32px;
+  margin: 0;
+}
+.score-model > .model-status-row > button { width: 96px; }
+.score-model > .policy-controls { margin: 0; align-items: center; }
+.score-model > .compact-model-dialog {
+  position: fixed;
+  box-sizing: border-box;
+  width: min(768px, calc(100% - 32px));
+  max-width: calc(100% - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  margin: auto;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.compact-model-dialog::backdrop { background: hsl(222 24% 9% / .6); }
+.compact-model-dialog-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.compact-model-dialog .compact-model-dialog-head h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  overflow-wrap: anywhere;
+}
+.compact-model-dialog-head form { flex: 0 0 auto; margin: 0; }
+.compact-model-dialog .model-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 16px;
+  margin: 0;
+  border: 0;
+  gap: 24px 16px;
+}
+.compact-model-dialog .model-detail-grid section { overflow-wrap: anywhere; }
+.compact-model-dialog .model-detail-grid h3 { font-size: 14px; }
+.compact-model-dialog .model-detail-grid :is(p, dt, dd) { font-size: 12px; }
+.compact-model-dialog .compact-model-statistics { grid-column: 1 / -1; }
+.compact-model-dialog .model-telemetry {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+@media (max-width: 46rem) {
+  .score-model-list > .score-model { height: 208px; padding: 12px; }
+  .score-model-list > .score-model.score-model-ordering { height: 264px; }
+  .score-model > header { gap: 8px; }
+  .score-model > header .model-toggle { width: 112px; }
+  .console-layout .console-content .score-model > header .model-toggle { padding-inline: 8px; }
+  .compact-model-dialog .model-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .compact-model-dialog .model-telemetry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.provider-key-modal .provider-key-row-actions > button { border:1px solid var(--line); border-radius:8px; background:var(--surface-2); padding:8px 12px; }

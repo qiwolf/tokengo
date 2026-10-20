@@ -26,6 +26,10 @@ pub fn router() -> Router<SharedState> {
             axum::routing::patch(credentials_update).delete(credentials_disable),
         )
         .route("/api/providers/{id}/models/discover", axum::routing::post(credential_catalog))
+        .route(
+            "/api/providers/{id}/credentials/{credential}/reveal",
+            axum::routing::post(credentials_reveal).layer(axum::middleware::map_response(secret_no_store)),
+        )
         .route("/api/channels/{id}/provider", put(assign))
         .route("/api/providers/{id}/models/enabled", put(group_model))
         .route("/api/channels/{id}/models/enabled", put(connection_model))
@@ -447,6 +451,8 @@ struct CredentialModel {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewCredential {
+    #[serde(default = "yes")]
+    inherit_models: bool,
     base_url: Option<String>,
     tools: Option<crate::search_tools::ToolCapabilities>,
     label: String,
@@ -540,8 +546,9 @@ async fn credentials_create(
             ),
         });
     }
-    if is_local && models.is_empty() { return Err(ApiError::bad_request("请明确选择此本地入口的模型，不会从其他端口复制模型")); }
-    if models.is_empty() {
+    // Empty local credentials are intentionally unroutable until models are selected;
+    // never inherit declarations from another local port.
+    if models.is_empty() && !is_local && body.inherit_models {
         for ch in channels::list(&c)?
             .into_iter()
             .filter(|row| row.provider_id == Some(id))
@@ -1042,4 +1049,49 @@ async fn credential_catalog(
     Ok(Json(
         json!({"models":models,"count":count,"http_status":status,"truncated":total>count}),
     ))
+}
+
+
+/// Explicit reveal is root-only and POST-protected by the panel's existing CSRF
+/// contract. Neither list endpoints nor OAuth tokens are exposed by this path.
+async fn credentials_reveal(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path((provider, id)): Path<(i64, i64)>,
+) -> Result<Json<Value>, ApiError> {
+    let c = s.conn();
+    require(&c, provider)?;
+    let credential = pool::credentials(&c, provider)?.into_iter().find(|k|k.id == id)
+        .ok_or_else(||ApiError::not_found("此渠道不存在该上游Key"))?;
+    if credential.kind != "api_key" {
+        return Err(ApiError::bad_request(if credential.kind == "oauth" {
+            "OAuth凭据仅显示账号授权状态，不提供访问Token或刷新Token明文"
+        } else { "免认证入口没有可显示的API Key" }));
+    }
+    let mut secrets = Vec::new();
+    for source in credential.source_ids {
+        let row = channels::get(&c,ChannelId(source))?.ok_or_else(||ApiError::not_found("该Key的来源不存在"))?;
+        if row.provider_id != Some(provider) {
+            return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"credential_source_conflict","此Key的来源归属不一致，请检查渠道配置"));
+        }
+        let oauth:bool = c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[source],|r|r.get(0)).map_err(db::DbError::from)?;
+        if oauth {
+            return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"credential_kind_conflict","此凭据存在OAuth绑定，仅允许查看账号授权状态"));
+        }
+        let secret = channels::secret(&c,&s.secrets,row.id).map_err(|_|ApiError::internal("无法解密此上游Key"))?;
+        secrets.push(secret.filter(|value| !value.trim().is_empty()));
+    }
+    if secrets.is_empty() || secrets.iter().all(Option::is_none) {
+        return Err(ApiError::not_found("此上游Key没有已保存的密钥，请检查原始认证配置"));
+    }
+    if secrets.iter().any(|value|value != &secrets[0]) {
+        return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"credential_secret_conflict","此Key的多个来源保存了不同密钥，请分别确认原始配置"));
+    }
+    let key = secrets.remove(0).ok_or_else(||ApiError::not_found("此上游Key没有已保存的密钥"))?;
+    Ok(Json(json!({"key":key})))
+}
+async fn secret_no_store(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(axum::http::header::CACHE_CONTROL,axum::http::HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(axum::http::header::PRAGMA,axum::http::HeaderValue::from_static("no-cache"));
+    response
 }

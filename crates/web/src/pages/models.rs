@@ -3,6 +3,7 @@
 //! 推理档位是原生参数，不按名称后缀合并或推断；运行评分与策略放高级区域。
 
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::fmt;
@@ -12,6 +13,25 @@ use crate::Ctx;
 
 pub(crate) fn model_visible_in(r:&NameRoute,filter:&str)->bool {match filter {"all"=>true,"disabled"=>r.visible&&(!r.enabled||!r.routed),"hidden"=>!r.visible,_=>r.visible&&r.enabled&&r.routed}}
 pub(crate) fn source_labels(r:&NameRoute)->Vec<String>{let mut names=Vec::new();for s in &r.sources {let name=s.provider_name.clone().unwrap_or_else(||"未分组".into());if !names.contains(&name){names.push(name);}}names}
+
+/// Native modal dialogs keep expanded statistics out of the card grid and
+/// provide browser-managed focus, Escape dismissal and focus restoration.
+fn show_model_details(id: &str, ctx: Ctx) {
+    let opened = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id(id))
+        .and_then(|dialog| {
+            js_sys::Reflect::get(dialog.as_ref(), &"showModal".into())
+                .ok()?
+                .dyn_into::<js_sys::Function>()
+                .ok()?
+                .call0(dialog.as_ref())
+                .ok()
+        });
+    if opened.is_none() {
+        ctx.say("无法打开模型详情，请刷新页面或更新浏览器。");
+    }
+}
 
 /// 一档用途：分档按钮上写什么、这一档收哪些类型、配色。
 pub(crate) struct KindTab {
@@ -213,7 +233,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     let chans=RwSignal::new(Vec::<Channel>::new());
     let busy=RwSignal::new(false);let err=RwSignal::new(None::<String>);
     let visibility=RwSignal::new("enabled".to_string());let search=RwSignal::new(String::new());let tab=RwSignal::new("chat".to_string());
-    let sort_score=RwSignal::new(false);let open=RwSignal::new(None::<String>);let updated=RwSignal::new(0i64);
+    let sort_score=RwSignal::new(false);let updated=RwSignal::new(0i64);
     let reload=move || {
         if busy.get_untracked(){return;} busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
@@ -259,23 +279,28 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                 list.into_iter().map(|r|{
                     let reorder_name=r.name.clone();let reorder_down=r.name.clone();
                     let toggle_name=r.name.clone();let channel_available=!r.channels.is_empty();let model_enabled=r.enabled;
-                    let visible_name=r.name.clone();let key=r.name.clone();let opened=open.get().as_deref()==Some(&key);let s=r.runtime.clone();
+                    let visible_name=r.name.clone();let s=r.runtime.clone();
+                    let dialog_id=format!("model-details-{}",js_sys::encode_uri_component(&r.name));
+                    let trigger_dialog=dialog_id.clone();
+                    let detail_title=format!("{} 的详情与统计",r.name);
+                    let labels=source_labels(&r);
+                    let supplier_summary=if labels.is_empty(){"未分组".to_string()}else{labels.join("、")};
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
                     let status=if !channel_available{"已停用（无可用渠道）"}else if !r.enabled{"已停用"}else{"已配置"};
                     let source=kind_source_label(&r.kind_source);
                     let (context,context_title)=context_badge(&r);
 
-                    view!{<article class="score-model"><header><div><h2>{r.name.clone()}</h2><div class="model-badges"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
-                        <details class="model-telemetry-detail"><summary>"运行统计"</summary><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></details>
-                        <div class="model-status-row"><div class="model-cooling">{let labels=source_labels(&r);if labels.is_empty(){vec!["未分组".to_string()]}else{labels}.into_iter().map(|n|view!{<div>{n}</div>}).collect_view()}<span class="muted small">{format!("{} 个可用连接",r.channels.len())}</span></div><button class="ghost" aria-expanded=opened on:click=move |_|open.update(|v|*v=if v.as_ref()==Some(&key){None}else{Some(key.clone())})>{if opened{"收起"}else{"详情"}}</button></div>
+                    view!{<article class=if ordering.get(){"score-model score-model-ordering"}else{"score-model"}><header><div><h2 title=r.name.clone()>{r.name.clone()}</h2><div class="model-badges" title="完整能力信息可在详情中查看"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
+                        <div class="model-status-row"><div class="model-cooling"><div class="model-supplier-summary" title=supplier_summary.clone()>{supplier_summary.clone()}</div><span class="muted small">{format!("{} 个可用连接",r.channels.len())}</span></div><button type="button" class="ghost" aria-haspopup="dialog" aria-controls=dialog_id.clone() on:click=move |_|show_model_details(&trigger_dialog,ctx)>"详情与统计"</button></div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
-                        {opened.then(||view!{<div class="model-detail-grid">
+                        <dialog class="compact-model-dialog" id=dialog_id aria-label=detail_title><div class="compact-model-dialog-head"><h2>{r.name.clone()}</h2><form method="dialog"><button type="submit" class="ghost" autofocus>"关闭"</button></form></div><div class="model-detail-grid">
+                            <section class="compact-model-statistics"><h3>"运行统计"</h3><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></section>
                             <section><h3>"展示与连接"</h3><p class="muted small">"隐藏仅从模型清单和 auto 排除，旧别名显式调用仍可用；全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>reload(),Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
                             <section><h3>"能力信息"</h3><dl><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
-                        </div>})}
+                        </div></dialog>
                     </article>}
                 }).collect_view().into_any()
             }}</div>

@@ -627,7 +627,7 @@ async fn local_endpoint_validation_and_single_supplier_guard() {
     let f=Fixture::new().await;
     let (s,v)=f.req("POST","/api/providers",json!({"name":"Local","endpoint_mode":"local"})).await;assert_eq!(s,200,"{v}");let p=v["provider"]["id"].as_i64().unwrap();
     let path=format!("/api/providers/{p}/credentials");
-    for body in [json!({"label":"missing-url","kind":"anonymous","models":[{"model":"m"}]}),json!({"label":"missing-model","kind":"anonymous","base_url":"http://127.0.0.1:8001/v1"}),json!({"label":"invalid","kind":"anonymous","base_url":"http://user:pass@127.0.0.1:8001/v1","models":[{"model":"m"}]}),json!({"label":"oauth","kind":"oauth","base_url":"http://127.0.0.1:8001/v1","models":[{"model":"m"}]})] {
+    for body in [json!({"label":"missing-url","kind":"anonymous","models":[{"model":"m"}]}),json!({"label":"invalid","kind":"anonymous","base_url":"http://user:pass@127.0.0.1:8001/v1","models":[{"model":"m"}]}),json!({"label":"oauth","kind":"oauth","base_url":"http://127.0.0.1:8001/v1","models":[{"model":"m"}]})] {
         let(s,v)=f.req("POST",&path,body).await;assert_eq!(s,400,"{v}");
     }
     let a=f.channel("http://127.0.0.1:8101/v1").await;let b=f.channel("http://127.0.0.1:8102/v1").await;

@@ -369,3 +369,73 @@ async fn a_rotated_key_cannot_return_a_stale_catalog() {
     barrier.release.notify_one();let (status,v)=task.await.unwrap();
     assert_eq!(status,StatusCode::CONFLICT,"{v}");assert!(!v.to_string().contains("old-key-model"));
 }
+
+#[tokio::test]
+async fn explicit_reveal_is_root_only_csrf_protected_uncached_and_not_in_lists() {
+    let f=Fixture::new().await;let p=f.provider("http://127.0.0.1:9/v1").await;let key=f.key(p,"saved-api-secret").await;
+    let path=format!("{}/api/providers/{p}/credentials/{key}/reveal",f.server.base);
+    let r=Client::new().post(&path).bearer_auth(&f.token).send().await.unwrap();
+    assert_eq!(r.status(),StatusCode::OK);assert_eq!(r.headers()["cache-control"],"no-store");assert_eq!(r.headers()["pragma"],"no-cache");
+    assert_eq!(r.json::<Value>().await.unwrap(),json!({"key":"saved-api-secret"}));
+    let list=Client::new().get(format!("{}/api/providers/{p}/credentials",f.server.base)).bearer_auth(&f.token).send().await.unwrap().json::<Value>().await.unwrap();
+    assert!(list["credentials"][0].get("key").is_none());
+    assert!(list["credentials"][0].get("secret").is_none());
+    let r=Client::new().post(&path).send().await.unwrap();assert_eq!(r.status(),StatusCode::UNAUTHORIZED);assert_eq!(r.headers()["cache-control"],"no-store");
+    let r=Client::new().post(&path).header("Cookie",format!("tokengo_session={}",f.token)).send().await.unwrap();assert_eq!(r.status(),StatusCode::FORBIDDEN);
+    let r=Client::new().post(&path).header("Cookie",format!("tokengo_session={}",f.token)).header("x-tokengo-panel","1").header("origin",&f.server.base).send().await.unwrap();assert_eq!(r.status(),StatusCode::OK);
+    let ordinary={let c=f.state.conn();let user=db::identity::create_user(&c,"ordinary","user",&Default::default()).unwrap();let account=db::accounts::create(&c,"ordinary","ordinary",user.id,"test-only-hash").unwrap();let credential=db::accounts::by_id(&c,account.id).unwrap().unwrap();db::accounts::create_session(&c,&credential).unwrap()};
+    let r=Client::new().post(&path).header("Cookie",format!("tokengo_account_session={ordinary}")).header("x-tokengo-panel","1").header("origin",&f.server.base).send().await.unwrap();assert_eq!(r.status(),StatusCode::FORBIDDEN);
+    let other=f.provider("http://127.0.0.1:8/v1").await;
+    assert_eq!(f.post(&format!("/api/providers/{other}/credentials/{key}/reveal"),json!({})).await.0,StatusCode::NOT_FOUND);
+    assert_eq!(f.post(&format!("/api/providers/{p}/credentials/999999/reveal"),json!({})).await.0,StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn reveal_requires_consistent_api_secrets_and_never_returns_oauth_tokens() {
+    let f=Fixture::new().await;let p=f.provider("http://127.0.0.1:9/v1").await;let key=f.key(p,"same-secret").await;
+    let source={let c=f.state.conn();let source=db::channels::create(&c,&db::channels::NewChannel{name:"second-source".into(),base_url:"http://127.0.0.1:9/v1".into(),enabled:true,unwrap_envelope:false,max_concurrent:0}).unwrap();db::channels::set_secret(&c,&f.state.secrets,source,"same-secret").unwrap();db::provider_channels::set_membership(&c,source.0,Some(p)).unwrap();assert_eq!(db::provider_pool::adopt_source(&c,&f.state.secrets,source.0,p).unwrap(),key);source};
+    let path=format!("/api/providers/{p}/credentials/{key}/reveal");
+    let before=f.snapshot();let (status,value)=f.post(&path,json!({})).await;assert_eq!(status,StatusCode::OK);assert_eq!(value["key"],"same-secret");assert_eq!(before,f.snapshot());
+    db::channels::set_secret(&f.state.conn(),&f.state.secrets,source,"inconsistent-secret").unwrap();
+    let (status,value)=f.post(&path,json!({})).await;assert_eq!(status,StatusCode::CONFLICT);assert!(!value.to_string().contains("inconsistent-secret"));
+    db::channels::clear_secret(&f.state.conn(),source).unwrap();assert_eq!(f.post(&path,json!({})).await.0,StatusCode::CONFLICT);
+    {let c=f.state.conn();for s in db::provider_pool::credentials(&c,p).unwrap()[0].source_ids.clone(){db::channels::clear_secret(&c,tokengo_shared::ChannelId(s)).unwrap();}}
+    assert_eq!(f.post(&path,json!({})).await.0,StatusCode::NOT_FOUND);
+    f.state.conn().execute("UPDATE provider_credentials SET kind='oauth' WHERE id=?1",[key]).unwrap();
+    let (status,value)=f.post(&path,json!({})).await;assert_eq!(status,StatusCode::BAD_REQUEST);assert!(!value.to_string().contains("same-secret"));assert!(value.get("key").is_none());
+    f.state.conn().execute("UPDATE provider_credentials SET kind='anonymous' WHERE id=?1",[key]).unwrap();assert_eq!(f.post(&path,json!({})).await.0,StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn local_key_without_models_is_unroutable_until_models_are_configured() {
+    async fn generation()->Json<Value>{Json(json!({"id":"isolated","object":"chat.completion","model":"actual-upstream","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}))}
+    let upstream=serve(Router::new().route("/v1/chat/completions",axum::routing::post(generation))).await;
+    let f=Fixture::new().await;db::sessions::set_gateway_key(&f.state.conn(),&f.state.secrets,"test-gateway").unwrap();
+    let (_,value)=f.post("/api/providers",json!({"name":"local model supplier","endpoint_mode":"local"})).await;let p=value["provider"]["id"].as_i64().unwrap();
+    // An existing port must not donate its models to the newly saved key.
+    let (status,value)=f.post(&format!("/api/providers/{p}/credentials"),json!({"label":"other-port","base_url":"http://127.0.0.1:9/v1","key":"different-port-key","models":[{"model":"other-model"}]})).await;assert_eq!(status,StatusCode::OK,"{value}");
+    let (status,value)=f.post(&format!("/api/providers/{p}/credentials"),json!({"label":"empty-new-key","base_url":format!("{}/v1",upstream.base),"key":"new-local-key","models":[]})).await;assert_eq!(status,StatusCode::OK,"{value}");assert_eq!(value["credential"]["models"],json!([]));let key=value["credential"]["id"].as_i64().unwrap();
+    let source=value["source_id"].as_i64().unwrap();assert!(db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(source)).unwrap().unwrap().models.is_empty());
+    let response=Client::new().post(format!("{}/v1/chat/completions",f.server.base)).bearer_auth("test-gateway").json(&json!({"model":"new-local-model","messages":[{"role":"user","content":"hi"}]})).send().await.unwrap();assert!(!response.status().is_success());
+    let listed=Client::new().get(format!("{}/v1/models",f.server.base)).bearer_auth("test-gateway").send().await.unwrap().json::<Value>().await.unwrap();assert!(!listed["data"].as_array().unwrap().iter().any(|m|m["id"]=="new-local-model"));
+    let response=Client::new().patch(format!("{}/api/providers/{p}/credentials/{key}",f.server.base)).bearer_auth(&f.token).json(&json!({"models":[{"model":"new-local-model","upstream":"actual-upstream","enabled":true}]})).send().await.unwrap();assert_eq!(response.status(),StatusCode::OK);
+    let response=Client::new().post(format!("{}/v1/chat/completions",f.server.base)).bearer_auth("test-gateway").json(&json!({"model":"new-local-model","messages":[{"role":"user","content":"hi"}]})).send().await.unwrap();let status=response.status();let body=response.text().await.unwrap();assert_eq!(status,StatusCode::OK,"{body}");
+}
+
+#[tokio::test]
+async fn online_key_can_disable_legacy_model_inheritance_until_models_are_configured() {
+    async fn generation()->Json<Value>{Json(json!({"id":"isolated","object":"chat.completion","model":"actual-upstream","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}))}
+    let upstream=serve(Router::new().route("/v1/chat/completions",axum::routing::post(generation))).await;
+    let f=Fixture::new().await;db::sessions::set_gateway_key(&f.state.conn(),&f.state.secrets,"test-gateway").unwrap();
+    let (_,value)=f.post("/api/providers",json!({"name":"online model supplier","base_url":format!("{}/v1",upstream.base)})).await;let p=value["provider"]["id"].as_i64().unwrap();
+    // An existing key must not donate its models to this explicit standalone key.
+    let (status,value)=f.post(&format!("/api/providers/{p}/credentials"),json!({"label":"other-port","key":"different-port-key","models":[{"model":"other-model"}]})).await;assert_eq!(status,StatusCode::OK,"{value}");
+    let (status,value)=f.post(&format!("/api/providers/{p}/credentials"),json!({"label":"empty-new-key","key":"new-online-key","inherit_models":false})).await;assert_eq!(status,StatusCode::OK,"{value}");assert_eq!(value["credential"]["models"],json!([]));let key=value["credential"]["id"].as_i64().unwrap();
+    let source=value["source_id"].as_i64().unwrap();assert!(db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(source)).unwrap().unwrap().models.is_empty());
+    let (status,legacy)=f.post(&format!("/api/providers/{p}/credentials"),json!({"label":"legacy-default","key":"legacy-default-key"})).await;assert_eq!(status,StatusCode::OK,"{legacy}");assert!(legacy["credential"]["models"].as_array().unwrap().iter().any(|m|m["model"]=="other-model"));
+    assert!(db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(source)).unwrap().unwrap().models.is_empty());
+    let response=Client::new().post(format!("{}/v1/chat/completions",f.server.base)).bearer_auth("test-gateway").json(&json!({"model":"new-local-model","messages":[{"role":"user","content":"hi"}]})).send().await.unwrap();assert!(!response.status().is_success());
+    let listed=Client::new().get(format!("{}/v1/models",f.server.base)).bearer_auth("test-gateway").send().await.unwrap().json::<Value>().await.unwrap();assert!(!listed["data"].as_array().unwrap().iter().any(|m|m["id"]=="new-local-model"));
+    let response=Client::new().patch(format!("{}/api/providers/{p}/credentials/{key}",f.server.base)).bearer_auth(&f.token).json(&json!({"models":[{"model":"new-local-model","upstream":"actual-upstream","enabled":true}]})).send().await.unwrap();assert_eq!(response.status(),StatusCode::OK);
+    let response=Client::new().post(format!("{}/v1/chat/completions",f.server.base)).bearer_auth("test-gateway").json(&json!({"model":"new-local-model","messages":[{"role":"user","content":"hi"}]})).send().await.unwrap();let status=response.status();let body=response.text().await.unwrap();assert_eq!(status,StatusCode::OK,"{body}");
+}

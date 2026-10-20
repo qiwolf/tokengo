@@ -1787,6 +1787,18 @@ mod tests {
         assert!(!String::from_utf8_lossy(&bytes).contains("SYNTHETIC-ACCESS"));
         assert_eq!(before,format!("{:?}",crate::db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(channel)).unwrap()));
         assert_eq!(binding(&f.state,channel).unwrap().unwrap().0.account_id,account.id);
+        let reveal=axum::http::Request::builder().method("POST")
+            .uri(format!("/api/providers/{provider}/credentials/{}/reveal",credential.id))
+            .header("Authorization",format!("Bearer {panel}"))
+            .body(axum::body::Body::empty()).unwrap();
+        let response=crate::app(f.state.clone()).oneshot(reveal).await.unwrap();
+        assert_eq!(response.status(),axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()["cache-control"],"no-store");
+        let bytes=axum::body::to_bytes(response.into_body(),1<<20).await.unwrap();
+        let value:Value=serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("key").is_none());
+        assert!(!String::from_utf8_lossy(&bytes).contains("SYNTHETIC-ACCESS"));
+        assert!(!String::from_utf8_lossy(&bytes).contains("SYNTHETIC-ROTATING-REFRESH"));
     }
 
 }
