@@ -2,7 +2,9 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-已发布：[v0.34.0-qiwolf.2 原生部署与容器双版本](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.2)。运行代码提交 `3d5c448c408664a14ac0c4400c3dd70f63f2694b`；同提交Rust/WASM CI、双分发和目标升级已验收，后续文档修订不更换该版本二进制。
+已发布：[v0.34.0-qiwolf.3 原生部署与容器双版本](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.3)。运行代码提交 `f2943d9707e16b231af7e291d4688f3e307ccc4f`；同提交Rust/WASM CI、双分发和目标升级已验收，后续文档修订不更换该版本二进制。
+
+本版上游 Key 管理先显示已有密钥及配置状态，编辑留空保留密钥。添加上游模型可读取当前 Key 的目录并搜索、多选，也可手工输入；先填上游模型名，再填可选的本地映射名，留空沿用上游名。既有本地映射保持原名，详见[操作说明](docs/provider-key-pools.md)。
 
 本 fork 基于上游 v0.34.0，使用 Rust / Axum / SQLite 与 Leptos / WebAssembly 构建个人或小团队网关。已实现多用户、多 VKey、预算与持久账本、有序 fallback、三协议原生入口，以及账号密码登录。统一用户、自助 Key 和点选权限的第一阶段已实现，最终界面、CI和部署验收状态单列。最新分支增加在线单地址与本地多地址渠道、多上游Key池、用户私有虚拟模型与顺序/时段策略，以及非破坏模型开关和原生推理档位元数据管理。
 
@@ -80,7 +82,7 @@ TOKENGO_LOG_DIR=./logs \
 ./target/release/tokengo-server
 ```
 
-服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.2` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径，不自动发布公共镜像仓库。
+服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.3` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径，不自动发布公共镜像仓库。
 
 ### 容器部署与分发
 
