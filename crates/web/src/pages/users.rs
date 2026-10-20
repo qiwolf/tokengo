@@ -6,12 +6,26 @@ use super::{
 use crate::{Ctx, Page, account_api, admin_api as api};
 use leptos::prelude::*;
 use serde_json::{Value, json};
+fn login_username(user: &Value) -> Option<String> {
+    api::rows(user, "accounts").iter().find_map(|account| {
+        let username = api::text(account, "username");
+        (!username.is_empty()).then_some(username)
+    })
+}
+
+fn login_required(creating: bool, has_login: bool, open_login: bool) -> bool {
+    creating || (!has_login && open_login)
+}
+
 #[component]
 pub fn Users(ctx: Ctx) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Value>::new());
     let roots = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
     let owner = RwSignal::new(None::<i64>);
+    let editing = RwSignal::new(false);
+    let keys_open = RwSignal::new(false);
+    let open_login = RwSignal::new(false);
     let username = RwSignal::new(String::new());
     let name = RwSignal::new(String::new());
     let password = RwSignal::new(String::new());
@@ -82,6 +96,9 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     let reset = move || {
         selected.set(None);
         owner.set(None);
+        editing.set(true);
+        keys_open.set(false);
+        open_login.set(false);
         username.set(String::new());
         name.set(String::new());
         password.set(String::new());
@@ -97,17 +114,16 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             return;
         }
         let existing = selected.get_untracked();
-        let has_login = existing
-            .as_ref()
-            .is_some_and(|v| v["accounts"].as_array().is_some_and(|a| !a.is_empty()));
+        let has_login = existing.as_ref().and_then(login_username).is_some();
         let creating = existing.is_none();
+        let needs_login = login_required(creating, has_login, open_login.get_untracked());
         let pw = password.get_untracked();
         let result = (|| -> Result<Value, String> {
             policy::validate(&draft.get_untracked())?;
             if name.get_untracked().trim().is_empty() {
                 return Err("请填写显示名称。".into());
             }
-            if creating || (!has_login && !pw.is_empty()) {
+            if needs_login {
                 if !account_api::valid_username(username.get_untracked().trim()) {
                     return Err("登录名需为3–64位字母、数字、点、下划线或连字符。".into());
                 }
@@ -136,9 +152,11 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
                 return;
             }
         };
-        let id = existing.and_then(|v| v["id"].as_i64());
+        let id = existing.as_ref().and_then(|v| v["id"].as_i64());
         if id.is_some()
-            && (!pw.is_empty() || !enabled.get_untracked())
+            && ((has_login && !pw.is_empty())
+                || (existing.as_ref().is_some_and(|u| u["enabled"] == true)
+                    && !enabled.get_untracked()))
             && !web_sys::window()
                 .and_then(|w| {
                     w.confirm_with_message(
@@ -166,19 +184,21 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             {
                 Ok(mut v) => {
                     let uid = v["user"]["id"].as_i64().or(id);
-                    if id.is_some() && !has_login && !pw.is_empty() {
+                    let mut login_failed = false;
+                    if id.is_some() && needs_login {
                         if let Some(uid) = uid {
-                            match api::request("POST",&format!("/api/managed-users/{uid}/login-credential"),Some(json!({"username":username.get_untracked().trim(),"password":pw,"display_name":name.get_untracked().trim()}))).await{Ok(r)=>{if r["user"].is_object(){v=r}},Err(e)=>error.set(format!("用户资料已保存，但登录尚未开通：{}。原密钥和账本保留。",e.message))}
+                            match api::request("POST",&format!("/api/managed-users/{uid}/login-credential"),Some(json!({"username":username.get_untracked().trim(),"password":pw,"display_name":name.get_untracked().trim()}))).await{Ok(r)=>{if r["user"].is_object(){v=r}},Err(e)=>{login_failed=true;error.set(format!("用户资料已保存，但登录尚未开通：{}。请修正后重新设置初始密码。",e.message))}}
                         }
                     }
                     password.set(String::new());
                     selected.set(Some(v["user"].clone()));
                     owner.set(uid);
-                    if let Some(a) = v["user"]["accounts"].as_array().and_then(|a| a.first()) {
-                        username.set(api::text(a, "username"));
-                    }
+                    username.set(login_username(&v["user"]).unwrap_or_default());
+                    open_login.set(login_failed);
                     notice.set(
-                        if creating {
+                        if login_failed {
+                            "资料已保存；请完成登录设置。"
+                        } else if creating {
                             "用户已创建，可直接使用登录名和初始密码登录，并自行创建 API Key。"
                         } else {
                             "用户已保存；模型权限和总额度实时约束其全部 Key。"
@@ -195,17 +215,63 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             busy.set(false);
         });
     };
-    view! {<div class="page admin-page"><PageHead title="用户" desc="一次设置登录账号、模型授权和费用上限；用户登录后自行管理 API Key。"><button class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></PageHead>
-    <section class="card"><header class="card-head"><h2>"用户列表"</h2><button class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></header><div class="card-body"><div class="policy-limits"><label class="account-field"><span>"搜索用户 / 登录名"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><label class="account-check"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用的历史用户"</label></div><p role="alert">{move||list_error.get()}</p><p role="status">{move||if loading.get(){"正在读取用户…"}else if rows.get().is_empty(){"还没有用户，点击新建即可设置登录和调用权限。"}else{""}}</p><div class="table-wrap"><table><thead><tr><th>"用户"</th><th>"登录账号"</th><th>"状态 / 额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||api::rows(u,"accounts").iter().any(|a|api::text(a,"username").to_lowercase().contains(&query)))}).map(|u|{let id=u["id"].as_i64().unwrap_or(0);let n=api::text(&u,"name");let accounts=api::rows(&u,"accounts");let names=if accounts.is_empty(){"尚未开通登录".into()}else{accounts.iter().map(|a|api::text(a,"username")).collect::<Vec<_>>().join("、")};let state=if u["enabled"]==true{"启用"}else{"停用"};let quota=policy::budget_label(&u["budget"]);view!{<tr><td data-label="用户"><strong>{n}</strong><div class="muted small">{format!("#{id}")}</div></td><td data-label="登录账号">{names}</td><td data-label="状态 / 额度">{state}<div class="muted small">{quota}</div></td><td data-label="操作"><button class="ghost" disabled=move||busy.get() on:click=move |_|{owner.set(Some(id));username.set(api::rows(&u,"accounts").first().map(|a|api::text(a,"username")).unwrap_or_default());name.set(api::text(&u,"name"));password.set(String::new());enabled.set(u["enabled"]==true);draft.set(u["policy"].clone());limit.set(u["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());}>"管理"</button></td></tr>}}).collect_view()}</tbody></table></div>
-    <p class="account-help">{move||roots.get().first().map(|a|format!("管理员 {} 的登录安全在“账号安全”管理，不占用普通用户。",api::text(a,"username"))).unwrap_or_default()}</p><button class="text-link" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></div></section>
-    <section class="card"><header class="card-head"><h2>{move||selected.get().map(|v|format!("管理用户：{}",api::text(&v,"name"))).unwrap_or_else(||"创建用户".into())}</h2></header><div class="card-body"><form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()><div class="policy-limits">
-    <label class="account-field"><span>"登录账号"</span><input type="text" minlength="3" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" readonly=move||selected.get().is_some_and(|u|u["accounts"].as_array().is_some_and(|a|!a.is_empty())) prop:value=username on:input=move|e|username.set(event_target_value(&e))/></label><label class="account-field"><span>"显示名称"</span><input type="text" required maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label></div>
-    <crate::account_ui::PasswordField id="user-password" label="初始密码 / 重置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/>
-    <p id="user-help" class="account-help">{move||if selected.get().is_none(){"新用户须填写账号和初始密码，保存后即可登录。"}else if selected.get().is_some_and(|u|u["accounts"].as_array().is_none_or(Vec::is_empty)){"已有用户的 Key 与历史保留；填写登录名和初始密码即可为此用户开通登录，无需新建或关联另一种用户。"}else{"编辑时密码留空不修改；如需改自己的管理员登录名或密码，请到账号安全。"}}</p>
-    <label class="account-check"><input type="checkbox" disabled=move||selected.get().is_none() prop:checked=enabled on:change=move|e|enabled.set(event_target_checked(&e))/>"启用用户（登录与 API 调用同步生效）"</label>
-    <PolicyEditor policy=draft models=models channels=channels prefix="user" admin=true/>
-    <label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不限制累计金额" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按配置价格与实际 Token/按次用量累计费用；金额最多6位小数，留空不限，0表示没有付费额度。月度套餐和原始 Token 配额将在后续独立实现，本页不将金额冒充 Token 余额。"</p>
-    <p id="user-error" role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else{"保存用户"}}</button></fieldset></form></div></section>
-    <KeyManager ctx=ctx owner=owner models=models channels=channels form_busy=busy/>
-    </div>}
+    view! {<div class="page admin-page users-page"><PageHead title="用户" desc="管理登录账号、模型权限和消费上限；用户登录后可自行创建 API Key。"/>
+    <Show when=move||!editing.get()>
+    <section class="card"><header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
+    <div class="card-body"><div class="policy-limits"><label class="account-field"><span>"搜索用户 / 登录名"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><label class="account-check"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用用户"</label></div>
+    <p role="alert">{move||list_error.get()}</p><p role="status">{move||if loading.get(){"正在读取用户…"}else if rows.get().is_empty(){"还没有用户，点击新建用户即可开始。"}else{""}}</p>
+    <div class="table-wrap"><table><thead><tr><th>"用户"</th><th>"登录账号"</th><th>"状态 / 额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||api::rows(u,"accounts").iter().any(|a|api::text(a,"username").to_lowercase().contains(&query)))}).map(|u|{
+        let id=u["id"].as_i64().unwrap_or(0);
+        let n=api::text(&u,"name");
+        let names=api::rows(&u,"accounts").iter().filter_map(|a|a["username"].as_str()).collect::<Vec<_>>().join("、");
+        let names=if names.is_empty(){"未设置登录".into()}else{names};
+        let state=if u["enabled"]==true{"已启用"}else{"已停用"};
+        let quota=policy::budget_label(&u["budget"]);
+        view!{<tr><td data-label="用户"><strong>{n}</strong></td><td data-label="登录账号">{names}</td><td data-label="状态 / 额度">{state}<div class="muted small">{quota}</div></td><td data-label="操作"><button class="ghost" disabled=move||busy.get() on:click=move |_|{
+            owner.set(Some(id));username.set(login_username(&u).unwrap_or_default());name.set(api::text(&u,"name"));password.set(String::new());enabled.set(u["enabled"]==true);draft.set(u["policy"].clone());limit.set(u["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);keys_open.set(false);editing.set(true);
+        }>"管理"</button></td></tr>}
+    }).collect_view()}</tbody></table></div>
+    <p class="account-help">{move||roots.get().first().map(|a|format!("管理员 {} 的登录名和密码在账号安全中管理。",api::text(a,"username"))).unwrap_or_default()}</p><button class="text-link" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></div></section></Show>
+    <Show when=move||editing.get()>
+    <div class="user-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|{editing.set(false);keys_open.set(false);owner.set(None);password.set(String::new());}>"返回用户列表"</button></div>
+    <section class="card"><header class="card-head"><h2>{move||selected.get().map(|v|format!("管理用户：{}",api::text(&v,"name"))).unwrap_or_else(||"新建用户".into())}</h2></header>
+    <Show when=move||selected.get().is_some()><nav class="user-section-nav" aria-label="用户管理功能"><button type="button" class="ghost" aria-pressed=move||(!keys_open.get()).to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(false)>"账号与授权"</button><button type="button" class="ghost" aria-pressed=move||keys_open.get().to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(true)>"API Key"</button></nav></Show>
+    <Show when=move||!keys_open.get()><div class="card-body"><form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()>
+    <section class="user-form-section" aria-labelledby="user-account-heading"><h3 id="user-account-heading">"登录与基本资料"</h3>
+    <Show when=move||selected.get().is_some_and(|u|login_username(&u).is_none())><div class="user-login-state"><p>"此用户未设置登录账号，现有 API Key 仍按原有权限使用。"</p><label class="account-check"><input type="checkbox" prop:checked=open_login on:change=move|e|{open_login.set(event_target_checked(&e));password.set(String::new());username.set(String::new());}/>"为此用户开通登录"</label></div></Show>
+    <div class="policy-limits"><Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><label class="account-field"><span>"登录账号"</span><input type="text" minlength="3" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" required=true readonly=move||selected.get().is_some_and(|u|login_username(&u).is_some()) prop:value=username on:input=move|e|username.set(event_target_value(&e))/></label></Show><label class="account-field"><span>"显示名称"</span><input type="text" required maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label></div>
+    <Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><crate::account_ui::PasswordField id="user-password" label="设置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/>
+    <p id="user-help" class="account-help">{move||if selected.get().is_none()||open_login.get(){"请输入登录账号及至少12字节的初始密码，保存后即可登录。"}else{"登录账号已设置；密码留空表示不修改。填写新密码会退出此用户现有的登录会话。"}}</p></Show>
+    <label class="account-check"><input type="checkbox" disabled=move||selected.get().is_none() prop:checked=enabled on:change=move|e|enabled.set(event_target_checked(&e))/>"启用用户"</label><p class="account-help">"停用后，此用户将无法登录或调用模型，历史记录和 Key 会保留。"</p></section>
+    <section class="user-form-section" aria-labelledby="user-policy-heading"><h3 id="user-policy-heading">"模型授权与调用限制"</h3><PolicyEditor policy=draft models=models channels=channels prefix="user" admin=true/></section>
+    <section class="user-form-section" aria-labelledby="user-budget-heading"><h3 id="user-budget-heading">"消费额度"</h3><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空表示不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按实际用量和模型价格累计费用。留空不限，0 表示无付费额度；此处设置的是金额，不是 Token 数量或月度套餐。"</p></section>
+    <p id="user-error" role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p><div class="user-actions"><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button><button type="button" class="ghost" on:click=move |_|{editing.set(false);owner.set(None);password.set(String::new());}>"取消"</button></div></fieldset></form></div></Show>
+    </section>
+    <Show when=move||keys_open.get()&&owner.get().is_some()><KeyManager ctx=ctx owner=owner models=models channels=channels form_busy=busy/></Show>
+    </Show></div>}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn historical_user_has_no_invented_login() {
+        assert_eq!(
+            login_username(&json!({"id":7,"name":"Andy","accounts":[]})),
+            None
+        );
+        assert!(!login_required(false, false, false));
+        assert!(login_required(false, false, true));
+    }
+
+    #[test]
+    fn saved_login_uses_account_username_instead_of_display_name() {
+        assert_eq!(
+            login_username(&json!({"name":"Andy","accounts":[{"username":"andy-login"}]})),
+            Some("andy-login".into())
+        );
+        assert!(!login_required(false, true, true));
+        assert!(login_required(true, false, false));
+    }
 }

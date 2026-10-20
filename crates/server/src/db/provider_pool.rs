@@ -29,6 +29,7 @@ pub struct AffinityToken {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Credential {
+    pub base_urls: Vec<String>,
     pub id: i64,
     pub provider_id: i64,
     pub label: String,
@@ -159,6 +160,15 @@ pub fn backfill(c: &Connection, sb: &SecretBox) -> Result<()> {
             }
         }
         for (pid, name, enabled) in old {
+            if local(c, pid)? {
+                for row in rows.iter().filter(|r| r.provider_id == Some(pid)) {
+                    canonical_url(&row.base_url)?;
+                    if adapter(c, row.id.0)? != "api" { return Err(bad("本地供应商只支持API或免认证入口")); }
+                    ensure_source(c, sb, row, pid)?;
+                }
+                c.execute("UPDATE provider_channels SET base_url=NULL,adapter_kind='api',canonical_state='canonical' WHERE id=?1", [pid])?;
+                continue;
+            }
             let members = rows
                 .iter()
                 .filter(|r| r.provider_id == Some(pid))
@@ -254,7 +264,7 @@ fn ensure_source(
     let readable = identity.is_ok();
     let (kind, hash, account) =
         identity.unwrap_or_else(|_| ("api_key".into(), format!("unreadable:{}", row.id.0), None));
-    let matching:Option<i64>=c.query_row("SELECT id FROM provider_credentials WHERE provider_id=?1 AND identity_hash=?2 ORDER BY id LIMIT 1",params![provider,hash],|r|r.get(0)).optional()?;
+    let matching = matching_identity(c, provider, &hash, &row.base_url, None)?;
     let credential = if let Some(id) = matching {
         id
     } else {
@@ -274,7 +284,9 @@ pub fn adopt_source(c: &Connection, sb: &SecretBox, source: i64, provider: i64) 
     )?;
     let normalized = canonical_url(&row.base_url)?;
     let ad = adapter(c, source)?;
-    if state == "canonical" && url.as_deref() != Some(normalized.as_str()) {
+    let is_local = local(c, provider)?;
+    if is_local && ad != "api" { return Err(bad("本地供应商只支持API或免认证入口")); }
+    if !is_local && state == "canonical" && url.as_deref() != Some(normalized.as_str()) {
         return Err(bad("渠道只允许一个API URL，请创建另一个渠道"));
     }
     let has_credentials: bool = c.query_row(
@@ -285,7 +297,7 @@ pub fn adopt_source(c: &Connection, sb: &SecretBox, source: i64, provider: i64) 
     if has_credentials && provider_adapter != ad {
         return Err(bad("认证或工具协议语义不同，请创建另一个渠道"));
     }
-    if url.is_none() {
+    if !is_local && url.is_none() {
         c.execute("UPDATE provider_channels SET base_url=?2,canonical_state='canonical',adapter_kind=?3 WHERE id=?1",params![provider,normalized,ad])?;
     }
     ensure_source(c, sb, &row, provider)
@@ -326,7 +338,9 @@ pub fn credentials(c: &Connection, provider: i64) -> Result<Vec<Credential>> {
    else {models.push(CredentialModel{model:m.model.clone(),upstream:m.upstream.clone(),enabled:m.enabled,vision:m.vision,drop_fields:m.drop_fields_text(),conflict:false});}
   }}}
   let tools=source_ids.iter().map(|source_id|Ok(CredentialTools{source_id:*source_id,capabilities:crate::search_tools::load(c,*source_id)?})).collect::<Result<Vec<_>>>()?;
-  Ok(Credential{id,provider_id,label,kind,enabled,priority,max_concurrent,source_ids,has_secret,oauth_account_id,revision,models,tools})
+  let mut base_urls = source_ids.iter().map(|source|c.query_row("SELECT base_url FROM channels WHERE id=?1", [source], |r|r.get::<_,String>(0)).map_err(DbError::from)).collect::<Result<Vec<_>>>()?;
+  base_urls.sort();base_urls.dedup();
+  Ok(Credential{base_urls,id,provider_id,label,kind,enabled,priority,max_concurrent,source_ids,has_secret,oauth_account_id,revision,models,tools})
  }).collect()
 }
 pub fn affinity_token(c: &Connection, user: i64, provider: i64) -> Result<Option<AffinityToken>> {
@@ -482,7 +496,7 @@ pub fn rotate_secret(c: &Connection, sb: &SecretBox, credential: i64, key: &str)
     let source = *sources.first().ok_or_else(|| bad("凭据没有来源部署"))?;
     let source = channels::get(c, ChannelId(source))?.ok_or_else(|| bad("来源不存在"))?;
     let (_, hash, _) = auth_identity(c, sb, &source)?;
-    let duplicate:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM provider_credentials WHERE provider_id=?1 AND id<>?2 AND identity_hash=?3)",params![row.0,credential,hash],|r|r.get(0))?;
+    let duplicate = matching_identity(c,row.0,&hash,&source.base_url,Some(credential))?.is_some();
     if duplicate {
         return Err(bad("此渠道已存在相同凭据，请使用已有Key"));
     }
@@ -492,5 +506,36 @@ pub fn rotate_secret(c: &Connection, sb: &SecretBox, credential: i64, key: &str)
             params![credential, hash],
         )?;
     }
+    Ok(())
+}
+
+/// Explicit local grouping is never inferred from an IP address.
+pub fn local(c: &Connection, provider: i64) -> Result<bool> {
+    Ok(c.query_row("SELECT endpoint_mode='local' FROM provider_channels WHERE id=?1", [provider], |r|r.get(0))?)
+}
+fn matching_identity(c: &Connection, provider: i64, hash: &str, url: &str, excluding: Option<i64>) -> Result<Option<i64>> {
+    let mut q=c.prepare("SELECT id FROM provider_credentials WHERE provider_id=?1 AND identity_hash=?2 AND (?3 IS NULL OR id<>?3) ORDER BY id")?;
+    let ids=q.query_map(params![provider,hash,excluding],|r|r.get::<_,i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    if !local(c,provider)? { return Ok(ids.first().copied()); }
+    let url=canonical_url(url)?;
+    for id in ids {
+        let mut q=c.prepare("SELECT s.base_url FROM channels s JOIN source_credentials x ON x.source_id=s.id WHERE x.credential_id=?1")?;
+        let urls=q.query_map([id],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        if urls.iter().any(|value|canonical_url(value).ok().as_ref()==Some(&url)) { return Ok(Some(id)); }
+    }
+    Ok(None)
+}
+pub fn update_local_url(c: &Connection, sb: &SecretBox, provider: i64, credential: i64, url: &str) -> Result<()> {
+    if !local(c,provider)? { return Err(bad("普通供应商请在渠道设置中修改唯一API URL")); }
+    let url=canonical_url(url)?;
+    let row=credentials(c,provider)?.into_iter().find(|r|r.id==credential).ok_or_else(||bad("凭据不存在"))?;
+    for source in &row.source_ids {
+        let channel=channels::get(c,ChannelId(*source))?.ok_or_else(||bad("来源不存在"))?;
+        let (_,hash,_)=auth_identity(c,sb,&channel)?;
+        if matching_identity(c,provider,&hash,&url,Some(credential))?.is_some() { return Err(bad("此地址已存在相同凭据，请使用已有入口")); }
+    }
+    c.execute("UPDATE channels SET base_url=?2 WHERE id IN (SELECT source_id FROM source_credentials WHERE credential_id=?1) AND base_url<>?2",params![credential,url])?;
+    c.execute("UPDATE provider_credentials SET revision=revision+1 WHERE id=?1",[credential])?;
+    c.execute("UPDATE provider_channels SET config_version=config_version+1 WHERE id=?1",[provider])?;
     Ok(())
 }

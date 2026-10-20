@@ -899,6 +899,20 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
         assert!(v["error"]["message"].as_str().unwrap().contains("model not found"));
     }
 
+    // HTTP completion is not a diagnostic-write barrier: the financial outbox
+    // worker may briefly own SQLite, so Finish/Attempt jobs can be deferred.
+    // drain_writes intentionally uses try_lock and can requeue; wait for both
+    // queued and in-flight jobs before asserting the exact final ledger below.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while f.state.pending_writes() > 0 {
+            f.state.drain_writes();
+            if f.state.pending_writes() > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        }
+    }).await.expect("all six client-error diagnostic writes must finish");
+    assert_eq!(f.state.pending_writes(), 0);
+
     assert_eq!(bad.count(), 6, "每次只该打一次（不重试）");
     assert_eq!(good.count(), 0, "备选渠道一次都不该被叫");
     assert_eq!(f.attempts().len(), 6, "六次请求 = 六次尝试，没有重试");
@@ -914,6 +928,7 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
 
     // 账上也不该算成渠道的锅
     let rows = f.request_rows();
+    assert_eq!(rows.len(), 6, "six HTTP errors must produce six final request rows: {rows:?}");
     assert!(rows.iter().all(|r| r.0 == "client_error"), "{rows:?}");
 
     // 冷却表里也必须是干净的：客户端写错六次，一次都不许记到渠道头上

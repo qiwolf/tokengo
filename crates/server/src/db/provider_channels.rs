@@ -68,6 +68,8 @@ pub fn one(c: &Connection, id: i64) -> Result<Value> {
         .collect();
     let ids: Vec<_> = chans.iter().map(|x| x.id.0).collect();
     let (base_url,adapter_kind,canonical_state,key_strategy,switch_on_429,switch_on_400,config_version):(Option<String>,String,String,String,bool,bool,i64)=c.query_row("SELECT base_url,adapter_kind,canonical_state,key_strategy,switch_on_429,switch_on_400,config_version FROM provider_channels WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)))?;
+    let endpoint_mode:String=c.query_row("SELECT endpoint_mode FROM provider_channels WHERE id=?1",[id],|r|r.get(0))?;
+    let mut base_urls:Vec<_>=chans.iter().map(|ch|ch.base_url.clone()).collect();base_urls.sort();base_urls.dedup();
     let routes = super::model_routes::list(c)?;
     let mut models = Vec::new();
     for r in routes {
@@ -111,7 +113,7 @@ pub fn one(c: &Connection, id: i64) -> Result<Value> {
         }));
     }
     Ok(
-        json!({"id":id,"name":name,"enabled":enabled,"connection_ids":ids,"models":models,"base_url":base_url,"adapter_kind":adapter_kind,"canonical_state":canonical_state,"key_strategy":key_strategy,"switch_on_429":switch_on_429,"switch_on_400":switch_on_400,"config_version":config_version}),
+        json!({"endpoint_mode":endpoint_mode,"base_urls":base_urls,"id":id,"name":name,"enabled":enabled,"connection_ids":ids,"models":models,"base_url":base_url,"adapter_kind":adapter_kind,"canonical_state":canonical_state,"key_strategy":key_strategy,"switch_on_429":switch_on_429,"switch_on_400":switch_on_400,"config_version":config_version}),
     )
 }
 pub fn list(c: &Connection) -> Result<Value> {

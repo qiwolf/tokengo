@@ -17,6 +17,10 @@ pub struct ProviderModel {
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Provider {
+    #[serde(default)]
+    pub endpoint_mode: String,
+    #[serde(default)]
+    pub base_urls: Vec<String>,
     pub id: i64,
     pub name: String,
     pub enabled: bool,
@@ -95,4 +99,20 @@ pub async fn save_config(id: Option<i64>, body: serde_json::Value) -> Result<(),
     call(if id.is_some() { "PUT" } else { "POST" }, &path, Some(body))
         .await
         .map(|_| ())
+}
+
+/// Imported storage labels are useful for diagnostics, not for naming operator controls.
+pub fn credential_label(row: &serde_json::Value, position: usize) -> String {
+    let label=row["label"].as_str().unwrap_or("");
+    let imported=label.strip_suffix(" · Key").is_some_and(|v|[" / 数据库 "," / 配置 "].into_iter().any(|marker|v.rsplit_once(marker).is_some_and(|(_,n)|n.parse::<u64>().is_ok())));
+    if imported || label.is_empty(){format!("上游 Key {}",position+1)}else{label.to_string()}
+}
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    #[test] fn imported_storage_labels_are_not_public_names() {
+        assert_eq!(credential_label(&json!({"label":"deepseek / 数据库 4 · Key"}),1),"上游 Key 2");
+        assert_eq!(credential_label(&json!({"label":"local / 配置 0 · Key"}),0),"上游 Key 1");
+        assert_eq!(credential_label(&json!({"label":"主账号"}),0),"主账号");
+    }
 }

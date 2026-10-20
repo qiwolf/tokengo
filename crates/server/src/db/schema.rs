@@ -439,4 +439,5 @@ END;
     (34, include_str!("reasoning.sql")),
     (35, include_str!("provider_pool.sql")),
     (36, include_str!("user_virtual_routes.sql")),
+    (37, include_str!("local_endpoints.sql")),
 ];

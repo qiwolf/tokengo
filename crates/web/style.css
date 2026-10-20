@@ -1716,3 +1716,101 @@ html[data-theme="light"] {
 .admin-page .account-form, .key-manager .account-form { max-width: 100%; }
 .policy-options .account-check { margin-bottom: 0; }
 .one-time-secret { display: block; overflow-wrap: anywhere; padding: 16px; background: var(--surface-2); margin-block: 16px; }
+
+/* Console controls share one scale; old compact dashboard rules must not shrink actions. */
+.console-layout .console-content button {
+  min-height: 48px;
+  height: auto;
+  max-width: 100%;
+  padding: 10px 16px;
+  font-size: 14px;
+  line-height: 20px;
+  white-space: normal;
+}
+.console-content .account-field input:not([type="checkbox"]):not([type="radio"]),
+.console-content .account-field select {
+  box-sizing: border-box;
+  height: 48px;
+  padding: 10px 12px;
+  line-height: 24px;
+}
+.console-content .account-field select {
+  padding-right: 36px;
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+}
+.console-content .pick, .console-content .kind-pick,
+.console-content .account-check {
+  box-sizing: border-box;
+  min-height: 48px;
+  gap: 8px;
+  margin-bottom: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.console-content .pick, .console-content .kind-pick { padding: 10px 12px; }
+.account-field input[type="checkbox"], .account-field input[type="radio"],
+.console-content input[type="checkbox"], .console-content input[type="radio"] {
+  box-sizing: border-box;
+  flex: 0 0 20px;
+  width: 20px;
+  min-width: 20px;
+  max-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  margin: 0;
+  appearance: auto;
+}
+.provider-create, .provider-edit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  align-items: end;
+}
+.provider-create .account-field, .provider-edit .account-field { min-width: 0; }
+.provider-edit .account-actions, .provider-edit-actions {
+  grid-column: 1 / -1;
+  align-items: center;
+  margin: 0;
+}
+.provider-heading { flex-wrap: wrap; }
+.provider-heading > div:first-child { flex-basis: 320px; }
+.provider-heading .provider-url { overflow-wrap: anywhere; }
+.table-wrap .provider-model-table .reasoning-default-field {
+  width: min(100%, 24rem);
+  max-width: 24rem;
+}
+.reasoning-config .account-help, .reasoning-config > p { max-width: 72ch; }
+.model-state-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.model-state-actions .tag { flex: 0 0 auto; }
+.model-access-list { display: grid; gap: 12px; padding: 0; margin: 16px 0; list-style: none; }
+.model-access-list > li, .model-access-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.model-access-list code { overflow-wrap: anywhere; }
+.user-section-nav, .user-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.user-section-nav { margin-bottom: 24px; }
+.user-login-state { padding: 12px 16px; margin-bottom: 24px; border-left: 3px solid var(--accent); background: var(--accent-soft); }
+.user-form-section + .user-form-section { padding-top: 24px; margin-top: 24px; border-top: 1px solid var(--line); }
+.user-actions { margin-top: 24px; }
+@media (max-width: 768px) {
+  .provider-create { display: grid; }
+  .provider-create button { margin-top: 0; }
+  .provider-heading { gap: 8px; }
+  .provider-heading > button { flex: 1 1 auto; }
+  .provider-edit-actions > button { flex: 1 1 auto; }
+}
+
+.users-page .card-head .user-actions { margin-top: 0; }
+.users-page table button { min-width: 64px; white-space: nowrap; }
+.model-access-item { min-width: 0; padding-block: 16px; border-bottom: 1px solid var(--line); }

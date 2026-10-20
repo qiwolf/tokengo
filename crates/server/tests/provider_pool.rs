@@ -584,3 +584,101 @@ async fn moving_a_carrier_then_rotating_never_changes_the_old_pool_secret() {
         Some("new-isolated-key")
     );
 }
+
+#[tokio::test]
+async fn local_endpoints_preserve_identity_restart_and_isolate_key_rotation() {
+    let f=Fixture::new().await;
+    let (s,v)=f.req("POST","/api/providers",json!({"name":"My local host","endpoint_mode":"local"})).await;
+    assert_eq!(s,200,"{v}");let p=v["provider"]["id"].as_i64().unwrap();
+    let path=format!("/api/providers/{p}/credentials");
+    let mut keys=Vec::new();let mut sources=Vec::new();
+    for (port,model) in [(8101,"local-chat"),(8102,"local-vector")] {
+        let (s,v)=f.req("POST",&path,json!({"label":model,"kind":"api_key","key":"same-secret","base_url":format!("http://127.0.0.1:{port}/v1"),"models":[{"model":model}]})).await;
+        assert_eq!(s,200,"{v}"); keys.push(v["credential"]["id"].as_i64().unwrap());sources.push(v["source_id"].as_i64().unwrap());
+    }
+    assert_ne!(keys[0],keys[1]);
+    let before=db::provider_channels::one(&f.state.conn(),p).unwrap();
+    for _ in 0..2 {db::provider_pool::backfill(&f.state.conn(),&f.state.secrets).unwrap();}
+    assert_eq!(before,db::provider_channels::one(&f.state.conn(),p).unwrap());
+    assert_eq!(before["base_urls"].as_array().unwrap().len(),2);
+    let (s,v)=f.req("PUT",&format!("/api/providers/{p}"),json!({"name":"Renamed local","enabled":true,"endpoint_mode":"local"})).await;assert_eq!(s,200,"{v}");
+    let (s,v)=f.req("PUT",&format!("/api/providers/{p}"),json!({"name":"Unsafe rewrite","base_url":"http://127.0.0.1:9999/v1"})).await;assert_eq!(s,400,"{v}");
+    let (s,v)=f.req("PUT",&format!("/api/providers/{p}"),json!({"name":"Unsafe single","endpoint_mode":"single"})).await;assert_eq!(s,400,"{v}");
+    let (s,v)=f.req("PATCH",&format!("{path}/{}",keys[0]),json!({"base_url":"http://127.0.0.1:8102/v1"})).await;assert_eq!(s,400,"{v}");
+    assert_eq!(db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(sources[0])).unwrap().unwrap().base_url,"http://127.0.0.1:8101/v1");
+    let before_generation=f.state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[sources[0]],|r|r.get::<_,i64>(0)).unwrap();
+    let (s,v)=f.req("PATCH",&format!("{path}/{}",keys[0]),json!({"base_url":"http://127.0.0.1:8201/v1"})).await;assert_eq!(s,200,"{v}");
+    assert_eq!(f.state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[sources[0]],|r|r.get::<_,i64>(0)).unwrap(),before_generation+1);
+    let (s,v)=f.req("PATCH",&format!("{path}/{}",keys[0]),json!({"key":"rotated"})).await;assert_eq!(s,200,"{v}");
+    let c=f.state.conn();
+    let a=db::channels::get(&c,tokengo_shared::ChannelId(sources[0])).unwrap().unwrap();
+    let b=db::channels::get(&c,tokengo_shared::ChannelId(sources[1])).unwrap().unwrap();
+    assert_eq!(a.base_url,"http://127.0.0.1:8201/v1");assert_eq!(b.base_url,"http://127.0.0.1:8102/v1");
+    assert_eq!(a.models.len(),1);assert_eq!(b.models.len(),1);assert_eq!(b.models[0].model,"local-vector");
+    assert_eq!(db::provider_pool::load_source_secret(&c,&f.state.secrets,b.id.0).unwrap().as_deref(),Some("same-secret"));
+    assert_eq!(db::provider_pool::load_source_secret(&c,&f.state.secrets,a.id.0).unwrap().as_deref(),Some("rotated"));
+    let generation=|id|c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get::<_,i64>(0)).unwrap();
+    assert!(generation(a.id.0)>generation(b.id.0));
+    assert_eq!(db::provider_channels::membership(&c,a.id.0).unwrap().unwrap().0,p);
+}
+
+#[tokio::test]
+async fn local_endpoint_validation_and_single_supplier_guard() {
+    let f=Fixture::new().await;
+    let (s,v)=f.req("POST","/api/providers",json!({"name":"Local","endpoint_mode":"local"})).await;assert_eq!(s,200,"{v}");let p=v["provider"]["id"].as_i64().unwrap();
+    let path=format!("/api/providers/{p}/credentials");
+    for body in [json!({"label":"missing-url","kind":"anonymous","models":[{"model":"m"}]}),json!({"label":"missing-model","kind":"anonymous","base_url":"http://127.0.0.1:8001/v1"}),json!({"label":"invalid","kind":"anonymous","base_url":"http://user:pass@127.0.0.1:8001/v1","models":[{"model":"m"}]}),json!({"label":"oauth","kind":"oauth","base_url":"http://127.0.0.1:8001/v1","models":[{"model":"m"}]})] {
+        let(s,v)=f.req("POST",&path,body).await;assert_eq!(s,400,"{v}");
+    }
+    let a=f.channel("http://127.0.0.1:8101/v1").await;let b=f.channel("http://127.0.0.1:8102/v1").await;
+    f.assign(a,Some(p)).await;f.assign(b,Some(p)).await;
+    let single=f.provider("Single").await;
+    f.assign(a,Some(single)).await;
+    let(s,v)=f.req("PUT",&format!("/api/channels/{b}/provider"),json!({"provider_id":single})).await;assert_eq!(s,409,"{v}");
+    assert_eq!(db::provider_channels::membership(&f.state.conn(),b).unwrap().unwrap().0,p);
+}
+
+#[tokio::test]
+async fn local_two_ports_route_only_the_declared_model_and_upstream_mapping() {
+    async fn first(Json(v):axum::Json<Value>)->axum::Json<Value>{assert_eq!(v["model"],"port-one-model");axum::Json(json!({"id":"a","object":"chat.completion","model":"one","choices":[{"index":0,"message":{"role":"assistant","content":"port-one"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}))}
+    async fn second(Json(v):axum::Json<Value>)->axum::Json<Value>{assert_eq!(v["model"],"port-two-model");axum::Json(json!({"id":"b","object":"chat.completion","model":"two","choices":[{"index":0,"message":{"role":"assistant","content":"port-two"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}))}
+    use axum::Json;
+    let (one,t1)=serve(Router::new().route("/v1/chat/completions",axum::routing::post(first))).await;
+    let (two,t2)=serve(Router::new().route("/v1/chat/completions",axum::routing::post(second))).await;
+    let f=Fixture::new().await;
+    let(_,v)=f.req("POST","/api/providers",json!({"name":"Local routing","endpoint_mode":"local"})).await;let p=v["provider"]["id"].as_i64().unwrap();
+    for (base,public,upstream) in [(one,"one","port-one-model"),(two,"two","port-two-model")] {
+        let(s,v)=f.req("POST",&format!("/api/providers/{p}/credentials"),json!({"label":public,"kind":"anonymous","base_url":format!("{base}/v1"),"models":[{"model":public,"upstream":upstream}]})).await;assert_eq!(s,200,"{v}");
+    }
+    for (model,content) in [("one","port-one"),("two","port-two")] {
+        let response=reqwest::Client::new().post(format!("{}/v1/chat/completions",f.base)).bearer_auth("provider-pool-key").json(&json!({"model":model,"messages":[{"role":"user","content":"hi"}]})).send().await.unwrap();
+        let status=response.status();let body:Value=response.json().await.unwrap();assert_eq!(status,200,"{body}");assert_eq!(body["choices"][0]["message"]["content"],content);
+    }
+    t1.abort();t2.abort();
+}
+
+#[tokio::test]
+async fn schema_37_defaults_existing_suppliers_to_single_without_rewriting_sources() {
+    let f=Fixture::new().await;
+    let source=f.channel("http://127.0.0.1:8101/v1").await;
+    let p=f.provider("Existing supplier").await;f.assign(source,Some(p)).await;
+    {
+        let c=f.state.conn();
+        let before=db::channels::get(&c,tokengo_shared::ChannelId(source)).unwrap().unwrap();
+        let credentials=serde_json::to_value(db::provider_pool::credentials(&c,p).unwrap()).unwrap();
+        c.execute_batch("ALTER TABLE provider_channels DROP COLUMN endpoint_mode; DELETE FROM schema_migrations WHERE version=37;").unwrap();
+        db::migrate(&c).unwrap();db::migrate(&c).unwrap();
+        assert!(!db::provider_pool::local(&c,p).unwrap());
+        db::provider_pool::backfill(&c,&f.state.secrets).unwrap();
+        let after=db::channels::get(&c,tokengo_shared::ChannelId(source)).unwrap().unwrap();
+        assert_eq!(before.base_url,after.base_url);assert_eq!(before.id,after.id);
+        assert_eq!(credentials,serde_json::to_value(db::provider_pool::credentials(&c,p).unwrap()).unwrap());
+    }
+    let (s,v)=f.req("PUT",&format!("/api/providers/{p}"),json!({"name":"Now local","endpoint_mode":"local"})).await;
+    assert_eq!(s,200,"{v}");assert!(v["provider"]["base_url"].is_null());assert_eq!(v["provider"]["base_urls"],json!(["http://127.0.0.1:8101/v1"]));
+    let credentials_before=serde_json::to_value(db::provider_pool::credentials(&f.state.conn(),p).unwrap()).unwrap();
+    db::provider_pool::backfill(&f.state.conn(),&f.state.secrets).unwrap();
+    assert_eq!(credentials_before,serde_json::to_value(db::provider_pool::credentials(&f.state.conn(),p).unwrap()).unwrap());
+    let(s,v)=f.req("PUT",&format!("/api/providers/{p}"),json!({"name":"Back to single","endpoint_mode":"single","base_url":"http://127.0.0.1:8103/v1"})).await;assert_eq!(s,200,"{v}");
+    assert_eq!(db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(source)).unwrap().unwrap().base_url,"http://127.0.0.1:8103/v1");
+}

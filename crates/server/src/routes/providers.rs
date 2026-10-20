@@ -34,6 +34,7 @@ pub fn router() -> Router<SharedState> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProviderBody {
+    endpoint_mode: Option<String>,
     name: String,
     #[serde(default = "yes")]
     enabled: bool,
@@ -137,6 +138,7 @@ async fn create(
 ) -> Result<Json<Value>, ApiError> {
     let Json(b) = body.map_err(|_| ApiError::bad_request("Invalid provider JSON"))?;
     let n = providers::name(&b.name).map_err(ApiError::bad_request)?;
+    if b.endpoint_mode.as_deref().is_some_and(|m| !matches!(m,"single"|"local")) { return Err(ApiError::bad_request("供应商地址模式必须是single或local")); }
     let url = b
         .base_url
         .as_deref()
@@ -164,8 +166,12 @@ async fn create(
         )?;
         let id = c.last_insert_rowid();
         c.execute("UPDATE provider_channels SET base_url=?2,canonical_state=?3,key_strategy=?4,switch_on_429=?5,switch_on_400=?6 WHERE id=?1",rusqlite::params![id,url,if url.is_some(){"canonical"}else{"attention"},b.key_strategy.unwrap_or_else(||"ordered".into()),b.switch_on_429.unwrap_or(true),b.switch_on_400.unwrap_or(false)])?;
+        if b.endpoint_mode.as_deref()==Some("local") {
+            if url.is_some() { return Err(db::DbError::Other("本地供应商请在每个模型入口设置API URL".into())); }
+            c.execute("UPDATE provider_channels SET endpoint_mode='local',base_url=NULL,canonical_state='canonical' WHERE id=?1",[id])?;
+        }
         Ok(id)
-    })?;
+    }).map_err(|e|ApiError::bad_request(e.to_string()))?;
     Ok(Json(json!({"provider":providers::one(&c,id)?})))
 }
 async fn update(
@@ -176,6 +182,7 @@ async fn update(
 ) -> Result<Json<Value>, ApiError> {
     let Json(b) = body.map_err(|_| ApiError::bad_request("Invalid provider JSON"))?;
     let n = providers::name(&b.name).map_err(ApiError::bad_request)?;
+    if b.endpoint_mode.as_deref().is_some_and(|m| !matches!(m,"single"|"local")) { return Err(ApiError::bad_request("供应商地址模式必须是single或local")); }
     let url = b
         .base_url
         .as_deref()
@@ -201,6 +208,20 @@ async fn update(
             "UPDATE provider_channels SET name=?2,enabled=?3 WHERE id=?1",
             rusqlite::params![id, n, b.enabled as i64],
         )?;
+        let was_local=pool::local(c,id)?;
+        let is_local=b.endpoint_mode.as_deref().map(|m|m=="local").unwrap_or(was_local);
+        if is_local {
+            if url.is_some() { return Err(db::DbError::Other("本地供应商请在每个模型入口设置API URL".into())); }
+            let non_api:bool=c.query_row("SELECT adapter_kind<>'api' FROM provider_channels WHERE id=?1",[id],|r|r.get(0))?;
+            if non_api { return Err(db::DbError::Other("OAuth或工具供应商不能切换为本地模型".into())); }
+            c.execute("UPDATE provider_channels SET endpoint_mode='local',base_url=NULL,canonical_state='canonical' WHERE id=?1",[id])?;
+        } else if was_local {
+            let mut urls=channels::list(c)?.into_iter().filter(|ch|ch.provider_id==Some(id)).map(|ch|pool::canonical_url(&ch.base_url)).collect::<db::Result<Vec<_>>>()?;
+            urls.sort();urls.dedup();
+            if urls.len()>1 { return Err(db::DbError::Other("此本地供应商存在多个API URL，不能切换为单地址".into())); }
+            let single=urls.first();
+            c.execute("UPDATE provider_channels SET endpoint_mode='single',base_url=?2,canonical_state=?3 WHERE id=?1",rusqlite::params![id,single,if single.is_some(){"canonical"}else{"attention"}])?;
+        }
         let old_url:Option<String>=c.query_row("SELECT base_url FROM provider_channels WHERE id=?1",[id],|r|r.get(0))?;
         if let Some(url)=&url {
             let oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings o JOIN provider_connections p ON p.channel_id=o.channel_id WHERE p.provider_id=?1)",[id],|r|r.get(0))?;
@@ -425,6 +446,7 @@ struct CredentialModel {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewCredential {
+    base_url: Option<String>,
     tools: Option<crate::search_tools::ToolCapabilities>,
     label: String,
     kind: Option<String>,
@@ -464,7 +486,14 @@ async fn credentials_create(
             |r| r.get(0),
         )
         .map_err(db::DbError::from)?;
-    let url = url.ok_or_else(|| ApiError::bad_request("请先设置此渠道唯一API URL"))?;
+    let is_local=pool::local(&c,id)?;
+    let url = if is_local {
+        if kind=="oauth" || body.tools.is_some() { return Err(ApiError::bad_request("本地模型入口只支持API Key或免认证")); }
+        pool::canonical_url(body.base_url.as_deref().ok_or_else(||ApiError::bad_request("请填写本地模型入口API URL"))?).map_err(|e|ApiError::bad_request(e.to_string()))?
+    } else {
+        if body.base_url.is_some() { return Err(ApiError::bad_request("普通供应商只允许渠道设置中的唯一API URL")); }
+        url.ok_or_else(|| ApiError::bad_request("请先设置此渠道唯一API URL"))?
+    };
     if let Some(tools) = &body.tools {
         tools.validate().map_err(ApiError::bad_request)?;
         if kind == "oauth" || !(tools.search || tools.fetch) {
@@ -510,6 +539,7 @@ async fn credentials_create(
             ),
         });
     }
+    if is_local && models.is_empty() { return Err(ApiError::bad_request("请明确选择此本地入口的模型，不会从其他端口复制模型")); }
     if models.is_empty() {
         for ch in channels::list(&c)?
             .into_iter()
@@ -580,7 +610,7 @@ async fn credentials_create(
   if let Some(key)=&body.key{channels::set_secret(c,&s.secrets,source,key)?;}
   channels::set_models(c,source,&models)?;providers::set_membership(c,source.0,Some(id))?;
   // Inherit declared protocol semantics, not another account's credentials or headers.
-  let first:Option<i64>=c.query_row("SELECT channel_id FROM provider_connections WHERE provider_id=?1 AND channel_id<>?2 ORDER BY channel_id LIMIT 1",rusqlite::params![id,source.0],|r|r.get(0)).optional()?;
+  let first:Option<i64>=c.query_row("SELECT channel_id FROM provider_connections WHERE provider_id=?1 AND channel_id<>?2 AND (?3=0 OR channel_id IN (SELECT id FROM channels WHERE base_url=?4)) ORDER BY channel_id LIMIT 1",rusqlite::params![id,source.0,is_local,url],|r|r.get(0)).optional()?;
   if let Some(template)=first{crate::protocol_config::save(c,source.0,&crate::protocol_config::load(c,template)?)?;}
   if let Some(account)=account{
    crate::protocol_config::save(c,source.0,&crate::protocol_config::Capabilities{native:vec![crate::protocol::Protocol::Responses],allow_conversion:true,..Default::default()})?;
@@ -605,6 +635,7 @@ async fn credentials_create(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CredentialPatch {
+    base_url: Option<String>,
     label: Option<String>,
     enabled: Option<bool>,
     priority: Option<i64>,
@@ -662,7 +693,13 @@ async fn credentials_update(
             }
         }
     }
+    if let Some(url)=&body.base_url {
+        if !pool::local(&c,provider)? { return Err(ApiError::bad_request("普通供应商请在渠道设置修改唯一API URL")); }
+        pool::canonical_url(url).map_err(|e|ApiError::bad_request(e.to_string()))?;
+    }
+    let names=if body.base_url.is_some() {original.models.iter().map(|m|m.model.clone()).collect::<Vec<_>>()}else{vec![]};
     db::in_tx(&c, |c| {
+        if let Some(url)=&body.base_url { pool::update_local_url(c,&s.secrets,provider,id,url)?; }
         if let Some(key) = &body.key {
             pool::rotate_secret(c, &s.secrets, id, key)?;
         }
@@ -720,12 +757,14 @@ async fn credentials_update(
             }
         }
         c.execute("UPDATE provider_credentials SET label=COALESCE(?2,label),enabled=COALESCE(?3,enabled),priority=COALESCE(?4,priority),max_concurrent=COALESCE(?5,max_concurrent) WHERE id=?1",rusqlite::params![id,body.label,body.enabled,body.priority,body.max_concurrent])?;
-        Ok(())
-    })?;
+        reset(c,&names)
+    }).map_err(|e|ApiError::bad_request(e.to_string()))?;
     let row = pool::credentials(&c, provider)?
         .into_iter()
         .find(|k| k.id == id)
         .ok_or_else(|| ApiError::internal("凭据不可见"))?;
+    drop(c);
+    changed(&s,names);
     Ok(Json(json!({"credential":row})))
 }
 async fn credentials_disable(

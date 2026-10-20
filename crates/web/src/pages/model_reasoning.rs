@@ -15,28 +15,30 @@ pub(crate) fn capability_label(c: &ReasoningCapability) -> String {
     let source = match c.source.as_str() {
         "upstream" => "上游声明",
         "user_confirmed" => "人工确认",
-        _ => "来源未知",
+        _ => "尚未确认",
     };
     let status = match c.status.as_str() {
         "supported" if !c.levels.is_empty() => format!("支持档位：{}", c.levels.join(" / ")),
         "supported" => "支持推理，档位未知".into(),
         "unsupported" => "明确不支持推理".into(),
-        _ => "推理档位未知，待确认".into(),
+        _ => "尚未确认支持哪些推理档位".into(),
     };
-    format!("{status} · {source}")
+    if c.source=="upstream"||c.source=="user_confirmed" {format!("{status} · {source}")}else{status}
 }
 #[component]
-pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String) -> impl IntoView {
+pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(optional)] label: Option<String>) -> impl IntoView {
     let model = StoredValue::new(model);
     let data = RwSignal::new(ReasoningCapability::default());
     let manual = RwSignal::new(String::new());
     let manual_on = RwSignal::new(false);
     let default = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    let loaded = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let message = RwSignal::new(String::new());
     let load =
         Callback::new(move |()| {
+            loaded.set(false);
             let Some(id) = channel else {
                 return;
             };
@@ -55,6 +57,9 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String) -> impl In
                                 String::new()
                             });
                             data.set(cap);
+                            loaded.set(true);
+                        } else {
+                            error.set("当前模型配置不存在，请刷新渠道后重试。".into());
                         }
                     }
                     Err(e) => {
@@ -74,6 +79,7 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String) -> impl In
         if busy.get_untracked() {
             return;
         }
+        if !loaded.get_untracked() {error.set("请等待模型配置读取成功后再保存。".into());return;}
         let levels = if manual_on.get_untracked() {
             let levels = confirmed_levels(&manual.get_untracked());
             if levels.is_empty() {
@@ -98,7 +104,7 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String) -> impl In
             busy.set(false);
         });
     };
-    let refresh=move |_|{let Some(id)=channel else{return;};if busy.get_untracked(){return;}busy.set(true);error.set(String::new());leptos::task::spawn_local(async move{match api::refresh_channel_metadata(id).await{Ok(r) if r.ok=>{message.set("已刷新真实目录元数据，未发送推理请求。".into());load.run(());},Ok(r)=>error.set(r.note.unwrap_or_else(||"元数据获取失败，现有配置保留。".into())),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});};
+    let refresh=move |_|{let Some(id)=channel else{return;};if busy.get_untracked(){return;}busy.set(true);error.set(String::new());leptos::task::spawn_local(async move{match api::refresh_channel_metadata(id).await{Ok(r) if r.ok=>{message.set("已从服务商更新模型信息；本次未调用模型。".into());load.run(());},Ok(r)=>error.set(r.note.unwrap_or_else(||"元数据获取失败，现有配置保留。".into())),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});};
     let field = move |name: &str| {
         format!(
             "reasoning-{}-{}-{}",
@@ -107,10 +113,10 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String) -> impl In
             name
         )
     };
-    view! {<section class="reasoning-config"><h3>{channel.map(|id|format!("连接 #{id} 的原生推理参数")).unwrap_or_else(||"新模型推理参数（请先保存）".into())}</h3><p>{move||capability_label(&data.get())}</p><p class="muted small">{move||data.get().reason}</p><p class="muted small">{move||data.get().default_effort.map(|v|format!("当前默认：{v}（{}）",if data.get().configured_default{"本模型配置"}else{"服务商声明"})).unwrap_or_else(||if data.get().configured_default{"使用服务商默认（不注入档位）".into()}else{"目录未声明默认档位".into()})}</p><p class="muted small">"来自上游目录，未做推理实测；跨协议支持以接入协议为准。目录识别不发付费推理，没有声明具体档位时保持未知；推理档位不另建模型名。客户端 reasoning.effort / reasoning_effort 与 service_tier 显式值优先。"</p>
-    <button type="button" class="ghost" disabled=move||busy.get()||channel.is_none() on:click=refresh>"刷新能力元数据"</button><form class="account-form" on:submit=save><div class="account-field"><label for=field("default")>"默认推理档位"</label><select id=field("default") prop:value=default disabled=move||busy.get()||channel.is_none() on:change=move|e|default.set(event_target_value(&e))><option value="">"使用服务商默认"</option>{move||data.get().levels.into_iter().map(|level|view!{<option value=level.clone()>{level.clone()}</option>}).collect_view()}</select></div>
-    <label class="pick"><input type="checkbox" prop:checked=manual_on on:change=move|e|manual_on.set(event_target_checked(&e))/>{"人工确认支持档位"}</label><Show when=move||manual_on.get()><div class="account-field"><label for=field("manual")>"已明确确认的档位（逗号分隔）"</label><input id=field("manual") prop:value=manual on:input=move|e|manual.set(event_target_value(&e)) aria-describedby=field("help")/><p id=field("help") class="account-help">"仅填写你已核实支持的值，来源会标为人工确认。先保存档位，再选择默认；关闭后恢复目录判断。"</p></div></Show>
-    <p class="account-error" role="alert">{move||error.get()}</p><p class="account-success" role="status">{move||message.get()}</p><button type="submit" class="ghost" disabled=move||busy.get()||channel.is_none()>{move||if busy.get(){"正在保存…"}else{"保存推理参数"}}</button></form></section>}
+    view! {<section class="reasoning-config"><h3>{label.unwrap_or_else(||if channel.is_some(){"推理设置".into()}else{"推理设置（请先保存模型）".into()})}</h3><p>{move||capability_label(&data.get())}</p><p class="muted small">{move||data.get().default_effort.map(|v|format!("当前默认档位：{v}（{}）",if data.get().configured_default{"已配置"}else{"服务商默认"})).unwrap_or_else(||"当前跟随服务商默认设置。".into())}</p><p class="account-help">"先更新模型信息，查看服务商公布的档位，再选择默认值。未公布档位时保持默认；客户端指定的推理档位优先生效。"</p><details class="reasoning-diagnostics"><summary>"识别依据与高级说明"</summary><p class="muted small">{move||data.get().reason}</p><p class="muted small">"更新模型信息不会发送推理请求，识别结果不代表实际调用已验证。具体能力以当前接入协议为准。推理档位使用模型原生参数，不另建模型名；客户端显式指定的 reasoning.effort、reasoning_effort 和 service_tier 优先。"</p></details>
+    <button type="button" class="ghost" disabled=move||busy.get()||channel.is_none() on:click=refresh>"更新模型信息"</button><form class="account-form" on:submit=save><div class="account-field reasoning-default-field"><label for=field("default")>"默认推理档位"</label><select id=field("default") prop:value=default disabled=move||busy.get()||channel.is_none()||!loaded.get() on:change=move|e|default.set(event_target_value(&e))><option value="">"使用服务商默认"</option>{move||data.get().levels.into_iter().map(|level|view!{<option value=level.clone()>{level.clone()}</option>}).collect_view()}</select></div>
+    <label class="pick"><input type="checkbox" disabled=move||busy.get()||!loaded.get() prop:checked=manual_on on:change=move|e|manual_on.set(event_target_checked(&e))/>{"人工确认支持档位"}</label><Show when=move||manual_on.get()><div class="account-field"><label for=field("manual")>"已明确确认的档位（逗号分隔）"</label><input id=field("manual") prop:value=manual on:input=move|e|manual.set(event_target_value(&e)) aria-describedby=field("help")/><p id=field("help") class="account-help">"仅填写你已核实支持的值，来源会标为人工确认。先保存档位，再选择默认；关闭后恢复目录判断。"</p></div></Show>
+    <p class="account-error" role="alert">{move||error.get()}</p><p class="account-success" role="status">{move||message.get()}</p><button type="submit" class="ghost" disabled=move||busy.get()||channel.is_none()||!loaded.get()>{move||if busy.get(){"正在保存…"}else{"保存推理参数"}}</button></form></section>}
 }
 #[cfg(test)]
 mod tests {
