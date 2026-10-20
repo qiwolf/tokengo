@@ -3130,8 +3130,29 @@ async fn high_concurrency_never_turns_a_good_request_into_a_500() {
         .collect();
     assert!(bad.is_empty(), "并发下不许出现非 200，实际 {} 发：{:?}", bad.len(), bad.first());
 
-    // 账要记全：没有哪一发停在半截状态（这才是「记账绝不失败请求」的另一半）
-    f.state.drain_writes();
+    // One drain is not a completion barrier: the financial outbox retry worker
+    // may hold the DB, and drain_writes deliberately requeues the remaining batch.
+    // Prove this using a real held DB mutex rather than relying on load timing.
+    let queued_after_http = f.state.pending_writes();
+    assert!(queued_after_http > 0, "outbound progress is queued for these requests");
+    {
+        let held = f.state.conn();
+        assert_eq!(f.state.drain_writes(), 0, "a busy DB must defer the batch");
+        let deferred = f.state.pending_writes();
+        // Repeated routing-state jobs may coalesce; request/attempt completeness
+        // is verified below, so do not confuse that intentional coalescing with loss.
+        assert!(deferred > 0 && deferred <= queued_after_http, "a busy DB must retain unfinished jobs");
+        drop(held);
+    }
+    // 账要记全：等待队列与正在交付的批次均归零，最终完整性条件不放宽。
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while f.state.pending_writes() > 0 {
+            f.state.drain_writes();
+            if f.state.pending_writes() > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        }
+    }).await.expect("all deferred diagnostic writes must drain within ten seconds");
     let n_ok: i64 = f
         .state
         .conn()
@@ -3142,6 +3163,11 @@ async fn high_concurrency_never_turns_a_good_request_into_a_500() {
         )
         .unwrap();
     assert_eq!(n_ok as usize, N, "每一发都要记成成功");
+    let conn = f.state.conn();
+    let (total, running):(i64,i64)=conn.query_row("SELECT COUNT(*),SUM(status='running') FROM requests",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+    let (attempts, successful_attempts):(i64,i64)=conn.query_row("SELECT COUNT(*),SUM(outcome='success') FROM attempts",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+    assert_eq!((total,running,attempts,successful_attempts),(N as i64,0,N as i64,N as i64),"all requests and their attempts must be terminal and complete");
+    eprintln!("HTTP {N}/{N} successful; deferred at HTTP end={queued_after_http}; final pending=0; requests={total}, running={running}, attempts={attempts}, successful_attempts={successful_attempts}");
 }
 
 // ───────────────────────── 保留名 auto ─────────────────────────
@@ -4198,3 +4224,6 @@ async fn nonstream_json_can_complete_after_thirty_seconds() {
     assert_eq!(f.request_rows()[0].0,"ok");
     assert!(f.state.conn().query_row("select duration_ms from attempts limit 1",[],|r|r.get::<_,i64>(0)).unwrap()>=32000);
 }
+
+#[path = "support/pool_virtual_cases.rs"]
+mod pool_virtual_cases;

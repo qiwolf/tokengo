@@ -4,6 +4,7 @@
 //! 将来搬数据和对拍都方便。
 
 pub mod provider_channels;
+pub mod provider_pool;
 pub mod accounts;
 pub mod identity;
 pub mod billing;
@@ -161,6 +162,12 @@ mod tests {
             "panel_accounts",
             "provider_channels",
             "provider_connections",
+            "provider_credentials",
+            "source_credentials",
+            "credential_affinity",
+            "user_virtual_models",
+            "user_virtual_targets",
+            "user_virtual_windows",
             "channel_reasoning_catalog",
             "channel_reasoning_settings",
             "account_sessions",
@@ -382,3 +389,5 @@ mod tests {
         );
     }
 }
+
+pub mod user_virtual_routes;

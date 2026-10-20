@@ -134,21 +134,24 @@ struct Candidate {
     channel: Channel,
     revision: i64,
     protocols: crate::protocol_config::Capabilities,
-    binding_generation:i64,
+    binding_generation: i64,
+    credential: Option<crate::db::provider_pool::CredentialRef>,
+    target: Option<crate::db::user_virtual_routes::ResolvedTarget>,
 }
 
 /// 这次请求要试的候选链（已按顺序排好）+ 各自的密钥。
 struct Plan {
     /// 这一链挂在哪个名字下（普通模型名 = 归一后的那个名字；auto 时是保留名）。
     route: String,
+    virtual_route: Option<crate::db::user_virtual_routes::ResolvedVirtualPlan>,
     /// 是不是保留名 `auto`：auto 现场挑、不写路由状态、不做回切。
     auto: bool,
     entries: Vec<Candidate>,
     secrets: HashMap<i64, String>,
     /// 每条渠道「同时最多几发」（渠道 id → 上限；0 或缺席 = 不限）。
     caps: HashMap<i64, u32>,
-    explored:Option<String>,
-    load_ticket:Option<(String,crate::state::ModelLoadTicket)>,
+    explored: Option<String>,
+    load_ticket: Option<(String, crate::state::ModelLoadTicket)>,
 }
 
 impl Plan {
@@ -166,6 +169,243 @@ impl Plan {
     }
 }
 
+type GatewayPermits = (
+    Option<crate::state::ChannelPermit>,
+    Option<crate::state::ChannelPermit>,
+);
+type PoolGroup = (Option<usize>, i64, String);
+#[derive(Default)]
+struct PoolControl {
+    selected: HashMap<PoolGroup, i64>,
+    seen: std::collections::HashSet<(Option<usize>, i64, String)>,
+    tokens: HashMap<i64, crate::db::provider_pool::AffinityToken>,
+}
+fn pool_group(
+    target: Option<&crate::db::user_virtual_routes::ResolvedTarget>,
+    credential: &crate::db::provider_pool::CredentialRef,
+    name: &str,
+) -> PoolGroup {
+    (
+        target.map(|target| target.position),
+        credential.provider_id,
+        name.to_owned(),
+    )
+}
+fn virtual_route_error(error: crate::db::user_virtual_routes::VirtualError) -> ApiError {
+    let status = match error.code {
+        "route_time_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+        "virtual_route_changed" => StatusCode::CONFLICT,
+        _ => StatusCode::FORBIDDEN,
+    };
+    ApiError::new(status, error.code, error.message)
+}
+fn order_pool_entries(
+    state: &SharedState,
+    plan: &mut Plan,
+    auth: &crate::db::identity::AuthContext,
+    endpoint: EndpointKind,
+) -> Result<(), ApiError> {
+    let c = state.conn();
+    let mut eligible = Vec::new();
+    for entry in std::mem::take(&mut plan.entries) {
+        let usable = entry.credential.is_none()
+            || (!crate::db::faults::blocked(&c, entry.channel.id.0, &entry.name, now_ms())?
+                && crate::db::policy::peek(
+                    &c,
+                    entry.channel.id.0,
+                    &entry.name,
+                    entry.channel.upstream_model(&entry.name),
+                    now_ms(),
+                )?
+                .is_none());
+        if usable {
+            eligible.push(entry);
+        }
+    }
+    plan.entries = eligible;
+    let mut groups: HashMap<PoolGroup, Vec<usize>> = HashMap::new();
+    for (index, entry) in plan.entries.iter().enumerate() {
+        if let Some(credential) = &entry.credential {
+            // Protocol-ineligible sources cannot establish affinity for an unusable key.
+            if endpoint
+                .protocol()
+                .is_some_and(|protocol| entry.protocols.select(protocol).is_none())
+            {
+                continue;
+            }
+            groups
+                .entry(pool_group(entry.target.as_ref(), credential, &entry.name))
+                .or_default()
+                .push(index);
+        }
+    }
+    let mut entries: Vec<Option<Candidate>> = std::mem::take(&mut plan.entries)
+        .into_iter()
+        .map(Some)
+        .collect();
+    for ((_, provider, _), indices) in groups {
+        let ids: Vec<i64> = indices
+            .iter()
+            .map(|index| entries[*index].as_ref().unwrap().channel.id.0)
+            .collect();
+        let loads: HashMap<i64, usize> = indices
+            .iter()
+            .filter_map(|index| entries[*index].as_ref().unwrap().credential.as_ref())
+            .map(|credential| (credential.id, state.credential_load(credential.id)))
+            .collect();
+        let ordered = crate::db::provider_pool::order_for_user_with_load(
+            &c,
+            auth.user_id,
+            provider,
+            &ids,
+            &loads,
+        )?;
+        let mut available: HashMap<i64, Candidate> = indices
+            .iter()
+            .map(|index| {
+                let entry = entries[*index].take().unwrap();
+                (entry.channel.id.0, entry)
+            })
+            .collect();
+        for (index, id) in indices.into_iter().zip(ordered) {
+            entries[index] = available.remove(&id);
+        }
+        // Fail closed if the pool omitted disabled/stale sources rather than reinserting them.
+    }
+    plan.entries = entries.into_iter().flatten().collect();
+    Ok(())
+}
+fn defer_explicit_retry_after(
+    state: &SharedState,
+    plan: &Plan,
+    index: usize,
+    error: &UpstreamError,
+) -> Result<(), ApiError> {
+    let Some(delay) = error
+        .retry_after
+        .as_ref()
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::upstream::retry_after_ms)
+        .filter(|delay| *delay > 0)
+    else {
+        return Ok(());
+    };
+    let entry = &plan.entries[index];
+    let until = now_ms().saturating_add(delay.min(i64::MAX as u64) as i64);
+    let c = state.conn();
+    for source in plan.entries.iter().filter(|source| {
+        source.name == entry.name
+            && match (&source.credential, &entry.credential) {
+                (Some(a), Some(b)) => a.id == b.id,
+                _ => source.channel.id == entry.channel.id,
+            }
+    }) {
+        let generation: i64 = c
+            .query_row(
+                "SELECT binding_generation FROM channels WHERE id=?1",
+                [source.channel.id.0],
+                |row| row.get(0),
+            )
+            .map_err(crate::db::DbError::from)?;
+        if generation != source.binding_generation {
+            continue;
+        }
+        c.execute("INSERT OR IGNORE INTO model_cooldowns(channel_id,model_name,upstream_model) VALUES(?1,?2,?3)",rusqlite::params![source.channel.id.0,tokengo_shared::normalize_model_name(&source.name),source.channel.upstream_model(&source.name)]).map_err(crate::db::DbError::from)?;
+        c.execute("UPDATE model_cooldowns SET until_ms=MAX(until_ms,?4),reason='HTTP 429 Retry-After',lease_until=0 WHERE channel_id=?1 AND model_name=?2 AND upstream_model=?3",rusqlite::params![source.channel.id.0,tokengo_shared::normalize_model_name(&source.name),source.channel.upstream_model(&source.name),until]).map_err(crate::db::DbError::from)?;
+    }
+    Ok(())
+}
+fn advance_explicit_route(
+    state: &SharedState,
+    plan: &Plan,
+    index: usize,
+    status: u16,
+    auth: Option<&crate::db::identity::AuthContext>,
+    pinned: bool,
+    control: &mut PoolControl,
+    active_target: &mut Option<usize>,
+) -> Result<bool, ApiError> {
+    if pinned {
+        return Ok(false);
+    }
+    let entry = &plan.entries[index];
+    if let (Some(credential), Some(auth)) = (&entry.credential, auth) {
+        let current =
+            crate::db::provider_pool::source_credential(&state.conn(), entry.channel.id.0)?;
+        if current.as_ref().is_none_or(|current| {
+            !current.enabled
+                || current.id != credential.id
+                || current.revision != credential.revision
+                || current.provider_version != credential.provider_version
+        }) {
+            return Err(ApiError::new(StatusCode::CONFLICT,"credential_changed","Credential changed while the previous attempt was running; retry with current configuration"));
+        }
+        let allowed = match status {
+            429 => credential.switch_on_429,
+            400 => credential.switch_on_400,
+            _ => false,
+        };
+        if allowed {
+            let group = pool_group(entry.target.as_ref(), credential, &entry.name);
+            if let Some(next) = plan.entries.iter().skip(index + 1).find(|next| {
+                next.credential.as_ref().is_some_and(|next_credential| {
+                    pool_group(next.target.as_ref(), next_credential, &next.name) == group
+                        && next_credential.id != credential.id
+                        && !control.seen.contains(&(
+                            next.target.as_ref().map(|target| target.position),
+                            next_credential.id,
+                            next.name.clone(),
+                        ))
+                })
+            }) {
+                let next_credential = next.credential.as_ref().unwrap();
+                if let Some(token) = control.tokens.get(&credential.provider_id) {
+                    if token.credential_id == credential.id
+                        && !crate::db::provider_pool::switch_affinity(
+                            &state.conn(),
+                            auth.user_id,
+                            credential.provider_id,
+                            token,
+                            next_credential.id,
+                        )?
+                    {
+                        return Err(ApiError::new(StatusCode::CONFLICT,"affinity_changed","Concurrent request already changed this user's upstream key; retry with current affinity"));
+                    }
+                    if let Some(token) = crate::db::provider_pool::affinity_token(
+                        &state.conn(),
+                        auth.user_id,
+                        credential.provider_id,
+                    )? {
+                        control.tokens.insert(credential.provider_id, token);
+                    }
+                }
+                control.selected.insert(group, next_credential.id);
+                return Ok(true);
+            }
+        }
+    }
+    if let Some(target) = &entry.target {
+        let allowed = match status {
+            429 => target.switch_on_429,
+            400 => target.switch_on_400,
+            _ => false,
+        };
+        if allowed {
+            if let Some(next) = plan
+                .entries
+                .iter()
+                .skip(index + 1)
+                .filter_map(|next| next.target.as_ref())
+                .find(|next| next.position > target.position)
+            {
+                *active_target = Some(next.position);
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// 把一条候选挂进链子（顺手把它的密钥与并发上限捞出来）。
 fn push_entry(
     state: &SharedState,
@@ -175,16 +415,47 @@ fn push_entry(
     mut channel: Channel,
 ) -> Result<(), ApiError> {
     channel.headers = channels::headers(conn, &state.secrets, channel.id)?;
-    if let Some(s) = channels::secret(conn, &state.secrets, channel.id)? {
+    if let Some(s) =
+        crate::db::provider_pool::load_source_secret(conn, &state.secrets, channel.id.0)?
+    {
         plan.secrets.insert(channel.id.0, s);
     }
     if channel.max_concurrent > 0 {
         plan.caps.insert(channel.id.0, channel.max_concurrent);
     }
-    let revision=crate::db::faults::revision(conn,channel.id.0)?;
-    let protocols=crate::protocol_config::load(conn,channel.id.0)?;
-    let binding_generation=conn.query_row("SELECT binding_generation FROM channels WHERE id=?1",[channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
-    plan.entries.push(Candidate { name, channel, revision, protocols,binding_generation });
+    let revision = crate::db::faults::revision(conn, channel.id.0)?;
+    let protocols = crate::protocol_config::load(conn, channel.id.0)?;
+    let binding_generation = conn
+        .query_row(
+            "SELECT binding_generation FROM channels WHERE id=?1",
+            [channel.id.0],
+            |r| r.get(0),
+        )
+        .map_err(crate::db::DbError::from)?;
+    let credential = crate::db::provider_pool::source_credential(conn, channel.id.0)?;
+    if credential
+        .as_ref()
+        .is_some_and(|credential| !credential.enabled)
+        || (credential.is_none()
+            && conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM source_credentials WHERE source_id=?1)",
+                    [channel.id.0],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(crate::db::DbError::from)?)
+    {
+        return Ok(());
+    }
+    plan.entries.push(Candidate {
+        name,
+        channel,
+        revision,
+        protocols,
+        binding_generation,
+        credential,
+        target: None,
+    });
     Ok(())
 }
 
@@ -192,10 +463,37 @@ fn push_entry(
 pub fn permitted_candidate(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str,channel:i64)->Result<bool,ApiError> {
     permitted_candidate_for(c,auth,name,channel,EndpointKind::Chat)
 }
-fn permitted_candidate_for(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str,channel:i64,endpoint:EndpointKind)->Result<bool,ApiError> {
-    if !auth.permits_model(name) {return Ok(false);}
-    let paid=if endpoint.tool_kind().is_some() {crate::db::billing::request_price(c,name,channel)?.is_none_or(|p|p.micro_per_call>0)}else{crate::db::billing::price(c,name,channel)?.is_none_or(|p|p.input_micro_per_million>0 || p.output_micro_per_million>0)};
-    Ok(auth.permits_channel(channel,paid))
+fn permitted_candidate_for(
+    c: &rusqlite::Connection,
+    auth: &crate::db::identity::AuthContext,
+    name: &str,
+    channel: i64,
+    endpoint: EndpointKind,
+) -> Result<bool, ApiError> {
+    let credential = crate::db::provider_pool::source_credential(c, channel)?;
+    if credential
+        .as_ref()
+        .is_some_and(|credential| !credential.enabled)
+        || (credential.is_none()
+            && c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_credentials WHERE source_id=?1)",
+                [channel],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(crate::db::DbError::from)?)
+    {
+        return Ok(false);
+    }
+    if !auth.permits_model(name) {
+        return Ok(false);
+    }
+    let paid = if endpoint.tool_kind().is_some() {
+        crate::db::billing::request_price(c, name, channel)?.is_none_or(|p| p.micro_per_call > 0)
+    } else {
+        crate::db::billing::price(c, name, channel)?
+            .is_none_or(|p| p.input_micro_per_million > 0 || p.output_micro_per_million > 0)
+    };
+    Ok(auth.permits_channel(channel, paid))
 }
 pub fn permitted_model(c:&rusqlite::Connection,auth:&crate::db::identity::AuthContext,name:&str)->Result<bool,ApiError> {
     if !auth.permits_model(name) {return Ok(false);}
@@ -300,8 +598,13 @@ fn validate_input_audio(v: &Value) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn billing_bound(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>)->Result<(i64,i64),ApiError> {
-    billing_bound_with_context(body,endpoint,price,None)
+#[cfg(test)]
+fn billing_bound(
+    body: &mut Value,
+    endpoint: EndpointKind,
+    price: Option<&crate::db::billing::Price>,
+) -> Result<(i64, i64), ApiError> {
+    billing_bound_with_context(body, endpoint, price, None)
 }
 
 fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
@@ -409,10 +712,76 @@ fn billing_error(e:crate::db::DbError)->ApiError {
 /// - **普通模型名**：勾了它的渠道，按渠道顺序（面板「渠道」页从上到下 = 先试）。
 /// - **保留名 `auto`**：现场挑一串最优的模型名（见 `db::model_routes::auto_candidates`），
 ///   逐个摊成链 —— 每条候选都带着「这一发要发给上游的名字」。
-fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vision:bool, auth: Option<&crate::db::identity::AuthContext>) -> Result<Plan, ApiError> {
+fn load_plan(
+    state: &SharedState,
+    model: &str,
+    endpoint: EndpointKind,
+    wants_vision: bool,
+    auth: Option<&crate::db::identity::AuthContext>,
+) -> Result<Plan, ApiError> {
     let conn = state.conn();
     if model_routes::is_auto(model) {
         return load_auto_plan(state, &conn, model, endpoint, wants_vision, auth);
+    }
+    if let Some(auth) = auth {
+        if let Some(resolved) =
+            crate::db::user_virtual_routes::resolve(&conn, auth.user_id, model, now_ms())
+                .map_err(virtual_route_error)?
+        {
+            if endpoint == EndpointKind::Embeddings && resolved.targets.len() > 1 {
+                return Err(ApiError::new(StatusCode::BAD_REQUEST,"embedding_fallback_unverified","Embedding virtual routes require one selected target until vector dimensions and output compatibility are configured"));
+            }
+            let mut plan = Plan {
+                route: resolved.name.clone(),
+                virtual_route: Some(resolved.clone()),
+                auto: false,
+                entries: Vec::new(),
+                secrets: HashMap::new(),
+                caps: HashMap::new(),
+                explored: None,
+                load_ticket: None,
+            };
+            for target in &resolved.targets {
+                let Some(route) = model_routes::routes_for(&conn, &target.logical_model)? else {
+                    continue;
+                };
+                if !route.enabled {
+                    continue;
+                }
+                let kind_ok = route.kind == endpoint.as_model_kind()
+                    || route.kind == tokengo_shared::ModelKind::Unknown;
+                if !kind_ok {
+                    continue;
+                }
+                for channel in model_routes::channels_for(&conn, &route.name)? {
+                    let provider =
+                        crate::db::provider_pool::source_credential(&conn, channel.id.0)?;
+                    if !channel.routable()
+                        || provider.as_ref().is_none_or(|credential| {
+                            credential.provider_id != target.provider_id || !credential.enabled
+                        })
+                    {
+                        continue;
+                    }
+                    if !permitted_candidate_for(&conn, auth, &route.name, channel.id.0, endpoint)? {
+                        continue;
+                    }
+                    let before = plan.entries.len();
+                    push_entry(state, &conn, &mut plan, route.name.clone(), channel)?;
+                    if plan.entries.len() > before {
+                        plan.entries.last_mut().unwrap().target = Some(target.clone());
+                    }
+                }
+            }
+            if plan.entries.is_empty() {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "source_not_allowed",
+                    "No authorized and enabled virtual-route targets",
+                ));
+            }
+            return Ok(plan);
+        }
     }
     let Some(route) = model_routes::routes_for(&conn, model)? else {
         // 报错别教训人，说清「去哪儿勾上」就够了。
@@ -420,15 +789,22 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vis
             "模型「{model}」这里没有：去面板「渠道」页把这个模型名勾上 —— 勾上才认（勾选就是白名单）"
         )));
     };
-    if !route.enabled {return Err(ApiError::new(StatusCode::FORBIDDEN,"model_disabled",format!("模型「{model}」已停用")));}
+    if !route.enabled {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "model_disabled",
+            format!("模型「{model}」已停用"),
+        ));
+    }
     let mut plan = Plan {
         route: route.name.clone(),
+        virtual_route: None,
         auto: false,
         entries: Vec::new(),
         secrets: HashMap::new(),
         caps: HashMap::new(),
-        explored:None,
-        load_ticket:None,
+        explored: None,
+        load_ticket: None,
     };
     for channel in model_routes::channels_for(&conn, &route.name)? {
         if !channel.routable() {
@@ -441,7 +817,9 @@ fn load_plan(state: &SharedState, model: &str, endpoint: EndpointKind, wants_vis
         let mut names: Vec<String> = Vec::new();
         for id in &route.declared_by {
             if let Some(auth) = auth {
-                if !permitted_candidate_for(&conn, auth, &route.name, id.0,endpoint)? { continue; }
+                if !permitted_candidate_for(&conn, auth, &route.name, id.0, endpoint)? {
+                    continue;
+                }
             }
             if let Some(l) = channels::get(&conn, *id)? {
                 names.push(l.name);
@@ -468,17 +846,18 @@ fn load_auto_plan(
     conn: &rusqlite::Connection,
     model: &str,
     endpoint: EndpointKind,
-    wants_vision:bool,
+    wants_vision: bool,
     auth: Option<&crate::db::identity::AuthContext>,
 ) -> Result<Plan, ApiError> {
     let mut plan = Plan {
         route: model_routes::AUTO_NAME.to_string(),
+        virtual_route: None,
         auto: true,
         entries: Vec::new(),
         secrets: HashMap::new(),
         caps: HashMap::new(),
-        explored:None,
-        load_ticket:None,
+        explored: None,
+        load_ticket: None,
     };
     let mut candidates =
         model_routes::auto_candidates(conn, endpoint.as_model_kind(), wants_vision, now_ms())?;
@@ -487,14 +866,30 @@ fn load_auto_plan(
         candidates.retain(|name| permitted_model(&conn, auth, name).unwrap_or(false));
     }
     if had_candidates && candidates.is_empty() && auth.is_some() {
-        return Err(ApiError::new(StatusCode::FORBIDDEN,"model_not_allowed","No authorized auto candidates"));
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "model_not_allowed",
+            "No authorized auto candidates",
+        ));
     }
-    if candidates.is_empty() && wants_vision && !model_routes::auto_candidates(conn,endpoint.as_model_kind(),false,now_ms())?.is_empty() {
-        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY,"no_vision_model","这条请求带了图片，但没有符合视觉能力的候选模型"));
+    if candidates.is_empty()
+        && wants_vision
+        && !model_routes::auto_candidates(conn, endpoint.as_model_kind(), false, now_ms())?
+            .is_empty()
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no_vision_model",
+            "这条请求带了图片，但没有符合视觉能力的候选模型",
+        ));
     }
     if candidates.is_empty() {
         if !crate::db::faults::rows(conn)?.is_empty() {
-            return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling","暂无可用候选，存在账号或权限暂停，请在总览“调用异常”查看"));
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "models_cooling",
+                "暂无可用候选，存在账号或权限暂停，请在总览“调用异常”查看",
+            ));
         }
         let msg = if model_routes::auto_available(conn)? {
             format!(
@@ -511,14 +906,33 @@ fn load_auto_plan(
         };
         return Err(ApiError::not_found(msg));
     }
-    let sequence=state.auto_sequence.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-    let config=crate::db::policy::get(conn)?;
+    let sequence = state
+        .auto_sequence
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let config = crate::db::policy::get(conn)?;
     use rand::Rng;
-    let draw=rand::thread_rng().gen_range(0..10000u64);
+    let draw = rand::thread_rng().gen_range(0..10000u64);
     // Exploration must never select a model whose every matching channel is cooling.
-    candidates.retain(|name|model_routes::channels_for(conn,name).unwrap_or_default().iter().any(|c|crate::db::policy::peek(conn,c.id.0,name,c.upstream_model(name),now_ms()).ok().flatten().is_none()));
-    plan.explored=crate::db::policy::rank(conn,&mut candidates,&config,sequence,draw)?;
-    if config.strategy=="idle" {if let Some(t)=state.model_loads.select(&mut candidates,plan.explored.is_some()){plan.load_ticket=Some((candidates[0].clone(),t));}}
+    candidates.retain(|name| {
+        model_routes::channels_for(conn, name)
+            .unwrap_or_default()
+            .iter()
+            .any(|c| {
+                crate::db::policy::peek(conn, c.id.0, name, c.upstream_model(name), now_ms())
+                    .ok()
+                    .flatten()
+                    .is_none()
+            })
+    });
+    plan.explored = crate::db::policy::rank(conn, &mut candidates, &config, sequence, draw)?;
+    if config.strategy == "idle" {
+        if let Some(t) = state
+            .model_loads
+            .select(&mut candidates, plan.explored.is_some())
+        {
+            plan.load_ticket = Some((candidates[0].clone(), t));
+        }
+    }
     for name in candidates {
         for channel in model_routes::channels_for(conn, &name)? {
             if !channel.routable() || (wants_vision && !channel.vision) {
@@ -528,8 +942,22 @@ fn load_auto_plan(
         }
     }
     if plan.entries.is_empty() {
-        let until=model_routes::list(conn)?.iter().flat_map(|r|crate::db::policy::rows(conn,&r.name).unwrap_or_default()).map(|r|r.until_ms.max(r.lease_until)).filter(|t|*t>now_ms()).min();
-        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",format!("暂无可用模型，候选冷却或账号暂停；最早可重试时间：{}",until.map(|t|t.to_string()).unwrap_or_else(||"稍后".into()))));
+        let until = model_routes::list(conn)?
+            .iter()
+            .flat_map(|r| crate::db::policy::rows(conn, &r.name).unwrap_or_default())
+            .map(|r| r.until_ms.max(r.lease_until))
+            .filter(|t| *t > now_ms())
+            .min();
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "models_cooling",
+            format!(
+                "暂无可用模型，候选冷却或账号暂停；最早可重试时间：{}",
+                until
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| "稍后".into())
+            ),
+        ));
     }
     Ok(plan)
 }
@@ -537,9 +965,13 @@ fn load_auto_plan(
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
 pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
-    if let Some(kind)=req.endpoint.tool_kind() {
-        if req.stream || model_routes::is_auto(&req.model) {return Err(ApiError::bad_request("Search and Fetch require a non-streaming explicit route"));}
-        crate::search_tools::normalize_request(kind,&req.body).map_err(ApiError::bad_request)?;
+    if let Some(kind) = req.endpoint.tool_kind() {
+        if req.stream || model_routes::is_auto(&req.model) {
+            return Err(ApiError::bad_request(
+                "Search and Fetch require a non-streaming explicit route",
+            ));
+        }
+        crate::search_tools::normalize_request(kind, &req.body).map_err(ApiError::bad_request)?;
     }
     // 路由不出去（模型名没配置 / 组停用了 / 组里没有可用渠道）时，**也要留一条账**。
     //
@@ -547,46 +979,64 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     // 以前这三类 404 在 `load_plan` 里就直接 return 了，一条账都不记 —— 用户看到的是
     // 「客户端报 404、面板上干干净净」，只能靠猜。这与带图被拦（422）的处理也不一致：
     // 那条是记的。**记账绝不能反过来影响请求结果**：这里只记，记账本身错了就吞掉。
-    if let Some(auth) = &req.auth {
-        if !auth.permits_model(&req.model) {
-            record_routing_refusal(&state, &req, started_ms, 403, "Model not permitted");
-            return Err(ApiError::new(StatusCode::FORBIDDEN,"model_not_allowed","Model not permitted"));
-        }
-    }
     if req.endpoint.is_generation() {
-        validate_native_cost_and_state(req.endpoint,&req.body)?;
+        validate_native_cost_and_state(req.endpoint, &req.body)?;
     }
-    if req.endpoint==EndpointKind::Responses && ["previous_response_id","conversation"].iter().any(|f|req.body.get(*f).is_some_and(|v|!v.is_null())) {
+    if req.endpoint == EndpointKind::Responses
+        && ["previous_response_id", "conversation"]
+            .iter()
+            .any(|f| req.body.get(*f).is_some_and(|v| !v.is_null()))
+    {
         return Err(ApiError::bad_request("Server-side continuation is not enabled; supply the complete input history with store=false"));
     }
-    let mut plan_all = match load_plan(&state, &req.model, req.endpoint,req.endpoint.has_image(&req.body), req.auth.as_ref()) {
+    let mut plan_all = match load_plan(
+        &state,
+        &req.model,
+        req.endpoint,
+        req.endpoint.has_image(&req.body),
+        req.auth.as_ref(),
+    ) {
         Ok(p) => p,
         Err(e) => {
-            if e.status.is_client_error() || e.status==StatusCode::SERVICE_UNAVAILABLE {
+            if e.status.is_client_error() || e.status == StatusCode::SERVICE_UNAVAILABLE {
                 record_routing_refusal(&state, &req, started_ms, e.status.as_u16(), &e.message);
             }
             return Err(e);
         }
     };
     if let Some(auth) = &req.auth {
+        if plan_all.virtual_route.is_none() && !auth.permits_model(&req.model) {
+            record_routing_refusal(&state, &req, started_ms, 403, "Model not permitted");
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "model_not_allowed",
+                "Model not permitted",
+            ));
+        }
         let conn = state.conn();
         let mut authorized = Vec::new();
         for entry in plan_all.entries.drain(..) {
-            if permitted_candidate_for(&conn, auth, &entry.name, entry.channel.id.0,req.endpoint)? { authorized.push(entry); }
+            if permitted_candidate_for(&conn, auth, &entry.name, entry.channel.id.0, req.endpoint)?
+            {
+                authorized.push(entry);
+            }
         }
         plan_all.entries = authorized;
         if plan_all.entries.is_empty() {
             drop(conn);
             record_routing_refusal(&state, &req, started_ms, 403, "No authorized sources");
-            return Err(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","No authorized sources"));
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "source_not_allowed",
+                "No authorized sources",
+            ));
         }
     }
     // 这一链的全量候选（状态机与「记账记的是谁」都看这一份）
     let all_ids = plan_all.ids();
 
     // 这条请求是不是在让模型看图？（只有对话端点会有图）
-    let wants_vision =
-        req.endpoint.has_image(&req.body);
+    let wants_vision = req.endpoint.has_image(&req.body);
 
     // 带图就只走「标了能看图」的候选。**没标 = 不敢保证**：把图发给一条纯文本
     // 上游，它要么回一个含糊的 400、要么干脆把图忽略掉装没事，两种都让用户
@@ -630,8 +1080,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             )?
         };
         let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
-    record_client_app(&state,request_id,req.user_agent.as_deref());
-    guard.identify(req.auth.as_ref())?;
+        record_client_app(&state, request_id, req.user_agent.as_deref());
+        guard.identify(req.auth.as_ref())?;
         guard.finish(
             &state,
             Status::ClientError,
@@ -647,16 +1097,21 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         return Ok(no_vision_model_response(msg));
     }
 
-
+    if let Some(auth) = &req.auth {
+        order_pool_entries(&state, &mut plan, auth, req.endpoint)?;
+    }
+    let pooled = req.auth.is_some() && plan.entries.iter().any(|entry| entry.credential.is_some());
     // 顺序：
     // · 普通模型名 → 问状态机（首选 / 回切 / 上一条走的谁），带图时再按能看图筛一遍；
     // · `auto` → 现场算出来的那条链就是顺序（不读也不写状态机）。
-    let order: Vec<usize> = if plan.auto {
+    let mut order: Vec<usize> = if plan.auto || plan.virtual_route.is_some() {
         (0..plan.entries.len())
             .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
             .collect()
     } else {
-        let mut ord = state.routing().attempt_order(&plan.route, &all_ids, started_ms);
+        let mut ord = state
+            .routing()
+            .attempt_order(&plan.route, &all_ids, started_ms);
         if ord.is_empty() {
             ord = all_ids.clone();
         }
@@ -671,103 +1126,268 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
             .collect()
     };
+    if pooled && !plan.auto && plan.virtual_route.is_none() {
+        // Keep the global source/provider slots; only key preference within the same
+        // logical-model/provider group belongs to this authenticated user's affinity.
+        let mut slots: HashMap<PoolGroup, Vec<usize>> = HashMap::new();
+        for (position, index) in order.iter().copied().enumerate() {
+            let entry = &plan.entries[index];
+            if let Some(credential) = &entry.credential {
+                slots
+                    .entry(pool_group(entry.target.as_ref(), credential, &entry.name))
+                    .or_default()
+                    .push(position);
+            }
+        }
+        for positions in slots.into_values() {
+            let mut indices: Vec<usize> =
+                positions.iter().map(|position| order[*position]).collect();
+            indices.sort_unstable();
+            for (position, index) in positions.into_iter().zip(indices) {
+                order[position] = index;
+            }
+        }
+    }
     // 带图请求与 `auto` **只读状态机、不写**：
     // · 带图请求本来就只在「能看图」这个小圈子里挑渠道，让它的结果去改整个模型名的口味，
     //   等于一条带图请求把后面十分钟的纯文字请求一起改道。
     // · `auto` 每一发都是现场挑的，没有「首选/回切」可言；让它去写状态，
     //   那个名字下的账就没人解释得清了。
     // 渠道自身的健康照旧由每分钟探活和普通请求看着。
-    let touch_state = !wants_vision && !plan.auto;
+    let touch_state = !wants_vision && !plan.auto && plan.virtual_route.is_none();
 
     let request_id = {
         let conn = state.conn();
         requests::start(
-                &conn,
-                req.endpoint.as_str(),
-                &req.model,
-                req.client_ip.as_deref(),
-                wants_vision,
-            )?
+            &conn,
+            req.endpoint.as_str(),
+            &req.model,
+            req.client_ip.as_deref(),
+            wants_vision,
+        )?
     };
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
-    record_client_app(&state,request_id,req.user_agent.as_deref());
+    record_client_app(&state, request_id, req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
 
     let mut admitted_input = None;
     if let Some(auth) = &req.auth {
-        let (mut input, mut output) = admission_bound(&req.body, req.endpoint).map_err(|error|{guard.reject(&error);error})?;
+        let (mut input, mut output) =
+            admission_bound(&req.body, req.endpoint).map_err(|error| {
+                guard.reject(&error);
+                error
+            })?;
         // Predict the per-source default without borrowing mutable price caps.
         // OAuth keeps its full binding ceiling; a missing OAuth bound never uses generic caps.
-        let default_output=req.endpoint.is_generation() && ["max_tokens","max_completion_tokens","max_output_tokens"].iter().all(|key|req.body.get(*key).is_none());
-        let choices=if req.endpoint==EndpointKind::Chat {choices_count(&req.body)?}else{1};
-        let mut planned_output=None;
+        let default_output = req.endpoint.is_generation()
+            && ["max_tokens", "max_completion_tokens", "max_output_tokens"]
+                .iter()
+                .all(|key| req.body.get(*key).is_none());
+        let choices = if req.endpoint == EndpointKind::Chat {
+            choices_count(&req.body)?
+        } else {
+            1
+        };
+        let mut planned_output = None;
         for candidate in &plan.entries {
-            let c=state.conn();
-            let oauth_bound=crate::oauth::context_bounds(&c,candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))?;
-            let has_oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[candidate.channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
-            let candidate_output=if !req.endpoint.is_generation() {0}else if has_oauth {oauth_bound.map(|v|v.1).unwrap_or(output)}else if default_output {
-                4096.min(candidate.protocols.context_bounds().map(|v|v.1/choices).unwrap_or(4096)).checked_mul(choices)
-                    .ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?
-            }else {output};
-            planned_output=Some(planned_output.unwrap_or(0).max(candidate_output));
+            let c = state.conn();
+            let oauth_bound = crate::oauth::context_bounds(&c, candidate.channel.id.0)
+                .map_err(|_| ApiError::internal("OAuth source context unavailable"))?;
+            let has_oauth: bool = c
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",
+                    [candidate.channel.id.0],
+                    |r| r.get(0),
+                )
+                .map_err(crate::db::DbError::from)?;
+            let candidate_output = if !req.endpoint.is_generation() {
+                0
+            } else if has_oauth {
+                oauth_bound.map(|v| v.1).unwrap_or(output)
+            } else if default_output {
+                4096.min(
+                    candidate
+                        .protocols
+                        .context_bounds()
+                        .map(|v| v.1 / choices)
+                        .unwrap_or(4096),
+                )
+                .checked_mul(choices)
+                .ok_or_else(|| ApiError::bad_request("Total output token bound overflow"))?
+            } else {
+                output
+            };
+            planned_output = Some(planned_output.unwrap_or(0).max(candidate_output));
         }
-        if let Some(planned)=planned_output {output=planned;}
-        let opaque_input=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
-        let audio_input=has_input_audio(&req.body);
-        if audio_input && !plan.entries.iter().any(|entry|entry.protocols.native_input_audio && entry.protocols.native.contains(&crate::protocol::Protocol::Chat)) {
-            let error=ApiError::bad_request("No source declares native Chat input_audio");guard.reject(&error);return Err(error);
+        if let Some(planned) = planned_output {
+            output = planned;
+        }
+        let opaque_input = req
+            .endpoint
+            .protocol()
+            .is_some_and(|p| crate::protocol_sessions::opaque_history(p, &req.body));
+        let audio_input = has_input_audio(&req.body);
+        if audio_input
+            && !plan.entries.iter().any(|entry| {
+                entry.protocols.native_input_audio
+                    && entry
+                        .protocols
+                        .native
+                        .contains(&crate::protocol::Protocol::Chat)
+            })
+        {
+            let error = ApiError::bad_request("No source declares native Chat input_audio");
+            guard.reject(&error);
+            return Err(error);
         }
         if opaque_input || audio_input || req.endpoint.has_image(&req.body) {
-            let c=state.conn();
-            let mut maximum=None;
+            let c = state.conn();
+            let mut maximum = None;
             for candidate in &plan.entries {
-                if audio_input && !candidate.protocols.native_input_audio {continue;}
-                let oauth_bound=crate::oauth::context_bounds(&c,candidate.channel.id.0).map_err(|_|ApiError::internal("OAuth source context unavailable"))?;
-                let has_oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[candidate.channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
-                let context=if has_oauth {oauth_bound}else{candidate.protocols.context_bounds()};
-                let bound=context.map(|v|v.0).or(crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)?.map(|p|p.max_input_tokens));
-                if let Some(bound)=bound.filter(|n|*n>0) {maximum=Some(maximum.unwrap_or(0).max(bound));}
+                if audio_input && !candidate.protocols.native_input_audio {
+                    continue;
+                }
+                let oauth_bound = crate::oauth::context_bounds(&c, candidate.channel.id.0)
+                    .map_err(|_| ApiError::internal("OAuth source context unavailable"))?;
+                let has_oauth: bool = c
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",
+                        [candidate.channel.id.0],
+                        |r| r.get(0),
+                    )
+                    .map_err(crate::db::DbError::from)?;
+                let context = if has_oauth {
+                    oauth_bound
+                } else {
+                    candidate.protocols.context_bounds()
+                };
+                let bound = context.map(|v| v.0).or(crate::db::billing::price(
+                    &c,
+                    &candidate.name,
+                    candidate.channel.id.0,
+                )?
+                .map(|p| p.max_input_tokens));
+                if let Some(bound) = bound.filter(|n| *n > 0) {
+                    maximum = Some(maximum.unwrap_or(0).max(bound));
+                }
             }
-            let tpm_limited=auth.effective_policy().tpm.is_some() || auth.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|p|p.effective_policy().tpm.is_some()));
+            let tpm_limited = auth.effective_policy().tpm.is_some()
+                || auth.ancestor_key_ids.iter().any(|id| {
+                    crate::db::identity::context(&c, *id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|p| p.effective_policy().tpm.is_some())
+                });
             if opaque_input || audio_input || tpm_limited {
                 input=maximum.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque/audio input or image input with token limits requires configured context bounds")).map_err(|error|{guard.reject(&error);error})?;
-            } else if let Some(maximum)=maximum {input=maximum;}
-
+            } else if let Some(maximum) = maximum {
+                input = maximum;
+            }
         }
-        guard.admission = Some(crate::admission::acquire(state.clone(), auth, input as u64, output as u64).map_err(|e|{guard.reject(&e);e})?);
-        admitted_input=Some(input);
+        guard.admission = Some(
+            crate::admission::acquire(state.clone(), auth, input as u64, output as u64).map_err(
+                |e| {
+                    guard.reject(&e);
+                    e
+                },
+            )?,
+        );
+        admitted_input = Some(input);
     }
     let global_cfg = state.routing().cfg.clone();
     let cfg = crate::db::route_policy::effective(&state.conn(), &plan.route, global_cfg)?;
-    let attempt_ms = if req.stream { cfg.attempt_timeout_ms } else { cfg.nonstream_timeout_ms }.max(1);
+    let attempt_ms = if req.stream {
+        cfg.attempt_timeout_ms
+    } else {
+        cfg.nonstream_timeout_ms
+    }
+    .max(1);
     let attempt_timeout = Duration::from_millis(attempt_ms);
 
     // 同一段对话稳定不变的会话 ID（自定义头 `{{session_id}}` 用）。
     // **按客户端原样的请求体算一次**：改成上游的模型名之后再算，同一个客户端模型名
     // 落到不同渠道会得出不同的会话 ID，上游看到的就不再是"同一段对话"了。
     let explicit = req.explicit_session.as_deref().or_else(|| {
-        ["session_id", "conversation_id"].iter()
-            .find_map(|field| req.body.get(field).and_then(Value::as_str).filter(|id| !id.is_empty()))
+        ["session_id", "conversation_id"].iter().find_map(|field| {
+            req.body
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+        })
     });
-    let has_user = req.body.get("messages").and_then(Value::as_array)
-        .is_some_and(|messages| messages.iter().any(|message| message.get("role").and_then(Value::as_str) == Some("user")));
-    let needs_session = plan.entries.iter().any(|candidate| candidate.channel.headers.iter()
-        .any(|(_, value)| value.contains("{{session_id}}")));
+    let has_user = req
+        .body
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages
+                .iter()
+                .any(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        });
+    let needs_session = plan.entries.iter().any(|candidate| {
+        candidate
+            .channel
+            .headers
+            .iter()
+            .any(|(_, value)| value.contains("{{session_id}}"))
+    });
     if req.endpoint == EndpointKind::Chat && explicit.is_none() && !has_user && needs_session {
         let note = "该渠道要求稳定会话 ID；没有原始 user 消息的请求必须提供显式会话 ID";
-        guard.finish(&state, Status::ClientError, Some(400), None, started_ms, None, 0, 0, req.stream, Some(note));
+        guard.finish(
+            &state,
+            Status::ClientError,
+            Some(400),
+            None,
+            started_ms,
+            None,
+            0,
+            0,
+            req.stream,
+            Some(note),
+        );
         return Err(ApiError::bad_request(note));
     }
-    let session = explicit.map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")))
+    let session = explicit
+        .map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")))
         .or_else(|| tokengo_shared::session_id_from_body(&req.body))
         .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
 
-    let opaque=req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body));
-    let pin_key=req.explicit_session.as_deref().and_then(|id|req.endpoint.protocol().filter(|p|*p!=crate::protocol::Protocol::Chat)
-        .map(|p|crate::protocol_sessions::key(&req.session_namespace,id,&req.model,p)));
-    let existing_pin=pin_key.as_deref().map(|key|crate::protocol_sessions::load(&state.conn(),key)).transpose()?.flatten();
+    let opaque = req
+        .endpoint
+        .protocol()
+        .is_some_and(|p| crate::protocol_sessions::opaque_history(p, &req.body));
+    let pin_key = req.explicit_session.as_deref().and_then(|id| {
+        req.endpoint
+            .protocol()
+            .filter(|p| *p != crate::protocol::Protocol::Chat)
+            .map(|p| crate::protocol_sessions::key(&req.session_namespace, id, &req.model, p))
+    });
+    let existing_pin = pin_key
+        .as_deref()
+        .map(|key| crate::protocol_sessions::load(&state.conn(), key))
+        .transpose()?
+        .flatten();
+    let order: Vec<usize> = order
+        .into_iter()
+        .filter(|index| {
+            existing_pin
+                .as_ref()
+                .is_none_or(|pin| plan.entries[*index].channel.id.0 == pin.channel)
+        })
+        .collect();
+    if existing_pin.is_some() && order.is_empty() {
+        let error = ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "native_source_unavailable",
+            "Native session source is unavailable; retry later or start a new session",
+        );
+        guard.reject(&error);
+        return Err(error);
+    }
     if opaque && existing_pin.is_none() {
-        let error=ApiError::bad_request("Opaque reasoning history requires an existing explicit session bound to its original source"); guard.reject(&error); return Err(error);
+        let error=ApiError::bad_request("Opaque reasoning history requires an existing explicit session bound to its original source");
+        guard.reject(&error);
+        return Err(error);
     }
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
@@ -775,706 +1395,1759 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut last_channel = ChannelId(0);
     // 上游说的「过多久再来」；下一次重试用它顶掉默认节拍。
 
-
     // 每条渠道的「门口闸机」：同时最多几发（面板上按渠道配，0 = 不限）。
     // 满了**不硬压上去**（现网 503「bridge busy」151 次就是这么来的）：先换别的渠道；
     // 所有渠道都满，才在门口排队等一个名额，等到再重跑一遍。排队有预算上限，不会挂死。
     let mut last_policy_error: Option<ApiError> = None;
     let mut pre_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
+    let mut pool_control = PoolControl::default();
+    let mut active_target = plan
+        .entries
+        .first()
+        .and_then(|entry| entry.target.as_ref())
+        .map(|target| target.position);
     'pass: loop {
         let mut tried_any = false;
         let mut busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
 
-    'channels: for entry_idx in order.iter().copied() {
-        let Some(Candidate { name, channel, revision, protocols,binding_generation }) = plan.entries.get(entry_idx) else {
-            continue;
-        };
-        let tool_caps=if let Some(kind)=req.endpoint.tool_kind() {
-            let caps=crate::search_tools::load(&state.conn(),channel.id.0)?;
-            if !caps.permits(kind) {last_policy_error=Some(ApiError::bad_request("Source does not explicitly declare this standalone tool capability"));continue;}
-            Some(caps)
-        }else{None};
-
-        if has_input_audio(&req.body) && (req.endpoint!=EndpointKind::Chat || !protocols.native_input_audio || !protocols.native.contains(&crate::protocol::Protocol::Chat)) {
-            last_policy_error=Some(ApiError::bad_request("Source does not declare native Chat input_audio"));continue;
-        }
-        let upstream_protocol=match req.endpoint.protocol() {
-            Some(client)=>match protocols.select(client) {
-                Some(p)=>Some(p),
-                None=>{last_policy_error=Some(ApiError::bad_request("Source does not declare this protocol or allow conversion"));continue;}
-            },
-            None=>None,
-        };
-        let candidate_pin=upstream_protocol.map(|protocol|crate::protocol_sessions::Pin {
-            channel:channel.id.0,
-            generation:*binding_generation,
-            upstream_model:channel.upstream_model(name).into(),protocol,
-        });
-        if existing_pin.as_ref().is_some_and(|pin|candidate_pin.as_ref()!=Some(pin)) {
-            last_policy_error=Some(ApiError::bad_request("Native session is pinned to a different or changed source; start a new session"));continue;
-        }
-        if opaque {
-            if let (Some(owner),Some(pin))=(&pin_key,&candidate_pin) {
-                if !crate::protocol_sessions::verify_artifacts(&state.conn(),owner,pin,&req.body)? {
-                    let error=ApiError::bad_request("Opaque history contains artifacts not issued to this key, session and source");guard.reject(&error);return Err(error);
-                }
+        'channels: for entry_idx in order.iter().copied() {
+            let Some(Candidate {
+                name,
+                channel,
+                revision,
+                protocols,
+                binding_generation,
+                credential,
+                target,
+            }) = plan.entries.get(entry_idx)
+            else {
+                continue;
+            };
+            if target
+                .as_ref()
+                .is_some_and(|target| Some(target.position) != active_target)
+            {
+                continue;
             }
-        }
-        let upstream_path=upstream_protocol.map(|p|p.path()).unwrap_or(req.endpoint.path());
-        let prepared=if let Some(kind)=req.endpoint.tool_kind() {crate::search_tools::normalize_request(kind,&req.body).map_err(ApiError::bad_request)?}else{match (req.endpoint.protocol(),upstream_protocol) {
-            (Some(from),Some(to))=>match crate::protocol::convert_request(from,to,&req.body) {
-                Ok(body)=>body,
-                Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue;}
-            },
-            _=>req.body.clone(),
-        }};
-        // A source returning reasoning does not imply it accepts that dialect
-        // in assistant history. Only converted Chat replay needs explicit opt-in.
-        if req.endpoint.protocol().is_some_and(|client| client != crate::protocol::Protocol::Chat)
-            && upstream_protocol == Some(crate::protocol::Protocol::Chat)
-            && !protocols.chat_reasoning_replay
-            && prepared.get("messages").and_then(Value::as_array).is_some_and(|messages|
-                messages.iter().any(|message| message.get("reasoning_content").is_some_and(|value| !value.is_null())))
-        {
-            last_policy_error=Some(ApiError::bad_request("Source does not declare Chat reasoning history replay support"));
-            continue;
-        }
-        // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
-        let permit = match pre_permits.remove(&channel.id.0) {
-            Some(p) => Some(p),
-            None => match state.channel_gate(channel.id.0, plan.cap(channel.id)) {
-                None => None,
-                Some(sem) => match sem.clone().try_acquire_owned() {
-                    Ok(p) => Some(p),
-                    Err(_) => {
-                        busy.push((channel.id.0, sem));
+            let tool_caps = if let Some(kind) = req.endpoint.tool_kind() {
+                let caps = crate::search_tools::load(&state.conn(), channel.id.0)?;
+                if !caps.permits(kind) {
+                    last_policy_error = Some(ApiError::bad_request(
+                        "Source does not explicitly declare this standalone tool capability",
+                    ));
+                    continue;
+                }
+                Some(caps)
+            } else {
+                None
+            };
+
+            if has_input_audio(&req.body)
+                && (req.endpoint != EndpointKind::Chat
+                    || !protocols.native_input_audio
+                    || !protocols.native.contains(&crate::protocol::Protocol::Chat))
+            {
+                last_policy_error = Some(ApiError::bad_request(
+                    "Source does not declare native Chat input_audio",
+                ));
+                continue;
+            }
+            let upstream_protocol = match req.endpoint.protocol() {
+                Some(client) => match protocols.select(client) {
+                    Some(p) => Some(p),
+                    None => {
+                        last_policy_error = Some(ApiError::bad_request(
+                            "Source does not declare this protocol or allow conversion",
+                        ));
                         continue;
                     }
                 },
-            },
-        };
-        let account={let c=state.conn();crate::db::faults::claim(&c,channel.id.0,name,*revision,now_ms())?};
-        let Some(account)=account else {continue;};
-        let sent=channel.upstream_model(name);
-        let generation={let c=state.conn();crate::db::policy::claim(&c,channel.id.0,name,sent,now_ms())?};
-        let Some(generation)=generation else {let c=state.conn();crate::db::faults::release(&c,&account)?;continue;};
-        let load_ticket=match plan.load_ticket.take(){Some((n,t)) if tokengo_shared::same_model_name(&n,name)=>t,other=>{drop(other);state.model_loads.acquire(name)}};
-        // 冷到期的恢复试用只放一条：失败就进下一级冷却，不再连试三次。
-        let recovering={let c=state.conn();crate::db::policy::rows(&c,name)?.iter().any(|r|r.channel_id==channel.id.0 && r.upstream==sent && r.lease_until>0)};
-        // Auto chooses a logical candidate, not an exemption from its retry policy.
-        let retries = if plan.auto {
-            crate::db::route_policy::load(&state.conn(), name)?.retry_times.unwrap_or(cfg.retry_times)
-        } else { cfg.retry_times };
-        let max_attempts=if recovering || account.recovering() {1} else {(1 + retries).min(COOLDOWN_AFTER_FAILURES as u32).max(1)};
-        let mut cooldown=CooldownTicket{state:state.clone(),id:channel.id.0,name:name.clone(),upstream:sent.to_string(),generation,done:false,account};
-
-        // 这一发送给上游的名字：按**这个候选名**在这条渠道上查别名
-        // （auto 时每个候选各不相同 —— auto 挑中的是谁，上游看到的就是谁的名字）
-        let sent_model = channel.upstream_model(name).to_string();
-        // 账上记下「真正被叫的是谁」：面板上看得见 auto 这一发走了哪个模型
-        if plan.explored.as_deref()==Some(name.as_str()) {let c=state.conn();let _=c.execute("UPDATE requests SET explored=1 WHERE id=?1",[request_id]);}
-
-        // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
-        // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
-        // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
-        let adapted = tokengo_shared::strip_fields(&prepared, &channel.drop_fields);
-        let mut body = if let Some(kind)=req.endpoint.tool_kind() {crate::search_tools::normalize_request(kind,&adapted).map_err(ApiError::bad_request)?}else{rewrite_model(&adapted, &sent_model)};
-        let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
-        let cached_cap = crate::db::settings::get(&state.conn(), &cap_key).ok().flatten()
-            .and_then(|s| s.parse::<u64>().ok());
-        let notes=match (req.endpoint.protocol(),upstream_protocol) { (Some(from),Some(to))=>crate::protocol::normalization_notes(from,to,&req.body), _=>vec![] };
-        let mut adaptation_note = (!notes.is_empty()).then(||notes.join("; "));
-        if let Some(cap) = cached_cap {
-            if clamp_output(&mut body, cap) {
-                let cap_note=format!("按此渠道已知输出上限收窄至 {cap} tokens");
-                adaptation_note=Some(match adaptation_note.take(){Some(previous)=>format!("{previous}; {cap_note}"),None=>cap_note});
-            }
-        }
-        let mut body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
-        let mut learned_this_request = false;
-
-        let mut retry_after_override:Option<u64>=None;
-        // 上一次是「快失败」还是「慢失败」。连接被拒 / 5xx / 429 这类上游马上就回了，
-        // 重试有意义；耗时顶到超时的失败多半是上游在挂，再等一轮只会把整个请求预算吃掉、
-        // 让客户端白等，所以那种直接换下一候选（冷却计数照记）。
-        let mut slow_previous=false;
-        // 这一候选上见过的最大 Retry-After：冷却时当下限用（上游自己说的等多久最准）。
-        let mut pending_retry_ms:i64=0;
-        for attempt_no in 1..=max_attempts {
-            if attempt_no > 1 {
-                let left = cfg.request_budget_ms as i64 - (now_ms() - started_ms);
-                if slow_previous || left < attempt_ms as i64 {
-                    break;
-                }
-                // 上游在 Retry-After 里说了等多久就等多久（它比我们的默认节拍更懂自己）
-                let d = retry_after_override.take().unwrap_or_else(|| retry_delay_ms(attempt_no));
-                if d > 0 {
-                    tokio::time::sleep(Duration::from_millis(d.min(left.max(0) as u64))).await;
-                }
-            }
-            // 重试总预算：超了不再重试（不做无上限的等待）
-            if now_ms() - started_ms >= cfg.request_budget_ms as i64 {
-                guard.finish(
-                    &state,
-                    Status::Failed,
-                    None,
-                    Some(last_channel.0),
-                    started_ms,
-                    None,
-                    0,
-                    0,
-                    false,
-                    Some("重试预算用尽，放弃重试"),
-                );
-                return Ok(gateway_timeout(&plan, &req.model));
-            }
-
-            guard.settle_billing("retry_or_fallback");
-            guard.usage = Usage::default();
-            guard.request_units=None;
-            guard.request_billing=req.endpoint.tool_kind().is_some();
-            if !crate::db::faults::current(&state.conn(),&cooldown.account)? {break;}
-            let oauth_remaining=Duration::from_millis(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64).max(1));
-            let oauth=match tokio::time::timeout(oauth_remaining,crate::oauth::credentials(&state,channel.id.0)).await {
-                Ok(Ok(value))=>value,
-                _=>{last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"oauth_unavailable","ChatGPT authorization is unavailable; reauthorize this account in administration"));continue 'channels;}
+                None => None,
             };
-            let mapping_reasoning_defaults = if let Some(native)=upstream_protocol {
-                match crate::reasoning_capabilities::apply_defaults_and_validate(&state.conn(),channel.id.0,name,&sent_model,native,&mut body) {
-                    Ok(value)=>value,
-                    Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
-                }
-            } else {false};
-            if mapping_reasoning_defaults {
-                body_bytes=Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
-            }
-            if let Some(credential)=&oauth {
-                if upstream_protocol!=Some(crate::protocol::Protocol::Responses) || credential.binding_generation!=*binding_generation {
-                    let error=ApiError::bad_request("OAuth source binding changed; retry with current source configuration");guard.reject(&error);return Err(error);
-                }
-                crate::protocol::collect::prepare_request(&mut body,if mapping_reasoning_defaults {None}else{credential.reasoning_effort.as_deref()},credential.service_tier.as_deref())
-                    .map_err(|note|{let error=ApiError::bad_request(note);guard.reject(&error);error})?;
-            }
-            let live_generation:i64=state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[channel.id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
-            if live_generation!=*binding_generation {let error=ApiError::bad_request("Source configuration changed during request; retry with current configuration"); guard.reject(&error); return Err(error);}
+            let candidate_pin = upstream_protocol.map(|protocol| crate::protocol_sessions::Pin {
+                channel: channel.id.0,
+                generation: *binding_generation,
+                upstream_model: channel.upstream_model(name).into(),
+                protocol,
+            });
+            if existing_pin
+                .as_ref()
+                .is_some_and(|pin| candidate_pin.as_ref() != Some(pin))
             {
-                let c=state.conn();
-                let enabled=model_routes::channels_for(&c,name)?.into_iter().any(|candidate|candidate.id==channel.id && candidate.routable() && (!wants_vision || candidate.vision));
-                let kind=model_routes::routes_for(&c,name)?.map(|route|route.kind).unwrap_or_default();
-                let kind_ok=!plan.auto || kind==req.endpoint.as_model_kind() || (kind==tokengo_shared::ModelKind::Unknown && req.endpoint.is_generation());
-                let auto_ok=!plan.auto || (crate::db::model_routes::visible(&c,name)? && crate::db::route_policy::load(&c,name)?.include_in_auto!=Some(false));
-                if !enabled || !kind_ok || !auto_ok {
-                    last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Model or source routing permission changed while queued"));
-                    continue 'channels;
+                last_policy_error=Some(ApiError::bad_request("Native session is pinned to a different or changed source; start a new session"));
+                continue;
+            }
+            if pooled {
+                if let Some(credential) = credential {
+                    let group = pool_group(target.as_ref(), credential, name);
+                    let selected = pool_control.selected.entry(group).or_insert(credential.id);
+                    if *selected != credential.id {
+                        continue;
+                    }
+                    if pool_control.seen.contains(&(
+                        target.as_ref().map(|target| target.position),
+                        credential.id,
+                        name.clone(),
+                    )) {
+                        continue;
+                    }
                 }
             }
-            if let Some(auth) = &req.auth {
-                // Live policy is re-read at every outbound attempt, including retries.
-                let c = state.conn();
-                let current = crate::db::identity::context(&c, auth.key_id)?
-                    .ok_or_else(|| ApiError::unauthorized("Key revoked, expired or user disabled")).map_err(|error|{guard.reject(&error);error})?;
-                if !current.permits_model(&req.model) || !permitted_candidate_for(&c, &current, name, channel.id.0,req.endpoint)? {
-                    let error=ApiError::new(StatusCode::FORBIDDEN,"source_not_allowed","Source permission changed");guard.reject(&error);return Err(error);
-                }
-                let price = crate::db::billing::price(&c, name, channel.id.0)?;
-                let context=match oauth.as_ref() {
-                    Some(credential)=>credential.max_input_tokens.zip(credential.max_output_tokens),
-                    None=>protocols.context_bounds(),
-                };
-                let image_input=req.endpoint.has_image(&req.body);
-                let tpm_limited=current.effective_policy().tpm.is_some() || current.ancestor_key_ids.iter().any(|id|crate::db::identity::context(&c,*id).ok().flatten().is_some_and(|parent|parent.effective_policy().tpm.is_some()));
-                // An aggregate admission maximum is not this source's image context.
-                // Preserve unbounded native images only when token limits do not apply.
-                if image_input && tpm_limited && context.is_none() && (oauth.is_some() || !price.as_ref().is_some_and(|p|p.max_input_tokens>0)) {
-                    last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Image input with token limits requires this source's configured context bounds"));
-                    continue 'channels;
-                }
-                let full_context_input=has_input_audio(&req.body)
-                    || req.endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,&req.body))
-                    || (image_input && (tpm_limited || context.is_some() || price.is_some()));
-                let bounds=if req.endpoint.tool_kind().is_some(){Ok((0,0))}else if oauth.is_some() {subscription_bound(&body,price.as_ref(),context)}else {billing_bound_with_context(&mut body, match upstream_protocol {Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,None=>req.endpoint}, price.as_ref(),context)};
-                let (input, output) = bounds.map_err(|error|{guard.reject(&error);error})?;
-                if full_context_input && admitted_input.is_some_and(|reserved|input>reserved) {
-                    let error=ApiError::new(StatusCode::BAD_REQUEST,"source_context_changed","Source context exceeds the admitted input reservation; retry with current configuration");
-                    guard.reject(&error);return Err(error);
-                }
-                body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e|ApiError::internal(e.to_string()))?);
-                let attempt_id = format!("{}:{}",request_id,ordinal);
-                let reservation = if req.endpoint.tool_kind().is_some() {
-                    match crate::db::billing::request_price(&c,name,channel.id.0)? {
-                        Some(p)=>crate::db::billing::reserve_request(&c,current.user_id,current.key_id,request_id,&attempt_id,&p),
-                        None=>{last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Standalone tools require a configured per-request price"));continue 'channels;}
-                    }
-                }else{match price {
-                    Some(p) => crate::db::billing::reserve(&c,current.user_id,current.key_id,request_id,&attempt_id,&p,input,output),
-                    None => crate::db::billing::reserve_unpriced(&c,current.user_id,current.key_id,request_id,&attempt_id,channel.id.0,name),
-                }};
-                let id = match reservation {
-                    Ok(id)=>id,
-                    Err(e)=>{
-                        let error=billing_error(e);
-                        if matches!(error.kind,"budget_exceeded"|"pricing_required") {
-                            crate::db::identity::audit(&c,Some(&current),"attempt.denied","channel",channel.id.0,serde_json::json!({"request_id":request_id,"model":name,"reason":error.kind}))?;
-                            last_policy_error=Some(error);
-                            continue 'channels;
-                        }
+            if opaque {
+                if let (Some(owner), Some(pin)) = (&pin_key, &candidate_pin) {
+                    if !crate::protocol_sessions::verify_artifacts(
+                        &state.conn(),
+                        owner,
+                        pin,
+                        &req.body,
+                    )? {
+                        let error=ApiError::bad_request("Opaque history contains artifacts not issued to this key, session and source");
                         guard.reject(&error);
                         return Err(error);
                     }
+                }
+            }
+            let upstream_path = upstream_protocol
+                .map(|p| p.path())
+                .unwrap_or(req.endpoint.path());
+            let prepared = if let Some(kind) = req.endpoint.tool_kind() {
+                crate::search_tools::normalize_request(kind, &req.body)
+                    .map_err(ApiError::bad_request)?
+            } else {
+                match (req.endpoint.protocol(), upstream_protocol) {
+                    (Some(from), Some(to)) => {
+                        match crate::protocol::convert_request(from, to, &req.body) {
+                            Ok(body) => body,
+                            Err(note) => {
+                                last_policy_error = Some(ApiError::bad_request(note));
+                                continue;
+                            }
+                        }
+                    }
+                    _ => req.body.clone(),
+                }
+            };
+            // A source returning reasoning does not imply it accepts that dialect
+            // in assistant history. Only converted Chat replay needs explicit opt-in.
+            if req
+                .endpoint
+                .protocol()
+                .is_some_and(|client| client != crate::protocol::Protocol::Chat)
+                && upstream_protocol == Some(crate::protocol::Protocol::Chat)
+                && !protocols.chat_reasoning_replay
+                && prepared
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .is_some_and(|messages| {
+                        messages.iter().any(|message| {
+                            message
+                                .get("reasoning_content")
+                                .is_some_and(|value| !value.is_null())
+                        })
+                    })
+            {
+                last_policy_error = Some(ApiError::bad_request(
+                    "Source does not declare Chat reasoning history replay support",
+                ));
+                continue;
+            }
+            // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
+            let permit = match pre_permits.remove(&channel.id.0) {
+                Some(p) => Some(p),
+                None => match state.channel_gate(channel.id.0, plan.cap(channel.id)) {
+                    None => None,
+                    Some(sem) => match sem.clone().try_acquire_owned() {
+                        Ok(p) => Some(p),
+                        Err(_) => {
+                            if pooled && credential.is_some() {
+                                let left = cfg
+                                    .request_budget_ms
+                                    .saturating_sub((now_ms() - started_ms).max(0) as u64);
+                                match tokio::time::timeout(
+                                    Duration::from_millis(left),
+                                    sem.acquire_owned(),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(permit)) => Some(permit),
+                                    _ => {
+                                        let error=ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"credential_busy","Selected upstream source remained busy until request deadline");
+                                        guard.reject(&error);
+                                        return Err(error);
+                                    }
+                                }
+                            } else {
+                                busy.push((channel.id.0, sem));
+                                continue;
+                            }
+                        }
+                    },
+                },
+            };
+            let credential_permit = if pooled {
+                if let Some(credential) = credential {
+                    match state.credential_gate(credential.id, credential.max_concurrent) {
+                        None => None,
+                        Some(gate) => {
+                            let left = cfg
+                                .request_budget_ms
+                                .saturating_sub((now_ms() - started_ms).max(0) as u64);
+                            match tokio::time::timeout(
+                                Duration::from_millis(left),
+                                gate.acquire_owned(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(permit)) => Some(permit),
+                                _ => {
+                                    let error=ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"credential_busy","Selected upstream credential remained busy until request deadline");
+                                    guard.reject(&error);
+                                    return Err(error);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let permit = (permit, credential_permit);
+            let account = {
+                let c = state.conn();
+                crate::db::faults::claim(&c, channel.id.0, name, *revision, now_ms())?
+            };
+            let Some(account) = account else {
+                continue;
+            };
+            let sent = channel.upstream_model(name);
+            let generation = {
+                let c = state.conn();
+                crate::db::policy::claim(&c, channel.id.0, name, sent, now_ms())?
+            };
+            let Some(generation) = generation else {
+                let c = state.conn();
+                crate::db::faults::release(&c, &account)?;
+                continue;
+            };
+            let load_ticket = match plan.load_ticket.take() {
+                Some((n, t)) if tokengo_shared::same_model_name(&n, name) => t,
+                other => {
+                    drop(other);
+                    state.model_loads.acquire(name)
+                }
+            };
+            // 冷到期的恢复试用只放一条：失败就进下一级冷却，不再连试三次。
+            let recovering = {
+                let c = state.conn();
+                crate::db::policy::rows(&c, name)?.iter().any(|r| {
+                    r.channel_id == channel.id.0 && r.upstream == sent && r.lease_until > 0
+                })
+            };
+            // Auto chooses a logical candidate, not an exemption from its retry policy.
+            let retries = if plan.auto {
+                crate::db::route_policy::load(&state.conn(), name)?
+                    .retry_times
+                    .unwrap_or(cfg.retry_times)
+            } else {
+                cfg.retry_times
+            };
+            let max_attempts = if plan.virtual_route.is_some() || recovering || account.recovering()
+            {
+                1
+            } else {
+                (1 + retries).min(COOLDOWN_AFTER_FAILURES as u32).max(1)
+            };
+            let mut cooldown = CooldownTicket {
+                state: state.clone(),
+                id: channel.id.0,
+                name: name.clone(),
+                upstream: sent.to_string(),
+                generation,
+                done: false,
+                account,
+            };
+
+            // 这一发送给上游的名字：按**这个候选名**在这条渠道上查别名
+            // （auto 时每个候选各不相同 —— auto 挑中的是谁，上游看到的就是谁的名字）
+            let sent_model = channel.upstream_model(name).to_string();
+            // 账上记下「真正被叫的是谁」：面板上看得见 auto 这一发走了哪个模型
+            if plan.explored.as_deref() == Some(name.as_str()) {
+                let c = state.conn();
+                let _ = c.execute("UPDATE requests SET explored=1 WHERE id=?1", [request_id]);
+            }
+
+            // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
+            // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
+            // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
+            let adapted = tokengo_shared::strip_fields(&prepared, &channel.drop_fields);
+            let mut body = if let Some(kind) = req.endpoint.tool_kind() {
+                crate::search_tools::normalize_request(kind, &adapted)
+                    .map_err(ApiError::bad_request)?
+            } else {
+                rewrite_model(&adapted, &sent_model)
+            };
+            let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
+            let cached_cap = crate::db::settings::get(&state.conn(), &cap_key)
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<u64>().ok());
+            let notes = match (req.endpoint.protocol(), upstream_protocol) {
+                (Some(from), Some(to)) => crate::protocol::normalization_notes(from, to, &req.body),
+                _ => vec![],
+            };
+            let mut adaptation_note = (!notes.is_empty()).then(|| notes.join("; "));
+            if let Some(cap) = cached_cap {
+                if clamp_output(&mut body, cap) {
+                    let cap_note = format!("按此渠道已知输出上限收窄至 {cap} tokens");
+                    adaptation_note = Some(match adaptation_note.take() {
+                        Some(previous) => format!("{previous}; {cap_note}"),
+                        None => cap_note,
+                    });
+                }
+            }
+            let mut body_bytes = Bytes::from(
+                serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?,
+            );
+            let mut learned_this_request = false;
+
+            let mut retry_after_override: Option<u64> = None;
+            // 上一次是「快失败」还是「慢失败」。连接被拒 / 5xx / 429 这类上游马上就回了，
+            // 重试有意义；耗时顶到超时的失败多半是上游在挂，再等一轮只会把整个请求预算吃掉、
+            // 让客户端白等，所以那种直接换下一候选（冷却计数照记）。
+            let mut slow_previous = false;
+            // 这一候选上见过的最大 Retry-After：冷却时当下限用（上游自己说的等多久最准）。
+            let mut pending_retry_ms: i64 = 0;
+            for attempt_no in 1..=max_attempts {
+                if attempt_no > 1 {
+                    let left = cfg.request_budget_ms as i64 - (now_ms() - started_ms);
+                    if slow_previous || left < attempt_ms as i64 {
+                        break;
+                    }
+                    // 上游在 Retry-After 里说了等多久就等多久（它比我们的默认节拍更懂自己）
+                    let d = retry_after_override
+                        .take()
+                        .unwrap_or_else(|| retry_delay_ms(attempt_no));
+                    if d > 0 {
+                        tokio::time::sleep(Duration::from_millis(d.min(left.max(0) as u64))).await;
+                    }
+                }
+                // 重试总预算：超了不再重试（不做无上限的等待）
+                if now_ms() - started_ms >= cfg.request_budget_ms as i64 {
+                    guard.finish(
+                        &state,
+                        Status::Failed,
+                        None,
+                        Some(last_channel.0),
+                        started_ms,
+                        None,
+                        0,
+                        0,
+                        false,
+                        Some("重试预算用尽，放弃重试"),
+                    );
+                    return Ok(gateway_timeout(&plan, &req.model));
+                }
+
+                guard.settle_billing("retry_or_fallback");
+                guard.usage = Usage::default();
+                guard.request_units = None;
+                guard.request_billing = req.endpoint.tool_kind().is_some();
+                if !crate::db::faults::current(&state.conn(), &cooldown.account)? {
+                    break;
+                }
+                let oauth_remaining = Duration::from_millis(
+                    cfg.request_budget_ms
+                        .saturating_sub((now_ms() - started_ms).max(0) as u64)
+                        .max(1),
+                );
+                let oauth = match tokio::time::timeout(
+                    oauth_remaining,
+                    crate::oauth::credentials(&state, channel.id.0),
+                )
+                .await
+                {
+                    Ok(Ok(value)) => value,
+                    _ => {
+                        last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"oauth_unavailable","ChatGPT authorization is unavailable; reauthorize this account in administration"));
+                        continue 'channels;
+                    }
                 };
-                guard.billing_nonchat = !req.endpoint.is_generation();
-                guard.reservation = Some(id);
-                // Capture the actual loaded deployment, independent of later channel edits.
-                // Origin excludes URL credentials, paths, query parameters and fragments.
-                let source=serde_json::json!({"channel_id":channel.id.0,"channel_name":channel.name,
+                let mapping_reasoning_defaults = if let Some(native) = upstream_protocol {
+                    match crate::reasoning_capabilities::apply_defaults_and_validate(
+                        &state.conn(),
+                        channel.id.0,
+                        name,
+                        &sent_model,
+                        native,
+                        &mut body,
+                    ) {
+                        Ok(value) => value,
+                        Err(note) => {
+                            last_policy_error = Some(ApiError::bad_request(note));
+                            continue 'channels;
+                        }
+                    }
+                } else {
+                    false
+                };
+                if mapping_reasoning_defaults {
+                    body_bytes = Bytes::from(
+                        serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?,
+                    );
+                }
+                if let Some(credential) = &oauth {
+                    if upstream_protocol != Some(crate::protocol::Protocol::Responses)
+                        || credential.binding_generation != *binding_generation
+                    {
+                        let error = ApiError::bad_request(
+                            "OAuth source binding changed; retry with current source configuration",
+                        );
+                        guard.reject(&error);
+                        return Err(error);
+                    }
+                    crate::protocol::collect::prepare_request(
+                        &mut body,
+                        if mapping_reasoning_defaults {
+                            None
+                        } else {
+                            credential.reasoning_effort.as_deref()
+                        },
+                        credential.service_tier.as_deref(),
+                    )
+                    .map_err(|note| {
+                        let error = ApiError::bad_request(note);
+                        guard.reject(&error);
+                        error
+                    })?;
+                }
+                let live_generation: i64 = state
+                    .conn()
+                    .query_row(
+                        "SELECT binding_generation FROM channels WHERE id=?1",
+                        [channel.id.0],
+                        |r| r.get(0),
+                    )
+                    .map_err(crate::db::DbError::from)?;
+                if live_generation != *binding_generation {
+                    let error=ApiError::bad_request("Source configuration changed during request; retry with current configuration");
+                    guard.reject(&error);
+                    return Err(error);
+                }
+                {
+                    let c = state.conn();
+                    let enabled =
+                        model_routes::channels_for(&c, name)?
+                            .into_iter()
+                            .any(|candidate| {
+                                candidate.id == channel.id
+                                    && candidate.routable()
+                                    && (!wants_vision || candidate.vision)
+                            });
+                    let kind = model_routes::routes_for(&c, name)?
+                        .map(|route| route.kind)
+                        .unwrap_or_default();
+                    let kind_ok = !plan.auto
+                        || kind == req.endpoint.as_model_kind()
+                        || (kind == tokengo_shared::ModelKind::Unknown
+                            && req.endpoint.is_generation());
+                    let auto_ok = !plan.auto
+                        || (crate::db::model_routes::visible(&c, name)?
+                            && crate::db::route_policy::load(&c, name)?.include_in_auto
+                                != Some(false));
+                    if !enabled || !kind_ok || !auto_ok {
+                        last_policy_error = Some(ApiError::new(
+                            StatusCode::FORBIDDEN,
+                            "source_not_allowed",
+                            "Model or source routing permission changed while queued",
+                        ));
+                        continue 'channels;
+                    }
+                }
+                let live_route_check = (|| -> Result<(), ApiError> {
+                    let c = state.conn();
+                    if let (Some(route), Some(target), Some(auth)) =
+                        (&plan.virtual_route, target, &req.auth)
+                    {
+                        crate::db::user_virtual_routes::validate_current(
+                            &c,
+                            auth.user_id,
+                            route.id,
+                            route.version,
+                            target.position,
+                            now_ms(),
+                        )
+                        .map_err(virtual_route_error)?;
+                    }
+                    if pooled {
+                        if let Some(snapshot) = credential {
+                            let current =
+                                crate::db::provider_pool::source_credential(&c, channel.id.0)?;
+                            if current.as_ref().is_none_or(|current| {
+                                !current.enabled
+                                    || current.id != snapshot.id
+                                    || current.revision != snapshot.revision
+                                    || current.provider_version != snapshot.provider_version
+                            }) {
+                                return Err(ApiError::new(StatusCode::CONFLICT,"credential_changed","Upstream credential or provider configuration changed; retry with current configuration"));
+                            }
+                        }
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = live_route_check {
+                    guard.reject(&error);
+                    return Err(error);
+                }
+                if let Some(auth) = &req.auth {
+                    // Live policy is re-read at every outbound attempt, including retries.
+                    let c = state.conn();
+                    let Some(current) = crate::db::identity::context(&c, auth.key_id)? else {
+                        drop(c);
+                        let error = ApiError::unauthorized("Key revoked, expired or user disabled");
+                        guard.reject(&error);
+                        return Err(error);
+                    };
+                    if (plan.virtual_route.is_none() && !current.permits_model(&req.model))
+                        || !permitted_candidate_for(&c, &current, name, channel.id.0, req.endpoint)?
+                    {
+                        drop(c);
+                        let error = ApiError::new(
+                            StatusCode::FORBIDDEN,
+                            "source_not_allowed",
+                            "Source permission changed",
+                        );
+                        guard.reject(&error);
+                        return Err(error);
+                    }
+                    if pooled {
+                        if let Some(credential) = credential {
+                            if existing_pin.is_none() {
+                                let live_affinity = crate::db::provider_pool::affinity_token(
+                                    &c,
+                                    current.user_id,
+                                    credential.provider_id,
+                                )?;
+                                if live_affinity.as_ref().is_some_and(|token| {
+                                    token.credential_id != credential.id
+                                        && plan.entries.iter().any(|candidate| {
+                                            candidate.credential.as_ref().is_some_and(|other| {
+                                                other.id == token.credential_id
+                                                    && pool_group(
+                                                        candidate.target.as_ref(),
+                                                        other,
+                                                        &candidate.name,
+                                                    ) == pool_group(
+                                                        target.as_ref(),
+                                                        credential,
+                                                        name,
+                                                    )
+                                            })
+                                        })
+                                }) {
+                                    drop(c);
+                                    let error=ApiError::new(StatusCode::CONFLICT,"affinity_changed","Upstream key affinity changed while this request was queued; retry with the current identity");
+                                    guard.reject(&error);
+                                    return Err(error);
+                                }
+                            }
+                            if !pool_control.tokens.contains_key(&credential.provider_id) {
+                                let token =
+                                    crate::db::provider_pool::ensure_affinity_for_selection(
+                                        &c,
+                                        current.user_id,
+                                        credential.provider_id,
+                                        credential.id,
+                                    )?;
+                                pool_control.tokens.insert(credential.provider_id, token);
+                            }
+                        }
+                    }
+                    let price = crate::db::billing::price(&c, name, channel.id.0)?;
+                    let context = match oauth.as_ref() {
+                        Some(credential) => credential
+                            .max_input_tokens
+                            .zip(credential.max_output_tokens),
+                        None => protocols.context_bounds(),
+                    };
+                    let image_input = req.endpoint.has_image(&req.body);
+                    let tpm_limited = current.effective_policy().tpm.is_some()
+                        || current.ancestor_key_ids.iter().any(|id| {
+                            crate::db::identity::context(&c, *id)
+                                .ok()
+                                .flatten()
+                                .is_some_and(|parent| parent.effective_policy().tpm.is_some())
+                        });
+                    // An aggregate admission maximum is not this source's image context.
+                    // Preserve unbounded native images only when token limits do not apply.
+                    if image_input
+                        && tpm_limited
+                        && context.is_none()
+                        && (oauth.is_some()
+                            || !price.as_ref().is_some_and(|p| p.max_input_tokens > 0))
+                    {
+                        last_policy_error=Some(ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Image input with token limits requires this source's configured context bounds"));
+                        continue 'channels;
+                    }
+                    let full_context_input = has_input_audio(&req.body)
+                        || req.endpoint.protocol().is_some_and(|p| {
+                            crate::protocol_sessions::opaque_history(p, &req.body)
+                        })
+                        || (image_input && (tpm_limited || context.is_some() || price.is_some()));
+                    let bounds = if req.endpoint.tool_kind().is_some() {
+                        Ok((0, 0))
+                    } else if oauth.is_some() {
+                        subscription_bound(&body, price.as_ref(), context)
+                    } else {
+                        billing_bound_with_context(
+                            &mut body,
+                            match upstream_protocol {
+                                Some(crate::protocol::Protocol::Responses) => {
+                                    EndpointKind::Responses
+                                }
+                                Some(crate::protocol::Protocol::Messages) => EndpointKind::Messages,
+                                Some(crate::protocol::Protocol::Chat) => EndpointKind::Chat,
+                                None => req.endpoint,
+                            },
+                            price.as_ref(),
+                            context,
+                        )
+                    };
+                    let (input, output) = bounds.map_err(|error| {
+                        guard.reject(&error);
+                        error
+                    })?;
+                    if full_context_input && admitted_input.is_some_and(|reserved| input > reserved)
+                    {
+                        let error=ApiError::new(StatusCode::BAD_REQUEST,"source_context_changed","Source context exceeds the admitted input reservation; retry with current configuration");
+                        guard.reject(&error);
+                        return Err(error);
+                    }
+                    body_bytes = Bytes::from(
+                        serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?,
+                    );
+                    let attempt_id = format!("{}:{}", request_id, ordinal);
+                    let reservation = if req.endpoint.tool_kind().is_some() {
+                        match crate::db::billing::request_price(&c, name, channel.id.0)? {
+                            Some(p) => crate::db::billing::reserve_request(
+                                &c,
+                                current.user_id,
+                                current.key_id,
+                                request_id,
+                                &attempt_id,
+                                &p,
+                            ),
+                            None => {
+                                last_policy_error = Some(ApiError::new(
+                                    StatusCode::FORBIDDEN,
+                                    "pricing_required",
+                                    "Standalone tools require a configured per-request price",
+                                ));
+                                continue 'channels;
+                            }
+                        }
+                    } else {
+                        match price {
+                            Some(p) => crate::db::billing::reserve(
+                                &c,
+                                current.user_id,
+                                current.key_id,
+                                request_id,
+                                &attempt_id,
+                                &p,
+                                input,
+                                output,
+                            ),
+                            None => crate::db::billing::reserve_unpriced(
+                                &c,
+                                current.user_id,
+                                current.key_id,
+                                request_id,
+                                &attempt_id,
+                                channel.id.0,
+                                name,
+                            ),
+                        }
+                    };
+                    let id = match reservation {
+                        Ok(id) => id,
+                        Err(e) => {
+                            let error = billing_error(e);
+                            if matches!(error.kind, "budget_exceeded" | "pricing_required") {
+                                crate::db::identity::audit(
+                                    &c,
+                                    Some(&current),
+                                    "attempt.denied",
+                                    "channel",
+                                    channel.id.0,
+                                    serde_json::json!({"request_id":request_id,"model":name,"reason":error.kind}),
+                                )?;
+                                last_policy_error = Some(error);
+                                continue 'channels;
+                            }
+                            guard.reject(&error);
+                            return Err(error);
+                        }
+                    };
+                    guard.billing_nonchat = !req.endpoint.is_generation();
+                    guard.reservation = Some(id);
+                    // Capture the actual loaded deployment, independent of later channel edits.
+                    // Origin excludes URL credentials, paths, query parameters and fragments.
+                    let source = serde_json::json!({"channel_id":channel.id.0,"channel_name":channel.name,
                     "origin":reqwest::Url::parse(&channel.base_url).ok().map(|u|u.origin().ascii_serialization()),
                     "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol(),
+                    "virtual_model_id":plan.virtual_route.as_ref().map(|route|route.id),"virtual_model_version":plan.virtual_route.as_ref().map(|route|route.version),
+                    "target_position":target.as_ref().map(|target|target.position),"provider_id":credential.as_ref().map(|credential|credential.provider_id),"credential_id":credential.as_ref().map(|credential|credential.id),"credential_revision":credential.as_ref().map(|credential|credential.revision),
                     "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision)});
-                if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2,input_bound=?3,output_bound=?4 WHERE id=?1",rusqlite::params![id,source.to_string(),input,output]) {
+                    if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2,input_bound=?3,output_bound=?4 WHERE id=?1",rusqlite::params![id,source.to_string(),input,output]) {
                     if crate::db::billing::release(&c,id,"not_sent").is_ok(){guard.reservation=None;}
                     return Err(ApiError::from(crate::db::DbError::from(e)));
                 }
-            }
-            if let (Some(kind),Some(caps))=(req.endpoint.tool_kind(),tool_caps.as_ref()) {
-                if !state.tool_rates.admit(&caps.account_scope,kind,caps.qps) {
-                    guard.request_units=Some(0);guard.settle_billing("source_rate_limited_before_send");
-                    last_policy_error=Some(ApiError::new(StatusCode::TOO_MANY_REQUESTS,"source_rate_limit","Standalone tool account reached its configured local request rate"));continue 'channels;
                 }
-            }
-            // A later real source attempt supersedes an earlier representational mismatch.
-            if last_policy_error.as_ref().is_some_and(|error|matches!(error.kind,"protocol_not_supported"|"oauth_unavailable")) {last_policy_error=None;}
-            tried_any = true;
-            last_channel = channel.id;
-            guard.note_served(name);
-            guard.channel_id = Some(channel.id.0);
-            state.enqueue_write(crate::state::WriteJob::Progress(requests::ProgressArgs {
-                request_id, channel_id: channel.id.0, served_model: name.clone(), streamed: req.stream,
-            }));
-            let t0 = now_ms();
-            let uuid = crate::upstream::new_uuid();
-            guard.active_attempt=Some((requests::AttemptArgs {
-                request_id,ordinal,channel_id:channel.id.0,model_name:name.clone(),upstream_model:sent_model.clone(),
-                outcome:"canceled".into(),http_status:None,duration_ms:0,error:Some("客户端取消当前尝试".into()),first_byte_ms:None,
-            },t0));
-            let mut oauth_channel=channel.clone();
-            if let Some(credential)=&oauth {oauth_channel.base_url=credential.api_base.clone();oauth_channel.headers.clear();}
-            let outbound_secret=oauth.as_ref().map(|credential|credential.access_token.as_str()).or_else(||plan.secret(channel.id));
-            let outcome = state
-                .upstream
-                .call_via(
-                    &oauth_channel,
-                    outbound_secret,
-                    upstream_path,
-                    body_bytes.clone(),
-                    req.stream || oauth.is_some(),
-                    attempt_timeout.min(Duration::from_millis(
-                        (cfg.request_budget_ms as i64 - (now_ms() - started_ms)).max(1) as u64,
-                    )),
-                    &uuid,
-                    now_ms(),
-                    session.as_deref(),
-                    oauth.is_some(),
-                )
-                .await;
-
-            let resp = match outcome {
-                Err(fault) => {
-                    let dur = now_ms() - t0;
-                    slow_previous = dur >= attempt_ms as i64 * 3 / 4;
-                    guard.settle_billing("channel_fault");
-                    guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "channel_fault", None, dur, Some(&fault.message));
-                    ordinal += 1;
-                    last_fault = Some(format!("{}：{}", channel.name, fault.message));
-                    if cooldown.failure(&fault.message,pending_retry_ms) {break;}
-                    continue;
-                }
-                Ok(r) => r,
-            };
-
-            let status = resp.status().as_u16();
-            if req.endpoint.tool_kind().is_some() && status!=200 {guard.request_units=Some(0);}
-            let dur = now_ms() - t0;
-            slow_previous = dur >= attempt_ms as i64 * 3 / 4;
-            let classification=if req.endpoint.tool_kind().is_some() && status==408 {AttemptOutcome::ChannelFault}else{classify_status(status)};
-            match classification {
-                AttemptOutcome::Success => {
-                    // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
-                    // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
-                    if req.stream {
-                        let source=upstream_protocol.unwrap_or(crate::protocol::Protocol::Chat);
-                        let client=req.endpoint.protocol().unwrap_or(source);
-                        let left=attempt_ms.saturating_sub((now_ms()-t0).max(0) as u64)
-                            .min(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64));
-                        let mut resp=resp;
-                        let mut prepared=match prepare_stream(&mut resp,source,client,Duration::from_millis(left),attempt_timeout,&mut guard).await {
-                            Ok(p)=>p,
-                            Err(note)=>{
-                                if is_conversion_fault(&note) {
-                                    guard.settle_billing("protocol_fault");guard.active_attempt=None;
-                                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"protocol_fault",Some(status),now_ms()-t0,Some(&note));ordinal+=1;
-                                    last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"protocol_not_supported",note));
-                                    continue 'channels;
-                                }
-                                guard.settle_billing("precommit_fault");
-                                guard.active_attempt=None;
-                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"channel_fault",Some(status),now_ms()-t0,Some(&note));
-                                ordinal+=1;last_fault=Some(format!("{}：{note}",channel.name));
-                                slow_previous=now_ms()-t0>=attempt_ms as i64*3/4;
-                                if cooldown.failure(&note,pending_retry_ms) {break;}
-                                continue;
-                            }
-                        };
-                        if let (Some(key),Some(pin))=(&pin_key,&candidate_pin) {
-                            let claimed={let conn=state.conn();crate::protocol_sessions::claim(&conn,key,pin)};
-                            match claimed {
-                                Ok(true)=>{},
-                                Ok(false)=>{let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");guard.reject(&error);return Err(error);},
-                                Err(_)=>{
-                                    guard.settle_billing("local_state_fault");guard.active_attempt=None;
-                                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"local_fault",Some(status),now_ms()-t0,Some("Native session state unavailable"));
-                                    guard.error_code=Some("state_unavailable".into());
-                                    guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,0,0,false,Some("Native session state unavailable"));
-                                    return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Native session state could not be persisted; no fallback was attempted"));
-                                }
-                            }
-                        }
-                        if let (Some(owner),Some(pin))=(&pin_key,&candidate_pin) {
-                            let persisted=prepared.artifacts.persist(&state.conn(),owner,pin);
-                            if persisted.is_err() {
-                                guard.settle_billing("local_state_fault");guard.active_attempt=None;
-                                record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"local_fault",Some(status),now_ms()-t0,Some("Opaque artifact state unavailable"));
-                                guard.error_code=Some("state_unavailable".into());
-                                guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,0,0,false,Some("Opaque artifact state unavailable"));
-                                return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
-                            }
-                        }
-                        if touch_state {
-                            let mut r = state.routing();
-                            r.on_success_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
-                            drop(r);
-                            state.persist_state(&plan.route)?;
-                        }
-                        return Ok(stream_passthrough(
-                            state.clone(),
-                            resp,
-                            prepared,
-                            pin_key.clone().zip(candidate_pin.clone()),
-                            guard,
-                            request_id,
-                            started_ms,
-                            channel.id.0,
-                            permit,
-                            req.endpoint,
-                            ordinal, name.clone(), sent_model.clone(), t0, adaptation_note.clone(), cooldown, load_ticket, attempt_timeout,
+                if let (Some(kind), Some(caps)) = (req.endpoint.tool_kind(), tool_caps.as_ref()) {
+                    if !state.tool_rates.admit(&caps.account_scope, kind, caps.qps) {
+                        guard.request_units = Some(0);
+                        guard.settle_billing("source_rate_limited_before_send");
+                        last_policy_error = Some(ApiError::new(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "source_rate_limit",
+                            "Standalone tool account reached its configured local request rate",
                         ));
-                    }
-
-                    // 非流式：**先把正文读下来再算成功**。有的上游回 200 却一句话不说
-                    // （现网 4 天 9 次），那种必须当这条渠道的毛病去重试/换渠道 —— 不能先把
-                    // 路由状态记成「这条渠道好了」，更不能把空泡泡原样丢给用户。
-                    let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-                    let (resp, input, output, empty, usage) = if let Some(kind)=req.endpoint.tool_kind() {
-                        let (response,units,error)=buffer_tool_response(resp,kind).await;
-                        guard.request_units=units;
-                        (response,0,0,error,Usage::default())
-                    } else if oauth.is_some() {
-                        let left=attempt_ms.saturating_sub((now_ms()-t0).max(0) as u64)
-                            .min(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64));
-                        buffer_responses_stream(resp,req.endpoint.protocol().unwrap_or(crate::protocol::Protocol::Responses),
-                            pin_key.as_deref().zip(candidate_pin.as_ref()).map(|(owner,pin)|(&state,owner,pin)),
-                            Duration::from_millis(left),attempt_timeout,&mut guard).await
-                    } else if req.endpoint == EndpointKind::Rerank {
-                        buffer_rerank_passthrough(resp, http, &req.body).await
-                    } else {
-                        buffer_passthrough(
-                            resp,
-                            http,
-                            channel.unwrap_envelope,
-                            req.endpoint == EndpointKind::Chat,
-                            upstream_protocol.zip(req.endpoint.protocol()),
-                            pin_key.as_deref().zip(candidate_pin.as_ref()).map(|(owner,pin)|(&state,owner,pin)),
-                        )
-                        .await
-                    };
-                    let body_dur = now_ms() - t0;
-                    slow_previous = body_dur >= attempt_ms as i64 * 3 / 4;
-                    guard.usage = usage;
-
-                    if let Some(note)=empty.as_deref().filter(|note|note.starts_with("local_state:")) {
-                        guard.settle_billing("local_state_fault");guard.active_attempt=None;
-                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"local_fault",Some(status),now_ms()-t0,Some(note));
-                        guard.error_code=Some("state_unavailable".into());
-                        guard.finish(&state,Status::Failed,Some(503),Some(channel.id.0),started_ms,None,input,output,false,Some(note));
-                        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
-                    }
-                    if let Some(note)=empty.as_deref().filter(|note|is_conversion_fault(note)) {
-                        guard.settle_billing("protocol_fault");guard.active_attempt=None;
-                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"protocol_fault",Some(status),now_ms()-t0,Some(note));ordinal+=1;
-                        last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"protocol_not_supported",note));
                         continue 'channels;
                     }
-                    if let Some(note) = empty {
-                        guard.settle_billing("empty_reply");
-                        guard.active_attempt=None;
-                    record_attempt(
+                }
+                // A later real source attempt supersedes an earlier representational mismatch.
+                if last_policy_error.as_ref().is_some_and(|error| {
+                    matches!(error.kind, "protocol_not_supported" | "oauth_unavailable")
+                }) {
+                    last_policy_error = None;
+                }
+                tried_any = true;
+                if pooled {
+                    if let Some(credential) = credential {
+                        pool_control.seen.insert((
+                            target.as_ref().map(|target| target.position),
+                            credential.id,
+                            name.clone(),
+                        ));
+                    }
+                }
+                last_channel = channel.id;
+                guard.note_served(name);
+                guard.channel_id = Some(channel.id.0);
+                state.enqueue_write(crate::state::WriteJob::Progress(requests::ProgressArgs {
+                    request_id,
+                    channel_id: channel.id.0,
+                    served_model: name.clone(),
+                    streamed: req.stream,
+                }));
+                let t0 = now_ms();
+                let uuid = crate::upstream::new_uuid();
+                guard.active_attempt = Some((
+                    requests::AttemptArgs {
+                        request_id,
+                        ordinal,
+                        channel_id: channel.id.0,
+                        model_name: name.clone(),
+                        upstream_model: sent_model.clone(),
+                        outcome: "canceled".into(),
+                        http_status: None,
+                        duration_ms: 0,
+                        error: Some("客户端取消当前尝试".into()),
+                        first_byte_ms: None,
+                    },
+                    t0,
+                ));
+                let mut oauth_channel = channel.clone();
+                if let Some(credential) = &oauth {
+                    oauth_channel.base_url = credential.api_base.clone();
+                    oauth_channel.headers.clear();
+                }
+                let outbound_secret = oauth
+                    .as_ref()
+                    .map(|credential| credential.access_token.as_str())
+                    .or_else(|| plan.secret(channel.id));
+                let outcome = state
+                    .upstream
+                    .call_via(
+                        &oauth_channel,
+                        outbound_secret,
+                        upstream_path,
+                        body_bytes.clone(),
+                        req.stream || oauth.is_some(),
+                        attempt_timeout.min(Duration::from_millis(
+                            (cfg.request_budget_ms as i64 - (now_ms() - started_ms)).max(1) as u64,
+                        )),
+                        &uuid,
+                        now_ms(),
+                        session.as_deref(),
+                        oauth.is_some(),
+                    )
+                    .await;
+
+                let resp = match outcome {
+                    Err(fault) => {
+                        let dur = now_ms() - t0;
+                        slow_previous = dur >= attempt_ms as i64 * 3 / 4;
+                        guard.settle_billing("channel_fault");
+                        guard.active_attempt = None;
+                        record_attempt(
                             &state,
                             request_id,
                             ordinal,
                             channel,
-                            name, &sent_model,
-                            "empty_reply",
-                            Some(status),
+                            name,
+                            &sent_model,
+                            "channel_fault",
+                            None,
                             dur,
-                            Some(&note),
+                            Some(&fault.message),
                         );
                         ordinal += 1;
-                        tracing::warn!("渠道 {} 回了 200 但一句话没说，按这条渠道的毛病处理", channel.name);
-                        last_fault = Some(format!("{}：{note}", channel.name));
-                        if cooldown.failure(&note,pending_retry_ms) {break;}
+                        last_fault = Some(format!("{}：{}", channel.name, fault.message));
+                        if cooldown.failure(&fault.message, pending_retry_ms) {
+                            break;
+                        }
                         continue;
                     }
-                    if let (Some(key),Some(pin))=(&pin_key,&candidate_pin) {
-                        if !crate::protocol_sessions::claim(&state.conn(),key,pin)? {
-                            let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session"); guard.reject(&error); return Err(error);
-                        }
-                    }
-                    guard.settle_billing("success");
-                    guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "success", Some(status), now_ms()-t0, adaptation_note.as_deref());
-                    cooldown.finish(true,"",0);
-                    state.note_model_endpoint(name, req.endpoint);
-                    // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
-                    if touch_state {
-                        let mut r = state.routing();
-                        r.on_success_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
-                        drop(r);
-                        state.persist_state(&plan.route)?;
-                    }
-                    guard.finish(
-                        &state,
-                        Status::Ok,
-                        Some(status),
-                        Some(channel.id.0),
-                        started_ms,
-                        Some(dur),
-                        input,
-                        output,
-                        false,
-                        None,
-                    );
-                    return Ok(resp);
+                    Ok(r) => r,
+                };
+
+                let status = resp.status().as_u16();
+                if req.endpoint.tool_kind().is_some() && status != 200 {
+                    guard.request_units = Some(0);
                 }
-                AttemptOutcome::ClientFault => {
-                    // 完整客户端错误原样返回；错误正文不可读属于渠道故障，可以切换。
-                    let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
-                        .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
-                    let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
-                        Ok(err) => err,
-                        Err(note) => {
-                            let elapsed = now_ms() - t0;
-                            slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
-                            guard.settle_billing("channel_fault");
-                            guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
-                                "channel_fault", Some(status), elapsed, Some(&note));
+                let dur = now_ms() - t0;
+                slow_previous = dur >= attempt_ms as i64 * 3 / 4;
+                let classification = if req.endpoint.tool_kind().is_some() && status == 408 {
+                    AttemptOutcome::ChannelFault
+                } else {
+                    classify_status(status)
+                };
+                match classification {
+                    AttemptOutcome::Success => {
+                        // 流式：第一个字节发出去之后就不能换渠道了，所以先记账、更新路由状态，
+                        // 再直接透传（空不空只能等流完再判断，那时已经改不了什么，见 StreamState）。
+                        if req.stream {
+                            let source =
+                                upstream_protocol.unwrap_or(crate::protocol::Protocol::Chat);
+                            let client = req.endpoint.protocol().unwrap_or(source);
+                            let left = attempt_ms
+                                .saturating_sub((now_ms() - t0).max(0) as u64)
+                                .min(
+                                    cfg.request_budget_ms
+                                        .saturating_sub((now_ms() - started_ms).max(0) as u64),
+                                );
+                            let mut resp = resp;
+                            let mut prepared = match prepare_stream(
+                                &mut resp,
+                                source,
+                                client,
+                                Duration::from_millis(left),
+                                attempt_timeout,
+                                &mut guard,
+                            )
+                            .await
+                            {
+                                Ok(p) => p,
+                                Err(note) => {
+                                    if is_conversion_fault(&note) {
+                                        guard.settle_billing("protocol_fault");
+                                        guard.active_attempt = None;
+                                        record_attempt(
+                                            &state,
+                                            request_id,
+                                            ordinal,
+                                            channel,
+                                            name,
+                                            &sent_model,
+                                            "protocol_fault",
+                                            Some(status),
+                                            now_ms() - t0,
+                                            Some(&note),
+                                        );
+                                        ordinal += 1;
+                                        last_policy_error = Some(ApiError::new(
+                                            StatusCode::BAD_REQUEST,
+                                            "protocol_not_supported",
+                                            note,
+                                        ));
+                                        continue 'channels;
+                                    }
+                                    guard.settle_billing("precommit_fault");
+                                    guard.active_attempt = None;
+                                    record_attempt(
+                                        &state,
+                                        request_id,
+                                        ordinal,
+                                        channel,
+                                        name,
+                                        &sent_model,
+                                        "channel_fault",
+                                        Some(status),
+                                        now_ms() - t0,
+                                        Some(&note),
+                                    );
+                                    ordinal += 1;
+                                    last_fault = Some(format!("{}：{note}", channel.name));
+                                    slow_previous = now_ms() - t0 >= attempt_ms as i64 * 3 / 4;
+                                    if cooldown.failure(&note, pending_retry_ms) {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            };
+                            if let (Some(key), Some(pin)) = (&pin_key, &candidate_pin) {
+                                let claimed = {
+                                    let conn = state.conn();
+                                    crate::protocol_sessions::claim(&conn, key, pin)
+                                };
+                                match claimed {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");
+                                        guard.reject(&error);
+                                        return Err(error);
+                                    }
+                                    Err(_) => {
+                                        guard.settle_billing("local_state_fault");
+                                        guard.active_attempt = None;
+                                        record_attempt(
+                                            &state,
+                                            request_id,
+                                            ordinal,
+                                            channel,
+                                            name,
+                                            &sent_model,
+                                            "local_fault",
+                                            Some(status),
+                                            now_ms() - t0,
+                                            Some("Native session state unavailable"),
+                                        );
+                                        guard.error_code = Some("state_unavailable".into());
+                                        guard.finish(
+                                            &state,
+                                            Status::Failed,
+                                            Some(503),
+                                            Some(channel.id.0),
+                                            started_ms,
+                                            None,
+                                            0,
+                                            0,
+                                            false,
+                                            Some("Native session state unavailable"),
+                                        );
+                                        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Native session state could not be persisted; no fallback was attempted"));
+                                    }
+                                }
+                            }
+                            if let (Some(owner), Some(pin)) = (&pin_key, &candidate_pin) {
+                                let persisted =
+                                    prepared.artifacts.persist(&state.conn(), owner, pin);
+                                if persisted.is_err() {
+                                    guard.settle_billing("local_state_fault");
+                                    guard.active_attempt = None;
+                                    record_attempt(
+                                        &state,
+                                        request_id,
+                                        ordinal,
+                                        channel,
+                                        name,
+                                        &sent_model,
+                                        "local_fault",
+                                        Some(status),
+                                        now_ms() - t0,
+                                        Some("Opaque artifact state unavailable"),
+                                    );
+                                    guard.error_code = Some("state_unavailable".into());
+                                    guard.finish(
+                                        &state,
+                                        Status::Failed,
+                                        Some(503),
+                                        Some(channel.id.0),
+                                        started_ms,
+                                        None,
+                                        0,
+                                        0,
+                                        false,
+                                        Some("Opaque artifact state unavailable"),
+                                    );
+                                    return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
+                                }
+                            }
+                            if touch_state {
+                                let mut r = state.routing();
+                                r.on_success_with_interval(
+                                    &plan.route,
+                                    channel.id,
+                                    &all_ids,
+                                    now_ms(),
+                                    cfg.reprobe_interval_ms,
+                                );
+                                drop(r);
+                                state.persist_state(&plan.route)?;
+                            }
+                            return Ok(stream_passthrough(
+                                state.clone(),
+                                resp,
+                                prepared,
+                                pin_key.clone().zip(candidate_pin.clone()),
+                                guard,
+                                request_id,
+                                started_ms,
+                                channel.id.0,
+                                permit,
+                                req.endpoint,
+                                ordinal,
+                                name.clone(),
+                                sent_model.clone(),
+                                t0,
+                                adaptation_note.clone(),
+                                cooldown,
+                                load_ticket,
+                                attempt_timeout,
+                            ));
+                        }
+
+                        // 非流式：**先把正文读下来再算成功**。有的上游回 200 却一句话不说
+                        // （现网 4 天 9 次），那种必须当这条渠道的毛病去重试/换渠道 —— 不能先把
+                        // 路由状态记成「这条渠道好了」，更不能把空泡泡原样丢给用户。
+                        let http = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+                        let (resp, input, output, empty, usage) = if let Some(kind) =
+                            req.endpoint.tool_kind()
+                        {
+                            let (response, units, error) = buffer_tool_response(resp, kind).await;
+                            guard.request_units = units;
+                            (response, 0, 0, error, Usage::default())
+                        } else if oauth.is_some() {
+                            let left = attempt_ms
+                                .saturating_sub((now_ms() - t0).max(0) as u64)
+                                .min(
+                                    cfg.request_budget_ms
+                                        .saturating_sub((now_ms() - started_ms).max(0) as u64),
+                                );
+                            buffer_responses_stream(
+                                resp,
+                                req.endpoint
+                                    .protocol()
+                                    .unwrap_or(crate::protocol::Protocol::Responses),
+                                pin_key
+                                    .as_deref()
+                                    .zip(candidate_pin.as_ref())
+                                    .map(|(owner, pin)| (&state, owner, pin)),
+                                Duration::from_millis(left),
+                                attempt_timeout,
+                                &mut guard,
+                            )
+                            .await
+                        } else if req.endpoint == EndpointKind::Rerank {
+                            buffer_rerank_passthrough(resp, http, &req.body).await
+                        } else {
+                            buffer_passthrough(
+                                resp,
+                                http,
+                                channel.unwrap_envelope,
+                                req.endpoint == EndpointKind::Chat,
+                                upstream_protocol.zip(req.endpoint.protocol()),
+                                pin_key
+                                    .as_deref()
+                                    .zip(candidate_pin.as_ref())
+                                    .map(|(owner, pin)| (&state, owner, pin)),
+                            )
+                            .await
+                        };
+                        let body_dur = now_ms() - t0;
+                        slow_previous = body_dur >= attempt_ms as i64 * 3 / 4;
+                        guard.usage = usage;
+
+                        if let Some(note) = empty
+                            .as_deref()
+                            .filter(|note| note.starts_with("local_state:"))
+                        {
+                            guard.settle_billing("local_state_fault");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "local_fault",
+                                Some(status),
+                                now_ms() - t0,
+                                Some(note),
+                            );
+                            guard.error_code = Some("state_unavailable".into());
+                            guard.finish(
+                                &state,
+                                Status::Failed,
+                                Some(503),
+                                Some(channel.id.0),
+                                started_ms,
+                                None,
+                                input,
+                                output,
+                                false,
+                                Some(note),
+                            );
+                            return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
+                        }
+                        if let Some(note) =
+                            empty.as_deref().filter(|note| is_conversion_fault(note))
+                        {
+                            guard.settle_billing("protocol_fault");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "protocol_fault",
+                                Some(status),
+                                now_ms() - t0,
+                                Some(note),
+                            );
                             ordinal += 1;
+                            last_policy_error = Some(ApiError::new(
+                                StatusCode::BAD_REQUEST,
+                                "protocol_not_supported",
+                                note,
+                            ));
+                            continue 'channels;
+                        }
+                        if let Some(note) = empty {
+                            guard.settle_billing("empty_reply");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "empty_reply",
+                                Some(status),
+                                dur,
+                                Some(&note),
+                            );
+                            ordinal += 1;
+                            tracing::warn!(
+                                "渠道 {} 回了 200 但一句话没说，按这条渠道的毛病处理",
+                                channel.name
+                            );
                             last_fault = Some(format!("{}：{note}", channel.name));
-                            // No complete HTTP error is available to pass through. A previous
-                            // candidate's error must not mask this transport/protocol failure.
-                            last_http = None;
-                            if cooldown.failure(&note, pending_retry_ms) { break; }
+                            if cooldown.failure(&note, pending_retry_ms) {
+                                break;
+                            }
                             continue;
                         }
-                    };
-                    if req.endpoint.tool_kind().is_some() {
-                        guard.request_units=Some(0);
-                        guard.settle_billing("tool_client_error");guard.active_attempt=None;
-                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"client_fault",Some(status),now_ms()-t0,Some("Standalone tool request rejected; source model health unchanged"));
-                        guard.finish(&state,Status::ClientError,Some(status),Some(channel.id.0),started_ms,Some(now_ms()-t0),0,0,false,Some("Standalone tool request rejected"));
-                        return Ok(err.into_response());
+                        if let (Some(key), Some(pin)) = (&pin_key, &candidate_pin) {
+                            if !crate::protocol_sessions::claim(&state.conn(), key, pin)? {
+                                let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");
+                                guard.reject(&error);
+                                return Err(error);
+                            }
+                        }
+                        guard.settle_billing("success");
+                        guard.active_attempt = None;
+                        record_attempt(
+                            &state,
+                            request_id,
+                            ordinal,
+                            channel,
+                            name,
+                            &sent_model,
+                            "success",
+                            Some(status),
+                            now_ms() - t0,
+                            adaptation_note.as_deref(),
+                        );
+                        cooldown.finish(true, "", 0);
+                        state.note_model_endpoint(name, req.endpoint);
+                        // 命中的是首选就视为已回切；不是就记下当前渠道、重设检查点
+                        if touch_state {
+                            let mut r = state.routing();
+                            r.on_success_with_interval(
+                                &plan.route,
+                                channel.id,
+                                &all_ids,
+                                now_ms(),
+                                cfg.reprobe_interval_ms,
+                            );
+                            drop(r);
+                            state.persist_state(&plan.route)?;
+                        }
+                        guard.finish(
+                            &state,
+                            Status::Ok,
+                            Some(status),
+                            Some(channel.id.0),
+                            started_ms,
+                            Some(dur),
+                            input,
+                            output,
+                            false,
+                            None,
+                        );
+                        return Ok(resp);
                     }
-                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
-                    if let Some(fault)=crate::db::faults::classify(status,&err.body) {
-                        let reason=fault.label();
-                        cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
-                        guard.settle_billing("account_fault");
-                        guard.active_attempt=None;
-                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
-                        ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
-                        continue 'channels;
-                    }
-
-                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
-                    if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
-                        guard.settle_billing("context_limit");
-                        guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
-                            "context_limit", Some(status), dur, Some(&err.text));
-                        ordinal += 1;
-                        last_fault = Some(format!("渠道 {} 上下文不足：{}", channel.name, err.text));
-                        last_http = Some(err);
-                        continue 'channels;
-                    }
-                    if req.endpoint == EndpointKind::Chat && matches!(status, 400 | 422) && !learned_this_request {
-                        if let Some(cap) = output_ceiling(&err.text) {
-                            if clamp_output(&mut body, cap) {
-                                learned_this_request = true;
-                                let _ = crate::db::settings::set(&state.conn(), &cap_key, &cap.to_string());
-                                adaptation_note = Some(format!("上游明确输出上限为 {cap} tokens，已收窄重试"));
-                                guard.settle_billing("output_limit");
-                                guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
-                                    "output_limit", Some(status), dur, adaptation_note.as_deref());
+                    AttemptOutcome::ClientFault => {
+                        // 完整客户端错误原样返回；错误正文不可读属于渠道故障，可以切换。
+                        let remaining = attempt_ms
+                            .saturating_sub((now_ms() - t0).max(0) as u64)
+                            .min(
+                                cfg.request_budget_ms
+                                    .saturating_sub((now_ms() - started_ms).max(0) as u64),
+                            );
+                        let err = match read_error(
+                            resp,
+                            Duration::from_millis(remaining),
+                            attempt_timeout,
+                        )
+                        .await
+                        {
+                            Ok(err) => err,
+                            Err(note) => {
+                                let elapsed = now_ms() - t0;
+                                slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                                guard.settle_billing("channel_fault");
+                                guard.active_attempt = None;
+                                record_attempt(
+                                    &state,
+                                    request_id,
+                                    ordinal,
+                                    channel,
+                                    name,
+                                    &sent_model,
+                                    "channel_fault",
+                                    Some(status),
+                                    elapsed,
+                                    Some(&note),
+                                );
                                 ordinal += 1;
-                                body_bytes = Bytes::from(serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?);
-                                if attempt_no < max_attempts { continue; }
+                                last_fault = Some(format!("{}：{note}", channel.name));
+                                // No complete HTTP error is available to pass through. A previous
+                                // candidate's error must not mask this transport/protocol failure.
+                                last_http = None;
+                                if cooldown.failure(&note, pending_retry_ms) {
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        if matches!(status, 400 | 429) && (pooled || plan.virtual_route.is_some()) {
+                            let switched = match advance_explicit_route(
+                                &state,
+                                &plan,
+                                entry_idx,
+                                status,
+                                req.auth.as_ref(),
+                                existing_pin.is_some(),
+                                &mut pool_control,
+                                &mut active_target,
+                            ) {
+                                Ok(switched) => switched,
+                                Err(error) => {
+                                    guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                        .map(|value| Usage::read(&value))
+                                        .unwrap_or_default();
+                                    guard.settle_billing("affinity_changed");
+                                    guard.active_attempt = None;
+                                    record_attempt(
+                                        &state,
+                                        request_id,
+                                        ordinal,
+                                        channel,
+                                        name,
+                                        &sent_model,
+                                        "affinity_changed",
+                                        Some(status),
+                                        now_ms() - t0,
+                                        Some(&error.message),
+                                    );
+                                    guard.reject(&error);
+                                    return Err(error);
+                                }
+                            };
+                            if switched {
+                                if status == 429 {
+                                    defer_explicit_retry_after(&state, &plan, entry_idx, &err)?;
+                                }
+                                guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                    .map(|value| Usage::read(&value))
+                                    .unwrap_or_default();
+                                guard.settle_billing("explicit_route_switch");
+                                guard.active_attempt = None;
+                                record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"explicit_route_switch",Some(status),now_ms()-t0,Some("Explicit request-local key/target switch; no global key suspension"));
+                                ordinal += 1;
+                                last_fault = Some(format!("HTTP {status}: explicit route switch"));
                                 last_http = Some(err);
                                 continue 'channels;
                             }
                         }
-                    }
-                    guard.settle_billing("client_fault");
-                    guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_fault", Some(status), dur, Some(&err.text));
-                    let note = format!(
-                        "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
-                        channel.name,
-                        err.text.chars().take(200).collect::<String>()
-                    );
-                    guard.finish(
-                        &state,
-                        Status::ClientError,
-                        Some(status),
-                        Some(channel.id.0),
-                        started_ms,
-                        Some(dur),
-                        0,
-                        0,
-                        false,
-                        Some(&note),
-                    );
-                    return Ok(err.into_response());
-                }
-                AttemptOutcome::ChannelFault => {
-                    // Tool QPS and URL security errors must not suspend model-account access.
-                    if req.endpoint.tool_kind().is_some() && matches!(status,401|402|403|404|429) {
-                        let remaining=attempt_ms.saturating_sub((now_ms()-t0).max(0) as u64).min(cfg.request_budget_ms.saturating_sub((now_ms()-started_ms).max(0) as u64));
-                        let err=match read_error(resp,Duration::from_millis(remaining),attempt_timeout).await {
-                            Ok(err)=>err,
-                            Err(_)=>{
-                                let note="Standalone tool error body could not be read";
-                                guard.settle_billing("tool_error_unreadable");guard.active_attempt=None;
-                                record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"tool_error",Some(status),now_ms()-t0,Some(note));
-                                guard.finish(&state,Status::Failed,Some(502),Some(channel.id.0),started_ms,Some(now_ms()-t0),0,0,false,Some(note));
-                                return Err(ApiError::new(StatusCode::BAD_GATEWAY,"tool_error_unreadable",note));
+                        if req.endpoint.tool_kind().is_some() {
+                            guard.request_units = Some(0);
+                            guard.settle_billing("tool_client_error");
+                            guard.active_attempt = None;
+                            record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"client_fault",Some(status),now_ms()-t0,Some("Standalone tool request rejected; source model health unchanged"));
+                            guard.finish(
+                                &state,
+                                Status::ClientError,
+                                Some(status),
+                                Some(channel.id.0),
+                                started_ms,
+                                Some(now_ms() - t0),
+                                0,
+                                0,
+                                false,
+                                Some("Standalone tool request rejected"),
+                            );
+                            return Ok(err.into_response());
+                        }
+                        guard.usage = serde_json::from_slice::<Value>(&err.body)
+                            .map(|v| Usage::read(&v))
+                            .unwrap_or_default();
+                        if let Some(fault) = crate::db::faults::classify(status, &err.body) {
+                            let reason = fault.label();
+                            cooldown.suspend(
+                                fault,
+                                reason,
+                                err.retry_after
+                                    .as_ref()
+                                    .and_then(|v| v.to_str().ok())
+                                    .and_then(crate::upstream::retry_after_ms),
+                            )?;
+                            guard.settle_billing("account_fault");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "account_fault",
+                                Some(status),
+                                dur,
+                                Some(reason),
+                            );
+                            ordinal += 1;
+                            last_fault = Some(format!("{}：{}", channel.name, reason));
+                            last_http = Some(err);
+                            continue 'channels;
+                        }
+
+                        guard.usage = serde_json::from_slice::<Value>(&err.body)
+                            .map(|v| Usage::read(&v))
+                            .unwrap_or_default();
+                        if matches!(status, 400 | 413 | 422) && context_rejection(&err.text) {
+                            guard.settle_billing("context_limit");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "context_limit",
+                                Some(status),
+                                dur,
+                                Some(&err.text),
+                            );
+                            ordinal += 1;
+                            last_fault =
+                                Some(format!("渠道 {} 上下文不足：{}", channel.name, err.text));
+                            last_http = Some(err);
+                            continue 'channels;
+                        }
+                        if req.endpoint == EndpointKind::Chat
+                            && matches!(status, 400 | 422)
+                            && !learned_this_request
+                        {
+                            if let Some(cap) = output_ceiling(&err.text) {
+                                if clamp_output(&mut body, cap) {
+                                    learned_this_request = true;
+                                    let _ = crate::db::settings::set(
+                                        &state.conn(),
+                                        &cap_key,
+                                        &cap.to_string(),
+                                    );
+                                    adaptation_note = Some(format!(
+                                        "上游明确输出上限为 {cap} tokens，已收窄重试"
+                                    ));
+                                    guard.settle_billing("output_limit");
+                                    guard.active_attempt = None;
+                                    record_attempt(
+                                        &state,
+                                        request_id,
+                                        ordinal,
+                                        channel,
+                                        name,
+                                        &sent_model,
+                                        "output_limit",
+                                        Some(status),
+                                        dur,
+                                        adaptation_note.as_deref(),
+                                    );
+                                    ordinal += 1;
+                                    body_bytes = Bytes::from(
+                                        serde_json::to_vec(&body)
+                                            .map_err(|e| ApiError::internal(e.to_string()))?,
+                                    );
+                                    if attempt_no < max_attempts {
+                                        continue;
+                                    }
+                                    last_http = Some(err);
+                                    continue 'channels;
+                                }
                             }
-                        };
-                        guard.request_units=Some(0);guard.settle_billing("tool_rejected");guard.active_attempt=None;
-                        record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"tool_rejected",Some(status),now_ms()-t0,Some("Standalone tool rejected request; no model-account suspension"));
-                        if matches!(status,401|402|429) {ordinal+=1;last_http=Some(err);last_fault=Some("Standalone tool source rejected the request".into());continue 'channels;}
-                        guard.finish(&state,Status::ClientError,Some(status),Some(channel.id.0),started_ms,Some(now_ms()-t0),0,0,false,Some("Standalone tool rejected request"));
+                        }
+                        guard.settle_billing("client_fault");
+                        guard.active_attempt = None;
+                        record_attempt(
+                            &state,
+                            request_id,
+                            ordinal,
+                            channel,
+                            name,
+                            &sent_model,
+                            "client_fault",
+                            Some(status),
+                            dur,
+                            Some(&err.text),
+                        );
+                        let note = format!(
+                            "客户端错误 {status}（渠道 {} 未重试、未切换）：{}",
+                            channel.name,
+                            err.text.chars().take(200).collect::<String>()
+                        );
+                        guard.finish(
+                            &state,
+                            Status::ClientError,
+                            Some(status),
+                            Some(channel.id.0),
+                            started_ms,
+                            Some(dur),
+                            0,
+                            0,
+                            false,
+                            Some(&note),
+                        );
                         return Ok(err.into_response());
                     }
-                    let remaining = attempt_ms.saturating_sub((now_ms() - t0).max(0) as u64)
-                        .min(cfg.request_budget_ms.saturating_sub((now_ms() - started_ms).max(0) as u64));
-                    let err = match read_error(resp, Duration::from_millis(remaining), attempt_timeout).await {
-                        Ok(err) => err,
-                        Err(note) => {
-                            let elapsed = now_ms() - t0;
-                            slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
-                            guard.settle_billing("channel_fault");
-                            guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
-                                "channel_fault", Some(status), elapsed, Some(&note));
-                            ordinal += 1;
-                            last_fault = Some(format!("{}：{note}", channel.name));
-                            // No complete HTTP error is available to pass through. A previous
-                            // candidate's error must not mask this transport/protocol failure.
-                            last_http = None;
-                            if cooldown.failure(&note, pending_retry_ms) { break; }
-                            continue;
+                    AttemptOutcome::ChannelFault => {
+                        // Tool QPS and URL security errors must not suspend model-account access.
+                        if req.endpoint.tool_kind().is_some()
+                            && matches!(status, 401 | 402 | 403 | 404 | 429)
+                        {
+                            let remaining = attempt_ms
+                                .saturating_sub((now_ms() - t0).max(0) as u64)
+                                .min(
+                                    cfg.request_budget_ms
+                                        .saturating_sub((now_ms() - started_ms).max(0) as u64),
+                                );
+                            let err = match read_error(
+                                resp,
+                                Duration::from_millis(remaining),
+                                attempt_timeout,
+                            )
+                            .await
+                            {
+                                Ok(err) => err,
+                                Err(_) => {
+                                    let note = "Standalone tool error body could not be read";
+                                    guard.settle_billing("tool_error_unreadable");
+                                    guard.active_attempt = None;
+                                    record_attempt(
+                                        &state,
+                                        request_id,
+                                        ordinal,
+                                        channel,
+                                        name,
+                                        &sent_model,
+                                        "tool_error",
+                                        Some(status),
+                                        now_ms() - t0,
+                                        Some(note),
+                                    );
+                                    guard.finish(
+                                        &state,
+                                        Status::Failed,
+                                        Some(502),
+                                        Some(channel.id.0),
+                                        started_ms,
+                                        Some(now_ms() - t0),
+                                        0,
+                                        0,
+                                        false,
+                                        Some(note),
+                                    );
+                                    return Err(ApiError::new(
+                                        StatusCode::BAD_GATEWAY,
+                                        "tool_error_unreadable",
+                                        note,
+                                    ));
+                                }
+                            };
+                            guard.request_units = Some(0);
+                            guard.settle_billing("tool_rejected");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "tool_rejected",
+                                Some(status),
+                                now_ms() - t0,
+                                Some(
+                                    "Standalone tool rejected request; no model-account suspension",
+                                ),
+                            );
+                            if matches!(status, 401 | 402 | 429) {
+                                ordinal += 1;
+                                last_http = Some(err);
+                                last_fault =
+                                    Some("Standalone tool source rejected the request".into());
+                                continue 'channels;
+                            }
+                            guard.finish(
+                                &state,
+                                Status::ClientError,
+                                Some(status),
+                                Some(channel.id.0),
+                                started_ms,
+                                Some(now_ms() - t0),
+                                0,
+                                0,
+                                false,
+                                Some("Standalone tool rejected request"),
+                            );
+                            return Ok(err.into_response());
                         }
-                    };
-                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
-                    if let Some(fault)=crate::db::faults::classify(status,&err.body) {
-                        let reason=fault.label();
-                        cooldown.suspend(fault,reason,err.retry_after.as_ref().and_then(|v|v.to_str().ok()).and_then(crate::upstream::retry_after_ms))?;
-                        guard.settle_billing("account_fault");
-                        guard.active_attempt=None;
-                    record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"account_fault",Some(status),dur,Some(reason));
-                        ordinal+=1;last_fault=Some(format!("{}：{}",channel.name,reason));last_http=Some(err);
-                        continue 'channels;
-                    }
+                        let remaining = attempt_ms
+                            .saturating_sub((now_ms() - t0).max(0) as u64)
+                            .min(
+                                cfg.request_budget_ms
+                                    .saturating_sub((now_ms() - started_ms).max(0) as u64),
+                            );
+                        let err = match read_error(
+                            resp,
+                            Duration::from_millis(remaining),
+                            attempt_timeout,
+                        )
+                        .await
+                        {
+                            Ok(err) => err,
+                            Err(note) => {
+                                let elapsed = now_ms() - t0;
+                                slow_previous = elapsed >= attempt_ms as i64 * 3 / 4;
+                                guard.settle_billing("channel_fault");
+                                guard.active_attempt = None;
+                                record_attempt(
+                                    &state,
+                                    request_id,
+                                    ordinal,
+                                    channel,
+                                    name,
+                                    &sent_model,
+                                    "channel_fault",
+                                    Some(status),
+                                    elapsed,
+                                    Some(&note),
+                                );
+                                ordinal += 1;
+                                last_fault = Some(format!("{}：{note}", channel.name));
+                                // No complete HTTP error is available to pass through. A previous
+                                // candidate's error must not mask this transport/protocol failure.
+                                last_http = None;
+                                if cooldown.failure(&note, pending_retry_ms) {
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        if matches!(status, 400 | 429) && (pooled || plan.virtual_route.is_some()) {
+                            let switched = match advance_explicit_route(
+                                &state,
+                                &plan,
+                                entry_idx,
+                                status,
+                                req.auth.as_ref(),
+                                existing_pin.is_some(),
+                                &mut pool_control,
+                                &mut active_target,
+                            ) {
+                                Ok(switched) => switched,
+                                Err(error) => {
+                                    guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                        .map(|value| Usage::read(&value))
+                                        .unwrap_or_default();
+                                    guard.settle_billing("affinity_changed");
+                                    guard.active_attempt = None;
+                                    record_attempt(
+                                        &state,
+                                        request_id,
+                                        ordinal,
+                                        channel,
+                                        name,
+                                        &sent_model,
+                                        "affinity_changed",
+                                        Some(status),
+                                        now_ms() - t0,
+                                        Some(&error.message),
+                                    );
+                                    guard.reject(&error);
+                                    return Err(error);
+                                }
+                            };
+                            if switched {
+                                if status == 429 {
+                                    defer_explicit_retry_after(&state, &plan, entry_idx, &err)?;
+                                }
+                                guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                    .map(|value| Usage::read(&value))
+                                    .unwrap_or_default();
+                                guard.settle_billing("explicit_route_switch");
+                                guard.active_attempt = None;
+                                record_attempt(&state,request_id,ordinal,channel,name,&sent_model,"explicit_route_switch",Some(status),now_ms()-t0,Some("Explicit request-local key/target switch; no global key suspension"));
+                                ordinal += 1;
+                                last_fault = Some(format!("HTTP {status}: explicit route switch"));
+                                last_http = Some(err);
+                                continue 'channels;
+                            }
+                        }
+                        guard.usage = serde_json::from_slice::<Value>(&err.body)
+                            .map(|v| Usage::read(&v))
+                            .unwrap_or_default();
+                        if let Some(fault) = crate::db::faults::classify(status, &err.body) {
+                            let reason = fault.label();
+                            cooldown.suspend(
+                                fault,
+                                reason,
+                                err.retry_after
+                                    .as_ref()
+                                    .and_then(|v| v.to_str().ok())
+                                    .and_then(crate::upstream::retry_after_ms),
+                            )?;
+                            guard.settle_billing("account_fault");
+                            guard.active_attempt = None;
+                            record_attempt(
+                                &state,
+                                request_id,
+                                ordinal,
+                                channel,
+                                name,
+                                &sent_model,
+                                "account_fault",
+                                Some(status),
+                                dur,
+                                Some(reason),
+                            );
+                            ordinal += 1;
+                            last_fault = Some(format!("{}：{}", channel.name, reason));
+                            last_http = Some(err);
+                            continue 'channels;
+                        }
 
-                    guard.usage=serde_json::from_slice::<Value>(&err.body).map(|v|Usage::read(&v)).unwrap_or_default();
-                    let after = err
-                        .retry_after
-                        .as_ref()
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(crate::upstream::retry_after_ms);
-                    guard.settle_billing("channel_fault");
-                    guard.active_attempt=None;
-                    record_attempt(
-                        &state,
-                        request_id,
-                        ordinal,
-                        channel,
-                        name, &sent_model,
-                        "channel_fault",
-                        Some(status),
-                        dur,
-                        Some(&err.text),
-                    );
-                    ordinal += 1;
-                    last_fault = Some(format!("{}：HTTP {status} {}", channel.name, err.text));
-                    pending_retry_ms=pending_retry_ms.max(after.unwrap_or(0) as i64);
-                    let cooling=cooldown.failure(&format!("HTTP {status}: {}",err.text),pending_retry_ms);
-                    last_http = Some(err);
-                    if cooling {break;}
-                    if let Some(ms) = after {
-                        // Long Retry-After sets the eventual cooldown, not an unbounded request sleep.
-                        let ms=ms.min(LONG_RETRY_AFTER_MS);
-                        retry_after_override = Some(ms);
+                        guard.usage = serde_json::from_slice::<Value>(&err.body)
+                            .map(|v| Usage::read(&v))
+                            .unwrap_or_default();
+                        let after = err
+                            .retry_after
+                            .as_ref()
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(crate::upstream::retry_after_ms);
+                        guard.settle_billing("channel_fault");
+                        guard.active_attempt = None;
+                        record_attempt(
+                            &state,
+                            request_id,
+                            ordinal,
+                            channel,
+                            name,
+                            &sent_model,
+                            "channel_fault",
+                            Some(status),
+                            dur,
+                            Some(&err.text),
+                        );
+                        ordinal += 1;
+                        last_fault = Some(format!("{}：HTTP {status} {}", channel.name, err.text));
+                        pending_retry_ms = pending_retry_ms.max(after.unwrap_or(0) as i64);
+                        let cooling = cooldown
+                            .failure(&format!("HTTP {status}: {}", err.text), pending_retry_ms);
+                        last_http = Some(err);
+                        if cooling {
+                            break;
+                        }
+                        if let Some(ms) = after {
+                            // Long Retry-After sets the eventual cooldown, not an unbounded request sleep.
+                            let ms = ms.min(LONG_RETRY_AFTER_MS);
+                            retry_after_override = Some(ms);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                AttemptOutcome::ClientGone => {
-                    guard.settle_billing("client_gone");
-                    guard.active_attempt=None;
-                    record_attempt(&state, request_id, ordinal, channel, name, &sent_model, "client_gone", Some(status), dur, None);
-                    guard.finish(
-                        &state,
-                        Status::Canceled,
-                        Some(status),
-                        Some(channel.id.0),
-                        started_ms,
-                        Some(dur),
-                        0,
-                        0,
-                        false,
-                        Some("客户端已断开"),
-                    );
-                    return Ok(StatusCode::REQUEST_TIMEOUT.into_response());
+                    AttemptOutcome::ClientGone => {
+                        guard.settle_billing("client_gone");
+                        guard.active_attempt = None;
+                        record_attempt(
+                            &state,
+                            request_id,
+                            ordinal,
+                            channel,
+                            name,
+                            &sent_model,
+                            "client_gone",
+                            Some(status),
+                            dur,
+                            None,
+                        );
+                        guard.finish(
+                            &state,
+                            Status::Canceled,
+                            Some(status),
+                            Some(channel.id.0),
+                            started_ms,
+                            Some(dur),
+                            0,
+                            0,
+                            false,
+                            Some("客户端已断开"),
+                        );
+                        return Ok(StatusCode::REQUEST_TIMEOUT.into_response());
+                    }
                 }
             }
-        }
 
-        // 这条渠道把重试次数用完了还是不行 → 切换
-        if touch_state {
-            let mut r = state.routing();
-            r.on_channel_exhausted_with_interval(&plan.route, channel.id, &all_ids, now_ms(), cfg.reprobe_interval_ms);
-            drop(r);
-            state.persist_state(&plan.route)?;
-            tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, max_attempts);
-        } else {
-            tracing::warn!(
-                "（带图请求，不动路由状态）渠道 {} 连续 {} 次失败",
-                channel.name,
-                max_attempts
-            );
+            // 这条渠道把重试次数用完了还是不行 → 切换
+            if touch_state {
+                let mut r = state.routing();
+                r.on_channel_exhausted_with_interval(
+                    &plan.route,
+                    channel.id,
+                    &all_ids,
+                    now_ms(),
+                    cfg.reprobe_interval_ms,
+                );
+                drop(r);
+                state.persist_state(&plan.route)?;
+                tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, max_attempts);
+            } else {
+                tracing::warn!(
+                    "（带图请求，不动路由状态）渠道 {} 连续 {} 次失败",
+                    channel.name,
+                    max_attempts
+                );
+            }
         }
-    }
 
         if tried_any || busy.is_empty() {
             break 'pass;
@@ -1498,20 +3171,43 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         }
     }
 
-    if let Some(error)=last_policy_error {
+    if let Some(error) = last_policy_error {
         guard.reject(&error);
         return Err(error);
     }
     // 一个候选都没敢碰（全在冷却或恢复试用里）：如实回 503 并说清最早什么时候能再试 ——
     // 别拿「所有渠道都失败了」去冤枉渠道（渠道根本没被调过）。普通模型名和 auto 一视同仁。
-    if last_channel.0==0 {
-        let c=state.conn();
-        let until=model_routes::list(&c)?.iter().flat_map(|r|crate::db::policy::rows(&c,&r.name).unwrap_or_default()).map(|r|r.until_ms.max(r.lease_until)).filter(|t|*t>now_ms()).min();
+    if last_channel.0 == 0 {
+        let c = state.conn();
+        let until = model_routes::list(&c)?
+            .iter()
+            .flat_map(|r| crate::db::policy::rows(&c, &r.name).unwrap_or_default())
+            .map(|r| r.until_ms.max(r.lease_until))
+            .filter(|t| *t > now_ms())
+            .min();
         drop(c);
-        let msg=format!("候选冷却、账号暂停或恢复试用中，请在总览“调用异常”查看{}",until.map(|t|format!("（最早可重试时间：{t}）")).unwrap_or_default());
-        guard.error_code=Some("models_cooling".into());
-        guard.finish(&state,Status::Failed,Some(503),None,started_ms,None,0,0,false,Some(&msg));
-        return Ok(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"models_cooling",msg).into_response());
+        let msg = format!(
+            "候选冷却、账号暂停或恢复试用中，请在总览“调用异常”查看{}",
+            until
+                .map(|t| format!("（最早可重试时间：{t}）"))
+                .unwrap_or_default()
+        );
+        guard.error_code = Some("models_cooling".into());
+        guard.finish(
+            &state,
+            Status::Failed,
+            Some(503),
+            None,
+            started_ms,
+            None,
+            0,
+            0,
+            false,
+            Some(&msg),
+        );
+        return Ok(
+            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "models_cooling", msg).into_response(),
+        );
     }
     // 所有渠道都试完了
     let note = last_fault
@@ -1985,66 +3681,182 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
 
 #[allow(clippy::too_many_arguments)]
 fn stream_passthrough(
-    state: SharedState, resp: reqwest::Response, prepared:PreparedStream, provenance:Option<(String,crate::protocol_sessions::Pin)>, guard: RequestGuard,
-    request_id:i64,started_ms:i64,channel_id:i64,gate:Option<crate::state::ChannelPermit>,endpoint:EndpointKind,
-    ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,adaptation_note:Option<String>,
-    cooldown:CooldownTicket,load_ticket:crate::state::ModelLoadTicket,idle_timeout:Duration,
+    state: SharedState,
+    resp: reqwest::Response,
+    prepared: PreparedStream,
+    provenance: Option<(String, crate::protocol_sessions::Pin)>,
+    guard: RequestGuard,
+    request_id: i64,
+    started_ms: i64,
+    channel_id: i64,
+    gate: GatewayPermits,
+    endpoint: EndpointKind,
+    ordinal: u32,
+    model_name: String,
+    upstream_model: String,
+    attempt_started: i64,
+    adaptation_note: Option<String>,
+    cooldown: CooldownTicket,
+    load_ticket: crate::state::ModelLoadTicket,
+    idle_timeout: Duration,
 ) -> Response {
-    let status=resp.status();
-    let st=StreamState {
-        request_id,ordinal,model_name,upstream_model,attempt_started,adaptation_note,cooldown,_model_load:load_ticket,
-        resp,observer:prepared.observer,transcoder:prepared.transcoder,prefix:Some(prepared.prefix),eof:prepared.eof,artifacts:prepared.artifacts,provenance,
-        endpoint,first_byte_ms:None,guard:Some(guard),started_ms,channel_id,state,delivered:0,idle_timeout,_gate:gate,
+    let status = resp.status();
+    let st = StreamState {
+        request_id,
+        ordinal,
+        model_name,
+        upstream_model,
+        attempt_started,
+        adaptation_note,
+        cooldown,
+        _model_load: load_ticket,
+        resp,
+        observer: prepared.observer,
+        transcoder: prepared.transcoder,
+        prefix: Some(prepared.prefix),
+        eof: prepared.eof,
+        artifacts: prepared.artifacts,
+        provenance,
+        endpoint,
+        first_byte_ms: None,
+        guard: Some(guard),
+        started_ms,
+        channel_id,
+        state,
+        delivered: 0,
+        idle_timeout,
+        _gate: gate,
     };
-    let stream=unfold(st,|mut st|async move {
-        if st.guard.is_none() {return None;}
-        if let Some(prefix)=st.prefix.take().filter(|p|!p.is_empty()) {
-            st.first_byte_ms=Some(now_ms()-st.started_ms);
-            st.delivered+=prefix.len();
-            if let Some(g)=st.guard.as_mut(){g.streamed=true;}
-            return Some((Ok::<Bytes,std::io::Error>(prefix),st));
+    let stream = unfold(st, |mut st| async move {
+        if st.guard.is_none() {
+            return None;
         }
-        if st.eof {st.finish(None);return None;}
-        match tokio::time::timeout(st.idle_timeout,st.resp.chunk()).await {
-            Ok(Ok(Some(chunk)))=>{
-                let observed=st.observer.feed(&chunk);
-                if let Some(g)=st.guard.as_mut(){g.usage=Usage{input:st.observer.input,output:st.observer.output};g.streamed=true;}
-                let out=observed.and_then(|frames| {
-                    st.artifacts.frames(&frames)?;
-                    if let Some((owner,pin))=&st.provenance {st.artifacts.persist(&st.state.conn(),owner,pin).map_err(|_|"local_state: opaque artifact ownership persistence failed".to_string())?;}
-                    Ok(())
-                }).and_then(|_| match st.transcoder.as_mut(){Some(t)=>t.feed(&chunk).map_err(conversion_fault),None=>Ok(chunk.to_vec())});
+        if let Some(prefix) = st.prefix.take().filter(|p| !p.is_empty()) {
+            st.first_byte_ms = Some(now_ms() - st.started_ms);
+            st.delivered += prefix.len();
+            if let Some(g) = st.guard.as_mut() {
+                g.streamed = true;
+            }
+            return Some((Ok::<Bytes, std::io::Error>(prefix), st));
+        }
+        if st.eof {
+            st.finish(None);
+            return None;
+        }
+        match tokio::time::timeout(st.idle_timeout, st.resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                let observed = st.observer.feed(&chunk);
+                if let Some(g) = st.guard.as_mut() {
+                    g.usage = Usage {
+                        input: st.observer.input,
+                        output: st.observer.output,
+                    };
+                    g.streamed = true;
+                }
+                let out = observed
+                    .and_then(|frames| {
+                        st.artifacts.frames(&frames)?;
+                        if let Some((owner, pin)) = &st.provenance {
+                            st.artifacts
+                                .persist(&st.state.conn(), owner, pin)
+                                .map_err(|_| {
+                                    "local_state: opaque artifact ownership persistence failed"
+                                        .to_string()
+                                })?;
+                        }
+                        Ok(())
+                    })
+                    .and_then(|_| match st.transcoder.as_mut() {
+                        Some(t) => t.feed(&chunk).map_err(conversion_fault),
+                        None => Ok(chunk.to_vec()),
+                    });
                 match out {
-                    Ok(out)=>{st.delivered+=out.len();if st.observer.done {st.eof=true;} Some((Ok(Bytes::from(out)),st))},
-                    Err(note)=>{
-                        let out=if st.transcoder.is_none() && st.observer.failed.is_some(){chunk}else{stream_error(st.endpoint.protocol(),&note)};
-                        st.finish(Some(&note));Some((Ok(out),st))
+                    Ok(out) => {
+                        st.delivered += out.len();
+                        if st.observer.done {
+                            st.eof = true;
+                        }
+                        Some((Ok(Bytes::from(out)), st))
+                    }
+                    Err(note) => {
+                        let out = if st.transcoder.is_none() && st.observer.failed.is_some() {
+                            chunk
+                        } else {
+                            stream_error(st.endpoint.protocol(), &note)
+                        };
+                        st.finish(Some(&note));
+                        Some((Ok(out), st))
                     }
                 }
-            },
-            Ok(Ok(None))=>{
-                let ended=st.observer.finish_frames();
-                if let Some(g)=st.guard.as_mut(){g.usage=Usage{input:st.observer.input,output:st.observer.output};}
-                if let Ok(frames)=ended {
-                    if let Err(note)=st.artifacts.frames(&frames).and_then(|_|{
-                        if let Some((owner,pin))=&st.provenance {st.artifacts.persist(&st.state.conn(),owner,pin).map_err(|_|"local_state: opaque artifact ownership persistence failed".to_string())?;}
+            }
+            Ok(Ok(None)) => {
+                let ended = st.observer.finish_frames();
+                if let Some(g) = st.guard.as_mut() {
+                    g.usage = Usage {
+                        input: st.observer.input,
+                        output: st.observer.output,
+                    };
+                }
+                if let Ok(frames) = ended {
+                    if let Err(note) = st.artifacts.frames(&frames).and_then(|_| {
+                        if let Some((owner, pin)) = &st.provenance {
+                            st.artifacts
+                                .persist(&st.state.conn(), owner, pin)
+                                .map_err(|_| {
+                                    "local_state: opaque artifact ownership persistence failed"
+                                        .to_string()
+                                })?;
+                        }
                         Ok(())
-                    }) {st.finish(Some(&note));return Some((Ok(stream_error(st.endpoint.protocol(),&note)),st));}
+                    }) {
+                        st.finish(Some(&note));
+                        return Some((Ok(stream_error(st.endpoint.protocol(), &note)), st));
+                    }
                 }
-                let tail=match st.transcoder.as_mut(){Some(t)=>t.finish().map_err(conversion_fault),None=>Ok(vec![])};
+                let tail = match st.transcoder.as_mut() {
+                    Some(t) => t.finish().map_err(conversion_fault),
+                    None => Ok(vec![]),
+                };
                 match tail {
-                    Ok(tail) if !tail.is_empty()=>{st.eof=true;Some((Ok(Bytes::from(tail)),st))},
-                    Ok(_)=>{st.finish(None);None},
-                    Err(note)=>{st.finish(Some(&note));if is_conversion_fault(&note){Some((Ok(stream_error(st.endpoint.protocol(),&note)),st))}else{Some((Err(std::io::Error::other(note)),st))}}
+                    Ok(tail) if !tail.is_empty() => {
+                        st.eof = true;
+                        Some((Ok(Bytes::from(tail)), st))
+                    }
+                    Ok(_) => {
+                        st.finish(None);
+                        None
+                    }
+                    Err(note) => {
+                        st.finish(Some(&note));
+                        if is_conversion_fault(&note) {
+                            Some((Ok(stream_error(st.endpoint.protocol(), &note)), st))
+                        } else {
+                            Some((Err(std::io::Error::other(note)), st))
+                        }
+                    }
                 }
-            },
-            Ok(Err(_))=>{let note="上游流式连接异常中断；已输出内容不重试";st.finish(Some(note));Some((Err(std::io::Error::other(note)),st))},
-            Err(_)=>{let note="上游流式空闲超时；已输出内容不重试";st.finish(Some(note));Some((Err(std::io::Error::new(std::io::ErrorKind::TimedOut,note)),st))}
+            }
+            Ok(Err(_)) => {
+                let note = "上游流式连接异常中断；已输出内容不重试";
+                st.finish(Some(note));
+                Some((Err(std::io::Error::other(note)), st))
+            }
+            Err(_) => {
+                let note = "上游流式空闲超时；已输出内容不重试";
+                st.finish(Some(note));
+                Some((
+                    Err(std::io::Error::new(std::io::ErrorKind::TimedOut, note)),
+                    st,
+                ))
+            }
         }
     });
-    Response::builder().status(status).header(header::CONTENT_TYPE,"text/event-stream")
-        .header(header::CACHE_CONTROL,"no-cache").body(Body::from_stream(stream))
-        .unwrap_or_else(|_|StatusCode::BAD_GATEWAY.into_response())
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
 fn stream_error(protocol:Option<crate::protocol::Protocol>,note:&str)->Bytes {
@@ -2060,19 +3872,23 @@ fn stream_error(protocol:Option<crate::protocol::Protocol>,note:&str)->Bytes {
 }
 
 struct StreamState {
-    _model_load:crate::state::ModelLoadTicket,
-    cooldown:CooldownTicket,
-    request_id:i64,ordinal:u32,model_name:String,upstream_model:String,attempt_started:i64,
-    adaptation_note:Option<String>,
+    _model_load: crate::state::ModelLoadTicket,
+    cooldown: CooldownTicket,
+    request_id: i64,
+    ordinal: u32,
+    model_name: String,
+    upstream_model: String,
+    attempt_started: i64,
+    adaptation_note: Option<String>,
     first_byte_ms: Option<i64>,
     endpoint: EndpointKind,
     resp: reqwest::Response,
-    observer:crate::protocol::sse::Observer,
-    transcoder:Option<crate::protocol::sse::Transcoder>,
-    prefix:Option<Bytes>,
-    eof:bool,
-    artifacts:crate::protocol_sessions::ArtifactCollector,
-    provenance:Option<(String,crate::protocol_sessions::Pin)>,
+    observer: crate::protocol::sse::Observer,
+    transcoder: Option<crate::protocol::sse::Transcoder>,
+    prefix: Option<Bytes>,
+    eof: bool,
+    artifacts: crate::protocol_sessions::ArtifactCollector,
+    provenance: Option<(String, crate::protocol_sessions::Pin)>,
     guard: Option<RequestGuard>,
     started_ms: i64,
     channel_id: i64,
@@ -2081,7 +3897,7 @@ struct StreamState {
     idle_timeout: Duration,
     /// 这条渠道的并发名额。**流式期间一直握着**：不然名额一还，
     /// 明明还在往外吐字的那条流就不算数了，上游照样被打爆。
-    _gate: Option<crate::state::ChannelPermit>,
+    _gate: GatewayPermits,
 }
 
 impl StreamState {
@@ -2689,7 +4505,7 @@ mod tests {
         assert_eq!(EndpointKind::Rerank.as_str(), "/v1/rerank");
     }
 }
-    #[tokio::test]
+#[tokio::test]
     async fn stream_only_responses_collect_json_without_waiting_for_eof_and_keep_failure_usage() {
         use axum::routing::post;
         let item=serde_json::json!({"type":"message","id":"msg_test","status":"completed","role":"assistant","content":[{"type":"output_text","text":"collected","annotations":[]}]});

@@ -108,3 +108,5 @@ pub fn unbuilt(stage: u8, route: &str) -> Response {
     )
         .into_response()
 }
+
+pub mod virtual_models;

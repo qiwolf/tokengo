@@ -5,13 +5,13 @@
 //! 整个网关的所有请求都跟着排队。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::path::Path;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use rusqlite::Connection;
-use tokio::sync::Notify;
 use tokengo_shared::routing::Router as RoutingRouter;
+use tokio::sync::Notify;
 
 use crate::config::Config;
 use crate::crypto::SecretBox;
@@ -37,13 +37,52 @@ fn kind_to_endpoint(kind: tokengo_shared::ModelKind) -> Option<EndpointKind> {
 }
 
 #[derive(Default)]
-pub struct ModelLoads(pub Mutex<HashMap<String,usize>>);
-pub struct ModelLoadTicket {loads:Arc<ModelLoads>,key:String}
-impl Drop for ModelLoadTicket {fn drop(&mut self){let mut m=self.loads.0.lock().unwrap_or_else(|e|e.into_inner());if let Some(n)=m.get_mut(&self.key){*n=n.saturating_sub(1);if *n==0 {m.remove(&self.key);}}}}
+pub struct ModelLoads(pub Mutex<HashMap<String, usize>>);
+pub struct ModelLoadTicket {
+    loads: Arc<ModelLoads>,
+    key: String,
+}
+impl Drop for ModelLoadTicket {
+    fn drop(&mut self) {
+        let mut m = self.loads.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = m.get_mut(&self.key) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                m.remove(&self.key);
+            }
+        }
+    }
+}
 impl ModelLoads {
  pub fn acquire(self:&Arc<Self>,name:&str)->ModelLoadTicket {let key=tokengo_shared::normalize_model_name(name);*self.0.lock().unwrap_or_else(|e|e.into_inner()).entry(key.clone()).or_default()+=1;ModelLoadTicket{loads:self.clone(),key}}
- pub fn select(self:&Arc<Self>,names:&mut [String],explored:bool)->Option<ModelLoadTicket>{let mut m=self.0.lock().unwrap_or_else(|e|e.into_inner());if !explored {names.sort_by_key(|n|m.get(&tokengo_shared::normalize_model_name(n)).copied().unwrap_or(0));}let key=tokengo_shared::normalize_model_name(names.first()?);*m.entry(key.clone()).or_default()+=1;Some(ModelLoadTicket{loads:self.clone(),key})}
- pub fn preview(&self,names:&mut [String]){let m=self.0.lock().unwrap_or_else(|e|e.into_inner());names.sort_by_key(|n|m.get(&tokengo_shared::normalize_model_name(n)).copied().unwrap_or(0));}
+    pub fn select(
+        self: &Arc<Self>,
+        names: &mut [String],
+        explored: bool,
+    ) -> Option<ModelLoadTicket> {
+        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !explored {
+            names.sort_by_key(|n| {
+                m.get(&tokengo_shared::normalize_model_name(n))
+                    .copied()
+                    .unwrap_or(0)
+            });
+        }
+        let key = tokengo_shared::normalize_model_name(names.first()?);
+        *m.entry(key.clone()).or_default() += 1;
+        Some(ModelLoadTicket {
+            loads: self.clone(),
+            key,
+        })
+    }
+    pub fn preview(&self, names: &mut [String]) {
+        let m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        names.sort_by_key(|n| {
+            m.get(&tokengo_shared::normalize_model_name(n))
+                .copied()
+                .unwrap_or(0)
+        });
+    }
 }
 
 pub struct AppState {
@@ -52,7 +91,7 @@ pub struct AppState {
     pub admission: crate::admission::AdmissionState,
     pub panel_login_gate: crate::routes::accounts::LoginGate,
     pub auth_slots: Arc<tokio::sync::Semaphore>,
-    pub model_loads:Arc<ModelLoads>,
+    pub model_loads: Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
     pub db: Mutex<Connection>,
     pub routing: Mutex<RoutingRouter>,
@@ -68,6 +107,7 @@ pub struct AppState {
     writer: WriteQueue,
     /// 每条渠道的「门口闸机」：同时最多几发（渠道 id → 闸机 + 当前配置的上限）。
     channel_gates: Mutex<HashMap<i64, Arc<ChannelGate>>>,
+    credential_gates: Mutex<HashMap<i64, Arc<ChannelGate>>>,
     /// 最近的运行日志（内存里那份，面板「日志」页读它）。
     /// 用 OnceLock：服务启动时先建 state、再装订阅者，装完把这一格填上；
     /// 测试里不装，取值时就地造一个空的 —— 两边都不用改代码。
@@ -176,7 +216,9 @@ impl AppState {
         crate::billing_writer::replay(&conn, &cfg.db_path)?;
         db::billing::recover(&conn)?;
         let interrupted = db::requests::recover_interrupted(&conn)?;
-        if interrupted > 0 { tracing::warn!(interrupted, "已收尾重启前中断的请求"); }
+        if interrupted > 0 {
+            tracing::warn!(interrupted, "已收尾重启前中断的请求");
+        }
         tracing::info!("数据库 {} 就绪", cfg.db_path.display());
 
         // 把库切成「增量回收」模式。这一步必须在库还小的时候做（改这个属性要整库重写），
@@ -190,6 +232,7 @@ impl AppState {
         let secrets = SecretBox::load_or_init(Path::new(&cfg.master_key_path))?;
         db::gateway_keys::hydrate_legacy(&conn, &secrets)?;
         db::channels::migrate_headers(&conn, &secrets)?;
+        db::provider_pool::backfill(&conn, &secrets)?;
 
         let rcfg = db::routing::load_config(&conn)?;
         let mut router = RoutingRouter::new(rcfg);
@@ -213,9 +256,15 @@ impl AppState {
             }
         }
         if !endpoints.is_empty() {
-            tracing::info!("已恢复 {} 个模型名的用途（{}）",
+            tracing::info!(
+                "已恢复 {} 个模型名的用途（{}）",
                 endpoints.len(),
-                endpoints.iter().map(|(n, k)| format!("{n}={}", k.as_model_kind().label())).collect::<Vec<_>>().join(" "));
+                endpoints
+                    .iter()
+                    .map(|(n, k)| format!("{n}={}", k.as_model_kind().label()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
         }
 
         let state = Arc::new(Self {
@@ -224,7 +273,7 @@ impl AppState {
             admission: crate::admission::AdmissionState::default(),
             panel_login_gate: Default::default(),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
-            model_loads:Arc::new(ModelLoads::default()),
+            model_loads: Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),
             db: Mutex::new(conn),
             routing: Mutex::new(router),
@@ -235,6 +284,7 @@ impl AppState {
             model_endpoints: Mutex::new(endpoints),
             writer: WriteQueue::default(),
             channel_gates: Mutex::new(HashMap::new()),
+            credential_gates: Mutex::new(HashMap::new()),
             logs: OnceLock::new(),
             log_file: OnceLock::new(),
             log_control: OnceLock::new(),
@@ -506,6 +556,36 @@ impl AppState {
         });
     }
 
+    /// Account-wide gate shared by all deployments/models using one real credential.
+    pub fn credential_gate(&self, id: i64, limit: u32) -> Option<Arc<ChannelGate>> {
+        let mut gates = self
+            .credential_gates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let gate = gates
+            .entry(id)
+            .or_insert_with(|| {
+                Arc::new(ChannelGate {
+                    counts: Mutex::new((0, limit)),
+                    changed: Notify::new(),
+                })
+            })
+            .clone();
+        gate.counts.lock().unwrap_or_else(|e| e.into_inner()).1 = limit;
+        gate.changed.notify_waiters();
+        Some(gate)
+    }
+    pub fn credential_load(&self, id: i64) -> usize {
+        let gates = self
+            .credential_gates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        gates
+            .get(&id)
+            .map(|gate| gate.counts.lock().unwrap_or_else(|e| e.into_inner()).0 as usize)
+            .unwrap_or(0)
+    }
+
     /// Return the channel gate, including unlimited mode so existing in-flight calls remain tracked.
     ///
     /// 每个渠道一把闸机、上限按渠道配：上游免费额度多数是**按凭据**限并发的，
@@ -514,14 +594,19 @@ impl AppState {
     /// 所以刚调小的一瞬间可能略微超出新上限，之后自然收敛。
     pub fn channel_gate(&self, id: i64, limit: u32) -> Option<Arc<ChannelGate>> {
         let mut gates = self.channel_gates.lock().unwrap_or_else(|e| e.into_inner());
-        let gate = gates.entry(id).or_insert_with(|| Arc::new(ChannelGate {
-            counts: Mutex::new((0, limit)), changed: Notify::new(),
-        })).clone();
+        let gate = gates
+            .entry(id)
+            .or_insert_with(|| {
+                Arc::new(ChannelGate {
+                    counts: Mutex::new((0, limit)),
+                    changed: Notify::new(),
+                })
+            })
+            .clone();
         gate.counts.lock().unwrap_or_else(|e| e.into_inner()).1 = limit;
         gate.changed.notify_waiters();
         Some(gate)
     }
-
 }
 
 /// Keep in-flight ownership independent of capacity, so shrinking never mints permits.
@@ -763,7 +848,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let st = AppState::init(test_cfg(&dir)).unwrap();
 
-        assert!(st.channel_gate(1, 0).is_some(), "unlimited requests still own tracked slots");
+        assert!(
+            st.channel_gate(1, 0).is_some(),
+            "unlimited requests still own tracked slots"
+        );
 
         let gate = st.channel_gate(2, 2).unwrap();
         let a = gate.clone().try_acquire_owned().unwrap();
@@ -773,7 +861,10 @@ mod tests {
             "上限 2，第三个必须拿不到名额"
         );
         drop(a);
-        assert!(gate.clone().try_acquire_owned().is_ok(), "还回来一个就该放进一个");
+        assert!(
+            gate.clone().try_acquire_owned().is_ok(),
+            "还回来一个就该放进一个"
+        );
         drop(b);
 
         // 同一个渠道再问一次：还是那把闸机，不会翻倍放行
@@ -793,7 +884,9 @@ mod tests {
         assert!(smaller.clone().try_acquire_owned().is_err());
         drop(held);
         assert_eq!(smaller.available_permits(), 1);
-        for limit in [10, 2, 3, 1] { st.channel_gate(2, limit); }
+        for limit in [10, 2, 3, 1] {
+            st.channel_gate(2, limit);
+        }
         assert_eq!(smaller.available_permits(), 1);
 
         let unlimited = st.channel_gate(2, 0);
@@ -804,9 +897,9 @@ mod tests {
         drop(held);
         assert_eq!(smaller.available_permits(), 1);
 
-        let held: Vec<_> = (0..5).map(|_| {
-            st.channel_gate(2, 5).unwrap().try_acquire_owned().unwrap()
-        }).collect();
+        let held: Vec<_> = (0..5)
+            .map(|_| st.channel_gate(2, 5).unwrap().try_acquire_owned().unwrap())
+            .collect();
         st.channel_gate(2, 2);
         assert!(smaller.clone().try_acquire_owned().is_err());
         drop(held);
@@ -844,15 +937,34 @@ mod tests {
     }
 }
 
-#[cfg(test)]mod model_load_tests {
- use super::*;
- #[test]fn idle_selection_reserves_atomically_and_releases_on_drop(){
- let l=Arc::new(ModelLoads::default());let mut names=vec!["a".into(),"b".into()];let a=l.select(&mut names,false).unwrap();assert_eq!(names[0],"a");
- let mut names=vec!["a".into(),"b".into()];let b=l.select(&mut names,false).unwrap();assert_eq!(names[0],"b");drop(a);drop(b);assert!(l.0.lock().unwrap().is_empty());
- }
- #[test]fn direct_traffic_counts_and_exploration_stays_first(){let l=Arc::new(ModelLoads::default());let _t=l.acquire("a");let mut names=vec!["a".into(),"b".into()];l.preview(&mut names);assert_eq!(names[0],"b");let mut names=vec!["a".into(),"b".into()];let _e=l.select(&mut names,true);assert_eq!(names[0],"a");}
+#[cfg(test)]
+mod model_load_tests {
+    use super::*;
+    #[test]
+    fn idle_selection_reserves_atomically_and_releases_on_drop() {
+        let l = Arc::new(ModelLoads::default());
+        let mut names = vec!["a".into(), "b".into()];
+        let a = l.select(&mut names, false).unwrap();
+        assert_eq!(names[0], "a");
+        let mut names = vec!["a".into(), "b".into()];
+        let b = l.select(&mut names, false).unwrap();
+        assert_eq!(names[0], "b");
+        drop(a);
+        drop(b);
+        assert!(l.0.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn direct_traffic_counts_and_exploration_stays_first() {
+        let l = Arc::new(ModelLoads::default());
+        let _t = l.acquire("a");
+        let mut names = vec!["a".into(), "b".into()];
+        l.preview(&mut names);
+        assert_eq!(names[0], "b");
+        let mut names = vec!["a".into(), "b".into()];
+        let _e = l.select(&mut names, true);
+        assert_eq!(names[0], "a");
+    }
 }
-
 
 #[cfg(test)]
 mod writer_concurrency_tests {

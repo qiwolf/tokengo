@@ -51,6 +51,7 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::providers::router())
         .merge(routes::accounts::router())
         .merge(routes::managed_users::router())
+        .merge(routes::virtual_models::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
         .merge(routes::oauth::router())

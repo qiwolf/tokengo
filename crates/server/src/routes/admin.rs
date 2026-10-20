@@ -6,17 +6,17 @@
 //! 除 `ping` / `auth/*` 外，**所有接口都要过会话门**。
 
 use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::http::request::Parts;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::{client_ip, unbuilt, ApiError};
 use crate::db::{
-    catalog, channels, gateway_keys, kinds, maintenance, model_routes, now_ms, requests, routing, sessions,
-    settings,
+    catalog, channels, gateway_keys, kinds, maintenance, model_routes, now_ms, requests, routing,
+    sessions, settings,
 };
 use crate::SharedState;
 
@@ -236,25 +236,49 @@ async fn auth_login(
     Json(body): Json<LoginBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     super::accounts::legacy_request_headers(&headers)?;
-    let username = body.username.as_deref().ok_or_else(|| ApiError::bad_request("登录需要用户名和密码"))?;
-    if body.password.len()>256 { return Err(ApiError::unauthorized("账号或密码错误")); }
-    state.panel_login_gate.check(&username.to_ascii_lowercase())?;
-    let root = crate::db::accounts::root(&state.conn())?.ok_or_else(|| ApiError::unauthorized("账号或密码错误"))?;
+    let username = body
+        .username
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("登录需要用户名和密码"))?;
+    if body.password.len() > 256 {
+        return Err(ApiError::unauthorized("账号或密码错误"));
+    }
+    state
+        .panel_login_gate
+        .check(&username.to_ascii_lowercase())?;
+    let root = crate::db::accounts::root(&state.conn())?
+        .ok_or_else(|| ApiError::unauthorized("账号或密码错误"))?;
     let username_ok = root.account.username.eq_ignore_ascii_case(username);
     let hash = settings::get(&state.conn(), settings::PANEL_PASSWORD_HASH)?
         .ok_or_else(|| ApiError::bad_request("还没设置口令，请先初始化"))?;
-    let slot = state.auth_slots.clone().try_acquire_owned()
-        .map_err(|_| ApiError::new(axum::http::StatusCode::TOO_MANY_REQUESTS, "auth_busy", "Authentication busy; try again later"))?;
+    let slot = state.auth_slots.clone().try_acquire_owned().map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "auth_busy",
+            "Authentication busy; try again later",
+        )
+    })?;
     let verify_hash = hash.clone();
     let ok = tokio::task::spawn_blocking(move || {
         let _slot = slot;
         sessions::verify_password(&body.password, &verify_hash)
-    }).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
     let conn = state.conn();
-    if !ok || !username_ok || !crate::db::accounts::legacy_root_valid(&conn)? || crate::db::accounts::root(&conn)?.is_none_or(|now|now.version!=root.version || now.account.username!=root.account.username) || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str()) {
+    if !ok
+        || !username_ok
+        || !crate::db::accounts::legacy_root_valid(&conn)?
+        || crate::db::accounts::root(&conn)?.is_none_or(|now| {
+            now.version != root.version || now.account.username != root.account.username
+        })
+        || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str())
+    {
         return Err(ApiError::unauthorized("口令不对"));
     }
-    state.panel_login_gate.success(&username.to_ascii_lowercase());
+    state
+        .panel_login_gate
+        .success(&username.to_ascii_lowercase());
     sessions::purge_expired(&conn)?;
     let token = sessions::create_session(&conn, client_ip(&headers).as_deref())?;
     Ok(Json(serde_json::json!({ "ok": true, "token": token })))
@@ -403,27 +427,48 @@ fn default_true() -> bool {
 }
 
 impl ChannelBody {
-    fn headers(&self, conn: &rusqlite::Connection, state: &SharedState, id: Option<tokengo_shared::ChannelId>) -> Result<Option<Vec<(String,String)>>, ApiError> {
-        let Some(input) = &self.headers else { return Ok(None); };
-        let old = match id { Some(id) => channels::headers(conn, &state.secrets, id)?, None => vec![] };
+    fn headers(
+        &self,
+        conn: &rusqlite::Connection,
+        state: &SharedState,
+        id: Option<tokengo_shared::ChannelId>,
+    ) -> Result<Option<Vec<(String, String)>>, ApiError> {
+        let Some(input) = &self.headers else {
+            return Ok(None);
+        };
+        let old = match id {
+            Some(id) => channels::headers(conn, &state.secrets, id)?,
+            None => vec![],
+        };
         let mut output = Vec::new();
         let mut names = std::collections::HashSet::new();
         for h in input {
             let name = h.name.trim();
-            if name.is_empty() && h.value.is_empty() && h.action.is_none() { continue; }
-            if reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err() || !names.insert(name.to_ascii_lowercase()) {
+            if name.is_empty() && h.value.is_empty() && h.action.is_none() {
+                continue;
+            }
+            if reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err()
+                || !names.insert(name.to_ascii_lowercase())
+            {
                 return Err(ApiError::bad_request("Invalid or duplicate header name"));
             }
             let action = h.action.as_deref().unwrap_or("replace");
             let value = match action {
-                "keep" => old.iter().find(|(n,_)| n.eq_ignore_ascii_case(h.original_name.as_deref().unwrap_or(name)))
-                    .map(|(_,v)|v.clone()).ok_or_else(||ApiError::bad_request("Header to keep does not exist"))?,
+                "keep" => old
+                    .iter()
+                    .find(|(n, _)| {
+                        n.eq_ignore_ascii_case(h.original_name.as_deref().unwrap_or(name))
+                    })
+                    .map(|(_, v)| v.clone())
+                    .ok_or_else(|| ApiError::bad_request("Header to keep does not exist"))?,
                 "replace" => {
                     if h.value == "********" || h.value.starts_with("sealed-header-v1:") {
-                        return Err(ApiError::bad_request("Enter a replacement value, not a mask"));
+                        return Err(ApiError::bad_request(
+                            "Enter a replacement value, not a mask",
+                        ));
                     }
                     h.value.clone()
-                },
+                }
                 "clear" => String::new(),
                 "delete" => continue,
                 _ => return Err(ApiError::bad_request("Unknown header action")),
@@ -431,7 +476,7 @@ impl ChannelBody {
             if reqwest::header::HeaderValue::from_str(&value).is_err() {
                 return Err(ApiError::bad_request("Invalid header value"));
             }
-            output.push((name.to_string(),value));
+            output.push((name.to_string(), value));
         }
         Ok(Some(output))
     }
@@ -472,7 +517,9 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
+    if let Some(p) = &body.protocols {
+        p.validate().map_err(ApiError::bad_request)?;
+    }
     let models = body.models()?;
     let conn = state.conn();
     let headers = body.headers(&conn, &state, None)?;
@@ -492,15 +539,21 @@ async fn channels_create(
         if let Some(k) = body.key.as_deref().filter(|k| !k.trim().is_empty()) {
             channels::set_secret(c, &state.secrets, id, k)?;
         }
-        if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
+        if let Some(headers) = &headers {
+            if channels::headers(c, &state.secrets, id)? != *headers {
+                channels::set_headers(c, &state.secrets, id, headers)?;
+            }
+        }
         channels::set_models(c, id, &models)?;
-        if let Some(p)=&body.protocols {crate::protocol_config::save(c,id.0,p)?;}
+        if let Some(p) = &body.protocols {
+            crate::protocol_config::save(c, id.0, p)?;
+        }
         Ok(id)
     })?;
     tracing::info!("新建渠道 {id}：{}", body.name);
 
     let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::internal("刚建的渠道读不回来"))?;
-    Ok(Json(channel_json(&conn,&l)))
+    Ok(Json(channel_json(&conn, &l)))
 }
 
 async fn channels_update(
@@ -509,12 +562,50 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
+    if let Some(p) = &body.protocols {
+        p.validate().map_err(ApiError::bad_request)?;
+    }
     let mut models = body.models()?;
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
-    if let Some(old)=channels::get(&conn,id)? {for (m,input) in models.iter_mut().zip(&body.models) {if input.enabled.is_none(){if let Some(was)=old.models.iter().find(|v|tokengo_shared::same_model_name(&v.model,&m.model)){m.enabled=was.enabled;}}}}
+    if let Some(old) = channels::get(&conn, id)? {
+        for (m, input) in models.iter_mut().zip(&body.models) {
+            if input.enabled.is_none() {
+                if let Some(was) = old
+                    .models
+                    .iter()
+                    .find(|v| tokengo_shared::same_model_name(&v.model, &m.model))
+                {
+                    m.enabled = was.enabled;
+                }
+            }
+        }
+    }
     let headers = body.headers(&conn, &state, Some(id))?;
+    if crate::db::provider_pool::source_credential(&conn, id.0)?.is_some() {
+        let old = channels::get(&conn, id)?.ok_or_else(|| ApiError::not_found("连接不存在"))?;
+        let url_changed = crate::db::provider_pool::canonical_url(&body.base_url).ok()
+            != crate::db::provider_pool::canonical_url(&old.base_url).ok();
+        let secret_changed = body.key.as_deref().is_some_and(|k| {
+            channels::secret(&conn, &state.secrets, id)
+                .ok()
+                .flatten()
+                .as_deref()
+                != Some(k)
+        });
+        let headers_changed = if let Some(next) = &headers {
+            channels::headers(&conn, &state.secrets, id)? != *next
+        } else {
+            false
+        };
+        if url_changed || secret_changed || headers_changed {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "provider_pool_managed",
+                "此来源已由渠道Key池管理，请在渠道入口或Key池中修改地址、密钥和认证头",
+            ));
+        }
+    }
     crate::db::in_tx(&conn, |c| {
         channels::update(
             c,
@@ -531,15 +622,20 @@ async fn channels_update(
             Some(k) if !k.trim().is_empty() => channels::set_secret(c, &state.secrets, id, k)?,
             _ => {}
         }
-        if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
+        if let Some(headers) = &headers {
+            channels::set_headers(c, &state.secrets, id, headers)?;
+        }
         channels::set_models(c, id, &models)?;
-        if let Some(p)=&body.protocols {crate::protocol_config::save(c,id.0,p)?;}
+        if let Some(p) = &body.protocols {
+            crate::protocol_config::save(c, id.0, p)?;
+        }
         Ok(())
     })?;
     tracing::info!("更新渠道 {id}：{}", body.name);
 
-    let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::not_found(format!("渠道 {id} 不存在")))?;
-    Ok(Json(channel_json(&conn,&l)))
+    let l = channels::get(&conn, id)?
+        .ok_or_else(|| ApiError::not_found(format!("渠道 {id} 不存在")))?;
+    Ok(Json(channel_json(&conn, &l)))
 }
 
 async fn channels_delete(
@@ -576,6 +672,16 @@ fn channel_delete_dependency(
     c: &rusqlite::Connection,
     id: i64,
 ) -> Result<Option<String>, ApiError> {
+    let pooled: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_credentials WHERE source_id=?1)",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(crate::db::DbError::from)?;
+    if pooled {
+        return Ok(Some("渠道凭据池（请停用Key，来源ID需保留）".into()));
+    }
     for (table, label) in [
         ("oauth_channel_bindings", "OAuth绑定"),
         ("requests", "请求历史/进行中请求"),
@@ -665,7 +771,7 @@ struct ProbeQuery {
 /// 探活和「拉上游模型清单」都要这一套。抽出来是因为这两件事的加载逻辑一模一样，
 /// 各写一份迟早会有一边忘了解密密钥（现象是"这条渠道明明有 key，面板却说没有"）。
 struct ReadyChannel {
-    source_identity:String,
+    source_identity: String,
     channel: tokengo_shared::Channel,
     secret: Option<String>,
     has_secret: bool,
@@ -716,7 +822,9 @@ async fn channels_probe(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let id = tokengo_shared::ChannelId(id);
     let endpoint = match q.kind.as_deref() {
-        Some("embeddings") | Some("embedding") | Some("vec") => crate::gateway::EndpointKind::Embeddings,
+        Some("embeddings") | Some("embedding") | Some("vec") => {
+            crate::gateway::EndpointKind::Embeddings
+        }
         _ => crate::gateway::EndpointKind::Chat,
     };
 
@@ -751,11 +859,12 @@ async fn channels_probe(
         })));
     };
 
-    let endpoint=crate::protocol_config::probe_endpoint(&state.conn(),channel.id.0,endpoint)?;
+    let endpoint = crate::protocol_config::probe_endpoint(&state.conn(), channel.id.0, endpoint)?;
 
     let timeout = {
         let cfg = state.routing().cfg.clone();
-        std::time::Duration::from_millis(cfg.attempt_timeout_ms.max(1)).min(std::time::Duration::from_secs(15))
+        std::time::Duration::from_millis(cfg.attempt_timeout_ms.max(1))
+            .min(std::time::Duration::from_secs(15))
     };
     let t0 = now_ms();
     let r = state
@@ -782,7 +891,11 @@ async fn channels_probe(
                 }
                 _ => format!("上游不接受这个请求（HTTP {code}），多半是模型名或参数不对"),
             };
-            (kind == tokengo_shared::routing::AttemptOutcome::Success, Some(code), note)
+            (
+                kind == tokengo_shared::routing::AttemptOutcome::Success,
+                Some(code),
+                note,
+            )
         }
         Err(fault) => (false, None, fault.message),
     };
@@ -940,9 +1053,18 @@ async fn channels_models(
 }
 
 #[derive(Deserialize)]
-struct RegistryQuery { model: String, upstream: String, #[serde(default)] q: String }
+struct RegistryQuery {
+    model: String,
+    upstream: String,
+    #[serde(default)]
+    q: String,
+}
 #[derive(Deserialize)]
-struct RegistryWrite { model: String, upstream: String, identity: Option<String> }
+struct RegistryWrite {
+    model: String,
+    upstream: String,
+    identity: Option<String>,
+}
 
 fn registry_mapping(conn: &rusqlite::Connection, id: i64, model: &str, upstream: &str) -> Result<channels::ModelMapping, ApiError> {
     let channel = channels::get(conn, tokengo_shared::ChannelId(id))?
@@ -956,7 +1078,11 @@ fn registry_mapping(conn: &rusqlite::Connection, id: i64, model: &str, upstream:
 }
 
 #[derive(Deserialize)]
-struct ContextOverrideWrite { model: String, upstream: String, tokens: Option<i64> }
+struct ContextOverrideWrite {
+    model: String,
+    upstream: String,
+    tokens: Option<i64>,
+}
 async fn context_override_get(_auth:PanelAuth,State(state):State<SharedState>,Path(id):Path<i64>,Query(query):Query<RegistryQuery>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();let mapping=registry_mapping(&c,id,&query.model,&query.upstream)?;
  Ok(Json(serde_json::json!({"override_tokens":crate::model_registry::context_override(&c,tokengo_shared::ChannelId(id),&mapping)?})))
@@ -974,16 +1100,30 @@ async fn context_override_set(_auth: PanelAuth, State(state): State<SharedState>
     Ok(Json(serde_json::json!({"tokens":tokens,"source":tokens.map(|_|"user_confirmed")})))
 }
 
-async fn registry_get(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Query(query): Query<RegistryQuery>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn registry_get(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    Query(query): Query<RegistryQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
     let mapping = registry_mapping(&conn, id, &query.model, &query.upstream)?;
     let channel = tokengo_shared::ChannelId(id);
     let context = crate::model_registry::mapped(&conn, channel, &mapping)?;
     let identity = crate::model_registry::associated(&conn, channel, &mapping)?;
-    let verified = crate::capability_detector::mapped_context(&catalog::list(&conn, channel)?, &mapping);
+    let verified =
+        crate::capability_detector::mapped_context(&catalog::list(&conn, channel)?, &mapping);
     let mut stmt = conn.prepare("SELECT model_id,context_window FROM registry_context WHERE instr(lower(model_id),lower(?1))>0 AND context_window>0 ORDER BY model_id LIMIT 100").map_err(crate::db::DbError::from)?;
-    let entries = stmt.query_map([&query.q], |r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"tokens":r.get::<_,i64>(1)?}))).map_err(crate::db::DbError::from)?.collect::<Result<Vec<_>,_>>().map_err(crate::db::DbError::from)?;
-    Ok(Json(serde_json::json!({"identity":identity,"tokens":context.tokens,"reason":context.reason,"upstream_context":verified,"override_tokens":crate::model_registry::context_override(&conn,channel,&mapping)?,"entries":entries})))
+    let entries = stmt
+        .query_map([&query.q], |r| {
+            Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"tokens":r.get::<_,i64>(1)?}))
+        })
+        .map_err(crate::db::DbError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(crate::db::DbError::from)?;
+    Ok(Json(
+        serde_json::json!({"identity":identity,"tokens":context.tokens,"reason":context.reason,"upstream_context":verified,"override_tokens":crate::model_registry::context_override(&conn,channel,&mapping)?,"entries":entries}),
+    ))
 }
 
 async fn registry_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<RegistryWrite>) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1095,7 +1235,9 @@ async fn channels_vision_test(
     let Some(ready) = ready_channel(&state, id)? else {
         return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
     };
-    let ReadyChannel { channel, secret, .. } = ready;
+    let ReadyChannel {
+        channel, secret, ..
+    } = ready;
 
     let model_name = body.model.trim().to_string();
     if model_name.is_empty() {
@@ -1162,7 +1304,9 @@ async fn channels_vision_test(
                         "上游不收这张图（HTTP {code}）：这个模型多半不支持图像输入。它的原话：{}",
                         snippet(&text)
                     ),
-                    401 | 403 => format!("凭据不对（HTTP {code}）—— 先点「测一下」看看这条渠道本身通不通"),
+                    401 | 403 => {
+                        format!("凭据不对（HTTP {code}）—— 先点「测一下」看看这条渠道本身通不通")
+                    }
                     429 => format!("被上游限流了（HTTP {code}），过一会儿再测"),
                     _ => format!("上游回了 HTTP {code}：{}", snippet(&text)),
                 };
@@ -1271,7 +1415,11 @@ fn extract_reply(body: &str) -> String {
 /// 对外清单按模型组算，两处各算各的就会漂移（v0.11.0 起只有这一份）。
 ///
 /// `auto` 三类的候选各给一份：面板上点开 auto 就能看见「这一刻会挑中谁」。
-#[derive(Deserialize)]struct ModelEnabledBody {model:String,enabled:bool}
+#[derive(Deserialize)]
+struct ModelEnabledBody {
+    model: String,
+    enabled: bool,
+}
 async fn model_enabled_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<ModelEnabledBody>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();if model_routes::routes_for(&c,&body.model)?.is_none(){return Err(ApiError::not_found("模型未勾选"));}
  model_routes::set_enabled(&c,&body.model,body.enabled)?;
@@ -1280,9 +1428,17 @@ async fn model_enabled_save(_auth:PanelAuth,State(state):State<SharedState>,Json
 
 async fn auto_policy_get(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();Ok(Json(serde_json::json!({"policy":crate::db::policy::get(&c)?,"order":crate::db::policy::ordered(&c)?})))}
 async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
-#[derive(Deserialize)]struct OrderMove{model:String,up:bool}
+#[derive(Deserialize)]
+struct OrderMove {
+    model: String,
+    up: bool,
+}
 async fn model_order_move(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<OrderMove>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::move_model(&c,&body.model,body.up)?;Ok(Json(serde_json::json!({"ok":true})))}
-#[derive(Deserialize)]struct CoolReset{model:Option<String>,channel_id:Option<i64>}
+#[derive(Deserialize)]
+struct CoolReset {
+    model: Option<String>,
+    channel_id: Option<i64>,
+}
 async fn model_cooldowns(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();
  // 表里存的是归一化后的名字（连字符/下划线都成了空格），面板上要看的是**真名**：
@@ -1292,10 +1448,22 @@ async fn model_cooldowns(_auth:PanelAuth,State(state):State<SharedState>)->Resul
  for r in rows.iter_mut(){if let Some(n)=real.iter().find(|x|tokengo_shared::same_model_name(x,&r.model)){r.model=n.clone();}}
  Ok(Json(serde_json::json!({"cooldowns":rows,"faults":crate::db::faults::rows(&c)?,"now_ms":now_ms()})))
 }
-#[derive(Deserialize)]struct FaultRetry{channel_id:i64,#[serde(default)]model:String}
-async fn channel_fault_retry(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<FaultRetry>)->Result<Json<serde_json::Value>,ApiError>{
- let c=state.conn();crate::db::in_tx(&c,|c|crate::db::faults::retry(c,body.channel_id,&body.model))?;
- Ok(Json(serde_json::json!({"ok":true})))
+#[derive(Deserialize)]
+struct FaultRetry {
+    channel_id: i64,
+    #[serde(default)]
+    model: String,
+}
+async fn channel_fault_retry(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Json(body): Json<FaultRetry>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let c = state.conn();
+    crate::db::in_tx(&c, |c| {
+        crate::db::faults::retry(c, body.channel_id, &body.model)
+    })?;
+    Ok(Json(serde_json::json!({"ok":true})))
 }
 async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();if let Some(name)=body.model {crate::db::policy::reset(&c,&name,body.channel_id).map_err(crate::db::DbError::from)?;} else {
@@ -1315,11 +1483,33 @@ async fn model_routes_list(
     let auto = {
         let conn = state.conn();
         let cand = |k: tokengo_shared::ModelKind| {
-            let mut names=model_routes::auto_candidates(&conn,k,false,now_ms()).unwrap_or_default();
-            names.retain(|n|model_routes::channels_for(&conn,n).unwrap_or_default().iter().any(|c|crate::db::policy::peek(&conn,c.id.0,n,c.upstream_model(n),now_ms()).ok().flatten().is_none()));
-            let mut p=crate::db::policy::get(&conn).unwrap_or_default();p.explore=false;
-            let _=crate::db::policy::rank(&conn,&mut names,&p,state.auto_sequence.load(std::sync::atomic::Ordering::Relaxed),99);
-            if p.strategy=="idle" {state.model_loads.preview(&mut names);}
+            let mut names =
+                model_routes::auto_candidates(&conn, k, false, now_ms()).unwrap_or_default();
+            names.retain(|n| {
+                model_routes::channels_for(&conn, n)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|c| {
+                        crate::db::policy::peek(&conn, c.id.0, n, c.upstream_model(n), now_ms())
+                            .ok()
+                            .flatten()
+                            .is_none()
+                    })
+            });
+            let mut p = crate::db::policy::get(&conn).unwrap_or_default();
+            p.explore = false;
+            let _ = crate::db::policy::rank(
+                &conn,
+                &mut names,
+                &p,
+                state
+                    .auto_sequence
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                99,
+            );
+            if p.strategy == "idle" {
+                state.model_loads.preview(&mut names);
+            }
             names
         };
         serde_json::json!({
@@ -1330,8 +1520,14 @@ async fn model_routes_list(
             "rerank": cand(tokengo_shared::ModelKind::Rerank),
         })
     };
-    let scores = {let conn=state.conn(); crate::db::scores::all(&conn,now_ms())?};
-    let totals = {let conn=state.conn();crate::db::scores::total_calls(&conn)?};
+    let scores = {
+        let conn = state.conn();
+        crate::db::scores::all(&conn, now_ms())?
+    };
+    let totals = {
+        let conn = state.conn();
+        crate::db::scores::total_calls(&conn)?
+    };
     // Snapshot route state before subsequent per-model DB queries.
     let route_states = state.routing().all_states().clone();
     let rows = routes
@@ -1937,25 +2133,38 @@ mod tests {
     }
 }
 
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct GatewayKeyBody { name: String }
+struct GatewayKeyBody {
+    name: String,
+}
 
 async fn gateway_keys_list(_auth: PanelAuth, State(state): State<SharedState>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(serde_json::json!({"keys": gateway_keys::list(&state.conn())?})))
 }
 
-async fn gateway_keys_create(_auth: PanelAuth, State(state): State<SharedState>, Json(body): Json<GatewayKeyBody>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn gateway_keys_create(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Json(body): Json<GatewayKeyBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     gateway_keys::validate_name(&body.name).map_err(|e| ApiError::bad_request(e.to_string()))?;
     let conn = state.conn();
     let key = gateway_keys::generate();
     let row = gateway_keys::create(&conn, &state.secrets, &body.name, &key, false)?;
-    Ok(Json(serde_json::to_value(row).map_err(|_|ApiError::internal("Cannot serialize gateway key"))?))
+    Ok(Json(serde_json::to_value(row).map_err(|_| {
+        ApiError::internal("Cannot serialize gateway key")
+    })?))
 }
 
-async fn gateway_keys_reveal(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, ApiError> {
-    let key = gateway_keys::reveal(&state.conn(), &state.secrets, id)?.ok_or_else(||ApiError::not_found("Key not found or hash-only legacy key cannot be revealed"))?;
+async fn gateway_keys_reveal(
+    _auth: PanelAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let key = gateway_keys::reveal(&state.conn(), &state.secrets, id)?.ok_or_else(|| {
+        ApiError::not_found("Key not found or hash-only legacy key cannot be revealed")
+    })?;
     Ok(Json(serde_json::json!({"gateway_key":key})))
 }
 

@@ -10,10 +10,12 @@
 
 pub mod channels;
 pub mod provider_channels;
+pub mod provider_keys;
 pub mod model_reasoning;
 pub mod accounts;
 pub mod policy_editor;
 pub mod key_manager;
+pub mod virtual_models;
 pub mod portal;
 pub mod users;
 pub mod billing;
@@ -36,6 +38,7 @@ pub enum Page {
     Settings,
     Accounts,
     Portal,
+    Strategies,
     Account,
 }
 
@@ -52,7 +55,7 @@ impl Page {
     /// UI mounting boundary mirrors the server's distinct account roles.
     pub fn for_account(self, root:bool)->Page {
         if root {if self==Page::Portal {Page::Overview}else{self}}
-        else if matches!(self,Page::Account|Page::Portal){self}else{Page::Portal}
+        else if matches!(self,Page::Account|Page::Portal|Page::Strategies){self}else{Page::Portal}
     }
 
     /// URL hash 里用的名字。
@@ -64,7 +67,7 @@ impl Page {
             Page::Users => "users",
             Page::Billing => "billing",
             Page::Settings => "settings",
-            Page::Accounts=>"accounts",Page::Portal=>"portal",Page::Account=>"account",
+            Page::Strategies=>"strategies",Page::Accounts=>"accounts",Page::Portal=>"portal",Page::Account=>"account",
         }
     }
 
@@ -77,7 +80,7 @@ impl Page {
             Page::Users => "用户",
             Page::Billing => "账务",
             Page::Settings => "设置",
-            Page::Accounts=>"用户",Page::Portal=>"我的空间",Page::Account=>"账号安全",
+            Page::Strategies=>"调用策略",Page::Accounts=>"用户",Page::Portal=>"我的空间",Page::Account=>"账号安全",
         }
     }
 
@@ -90,7 +93,7 @@ impl Page {
             Page::Users => "用户身份、虚拟密钥及其权限和限流。",
             Page::Billing => "预算、价格版本和持久化的逐次尝试账本。",
             Page::Settings => "网关密钥、运行参数与维护。",
-            Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人密钥元数据与用量。",Page::Account=>"当前登录账号与密码。",
+            Page::Strategies=>"私有虚拟模型与顺序、错误码和时段调用策略。",Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人密钥元数据与用量。",Page::Account=>"当前登录账号与密码。",
         }
     }
 
@@ -107,7 +110,7 @@ impl Page {
         match name {
             "groups" | "routing" => Page::Models,
             "logs" => Page::Settings,
-            "portal"=>Page::Portal,"account"=>Page::Account,"accounts"=>Page::Users,
+            "strategies"=>Page::Strategies,"portal"=>Page::Portal,"account"=>Page::Account,"accounts"=>Page::Users,
             _ => Self::ALL
                 .iter()
                 .copied()

@@ -1,7 +1,7 @@
 //! Root-only explicit provider/source grouping; no credential or connection identity changes.
 use super::{admin::PanelAuth, ApiError};
 use crate::{
-    db::{self, channels, model_routes, provider_channels as providers},
+    db::{self, channels, model_routes, provider_channels as providers, provider_pool as pool},
     SharedState,
 };
 use axum::{
@@ -9,6 +9,7 @@ use axum::{
     routing::{get, put},
     Json, Router,
 };
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokengo_shared::{same_model_name, ChannelId};
@@ -16,6 +17,14 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/providers", get(list).post(create))
         .route("/api/providers/{id}", put(update).delete(delete))
+        .route(
+            "/api/providers/{id}/credentials",
+            get(credentials_list).post(credentials_create),
+        )
+        .route(
+            "/api/providers/{id}/credentials/{credential}",
+            axum::routing::patch(credentials_update).delete(credentials_disable),
+        )
         .route("/api/channels/{id}/provider", put(assign))
         .route("/api/providers/{id}/models/enabled", put(group_model))
         .route("/api/channels/{id}/models/enabled", put(connection_model))
@@ -28,6 +37,10 @@ struct ProviderBody {
     name: String,
     #[serde(default = "yes")]
     enabled: bool,
+    base_url: Option<String>,
+    key_strategy: Option<String>,
+    switch_on_429: Option<bool>,
+    switch_on_400: Option<bool>,
 }
 fn yes() -> bool {
     true
@@ -124,6 +137,15 @@ async fn create(
 ) -> Result<Json<Value>, ApiError> {
     let Json(b) = body.map_err(|_| ApiError::bad_request("Invalid provider JSON"))?;
     let n = providers::name(&b.name).map_err(ApiError::bad_request)?;
+    let url = b
+        .base_url
+        .as_deref()
+        .map(pool::canonical_url)
+        .transpose()
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    if let Some(strategy) = &b.key_strategy {
+        pool::validate_strategy(strategy).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    }
     let c = s.conn();
     let duplicate: bool = c
         .query_row(
@@ -140,7 +162,9 @@ async fn create(
             "INSERT INTO provider_channels(name,enabled,created_ms) VALUES(?1,?2,?3)",
             rusqlite::params![n, b.enabled as i64, db::now_ms()],
         )?;
-        Ok(c.last_insert_rowid())
+        let id = c.last_insert_rowid();
+        c.execute("UPDATE provider_channels SET base_url=?2,canonical_state=?3,key_strategy=?4,switch_on_429=?5,switch_on_400=?6 WHERE id=?1",rusqlite::params![id,url,if url.is_some(){"canonical"}else{"attention"},b.key_strategy.unwrap_or_else(||"ordered".into()),b.switch_on_429.unwrap_or(true),b.switch_on_400.unwrap_or(false)])?;
+        Ok(id)
     })?;
     Ok(Json(json!({"provider":providers::one(&c,id)?})))
 }
@@ -152,6 +176,15 @@ async fn update(
 ) -> Result<Json<Value>, ApiError> {
     let Json(b) = body.map_err(|_| ApiError::bad_request("Invalid provider JSON"))?;
     let n = providers::name(&b.name).map_err(ApiError::bad_request)?;
+    let url = b
+        .base_url
+        .as_deref()
+        .map(pool::canonical_url)
+        .transpose()
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    if let Some(strategy) = &b.key_strategy {
+        pool::validate_strategy(strategy).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    }
     let c = s.conn();
     require(&c, id)?;
     let duplicate:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM provider_channels WHERE name=?1 COLLATE NOCASE AND id<>?2)",rusqlite::params![n,id],|r|r.get(0)).map_err(db::DbError::from)?;
@@ -168,8 +201,16 @@ async fn update(
             "UPDATE provider_channels SET name=?2,enabled=?3 WHERE id=?1",
             rusqlite::params![id, n, b.enabled as i64],
         )?;
+        let old_url:Option<String>=c.query_row("SELECT base_url FROM provider_channels WHERE id=?1",[id],|r|r.get(0))?;
+        if let Some(url)=&url {
+            let oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings o JOIN provider_connections p ON p.channel_id=o.channel_id WHERE p.provider_id=?1)",[id],|r|r.get(0))?;
+            if oauth && url!=crate::oauth::API_BASE{return Err(db::DbError::Other("OAuth渠道必须保留官方API入口".into()));}
+            if old_url.as_ref()!=Some(url){c.execute("UPDATE channels SET base_url=?2 WHERE id IN (SELECT channel_id FROM provider_connections WHERE provider_id=?1)",rusqlite::params![id,url])?;}
+            c.execute("UPDATE provider_channels SET base_url=?2,canonical_state='canonical' WHERE id=?1",rusqlite::params![id,url])?;
+        }
+        c.execute("UPDATE provider_channels SET key_strategy=COALESCE(?2,key_strategy),switch_on_429=COALESCE(?3,switch_on_429),switch_on_400=COALESCE(?4,switch_on_400),config_version=config_version+1 WHERE id=?1",rusqlite::params![id,b.key_strategy,b.switch_on_429,b.switch_on_400])?;
         reset(c, &names)
-    })?;
+    }).map_err(|e|ApiError::bad_request(e.to_string()))?;
     let row = providers::one(&c, id)?;
     drop(c);
     changed(&s, names);
@@ -182,6 +223,27 @@ async fn delete(
 ) -> Result<Json<Value>, ApiError> {
     let c = s.conn();
     require(&c, id)?;
+    let alias_reference: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM user_virtual_targets WHERE provider_id=?1)",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(db::DbError::from)?;
+    if alias_reference {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "provider_in_use",
+            "渠道仍被用户虚拟路由引用，请先修改虚拟目标或停用渠道",
+        ));
+    }
+    if !pool::credentials(&c, id)?.is_empty() {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "provider_not_empty",
+            "渠道仍有凭据或历史来源引用，请停用保留，不能级联删除",
+        ));
+    }
     // One guarded statement: a concurrent membership can never be cascaded away.
     let deleted = db::in_tx(&c, |c| {
         Ok(c.execute("DELETE FROM provider_channels WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM provider_connections WHERE provider_id=?1)", [id])?)
@@ -211,7 +273,17 @@ async fn assign(
     let names: Vec<_> = ch.models.into_iter().map(|m| m.model).collect();
     db::in_tx(&c, |c| {
         providers::set_membership(c, id, b.provider_id)?;
+        if let Some(provider) = b.provider_id {
+            pool::adopt_source(c, &s.secrets, id, provider)?;
+        }
         reset(c, &names)
+    })
+    .map_err(|e| {
+        ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "provider_url_conflict",
+            e.to_string(),
+        )
     })?;
     drop(c);
     changed(&s, names);
@@ -328,4 +400,353 @@ async fn reasoning(
     })
     .map_err(|_| ApiError::bad_request("Invalid model reasoning configuration"))?;
     Ok(Json(json!({"reasoning":caps})))
+}
+
+async fn credentials_list(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let c = s.conn();
+    require(&c, id)?;
+    Ok(Json(
+        json!({"provider":providers::one(&c,id)?,"credentials":pool::credentials(&c,id)?}),
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialModel {
+    model: String,
+    upstream: Option<String>,
+    enabled: Option<bool>,
+    vision: Option<bool>,
+    drop_fields: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NewCredential {
+    tools: Option<crate::search_tools::ToolCapabilities>,
+    label: String,
+    kind: Option<String>,
+    key: Option<String>,
+    #[serde(default)]
+    models: Vec<CredentialModel>,
+    #[serde(default)]
+    max_concurrent: u32,
+    oauth_account_id: Option<i64>,
+    max_input_tokens: Option<i64>,
+    max_output_tokens: Option<i64>,
+}
+async fn credentials_create(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path(id): Path<i64>,
+    Json(body): Json<NewCredential>,
+) -> Result<Json<Value>, ApiError> {
+    let label = providers::name(&body.label).map_err(ApiError::bad_request)?;
+    let kind = body.kind.as_deref().unwrap_or("api_key");
+    if !matches!(kind, "api_key" | "oauth" | "anonymous")
+        || body
+            .key
+            .as_ref()
+            .is_some_and(|k| k.len() > 65536 || k.trim().is_empty())
+        || kind == "api_key" && body.key.is_none()
+        || kind != "api_key" && body.key.is_some()
+    {
+        return Err(ApiError::bad_request("凭据类型或密钥无效"));
+    }
+    let c = s.conn();
+    require(&c, id)?;
+    let url: Option<String> = c
+        .query_row(
+            "SELECT base_url FROM provider_channels WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(db::DbError::from)?;
+    let url = url.ok_or_else(|| ApiError::bad_request("请先设置此渠道唯一API URL"))?;
+    if let Some(tools) = &body.tools {
+        tools.validate().map_err(ApiError::bad_request)?;
+        if kind == "oauth" || !(tools.search || tools.fetch) {
+            return Err(ApiError::bad_request(
+                "工具凭据必须明确启用search/fetch，且不能与OAuth混用",
+            ));
+        }
+    }
+    let requested_adapter = if body.tools.is_some() {
+        "tools"
+    } else if kind == "oauth" {
+        "oauth"
+    } else {
+        "api"
+    };
+    let existing_adapter: String = c
+        .query_row(
+            "SELECT adapter_kind FROM provider_channels WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(db::DbError::from)?;
+    if !pool::credentials(&c, id)?.is_empty() && existing_adapter != requested_adapter {
+        return Err(ApiError::bad_request(
+            "认证或工具协议语义不同，请创建另一个渠道；工具Key必须显式填写独立account_scope",
+        ));
+    }
+
+    let mut models = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for m in body.models {
+        let name = model(&m.model)?;
+        if !seen.insert(tokengo_shared::normalize_model_name(&name)) {
+            return Err(ApiError::bad_request("模型不能重复"));
+        }
+        models.push(channels::ModelMapping {
+            model: name,
+            upstream: m.upstream.filter(|s| !s.trim().is_empty()),
+            enabled: m.enabled.unwrap_or(true),
+            vision: m.vision.unwrap_or(false),
+            drop_fields: channels::ModelMapping::drop_fields_from_text(
+                m.drop_fields.as_deref().unwrap_or(""),
+            ),
+        });
+    }
+    if models.is_empty() {
+        for ch in channels::list(&c)?
+            .into_iter()
+            .filter(|row| row.provider_id == Some(id))
+        {
+            for m in ch.models {
+                if seen.insert(tokengo_shared::normalize_model_name(&m.model)) {
+                    models.push(m);
+                }
+            }
+        }
+    }
+    if models.len() > 256 {
+        return Err(ApiError::bad_request("最多配置256个模型"));
+    }
+    let account = if kind == "oauth" {
+        if url != crate::oauth::API_BASE || models.iter().any(|m| !m.drop_fields.is_empty()) {
+            return Err(ApiError::bad_request(
+                "OAuth凭据必须使用官方入口且不能丢弃字段",
+            ));
+        }
+        let account = body
+            .oauth_account_id
+            .ok_or_else(|| ApiError::bad_request("请选择已授权OAuth账号"))?;
+        let active:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_accounts WHERE id=?1 AND status='active' AND cipher IS NOT NULL)",[account],|r|r.get(0)).map_err(db::DbError::from)?;
+        if !active {
+            return Err(ApiError::bad_request("OAuth账号不可用"));
+        }
+        Some(account)
+    } else {
+        if body.oauth_account_id.is_some() {
+            return Err(ApiError::bad_request("此凭据类型不能绑定OAuth账号"));
+        }
+        None
+    };
+    let bounds = if let Some(account) = account {
+        let previous:Option<(Option<i64>,Option<i64>)>=c.query_row("SELECT o.max_input_tokens,o.max_output_tokens FROM oauth_channel_bindings o WHERE o.account_id=?1 AND o.max_input_tokens IS NOT NULL AND o.max_output_tokens IS NOT NULL ORDER BY o.channel_id LIMIT 1",[account],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(db::DbError::from)?;
+        let input = body.max_input_tokens.or(previous.and_then(|p| p.0));
+        let output = body.max_output_tokens.or(previous.and_then(|p| p.1));
+        if input.is_none_or(|n| !(1..=16_777_216).contains(&n))
+            || output.is_none_or(|n| !(1..=16_777_216).contains(&n))
+        {
+            return Err(ApiError::bad_request("首个OAuth Key需要明确已验证的max_input_tokens/max_output_tokens；不可猜测上下文额度"));
+        }
+        (input, output)
+    } else {
+        if body.max_input_tokens.is_some() || body.max_output_tokens.is_some() {
+            return Err(ApiError::bad_request("此字段仅用于OAuth凭据"));
+        }
+        (None, None)
+    };
+    let existing_credentials = pool::credentials(&c, id)?;
+    if existing_credentials
+        .iter()
+        .any(|k| (k.kind == "oauth") != (kind == "oauth"))
+    {
+        return Err(ApiError::bad_request(
+            "OAuth与API Key入口语义不同，请单独创建渠道",
+        ));
+    }
+    let prior_credentials = existing_credentials
+        .into_iter()
+        .map(|k| k.id)
+        .collect::<std::collections::HashSet<_>>();
+    let (source,credential)=db::in_tx(&c,|c|{
+  c.execute("UPDATE provider_channels SET adapter_kind=?2 WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM provider_credentials WHERE provider_id=?1)",rusqlite::params![id,requested_adapter])?;
+  let source=channels::create(c,&channels::NewChannel{name:label.clone(),base_url:url.clone(),enabled:true,unwrap_envelope:false,max_concurrent:0})?;
+  if let Some(key)=&body.key{channels::set_secret(c,&s.secrets,source,key)?;}
+  channels::set_models(c,source,&models)?;providers::set_membership(c,source.0,Some(id))?;
+  // Inherit declared protocol semantics, not another account's credentials or headers.
+  let first:Option<i64>=c.query_row("SELECT channel_id FROM provider_connections WHERE provider_id=?1 AND channel_id<>?2 ORDER BY channel_id LIMIT 1",rusqlite::params![id,source.0],|r|r.get(0)).optional()?;
+  if let Some(template)=first{crate::protocol_config::save(c,source.0,&crate::protocol_config::load(c,template)?)?;}
+  if let Some(account)=account{
+   crate::protocol_config::save(c,source.0,&crate::protocol_config::Capabilities{native:vec![crate::protocol::Protocol::Responses],allow_conversion:true,..Default::default()})?;
+   c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id,max_input_tokens,max_output_tokens) VALUES(?1,?2,?3,?4)",rusqlite::params![source.0,account,bounds.0,bounds.1])?;
+  }
+  if let Some(tools)=&body.tools {
+   let raw=serde_json::to_string(tools).map_err(|_|db::DbError::Other("工具配置无法序列化".into()))?;
+   db::settings::set(c,&format!("channel_tools:{}",source.0),&raw)?;
+   c.execute("UPDATE channels SET binding_generation=binding_generation+1 WHERE id=?1",[source.0])?;
+  }
+  let credential=pool::adopt_source(c,&s.secrets,source.0,id)?;
+  if prior_credentials.contains(&credential){return Err(db::DbError::Other("此渠道已存在相同凭据，请使用已有Key".into()));}
+  c.execute("UPDATE provider_credentials SET label=?2,max_concurrent=?3 WHERE id=?1",rusqlite::params![credential,label,body.max_concurrent])?;
+  Ok((source.0,credential))
+ }).map_err(|e|ApiError::bad_request(e.to_string()))?;
+    let row = pool::credentials(&c, id)?
+        .into_iter()
+        .find(|k| k.id == credential)
+        .ok_or_else(|| ApiError::internal("凭据创建后不可见"))?;
+    Ok(Json(json!({"credential":row,"source_id":source})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialPatch {
+    label: Option<String>,
+    enabled: Option<bool>,
+    priority: Option<i64>,
+    max_concurrent: Option<u32>,
+    key: Option<String>,
+    models: Option<Vec<CredentialModel>>,
+}
+async fn credentials_update(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path((provider, id)): Path<(i64, i64)>,
+    Json(body): Json<CredentialPatch>,
+) -> Result<Json<Value>, ApiError> {
+    if let Some(label) = &body.label {
+        providers::name(label).map_err(ApiError::bad_request)?;
+    }
+    if body
+        .key
+        .as_ref()
+        .is_some_and(|k| k.trim().is_empty() || k.len() > 65536)
+    {
+        return Err(ApiError::bad_request("新密钥无效"));
+    }
+    let c = s.conn();
+    require(&c, provider)?;
+    let original = pool::credentials(&c, provider)?
+        .into_iter()
+        .find(|k| k.id == id)
+        .ok_or_else(|| ApiError::not_found("凭据不存在"))?;
+    if body.key.is_some() && original.kind != "api_key" {
+        return Err(ApiError::bad_request(
+            "此凭据通过专用授权流程轮换，不能写入API Key",
+        ));
+    }
+    if let Some(models) = &body.models {
+        let mut seen = std::collections::HashSet::new();
+        if models.len() > 256 {
+            return Err(ApiError::bad_request("最多配置256个模型"));
+        }
+        for m in models {
+            let name = model(&m.model)?;
+            if !seen.insert(tokengo_shared::normalize_model_name(&name)) {
+                return Err(ApiError::bad_request("模型不能重复"));
+            }
+            if original
+                .models
+                .iter()
+                .any(|old| tokengo_shared::same_model_name(&old.model, &name) && old.conflict)
+            {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::CONFLICT,
+                    "credential_mapping_conflict",
+                    "此Key的同名旧映射存在差异，不能静默覆盖；请先分别确认来源配置",
+                ));
+            }
+        }
+    }
+    db::in_tx(&c, |c| {
+        if let Some(key) = &body.key {
+            pool::rotate_secret(c, &s.secrets, id, key)?;
+        }
+        if let Some(models) = &body.models {
+            for m in models {
+                let mut targets = original
+                    .source_ids
+                    .iter()
+                    .filter_map(|id| channels::get(c, ChannelId(*id)).transpose())
+                    .collect::<db::Result<Vec<_>>>()?
+                    .into_iter()
+                    .filter(|s| {
+                        s.models
+                            .iter()
+                            .any(|p| tokengo_shared::same_model_name(&p.model, &m.model))
+                    })
+                    .collect::<Vec<_>>();
+                if targets.is_empty() {
+                    let id = *original
+                        .source_ids
+                        .first()
+                        .ok_or_else(|| db::DbError::Other("凭据没有来源".into()))?;
+                    targets.push(
+                        channels::get(c, ChannelId(id))?
+                            .ok_or_else(|| db::DbError::Other("来源不存在".into()))?,
+                    );
+                }
+                for source in targets {
+                    let mut mappings = source.models;
+                    let idx = if let Some(i) = mappings
+                        .iter()
+                        .position(|p| tokengo_shared::same_model_name(&p.model, &m.model))
+                    {
+                        i
+                    } else {
+                        mappings.push(channels::ModelMapping::new(&m.model, None, false));
+                        mappings.len() - 1
+                    };
+                    let target = &mut mappings[idx];
+                    if let Some(upstream) = &m.upstream {
+                        target.upstream =
+                            (!upstream.trim().is_empty()).then(|| upstream.trim().to_owned());
+                    }
+                    if let Some(enabled) = m.enabled {
+                        target.enabled = enabled;
+                    }
+                    if let Some(vision) = m.vision {
+                        target.vision = vision;
+                    }
+                    if let Some(fields) = &m.drop_fields {
+                        target.drop_fields = channels::ModelMapping::drop_fields_from_text(fields);
+                    }
+                    channels::set_models(c, source.id, &mappings)?;
+                }
+            }
+        }
+        c.execute("UPDATE provider_credentials SET label=COALESCE(?2,label),enabled=COALESCE(?3,enabled),priority=COALESCE(?4,priority),max_concurrent=COALESCE(?5,max_concurrent) WHERE id=?1",rusqlite::params![id,body.label,body.enabled,body.priority,body.max_concurrent])?;
+        Ok(())
+    })?;
+    let row = pool::credentials(&c, provider)?
+        .into_iter()
+        .find(|k| k.id == id)
+        .ok_or_else(|| ApiError::internal("凭据不可见"))?;
+    Ok(Json(json!({"credential":row})))
+}
+async fn credentials_disable(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path((provider, id)): Path<(i64, i64)>,
+) -> Result<Json<Value>, ApiError> {
+    let c = s.conn();
+    require(&c, provider)?;
+    let row = pool::credentials(&c, provider)?
+        .into_iter()
+        .find(|k| k.id == id)
+        .ok_or_else(|| ApiError::not_found("凭据不存在"))?;
+    c.execute(
+        "UPDATE provider_credentials SET enabled=0 WHERE id=?1",
+        [row.id],
+    )
+    .map_err(db::DbError::from)?;
+    let row = pool::credentials(&c, provider)?
+        .into_iter()
+        .find(|k| k.id == id)
+        .unwrap();
+    Ok(Json(json!({"credential":row,"preserved":true})))
 }

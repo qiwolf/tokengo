@@ -301,15 +301,47 @@ async fn models(
         let conn = state.conn();
         let mut servable = model_routes::servable(&conn)?;
         let mut allowed = Vec::new();
-        for model in servable.drain(..) { if model_routes::visible(&conn,&model.name)? && gateway::permitted_model(&conn, &_key.auth, &model.name)? {allowed.push(model);} }
-        let servable=allowed;
-        let auto_rows = if _key.auth.permits_model(model_routes::AUTO_NAME) && model_routes::auto_available(&conn)? {
+        for model in servable.drain(..) {
+            if model_routes::visible(&conn, &model.name)?
+                && gateway::permitted_model(&conn, &_key.auth, &model.name)?
+            {
+                allowed.push(model);
+            }
+        }
+        let servable = allowed;
+        let auto_rows = if _key.auth.permits_model(model_routes::AUTO_NAME)
+            && model_routes::auto_available(&conn)?
+        {
             let now = crate::db::now_ms();
-            let chat = model_routes::auto_candidates(&conn, ModelKind::Chat, false, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
+            let chat = model_routes::auto_candidates(&conn, ModelKind::Chat, false, now)?
+                .iter()
+                .any(|n| {
+                    servable
+                        .iter()
+                        .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                });
             let embeddings =
-                model_routes::auto_candidates(&conn, ModelKind::Embeddings, false, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
-            let rerank = model_routes::auto_candidates(&conn, ModelKind::Rerank, false, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
-            let vision = model_routes::auto_candidates(&conn, ModelKind::Chat, true, now)?.iter().any(|n|servable.iter().any(|m|tokengo_shared::same_model_name(n,&m.name)));
+                model_routes::auto_candidates(&conn, ModelKind::Embeddings, false, now)?
+                    .iter()
+                    .any(|n| {
+                        servable
+                            .iter()
+                            .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                    });
+            let rerank = model_routes::auto_candidates(&conn, ModelKind::Rerank, false, now)?
+                .iter()
+                .any(|n| {
+                    servable
+                        .iter()
+                        .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                });
+            let vision = model_routes::auto_candidates(&conn, ModelKind::Chat, true, now)?
+                .iter()
+                .any(|n| {
+                    servable
+                        .iter()
+                        .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                });
             let kind = if chat {
                 ModelKind::Chat
             } else if embeddings {
@@ -320,24 +352,38 @@ async fn models(
                 ModelKind::Unknown
             };
             let context = crate::capability_detector::conservative_context(
-                servable.iter().filter(|m| matches!(m.kind,
-                    ModelKind::Chat | ModelKind::Unknown | ModelKind::Embeddings | ModelKind::Rerank))
-                    .map(|m| m.context_window));
-            if !chat && !embeddings && !rerank { Vec::new() } else { vec![serde_json::json!({
-                "id": model_routes::AUTO_NAME,
-                "object": "model",
-                "created": created,
-                "owned_by": tokengo_shared::BRAND,
-                // 带图的请求打 auto 只有在这时候才走得通
-                "vision": vision,
-                "kind": kind.as_str(),
-                "context_window": context,
-                "context_length": context,
-                "context_source": context.map(|_| {
-                    let sources=servable.iter().filter_map(|m|m.context_source.as_deref()).collect::<std::collections::HashSet<_>>();
-                    if sources.len()==1 { *sources.iter().next().unwrap() } else { "user_confirmed+upstream" }
-                }),
-            })] }
+                servable
+                    .iter()
+                    .filter(|m| {
+                        matches!(
+                            m.kind,
+                            ModelKind::Chat
+                                | ModelKind::Unknown
+                                | ModelKind::Embeddings
+                                | ModelKind::Rerank
+                        )
+                    })
+                    .map(|m| m.context_window),
+            );
+            if !chat && !embeddings && !rerank {
+                Vec::new()
+            } else {
+                vec![serde_json::json!({
+                    "id": model_routes::AUTO_NAME,
+                    "object": "model",
+                    "created": created,
+                    "owned_by": tokengo_shared::BRAND,
+                    // 带图的请求打 auto 只有在这时候才走得通
+                    "vision": vision,
+                    "kind": kind.as_str(),
+                    "context_window": context,
+                    "context_length": context,
+                    "context_source": context.map(|_| {
+                        let sources=servable.iter().filter_map(|m|m.context_source.as_deref()).collect::<std::collections::HashSet<_>>();
+                        if sources.len()==1 { *sources.iter().next().unwrap() } else { "user_confirmed+upstream" }
+                    }),
+                })]
+            }
         } else {
             Vec::new()
         };
@@ -359,11 +405,43 @@ async fn models(
             "context_source": m.context_source,
         })
     }));
+    {
+        let conn = state.conn();
+        let names =
+            crate::db::user_virtual_routes::alias_names(&conn, &_key.auth, crate::db::now_ms())
+                .map_err(|error| {
+                    ApiError::new(axum::http::StatusCode::FORBIDDEN, error.code, error.message)
+                })?;
+        for name in names {
+            let resolved = crate::db::user_virtual_routes::resolve(
+                &conn,
+                _key.auth.user_id,
+                &name,
+                crate::db::now_ms(),
+            )
+            .map_err(|error| {
+                ApiError::new(axum::http::StatusCode::FORBIDDEN, error.code, error.message)
+            })?;
+            let kind = resolved
+                .as_ref()
+                .and_then(|route| route.targets.first())
+                .and_then(|target| {
+                    model_routes::routes_for(&conn, &target.logical_model)
+                        .ok()
+                        .flatten()
+                })
+                .map(|route| route.kind)
+                .unwrap_or(ModelKind::Unknown);
+            data.push(serde_json::json!({"id":name,"object":"model","created":created,"owned_by":"user-private","virtual":true,"kind":kind.as_str()}));
+        }
+    }
     // Preserve the minimal legacy shape when metadata is unknown.
     for model in &mut data {
         if model["context_window"].is_null() {
             if let Some(object) = model.as_object_mut() {
-                for key in ["context_window", "context_length", "context_source"] { object.remove(key); }
+                for key in ["context_window", "context_length", "context_source"] {
+                    object.remove(key);
+                }
             }
         }
     }

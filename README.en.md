@@ -235,3 +235,8 @@ MIT; see [LICENSE](LICENSE) and [NOTICE](NOTICE). FreeLLMAPI informed compatibil
 ## Protocol matrix and next phases
 
 See the [protocol routing matrix and fallback diagram](docs/protocol-routing-matrix.md) for native selection, bounded bridging and explicit rejection. The first unified-user phase implements atomic user/login creation, browser self-service Keys and point-and-click policies. It adds no schema, user expiry or self-service toggle; browser self-service creation has a fixed 32-active-Key cap. Monetary caps are not raw Token packages. Monthly entitlements, cumulative Token quota and custom probes remain future work. See [requirements coverage](docs/requirements-status.md), the [phased plan](docs/unified-user-and-quota-plan.md) and [acceptance status](docs/acceptance-status.md) for implementation and verification boundaries.
+
+
+## Provider Key pools and private virtual models
+
+The fork now models a provider channel as one API base URL with multiple upstream credentials and models. Ordered or concurrent allocation preserves user affinity across downstream VKeys, with explicit 429/400 switches. Users can create private virtual model names with ordered targets or weekly schedules (UTC or Asia/Shanghai); every attempt rechecks real target permissions, pricing and budget. Native session pins take precedence and committed streams are never replayed. Multi-target embeddings remain rejected until dimensions are verified. See the [behavior contract and flow diagram](docs/provider-key-pools.md) and [acceptance boundaries](docs/acceptance-status.md); source implementation, CI artifacts, Releases and production deployment are verified separately.

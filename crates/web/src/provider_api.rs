@@ -21,6 +21,16 @@ pub struct Provider {
     pub name: String,
     pub enabled: bool,
     pub connection_ids: Vec<i64>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub canonical_state: String,
+    #[serde(default)]
+    pub key_strategy: String,
+    #[serde(default = "yes")]
+    pub switch_on_429: bool,
+    #[serde(default)]
+    pub switch_on_400: bool,
     pub models: Vec<ProviderModel>,
 }
 #[derive(Clone, Deserialize)]
@@ -74,6 +84,15 @@ pub async fn toggle_connection(connection: i64, model: &str, enabled: bool) -> R
 /// Only empty providers can be removed. Sources and historical identities never cascade.
 pub async fn remove(id: i64) -> Result<(), ApiErr> {
     call("DELETE", &format!("/api/providers/{id}"), None)
+        .await
+        .map(|_| ())
+}
+
+pub async fn save_config(id: Option<i64>, body: serde_json::Value) -> Result<(), ApiErr> {
+    let path = id
+        .map(|i| format!("/api/providers/{i}"))
+        .unwrap_or_else(|| "/api/providers".into());
+    call(if id.is_some() { "PUT" } else { "POST" }, &path, Some(body))
         .await
         .map(|_| ())
 }

@@ -109,7 +109,7 @@ impl Fixture {
 async fn provider_membership_atomic_model_switch_and_restart_preserve_identity() {
     let f = Fixture::new().await;
     let a = f.channel("http://127.0.0.1:1").await;
-    let b = f.channel("http://127.0.0.1:2").await;
+    let b = f.channel("http://127.0.0.1:1").await;
     let p = f.provider("Explicit provider").await;
     f.assign(a, Some(p)).await;
     f.assign(b, Some(p)).await;
@@ -594,7 +594,7 @@ async fn reasoning_defaults_reach_real_chat_and_explicit_invalid_null_and_other_
 async fn shared_provider_never_broadens_existing_connection_acl() {
     let f = Fixture::new().await;
     let a = f.channel("http://127.0.0.1:1").await;
-    let b = f.channel("http://127.0.0.1:2").await;
+    let b = f.channel("http://127.0.0.1:1").await;
     let p = f.provider("same explicit provider").await;
     f.assign(a, Some(p)).await;
     f.assign(b, Some(p)).await;
@@ -673,10 +673,7 @@ async fn provider_delete_requires_empty_group_and_preserves_connections_and_hist
         .req("DELETE", &format!("/api/providers/{p}"), json!(null))
         .await;
     assert_eq!(s, 409, "{v}");
-    assert!(v["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("请先移动/删除连接"));
+    assert!(v["error"]["message"].as_str().unwrap().contains("停用保留"));
     assert_eq!(protected_connection_snapshot(&f.state.conn()), snapshot);
     assert_eq!(
         db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
@@ -689,15 +686,20 @@ async fn provider_delete_requires_empty_group_and_preserves_connections_and_hist
     let (s, v) = f
         .req("DELETE", &format!("/api/providers/{p}"), json!(null))
         .await;
-    assert_eq!(s, 200, "{v}");
-    assert_eq!(v["deleted"], true);
+    assert_eq!(s, 409, "{v}"); // Credential history remains after moving the source.
     assert!(
         db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
             .unwrap()
             .is_some()
     );
+    let empty = f.provider("truly empty").await;
+    let (s, v) = f
+        .req("DELETE", &format!("/api/providers/{empty}"), json!(null))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["deleted"], true);
     assert_eq!(
-        f.req("DELETE", &format!("/api/providers/{p}"), json!(null))
+        f.req("DELETE", &format!("/api/providers/{empty}"), json!(null))
             .await
             .0,
         404

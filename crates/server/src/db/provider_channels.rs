@@ -67,6 +67,7 @@ pub fn one(c: &Connection, id: i64) -> Result<Value> {
         .filter(|x| x.provider_id == Some(id))
         .collect();
     let ids: Vec<_> = chans.iter().map(|x| x.id.0).collect();
+    let (base_url,adapter_kind,canonical_state,key_strategy,switch_on_429,switch_on_400,config_version):(Option<String>,String,String,String,bool,bool,i64)=c.query_row("SELECT base_url,adapter_kind,canonical_state,key_strategy,switch_on_429,switch_on_400,config_version FROM provider_channels WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)))?;
     let routes = super::model_routes::list(c)?;
     let mut models = Vec::new();
     for r in routes {
@@ -88,22 +89,30 @@ pub fn one(c: &Connection, id: i64) -> Result<Value> {
             })
             .map(|ch| ch.id.0)
             .collect();
-        let routable: Vec<_> = if r.enabled {
-            r.channels
+        let mut routable = Vec::new();
+        if r.enabled {
+            for source in r
+                .channels
                 .iter()
                 .map(|x| x.0)
-                .filter(|id| ids.contains(id))
-                .collect()
-        } else {
-            Vec::new()
-        };
+                .filter(|source| ids.contains(source))
+            {
+                if super::provider_pool::source_credential(c, source)?
+                    .is_none_or(|key| key.enabled && key.provider_id == id)
+                {
+                    routable.push(source);
+                }
+            }
+        }
         let visible = super::model_routes::visible(c, &r.name)?;
         models.push(json!({
             "name":r.name,"global_enabled":r.enabled,"visible":visible,
             "declared_connection_ids":declared,"enabled_connection_ids":active,"routable_connection_ids":routable
         }));
     }
-    Ok(json!({"id":id,"name":name,"enabled":enabled,"connection_ids":ids,"models":models}))
+    Ok(
+        json!({"id":id,"name":name,"enabled":enabled,"connection_ids":ids,"models":models,"base_url":base_url,"adapter_kind":adapter_kind,"canonical_state":canonical_state,"key_strategy":key_strategy,"switch_on_429":switch_on_429,"switch_on_400":switch_on_400,"config_version":config_version}),
+    )
 }
 pub fn list(c: &Connection) -> Result<Value> {
     let mut st = c.prepare("SELECT id FROM provider_channels ORDER BY name COLLATE NOCASE,id")?;
