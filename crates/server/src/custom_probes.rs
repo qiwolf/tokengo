@@ -125,7 +125,7 @@ fn ready(c:&Connection,state:&SharedState,cfg:&Config,require_enabled:bool)->Res
     let upstream_model=mapping.upstream.clone().unwrap_or_else(||mapping.model.clone());
     let secret=db::channels::secret(c,&state.secrets,row.id).map_err(|_|"无法读取上游凭据，请检查 Key 配置")?;
     let headers=db::channels::headers(c,&state.secrets,row.id).map_err(|_|"无法读取上游请求头")?;
-    let signature=serde_json::to_string(&(crate::reasoning_capabilities::fingerprint(c,cfg.source_id).map_err(|_|"无法确认上游配置版本")?,credential.revision,credential.provider_version,c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[cfg.source_id],|r|r.get::<_,i64>(0)).map_err(|_|"无法读取绑定版本")?,&upstream_model,row.unwrap_envelope,crate::protocol_config::load(c,cfg.source_id).map_err(|_|"上游协议配置无效")?)).map_err(|_|"无法确认上游配置版本")?;
+    let signature=serde_json::to_string(&(crate::reasoning_capabilities::fingerprint(c,cfg.source_id).map_err(|_|"无法确认上游配置版本")?,credential.id,credential.provider_id,credential.revision,credential.provider_version,c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[cfg.source_id],|r|r.get::<_,i64>(0)).map_err(|_|"无法读取绑定版本")?,&upstream_model,row.unwrap_envelope,crate::protocol_config::load(c,cfg.source_id).map_err(|_|"上游协议配置无效")?)).map_err(|_|"无法确认上游配置版本")?;
     Ok(Ready{credential,oauth,tools,channel:Channel{id:row.id,name:row.name,base_url:row.base_url,enabled:row.enabled,priority:0,model_alias:None,vision:false,drop_fields:vec![],unwrap_envelope:row.unwrap_envelope,headers,max_concurrent:row.max_concurrent},secret,upstream_model,endpoint,signature})
 }
 fn ready_binding_signature(c:&Connection,state:&SharedState,cfg:&Config,signature:&str)->bool {
@@ -289,7 +289,7 @@ async fn execute_actor(state:&SharedState,id:&str,background:bool,now:i64,actor:
         }
         if let Some(kind)=live.endpoint.tool_kind(){if !state.tool_rates.admit(&live.tools.account_scope,kind,live.tools.qps){return Err("供应方工具账户达到每秒请求限制，未发送请求");}}
         // Refresh can rotate the account credential; capture the version actually used for dispatch.
-        {let c=state.conn();let mut snapshot=snapshot.clone();if let Some(o)=&oauth{snapshot["oauth_account_id"]=json!(o.account_id);snapshot["oauth_credential_revision"]=json!(o.credential_revision);snapshot["binding_generation"]=json!(o.binding_generation);}
+        {let c=state.conn();let mut snapshot=snapshot.clone();snapshot["provider_id"]=json!(live.credential.provider_id);snapshot["credential_id"]=json!(live.credential.id);snapshot["credential_revision"]=json!(live.credential.revision);snapshot["provider_version"]=json!(live.credential.provider_version);if let Some(o)=&oauth{snapshot["oauth_account_id"]=json!(o.account_id);snapshot["oauth_credential_revision"]=json!(o.credential_revision);snapshot["binding_generation"]=json!(o.binding_generation);}
             db::billing::prepare_diagnostic_dispatch(&c,ledger,&snapshot).map_err(|_|"无法保存实际来源快照，未发送请求")?;}
         guard.sent=true;
         let timeout=Duration::from_millis(probe.config.timeout_ms);

@@ -148,3 +148,18 @@ async fn custom_probe_cancel_and_shared_key_gate_do_not_leave_reserved_or_revive
     let p=f.create(f.config()).await;let calls=f.mock.calls.load(Ordering::SeqCst);let r=f.run(&p).await;assert_eq!(r["ok"],false);assert_eq!(r["billing"]["usage_certainty"],"not_sent");assert_eq!(f.mock.calls.load(Ordering::SeqCst),calls);drop(held);
     assert_eq!(f.run(&p).await["ok"],true,"cancelled lease must not block a later run");
 }
+#[tokio::test]
+async fn custom_probe_reparent_while_waiting_old_key_gate_never_dispatches_stale_identity() {
+    let f=Fixture::new().await;
+    let old=db::provider_pool::source_credential(&f.state.conn(),f.source).unwrap().unwrap();
+    f.state.conn().execute("UPDATE provider_credentials SET max_concurrent=1 WHERE id=?1",[old.id]).unwrap();
+    let held=f.state.credential_gate(old.id,1).unwrap().acquire_owned().await.unwrap();
+    let mut config=f.config();config["timeout_ms"]=json!(5000);let p=f.create(config).await;let id=p["id"].as_str().unwrap().to_string();let state=f.state.clone();
+    let task=tokio::spawn(async move{custom_probes::execute(&state,&id,false,db::now_ms()).await.unwrap()});
+    tokio::time::timeout(std::time::Duration::from_secs(2),async{loop{if !db::billing::usage(&f.state.conn(),&Default::default()).unwrap().is_empty(){break;}tokio::task::yield_now().await;}}).await.unwrap();
+    let(_,new)=f.req("POST","/api/providers",json!({"name":"new owner while queued"})).await;let pid=new["provider"]["id"].as_i64().unwrap();
+    let(status,value)=f.req("PUT",&format!("/api/channels/{}/provider",f.source),json!({"provider_id":pid})).await;assert_eq!(status,200,"{value}");
+    let next=db::provider_pool::source_credential(&f.state.conn(),f.source).unwrap().unwrap();assert_ne!((old.id,old.provider_id),(next.id,next.provider_id));drop(held);
+    let result=task.await.unwrap();assert!(!result.ok,"stale Key gate must not authorize a different credential");assert_eq!(f.mock.calls.load(Ordering::SeqCst),0);assert_eq!(result.billing.unwrap()["usage_certainty"],"not_sent");
+    let ledger=db::billing::usage(&f.state.conn(),&Default::default()).unwrap().remove(0);assert_eq!(ledger.source_snapshot["credential_id"],old.id);assert_eq!(ledger.source_snapshot["provider_id"],old.provider_id);assert_eq!(ledger.status,"not_sent");assert_eq!(ledger.debit_micro,Some(0));
+}
