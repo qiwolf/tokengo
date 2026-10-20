@@ -9,7 +9,7 @@
 - `POST /api/oauth/start`：`{label,redirect_uri,account_id?}`；redirect必须`http://127.0.0.1:<port>/auth/callback`。返回`attempt_id/authorization_url/expires_at/host_id`。本机工具必须先监听再打开浏览器；authorization_url不得打印或落普通日志，返回账号的URL可能含ID token hint。
 - `POST /api/oauth/complete`：`{attempt_id,state,code?,client_id?,error?}`。state十分钟有效、一次消费；拒绝错误state；验证正确state的denied回调消费attempt并400，不换token。初始注册必须使用callback签发client ID，后续签发ID不得替换选中账号ID。结果只有账号元数据。
 - `GET /api/oauth/accounts`：账号状态/身份/到期/版本和scope，无token。
-- `GET /api/oauth/accounts/{id}/models`：用该账号的新鲜token访问官方模型目录，返回最大1MiB/4096项目录，保留来源提供的上下文信息，不暴露token；目录缺上界时必须保留未知，不能凭模型名猜测。
+- `GET /api/oauth/accounts/{id}/models`：用该账号的新鲜token访问官方模型目录，返回最大1MiB/4096项目录，保留来源提供的上下文信息，不暴露token；目录缺上界时必须保留未知，不能凭模型名猜测。Sign in with ChatGPT 的正式目录是顶层`models`数组、标识为`slug`，保留全部原始元数据、visibility及顺序；显示选择器时仅展示`visibility=list`，请求模型使用原`slug`。普通API的`object=list/data/id`只作为明确独立兼容形状接受，两形状混合、重复标识、畸形上界或递归凭据字段均拒绝，不把模型目录当成token价格。
 - `GET/PUT/DELETE /api/oauth/channels/{id}`：查询、绑定、解绑。PUT为`{account_id,reasoning_effort?,service_tier?,max_input_tokens?,max_output_tokens?}`。effort限low/medium/high，tier限priority/auto/default。独立context bounds为1..16777216；只配置完整pair时`context_bounds`返回已配置边界。
 - `POST /api/oauth/accounts/{id}/revoke`：立即停用并清除本地token，增加所绑定渠道generation；按discovery的官方revocation endpoint尝试终止远程会话，响应明确`remote_revocation_confirmed`。失败时只能确认本地退出，需到ChatGPT设置断开应用；账号/client/host映射保留。
 
@@ -37,7 +37,7 @@ Token response的`earliest_refresh_at`按Unix秒解析，内部时间统一毫�
 
 回归使用独立合成RSA测试密钥、loopback JWKS/token/revocation/catalog服务；没有调用真实授权或读旧CLI认证。测试覆盖非法JWT、一次性state、跨账号、并发轮转/跨runtime CAS、刷新取消/撤销、重启保留、密文存储和管理权限。测试用api_base覆盖仅在cfg(test)编译；生产端点固定，不能经API/环境配置任意host。
 
-官方依据：[注册与登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)、[token字段](https://developers.openai.com/siwc/token-sharing-open-source/token-reference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+官方依据：[模型目录与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[注册与登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)、[token字段](https://developers.openai.com/siwc/token-sharing-open-source/token-reference)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 
 
 订阅传输会将顶层裸 function/custom 工具原样移到首个 developer `additional_tools` 输入项，保留名称、schema、调用和返回 ID；已有 namespace 不改。此适配遵循[官方 additional_tools 结构](https://developers.openai.com/api/docs/guides/tools-tool-search)。显式 API 不支持字段在发出请求前拒绝；非流式客户端的完整响应从有界 SSE 收集器重建，保留终端空 output 前的 finalized items。OAuth 与独立按次工具禁止旧的无账务自动探活/视觉测试，模型目录走账号专用管理接口，推理走正常 VKey 链路。

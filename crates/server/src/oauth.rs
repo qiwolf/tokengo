@@ -728,7 +728,7 @@ pub async fn models(state: &SharedState, account_id: i64) -> Result<serde_json::
             "{}/models",
             state.oauth.api_base().trim_end_matches('/')
         ))
-        .bearer_auth(bearer)
+        .bearer_auth(&bearer)
         .send()
         .await
         .map_err(|_| OAuthError("oauth_unavailable"))?;
@@ -736,34 +736,108 @@ pub async fn models(state: &SharedState, account_id: i64) -> Result<serde_json::
         return Err(OAuthError("oauth_models_unavailable"));
     }
     let catalog = bounded_json(response, 1 << 20).await?;
-    if catalog["object"] != "list"
-        || !catalog["data"].as_array().is_some_and(|models| {
-            models.len() <= 4096
-                && models.iter().all(|model| {
-                    model["id"]
-                        .as_str()
-                        .is_some_and(|id| !id.is_empty() && id.len() <= 512)
-                })
-        })
-    {
+    validate_catalog(&catalog)?;
+    // Even an unexpected metadata field must never echo this account's credential.
+    if catalog.to_string().contains(&bearer) {
         return Err(OAuthError("oauth_invalid_catalog"));
     }
-    fn secret(v: &serde_json::Value) -> bool {
-        match v {
-            serde_json::Value::Object(m) => m.iter().any(|(k, v)| {
+    Ok(catalog)
+}
+/// SIWC and ordinary API catalogs are distinct contracts, not interchangeable aliases.
+/// Return the original bounded JSON only after validating its explicit discriminator.
+fn validate_catalog(catalog: &serde_json::Value) -> Result<()> {
+    let bad = || OAuthError("oauth_invalid_catalog");
+    let root = catalog.as_object().ok_or_else(bad)?;
+    let (models, identifier) = if let Some(models) = root.get("models") {
+        if root.contains_key("data") || root.get("object").is_some_and(|v| v == "list") {
+            return Err(bad());
+        }
+        (models.as_array().ok_or_else(bad)?, "slug")
+    } else if root.get("object").is_some_and(|v| v == "list") {
+        (
+            root.get("data")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(bad)?,
+            "id",
+        )
+    } else {
+        return Err(bad());
+    };
+    if models.len() > 4096 {
+        return Err(bad());
+    }
+    let mut identities = std::collections::HashSet::new();
+    for model in models {
+        let model = model.as_object().ok_or_else(bad)?;
+        let id = model
+            .get(identifier)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(bad)?;
+        if id.trim().is_empty()
+            || id.trim() != id
+            || id.len() > 512
+            || id.chars().any(char::is_control)
+            || !identities.insert(id)
+        {
+            return Err(bad());
+        }
+        if identifier == "slug" {
+            for field in ["display_name", "visibility"] {
+                if let Some(value) = model.get(field) {
+                    if !value.as_str().is_some_and(|s| {
+                        !s.is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control)
+                    }) {
+                        return Err(bad());
+                    }
+                }
+            }
+        }
+        // Preserve absent/null ceilings as unknown. Never coerce a display string,
+        // guess by model name, or combine independent ceilings into a joint window.
+        for field in [
+            "context_window",
+            "max_context_window",
+            "max_input_tokens",
+            "max_output_tokens",
+        ] {
+            if let Some(value) = model.get(field).filter(|v| !v.is_null()) {
+                if !value.as_i64().is_some_and(|n| n > 0) {
+                    return Err(bad());
+                }
+            }
+        }
+    }
+    fn secret(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(map) => map.iter().any(|(key, value)| {
+                let normalized: String = key
+                    .chars()
+                    .filter(char::is_ascii_alphanumeric)
+                    .map(|c| c.to_ascii_lowercase())
+                    .collect();
                 matches!(
-                    k.to_ascii_lowercase().as_str(),
-                    "access_token" | "refresh_token" | "id_token" | "api_key" | "authorization"
-                ) || secret(v)
+                    normalized.as_str(),
+                    "accesstoken"
+                        | "refreshtoken"
+                        | "idtoken"
+                        | "apikey"
+                        | "authorization"
+                        | "token"
+                        | "secret"
+                        | "clientsecret"
+                        | "credentials"
+                        | "password"
+                        | "bearer"
+                ) || secret(value)
             }),
             serde_json::Value::Array(items) => items.iter().any(secret),
             _ => false,
         }
     }
-    if secret(&catalog) {
-        return Err(OAuthError("oauth_invalid_catalog"));
+    if secret(catalog) {
+        return Err(bad());
     }
-    Ok(catalog)
+    Ok(())
 }
 async fn refresh_if_due(state: &SharedState, id: i64) -> Result<()> {
     let began = tokio::time::Instant::now();
@@ -965,6 +1039,7 @@ mod tests {
         entered: tokio::sync::Notify,
         release: tokio::sync::Notify,
         hold: std::sync::atomic::AtomicBool,
+        catalog_json: Mutex<Option<Value>>,
     }
     impl Default for Mock {
         fn default() -> Self {
@@ -979,6 +1054,7 @@ mod tests {
                 entered: Default::default(),
                 release: Default::default(),
                 hold: Default::default(),
+                catalog_json: Mutex::new(None),
             }
         }
     }
@@ -1036,16 +1112,16 @@ mod tests {
             json!({"access_token":format!("SYNTHETIC-ACCESS-{n}"),"refresh_token":format!("SYNTHETIC-ROTATING-REFRESH-{n}"),"id_token":signed(&mock,!refresh),"token_type":"Bearer","expires_in":3600,"earliest_refresh_at":db::now_ms()/1000,"scope":SCOPE}),
         )
     }
-    async fn catalog(headers: axum::http::HeaderMap) -> Json<Value> {
+    async fn catalog(State(mock): State<Arc<Mock>>, headers: axum::http::HeaderMap) -> Json<Value> {
         assert!(headers
             .get("Authorization")
             .unwrap()
             .to_str()
             .unwrap()
             .starts_with("Bearer SYNTHETIC-ACCESS-"));
-        Json(
-            json!({"object":"list","data":[{"id":"gpt-synthetic","context_window":32768,"max_output_tokens":4096}]}),
-        )
+        Json(mock.catalog_json.lock().unwrap().clone().unwrap_or_else(||
+            json!({"object":"list","data":[{"id":"gpt-synthetic","context_window":32768,"max_output_tokens":4096}]})
+        ))
     }
     async fn jwks() -> Json<Value> {
         Json(serde_json::from_str(JWKS).unwrap())
@@ -1540,5 +1616,103 @@ mod tests {
         assert!(bind(&f.state, ch, &b).is_err());
         unbind(&f.state, ch).unwrap();
         assert!(credentials(&f.state, ch).await.unwrap().is_none());
+    }
+    #[tokio::test]
+    async fn siwc_catalog_preserves_slug_visibility_order_and_capabilities() {
+        let f = Fixture::new().await;
+        f.state
+            .oauth
+            .test_api_base(&format!("{}/v1", f.mock.base.lock().unwrap()));
+        let a = f.authorize().await;
+        let value = json!({"models":[{"slug":"model-b","display_name":"Second name","visibility":"list","context_window":1048576,"max_output_tokens":131072,"capabilities":{"reasoning_effort":["low","high"]}},{"slug":"model-a","display_name":"Hidden name","visibility":"hide","context_window":32768}]});
+        use tower::ServiceExt;
+        let panel = db::sessions::create_session(&f.state.conn(), None).unwrap();
+        for value in [
+            value,
+            json!({"object":"list","data":[{"id":"legacy-model","context_window":32768,"max_output_tokens":4096}]}),
+        ] {
+            *f.mock.catalog_json.lock().unwrap() = Some(value.clone());
+            assert_eq!(models(&f.state, a.id).await.unwrap(), value);
+            let request = axum::http::Request::builder()
+                .uri(format!("/api/oauth/accounts/{}/models", a.id))
+                .header("Authorization", format!("Bearer {panel}"))
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let response = crate::app(f.state.clone()).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), value);
+            assert!(!String::from_utf8_lossy(&bytes).contains("SYNTHETIC-ACCESS"));
+        }
+        assert_eq!(account(&f.state.conn(), a.id).unwrap().status, "active");
+    }
+    #[tokio::test]
+    async fn catalog_rejects_unknown_mixed_malformed_or_credential_shapes() {
+        let f = Fixture::new().await;
+        f.state
+            .oauth
+            .test_api_base(&format!("{}/v1", f.mock.base.lock().unwrap()));
+        let a = f.authorize().await;
+        let valid = json!({"slug":"model","display_name":"Model","visibility":"list"});
+        let mut bad = vec![
+            json!({"entries":[]}),
+            json!([]),
+            json!({"models":null}),
+            json!({"models":[{"id":"not-a-slug"}]}),
+            json!({"models":[{"slug":""}]}),
+            json!({"models":[{"slug":" bad"}]}),
+            json!({"models":[{"slug":"bad\nslug"}]}),
+            json!({"models":[{"slug":42}]}),
+            json!({"models":[{"slug":"model","visibility":true}]}),
+            json!({"models":[{"slug":"model","display_name":[]}]}),
+            json!({"models":[valid.clone(),valid.clone()]}),
+            json!({"object":"list","data":[],"models":[valid.clone()]}),
+            json!({"models":[valid.clone()],"data":[]}),
+            json!({"object":"list","data":[{"id":"dup"},{"id":"dup"}]}),
+            json!({"models":vec![valid.clone();4097]}),
+        ];
+        for field in [
+            "context_window",
+            "max_context_window",
+            "max_input_tokens",
+            "max_output_tokens",
+        ] {
+            for invalid in [
+                json!(0),
+                json!(-1),
+                json!("1048576"),
+                json!(1.5),
+                json!(18446744073709551615u64),
+            ] {
+                let mut model = valid.clone();
+                model[field] = invalid;
+                bad.push(json!({"models":[model]}));
+            }
+        }
+        bad.push(json!({"models":[{"slug":"model","metadata":{"echo":"SYNTHETIC-ACCESS-0"}}]}));
+        for key in [
+            "access_token",
+            "Refresh-Token",
+            "API_KEY",
+            "authorization",
+            "clientSecret",
+            "credentials",
+        ] {
+            bad.push(json!({"models":[{"slug":"model","metadata":{key:"SYNTHETIC-CREDENTIAL-NEVER-RETURN"}}]}));
+        }
+        for value in bad {
+            *f.mock.catalog_json.lock().unwrap() = Some(value);
+            let error = models(&f.state, a.id).await.unwrap_err();
+            assert_eq!(error.0, "oauth_invalid_catalog");
+            assert!(!error.to_string().contains("SYNTHETIC-CREDENTIAL"));
+        }
+        *f.mock.catalog_json.lock().unwrap() =
+            Some(json!({"object":"list","data":[{"id":"legacy-model","context_window":32768}]}));
+        assert_eq!(
+            models(&f.state, a.id).await.unwrap()["data"][0]["id"],
+            "legacy-model"
+        );
     }
 }
