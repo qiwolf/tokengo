@@ -25,6 +25,7 @@ pub fn router() -> Router<SharedState> {
             "/api/providers/{id}/credentials/{credential}",
             axum::routing::patch(credentials_update).delete(credentials_disable),
         )
+        .route("/api/providers/{id}/models/discover", axum::routing::post(credential_catalog))
         .route("/api/channels/{id}/provider", put(assign))
         .route("/api/providers/{id}/models/enabled", put(group_model))
         .route("/api/channels/{id}/models/enabled", put(connection_model))
@@ -788,4 +789,257 @@ async fn credentials_disable(
         .find(|k| k.id == id)
         .unwrap();
     Ok(Json(json!({"credential":row,"preserved":true})))
+}
+
+
+/// Catalog discovery uses exactly one selected credential and endpoint; it never
+/// saves draft credentials, model mappings, routing, billing or permissions.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscoverModels {
+    credential_id: Option<i64>,
+    key: Option<String>,
+    kind: Option<String>,
+    base_url: Option<String>,
+}
+async fn credential_catalog(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path(provider): Path<i64>,
+    body: Result<Json<DiscoverModels>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(body) = body.map_err(|_| ApiError::bad_request("模型目录请求格式无效"))?;
+    // Everything needed for upstream auth is copied while holding the DB guard;
+    // never hold that guard across an awaited HTTP request.
+    let (channel, secret, oauth_account, snapshot, credential_revision) = {
+        let c = s.conn();
+        require(&c, provider)?;
+        let is_local = pool::local(&c, provider)?;
+        if let Some(id) = body.credential_id {
+            if body.key.is_some() || body.kind.is_some() {
+                return Err(ApiError::bad_request(
+                    "已保存Key请只选择凭据，不要同时提交新密钥或类型",
+                ));
+            }
+            let credential = pool::credentials(&c, provider)?
+                .into_iter()
+                .find(|k| k.id == id)
+                .ok_or_else(|| ApiError::not_found("此渠道不存在该凭据"))?;
+            let requested = body
+                .base_url
+                .as_deref()
+                .map(pool::canonical_url)
+                .transpose()
+                .map_err(|_| ApiError::bad_request("API URL无效"))?;
+            let mut sources = credential
+                .source_ids
+                .iter()
+                .map(|id| connection(&c, *id))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(url) = requested {
+                sources.retain(|row| pool::canonical_url(&row.base_url).is_ok_and(|u| u == url));
+            } else if credential.base_urls.len() != 1 {
+                return Err(ApiError::bad_request("请先选择此凭据的API URL"));
+            }
+            let source = sources
+                .into_iter()
+                .next()
+                .ok_or_else(|| ApiError::bad_request("API URL不属于此凭据"))?;
+            let fingerprint = crate::reasoning_capabilities::fingerprint(&c, source.id.0)?;
+            let secret = channels::secret(&c, &s.secrets, source.id)?;
+            let headers = channels::headers(&c, &s.secrets, source.id)?;
+            let account = if credential.kind == "oauth" {
+                let account = credential.oauth_account_id.ok_or_else(|| {
+                    ApiError::bad_request("OAuth凭据尚未绑定账号，请先授权或手工输入模型")
+                })?;
+                let binding: Option<i64> = c
+                    .query_row(
+                        "SELECT account_id FROM oauth_channel_bindings WHERE channel_id=?1",
+                        [source.id.0],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(db::DbError::from)?;
+                if binding != Some(account) || source.base_url != crate::oauth::API_BASE {
+                    return Err(ApiError::bad_request(
+                        "OAuth凭据绑定或官方地址已改变，请重新确认账号配置",
+                    ));
+                }
+                Some(account)
+            } else {
+                None
+            };
+            (
+                tokengo_shared::Channel {
+                    id: source.id,
+                    name: source.name,
+                    base_url: pool::canonical_url(&source.base_url)
+                        .map_err(|_| ApiError::bad_request("已存API URL无效"))?,
+                    enabled: true,
+                    priority: 0,
+                    model_alias: None,
+                    vision: false,
+                    drop_fields: vec![],
+                    unwrap_envelope: false,
+                    headers,
+                    max_concurrent: 0,
+                },
+                secret,
+                account,
+                Some(fingerprint),
+                Some((id, credential.revision)),
+            )
+        } else {
+            let kind = body.kind.as_deref().unwrap_or("api_key");
+            if kind == "oauth" {
+                return Err(ApiError::bad_request(
+                    "请先绑定已授权OAuth账号，再读取该账号的官方模型目录；也可以手工输入",
+                ));
+            }
+            if !matches!(kind, "api_key" | "anonymous")
+                || (kind == "api_key"
+                    && body
+                        .key
+                        .as_ref()
+                        .is_none_or(|v| v.trim().is_empty() || v.len() > 65536))
+                || (kind == "anonymous" && body.key.is_some())
+            {
+                return Err(ApiError::bad_request("请填写有效的API Key，或选择免认证"));
+            }
+            let configured: Option<String> = c
+                .query_row(
+                    "SELECT base_url FROM provider_channels WHERE id=?1",
+                    [provider],
+                    |r| r.get(0),
+                )
+                .map_err(db::DbError::from)?;
+            let url = if is_local {
+                body.base_url
+                    .as_deref()
+                    .ok_or_else(|| ApiError::bad_request("请填写此本地模型入口的API URL"))?
+            } else {
+                let configured = configured
+                    .as_deref()
+                    .ok_or_else(|| ApiError::bad_request("请先设置渠道API URL"))?;
+                if body.base_url.as_deref().is_some_and(|u| {
+                    pool::canonical_url(u).ok() != pool::canonical_url(configured).ok()
+                }) {
+                    return Err(ApiError::bad_request("普通渠道只能探测渠道设置中的API URL"));
+                }
+                configured
+            };
+            let url = pool::canonical_url(url).map_err(|_| {
+                ApiError::bad_request("API URL无效：仅允许无凭据及查询参数的HTTP(S)地址")
+            })?;
+            // Draft keys do not borrow custom auth headers from another key.
+            (
+                tokengo_shared::Channel {
+                    id: ChannelId(0),
+                    name: "模型目录".into(),
+                    base_url: url,
+                    enabled: true,
+                    priority: 0,
+                    model_alias: None,
+                    vision: false,
+                    drop_fields: vec![],
+                    unwrap_envelope: false,
+                    headers: vec![],
+                    max_concurrent: 0,
+                },
+                body.key,
+                None,
+                None,
+                None,
+            )
+        }
+    };
+    let (status, raw) = if let Some(account) = oauth_account {
+        let value = crate::oauth::models(&s, account).await.map_err(|_| {
+            ApiError::new(
+                axum::http::StatusCode::BAD_GATEWAY,
+                "model_catalog_unavailable",
+                "此OAuth账号的官方模型目录暂不可用，请稍后重试或手工输入模型",
+            )
+        })?;
+        (200, value.to_string())
+    } else {
+        let timeout = std::time::Duration::from_millis(s.routing().cfg.attempt_timeout_ms.max(1))
+            .min(std::time::Duration::from_secs(15));
+        s.upstream
+            .fetch_models(
+                &channel,
+                secret.as_deref(),
+                timeout,
+                &crate::upstream::new_uuid(),
+                db::now_ms(),
+            )
+            .await
+            .map_err(|_| {
+                ApiError::new(
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "model_catalog_unavailable",
+                    "无法读取此Key的模型目录，请检查地址和认证，或手工输入模型",
+                )
+            })?
+    };
+    if !(200..300).contains(&status) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "model_catalog_upstream_error",
+            format!("此Key的模型目录返回HTTP {status}，请检查权限或手工输入模型"),
+        ));
+    }
+    if let Some((id, revision)) = credential_revision {
+        let c = s.conn();
+        let current = pool::credentials(&c, provider)?
+            .into_iter()
+            .find(|k| k.id == id);
+        if current.is_none_or(|k| k.revision != revision || !k.source_ids.contains(&channel.id.0))
+            || snapshot.as_ref().is_none_or(|before| {
+                crate::reasoning_capabilities::fingerprint(&c, channel.id.0)
+                    .ok()
+                    .as_ref()
+                    != Some(before)
+            })
+        {
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "credential_changed",
+                "读取期间凭据或地址已改变，请重新探测",
+            ));
+        }
+    }
+    let (catalog, total) = crate::upstream::parse_model_catalog_with_total(&raw);
+    if catalog.is_empty() && !crate::upstream::looks_like_a_model_list(&raw) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "model_catalog_invalid",
+            "此入口未返回可识别的模型目录，请手工输入上游模型名",
+        ));
+    }
+    // Return only names, never upstream bodies/metadata, and reject credential
+    // echoes even if an upstream embeds one inside an apparently valid model ID.
+    let forbidden = secret
+        .iter()
+        .map(String::as_str)
+        .chain(channel.headers.iter().map(|(_, v)| v.as_str()))
+        .filter(|v| !v.is_empty())
+        .collect::<Vec<_>>();
+    let mut models = catalog.into_iter().map(|m| m.id).collect::<Vec<_>>();
+    if models
+        .iter()
+        .any(|m| forbidden.iter().any(|s| m.contains(s)))
+    {
+        return Err(ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "model_catalog_invalid",
+            "上游返回了不安全的模型目录，请手工输入模型",
+        ));
+    }
+    models.sort();
+    models.dedup();
+    let count = models.len();
+    Ok(Json(
+        json!({"models":models,"count":count,"http_status":status,"truncated":total>count}),
+    ))
 }

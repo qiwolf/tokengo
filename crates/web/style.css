@@ -1814,3 +1814,14 @@ html[data-theme="light"] {
 .users-page .card-head .user-actions { margin-top: 0; }
 .users-page table button { min-width: 64px; white-space: nowrap; }
 .model-access-item { min-width: 0; padding-block: 16px; border-bottom: 1px solid var(--line); }
+
+/* Credential lists lead; editors and discoverable upstream models open explicitly. */
+.provider-key-pool fieldset { min-width:0; margin:0; padding:0; border:0; }
+.provider-key-editor.account-form { max-width:100%; margin-top:24px; padding-top:24px; border-top:1px solid var(--line); }
+.provider-catalog { padding:16px; margin-block:24px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); min-width:0; }
+.provider-catalog-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,256px),1fr)); gap:8px; max-height:256px; overflow:auto; margin-block:16px; }
+.provider-catalog-options .account-check { overflow-wrap:anywhere; min-width:0; align-items:center; }
+.provider-model-mapping { padding-block:16px; border-top:1px solid var(--line); min-width:0; align-items:end; }
+.provider-model-mapping > p { grid-column:1/-1; }
+.provider-filter { margin-block:16px; }
+.provider-key-pool table code,.provider-key-pool table td { overflow-wrap:anywhere; }

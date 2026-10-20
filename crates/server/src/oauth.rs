@@ -1759,4 +1759,34 @@ mod tests {
         assert_eq!(crate::reasoning_capabilities::for_model(&f.state.conn(),ch,"source-model").unwrap().status,"unknown");
     }
 
+    #[tokio::test]
+    async fn provider_credential_catalog_uses_bound_official_account_without_editing_models() {
+        use tower::ServiceExt;
+        let f=Fixture::new().await;
+        f.state.oauth.test_api_base(&format!("{}/v1",f.mock.base.lock().unwrap()));
+        let account=f.authorize().await;
+        let channel=f.channel(account.id);
+        crate::db::provider_pool::backfill(&f.state.conn(),&f.state.secrets).unwrap();
+        let row=crate::db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(channel)).unwrap().unwrap();
+        let provider=row.provider_id.unwrap();
+        let credential=crate::db::provider_pool::credentials(&f.state.conn(),provider).unwrap().into_iter().find(|k|k.source_ids.contains(&channel)).unwrap();
+        assert_eq!(credential.oauth_account_id,Some(account.id));
+        *f.mock.catalog_json.lock().unwrap()=Some(json!({"models":[{"slug":"official-bound-model","visibility":"list","context_window":32768}]}));
+        let before=format!("{:?}",crate::db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(channel)).unwrap());
+        let panel=db::sessions::create_session(&f.state.conn(),None).unwrap();
+        let request=axum::http::Request::builder().method("POST")
+            .uri(format!("/api/providers/{provider}/models/discover"))
+            .header("Authorization",format!("Bearer {panel}"))
+            .header("Content-Type","application/json")
+            .body(axum::body::Body::from(json!({"credential_id":credential.id}).to_string())).unwrap();
+        let response=crate::app(f.state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(),axum::http::StatusCode::OK);
+        let bytes=axum::body::to_bytes(response.into_body(),1<<20).await.unwrap();
+        let value:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["models"],json!(["official-bound-model"]));
+        assert!(!String::from_utf8_lossy(&bytes).contains("SYNTHETIC-ACCESS"));
+        assert_eq!(before,format!("{:?}",crate::db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(channel)).unwrap()));
+        assert_eq!(binding(&f.state,channel).unwrap().unwrap().0.account_id,account.id);
+    }
+
 }

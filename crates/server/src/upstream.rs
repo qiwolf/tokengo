@@ -32,6 +32,7 @@ impl std::fmt::Display for ChannelFault {
 pub struct Upstream {
     client: reqwest::Client,
     subscription_client:reqwest::Client,
+    models_client: reqwest::Client,
 }
 
 impl Upstream {
@@ -48,7 +49,12 @@ impl Upstream {
             .redirect(reqwest::redirect::Policy::none()).tcp_nodelay(true)
             .connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(90)))
             .map_err(anyhow::Error::msg)?.build().map_err(|_|anyhow::anyhow!("OpenAI inference client configuration failed"))?;
-        Ok(Self { client,subscription_client })
+        let models_client = reqwest::Client::builder()
+            .user_agent(concat!("tokengo/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
+            .tcp_nodelay(true).connect_timeout(Duration::from_secs(10))
+            .pool_idle_timeout(Duration::from_secs(90)).build()?;
+        Ok(Self { client,subscription_client,models_client })
     }
 
     /// 往一条渠道上发一次请求。
@@ -190,7 +196,7 @@ impl Upstream {
     ) -> Result<(u16, String), ChannelFault> {
         let url = join_url(&channel.base_url, "models");
         let mut rb = self
-            .client
+            .models_client
             .get(&url)
             .timeout(timeout)
             .header(reqwest::header::ACCEPT, "application/json");
