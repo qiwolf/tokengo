@@ -37,3 +37,7 @@ Fetch 可使用另一渠道并设 fetch:true。属于同一 DeepSeek 账号的�
 独立 Search/Fetch 转发不等于已自动接管 Claude Code/Codex 的内置网页工具。内置服务端搜索还需要协议事件、引用和单独工具费用的能力声明，不能仅放开 hosted tools 校验。
 
 依据：[中文官方指南](https://api-docs.deepseek.com/zh-cn/guides/search/)、[英文官方指南](https://api-docs.deepseek.com/guides/search/)。2026-10-20 直接页面的账号级限速分别为 Search 100 QPS、Fetch 25 QPS；缓存搜索结果可能仍显示较旧数值，部署时应复核当前页面。
+
+## 独立工具探针
+
+管理员[自定义探针](custom-probes.md)可选择明确声明的 Search / Fetch 接入，通过查询词、结果数、正文选项或网页 URL 控件配置。诊断复用工具标准化及账号 QPS，按请求次数写系统诊断账本，不扣用户额度；本地模型用于成本归属，不发送为上游工具模型参数。该能力不会自动接管客户端内置搜索。
