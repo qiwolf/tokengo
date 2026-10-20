@@ -2,6 +2,8 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
+已发布：[v0.34.0-qiwolf.1 原生部署与容器双版本](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.1)。运行代码提交 `ad4aea11f93edc8c46d66979d5cc550801b5848a`；同提交Rust/WASM CI、双分发和目标升级已验收，后续文档修订不更换该版本二进制。
+
 本 fork 基于上游 v0.34.0，使用 Rust / Axum / SQLite 与 Leptos / WebAssembly 构建个人或小团队网关。已实现多用户、多 VKey、预算与持久账本、有序 fallback、三协议原生入口，以及账号密码登录。统一用户、自助 Key 和点选权限的第一阶段已实现，最终界面、CI和部署验收状态单列。最新分支增加唯一API URL渠道、多上游Key池、用户私有虚拟模型与顺序/时段策略，以及非破坏模型开关和原生推理档位元数据管理。
 
 本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](docs/acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准；fork 分发标签使用 `v0.34.0-qiwolf.N`，可下载版本以 GitHub Releases 为准。更新内容见 [CHANGELOG](CHANGELOG.md)。
