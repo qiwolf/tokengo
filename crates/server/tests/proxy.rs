@@ -504,6 +504,21 @@ impl Fixture {
             .unwrap_or_default()
     }
 
+    /// This oneshot fixture does not run main's diagnostic writer. HTTP body
+    /// completion can leave jobs queued when the financial retry worker owns
+    /// SQLite; one try_lock-based drain is therefore not a completion barrier.
+    async fn flush_diagnostic_writes(&self) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while self.state.pending_writes() > 0 {
+                self.state.drain_writes();
+                if self.state.pending_writes() > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+        }).await.expect("all queued and in-flight diagnostic writes must finish");
+        assert_eq!(self.state.pending_writes(), 0);
+    }
+
     /// 请求级账目：状态 / HTTP / 渠道号 / 错误原因（按 id 升序）。
     fn ledger(&self) -> Vec<(String, Option<i64>, Option<i64>, Option<String>)> {
         let conn = self.state.conn();
@@ -809,8 +824,10 @@ async fn everything_down_returns_a_clear_502() {
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(msg.contains("所有渠道都失败了"), "错误要说清楚：{msg}");
 
+    f.flush_diagnostic_writes().await;
     assert_eq!(f.attempts().len(), 6, "两条渠道各 3 次尝试");
     let rows = f.request_rows();
+    assert_eq!(rows.len(), 1, "one failed HTTP request must produce one final request row");
     assert_eq!(rows[0].0, "failed");
     assert!(rows[0].5.as_deref().unwrap().contains("坏渠道B"));
 }
@@ -899,19 +916,7 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
         assert!(v["error"]["message"].as_str().unwrap().contains("model not found"));
     }
 
-    // HTTP completion is not a diagnostic-write barrier: the financial outbox
-    // worker may briefly own SQLite, so Finish/Attempt jobs can be deferred.
-    // drain_writes intentionally uses try_lock and can requeue; wait for both
-    // queued and in-flight jobs before asserting the exact final ledger below.
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while f.state.pending_writes() > 0 {
-            f.state.drain_writes();
-            if f.state.pending_writes() > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        }
-    }).await.expect("all six client-error diagnostic writes must finish");
-    assert_eq!(f.state.pending_writes(), 0);
+    f.flush_diagnostic_writes().await;
 
     assert_eq!(bad.count(), 6, "每次只该打一次（不重试）");
     assert_eq!(good.count(), 0, "备选渠道一次都不该被叫");
