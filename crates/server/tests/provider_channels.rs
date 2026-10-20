@@ -771,6 +771,11 @@ fn protected_connection_snapshot(c: &rusqlite::Connection) -> Vec<(String, Vec<V
         "channel_secrets",
         "channel_headers",
         "provider_connections",
+        "provider_credentials",
+        "credential_affinity",
+        "billing_prices",
+        "billing_request_prices",
+        "billing_budgets",
         "users",
         "gateway_keys",
         "oauth_accounts",
@@ -857,4 +862,82 @@ async fn deleting_scheduled_only_target_disables_alias_without_falling_through_t
     let(s,v)=f.req("DELETE",&format!("/api/providers/{q}"),json!(null)).await;assert_eq!(s,200,"{v}");
     let saved=vr::list(&f.state.conn(),1).unwrap();assert!(saved[0].config.targets.is_empty());assert!(!saved[0].config.enabled);
     task.abort();
+}
+
+fn managed_header_body(f:&Fixture,id:i64,headers:Value)->Value {
+    let c=f.state.conn();let row=db::channels::get(&c,tokengo_shared::ChannelId(id)).unwrap().unwrap();
+    json!({"name":row.name,"base_url":row.base_url,"enabled":row.enabled,"max_concurrent":row.max_concurrent,"unwrap_envelope":row.unwrap_envelope,"headers":headers,"models":row.models.iter().map(|m|json!({"model":m.model,"upstream":m.upstream,"enabled":m.enabled,"vision":m.vision,"drop_fields":m.drop_fields_text()})).collect::<Vec<_>>()})
+}
+fn header_state(f:&Fixture,id:i64)->Vec<(String,String)> {db::channels::headers(&f.state.conn(),&f.state.secrets,tokengo_shared::ChannelId(id)).unwrap()}
+
+#[tokio::test]
+async fn managed_non_auth_headers_sync_all_key_sources_and_preserve_models_and_history() {
+    let f=Fixture::new().await;let p=f.provider("header managed").await;
+    let a=f.channel("http://127.0.0.1:1").await;let b=f.channel("http://127.0.0.1:1").await;f.assign(a,Some(p)).await;f.assign(b,Some(p)).await;
+    let key=db::provider_pool::credentials(&f.state.conn(),p).unwrap().remove(0);
+    let before_hash:String=f.state.conn().query_row("SELECT identity_hash FROM provider_credentials WHERE id=?1",[key.id],|r|r.get(0)).unwrap();
+    let before_models={let c=f.state.conn();[a,b].map(|id|db::channels::get(&c,tokengo_shared::ChannelId(id)).unwrap().unwrap().models)};
+    {let c=f.state.conn();c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(1,'chat','m','ok',?1)",[a]).unwrap();}
+    {let c=f.state.conn();
+        c.execute("INSERT INTO billing_prices(channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,created_ms) VALUES(?1,'m',11,22,128,64,1)",[a]).unwrap();
+        c.execute("INSERT INTO billing_request_prices(channel_id,model,micro_per_call,created_ms) VALUES(?1,'m',17,1)",[a]).unwrap();
+        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,spent_micro) VALUES('user',1,1000,7) ON CONFLICT(scope,scope_id) DO UPDATE SET limit_micro=1000,spent_micro=7",[]).unwrap();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms,settled_ms) VALUES('header-history',1,1,(SELECT MAX(id) FROM requests),?1,'m',1,1,0,7,'settled',1,1)",[a]).unwrap();
+    }
+    let before_history:i64=f.state.conn().query_row("SELECT COUNT(*) FROM requests WHERE channel_id=?1 AND status='ok'",[a],|r|r.get(0)).unwrap();
+    let immutable=|snapshot:Vec<(String,Vec<Vec<String>>)>|snapshot.into_iter().filter(|(table,_)|matches!(table.as_str(),"requests"|"attempts"|"billing_ledger"|"billing_prices"|"billing_request_prices"|"billing_budgets"|"users"|"gateway_keys"|"oauth_accounts"|"oauth_channel_bindings")).collect::<Vec<_>>();
+    let before_immutable=immutable(protected_connection_snapshot(&f.state.conn()));
+    let body=managed_header_body(&f,a,json!([{"name":"X-Trace-Label","value":"tenant-test","action":"replace"}]));
+    let (status,response)=f.req("PUT",&format!("/api/channels/{a}"),body).await;assert_eq!(status,200,"{response}");
+    assert!(!response.to_string().contains("tenant-test"),"management responses must mask header values");
+    for (i,id) in [a,b].into_iter().enumerate(){assert_eq!(header_state(&f,id),vec![("X-Trace-Label".into(),"tenant-test".into())]);let c=f.state.conn();let row=db::channels::get(&c,tokengo_shared::ChannelId(id)).unwrap().unwrap();assert_eq!(row.models,before_models[i]);assert_eq!(db::channels::secret(&c,&f.state.secrets,tokengo_shared::ChannelId(id)).unwrap().as_deref(),Some("fixed-upstream-secret"));}
+    let keys=db::provider_pool::credentials(&f.state.conn(),p).unwrap();assert_eq!(keys.len(),1);assert_eq!(keys[0].id,key.id);assert_eq!(keys[0].source_ids,vec![a,b]);assert_eq!(keys[0].revision,key.revision+1);
+    let changed_hash:String=f.state.conn().query_row("SELECT identity_hash FROM provider_credentials WHERE id=?1",[key.id],|r|r.get(0)).unwrap();assert_ne!(before_hash,changed_hash);
+    assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM requests WHERE channel_id=?1 AND status='ok'",[a],|r|r.get::<_,i64>(0)).unwrap(),before_history);
+    assert_eq!(immutable(protected_connection_snapshot(&f.state.conn())),before_immutable);
+    let body=managed_header_body(&f,b,json!([]));let(status,response)=f.req("PUT",&format!("/api/channels/{b}"),body).await;assert_eq!(status,200,"{response}");
+    assert!(header_state(&f,a).is_empty());assert!(header_state(&f,b).is_empty());
+    assert_eq!(f.state.conn().query_row("SELECT identity_hash FROM provider_credentials WHERE id=?1",[key.id],|r|r.get::<_,String>(0)).unwrap(),before_hash);
+}
+
+#[tokio::test]
+async fn managed_non_auth_headers_keep_authentication_and_reject_auth_bypass_atomically() {
+    let f=Fixture::new().await;let p=f.provider("auth headers").await;
+    let(status,v)=f.req("POST","/api/channels",json!({"name":"auth source","base_url":"http://127.0.0.1:1","key":"fixed-key","headers":[{"name":"Authorization","value":"Bearer fixed-key"}],"models":[{"model":"m"}]})).await;assert_eq!(status,200,"{v}");let a=v["id"].as_i64().unwrap();f.assign(a,Some(p)).await;
+    let body=managed_header_body(&f,a,json!([{"name":"Authorization","action":"keep","original_name":"Authorization"},{"name":"X-Project-Id","value":"project-a"}]));let(status,v)=f.req("PUT",&format!("/api/channels/{a}"),body).await;assert_eq!(status,200,"{v}");
+    for headers in [json!([]),json!([{"name":"Authorization","value":"Bearer replacement"}]),json!([{"name":"Authorization","action":"keep"},{"name":"X-Api-Key","value":"bypass"}]),json!([{"name":"Authorization","action":"keep"},{"name":"Cookie","value":"session=bypass"}])]{
+        let before=protected_connection_snapshot(&f.state.conn());let body=managed_header_body(&f,a,headers);let(status,v)=f.req("PUT",&format!("/api/channels/{a}"),body).await;assert_eq!(status,409,"{v}");assert_eq!(v["error"]["type"],"provider_pool_managed");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);
+    }
+    for field in ["key","base_url"] {let mut body=managed_header_body(&f,a,json!([{"name":"Authorization","action":"keep"},{"name":"X-Project-Id","action":"keep"}]));body[field]=json!(if field=="key"{"changed-secret"}else{"http://127.0.0.1:2"});let before=protected_connection_snapshot(&f.state.conn());assert_eq!(f.req("PUT",&format!("/api/channels/{a}"),body).await.0,409);assert_eq!(protected_connection_snapshot(&f.state.conn()),before);}
+}
+
+#[tokio::test]
+async fn managed_non_auth_headers_duplicate_identity_rolls_back_entire_key() {
+    let f=Fixture::new().await;let p=f.provider("identity conflict").await;let mut ids=vec![];
+    for value in ["one","two"] {let(status,v)=f.req("POST","/api/channels",json!({"name":value,"base_url":"http://127.0.0.1:1","key":"same-key","headers":[{"name":"X-Project-Id","value":value}],"models":[{"model":"m"}]})).await;assert_eq!(status,200,"{v}");let id=v["id"].as_i64().unwrap();f.assign(id,Some(p)).await;ids.push(id);}
+    assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap().len(),2);
+    let before=protected_connection_snapshot(&f.state.conn());let body=managed_header_body(&f,ids[0],json!([{"name":"X-Project-Id","value":"two"}]));let(status,v)=f.req("PUT",&format!("/api/channels/{}",ids[0]),body).await;assert_eq!(status,409,"{v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);
+}
+
+#[tokio::test]
+async fn managed_non_auth_headers_preserve_anonymous_and_oauth_authentication_boundaries() {
+    let f=Fixture::new().await;
+    for oauth in [false,true] {
+        let p=f.provider(if oauth{"oauth headers"}else{"anonymous headers"}).await;
+        let(status,v)=f.req("POST","/api/channels",json!({"name":"no secret","base_url":"http://127.0.0.1:1","models":[{"model":"m"}]})).await;assert_eq!(status,200,"{v}");let id=v["id"].as_i64().unwrap();
+        if oauth {let c=f.state.conn();c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('fixture','https://fixture.invalid','subject','client','active','[]',9999999999999,9999999999999)",[]).unwrap();let account=c.last_insert_rowid();c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id) VALUES(?1,?2)",rusqlite::params![id,account]).unwrap();}
+        f.assign(id,Some(p)).await;
+        let before=protected_connection_snapshot(&f.state.conn());let body=managed_header_body(&f,id,json!([{"name":"X-Trace-Label","value":"safe-metadata"}]));let(status,v)=f.req("PUT",&format!("/api/channels/{id}"),body).await;
+        if oauth {assert_eq!(status,200,"{v}");assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap()[0].kind,"oauth");assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM oauth_channel_bindings WHERE channel_id=?1",[id],|r|r.get::<_,i64>(0)).unwrap(),1);}
+        else {assert_eq!(status,409,"{v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap()[0].kind,"anonymous");}
+    }
+}
+
+#[tokio::test]
+async fn managed_non_auth_headers_reject_cross_provider_credential_ownership() {
+    let f=Fixture::new().await;let p=f.provider("original headers owner").await;let q=f.provider("different owner").await;
+    let a=f.channel("http://127.0.0.1:1").await;let b=f.channel("http://127.0.0.1:1").await;f.assign(a,Some(p)).await;f.assign(b,Some(p)).await;
+    f.state.conn().execute("UPDATE provider_connections SET provider_id=?2 WHERE channel_id=?1",rusqlite::params![b,q]).unwrap();
+    let before=protected_connection_snapshot(&f.state.conn());
+    for id in [a,b] {let body=managed_header_body(&f,id,json!([{"name":"X-Trace-Label","value":"must-not-write"}]));let(status,v)=f.req("PUT",&format!("/api/channels/{id}"),body).await;assert_eq!(status,409,"{v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);}
 }

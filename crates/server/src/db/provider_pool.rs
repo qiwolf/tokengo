@@ -509,6 +509,51 @@ pub fn rotate_secret(c: &Connection, sb: &SecretBox, credential: i64, key: &str)
     Ok(())
 }
 
+/// Authentication material must continue to be managed through the Key pool.
+fn protected_header(name: &str) -> bool {
+    let name=name.to_ascii_lowercase();
+    matches!(name.as_str(),"authorization"|"proxy-authorization"|"cookie"|"set-cookie"|"x-api-key"|"x-goog-api-key"|"api-key"|"token")
+        || name.contains("authorization") || name.starts_with("x-auth") || name.ends_with("-token") || name.ends_with("-key")
+}
+fn authentication_headers(headers:&[(String,String)])->Vec<(String,String)> {
+    let mut out=headers.iter().filter(|(name,_)|protected_header(name)).map(|(name,value)|(name.to_ascii_lowercase(),value.clone())).collect::<Vec<_>>();
+    out.sort();out
+}
+/// Update non-authentication headers for all deployments of one existing Key.
+/// The caller must hold the database guard and an enclosing transaction; any identity
+/// conflict, inconsistent ownership, or failed write must roll the entire operation back.
+pub fn update_non_auth_headers(c:&Connection,sb:&SecretBox,source:i64,next:&[(String,String)])->Result<()> {
+    let (credential,provider,kind,identity):(i64,i64,String,String)=c.query_row(
+        "SELECT k.id,k.provider_id,k.kind,k.identity_hash FROM source_credentials s JOIN provider_credentials k ON k.id=s.credential_id WHERE s.source_id=?1",[source],
+        |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+    let current=channels::headers(c,sb,ChannelId(source))?;
+    if authentication_headers(&current)!=authentication_headers(next) {
+        return Err(bad("认证请求头只能在渠道 Key 管理中修改；此处可维护非认证的自定义上游请求头"));
+    }
+    let mut query=c.prepare("SELECT s.source_id,p.provider_id FROM source_credentials s LEFT JOIN provider_connections p ON p.channel_id=s.source_id WHERE s.credential_id=?1 ORDER BY s.source_id")?;
+    let sources=query.query_map([credential],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<i64>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    if sources.is_empty() || sources.iter().any(|(_,parent)|*parent!=Some(provider)) {return Err(bad("Key 与上游接入的渠道归属不一致，未修改任何配置"));}
+    // An inconsistent legacy deployment must not silently turn into another identity.
+    for (id,_) in &sources {
+        let row=channels::get(c,ChannelId(*id))?.ok_or_else(||bad("上游接入不存在"))?;
+        let (existing_kind,hash,_)=auth_identity(c,sb,&row)?;
+        if existing_kind!=kind || hash!=identity {return Err(bad("同一 Key 的认证或请求头配置不一致，请先在渠道 Key 管理中核对"));}
+    }
+    if current==next {return Ok(());}
+    for (id,_) in &sources {channels::set_headers(c,sb,ChannelId(*id),next)?;}
+    let mut new_identity=None;
+    for (id,_) in &sources {
+        let row=channels::get(c,ChannelId(*id))?.ok_or_else(||bad("上游接入不存在"))?;
+        let (new_kind,hash,_)=auth_identity(c,sb,&row)?;
+        if new_kind!=kind {return Err(bad("此次修改会改变凭据类型，请通过渠道 Key 管理维护认证方式"));}
+        if new_identity.as_ref().is_some_and(|old|old!=&hash) {return Err(bad("同一 Key 的身份不一致，未修改任何配置"));}
+        if matching_identity(c,provider,&hash,&row.base_url,Some(credential))?.is_some() {return Err(bad("此渠道已存在相同认证与请求头的 Key，请使用已有 Key"));}
+        new_identity=Some(hash);
+    }
+    c.execute("UPDATE provider_credentials SET identity_hash=?2,revision=revision+1 WHERE id=?1",params![credential,new_identity.unwrap()])?;
+    Ok(())
+}
+
 /// Explicit local grouping is never inferred from an IP address.
 pub fn local(c: &Connection, provider: i64) -> Result<bool> {
     Ok(c.query_row("SELECT endpoint_mode='local' FROM provider_channels WHERE id=?1", [provider], |r|r.get(0))?)

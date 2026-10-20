@@ -582,7 +582,8 @@ async fn channels_update(
         }
     }
     let headers = body.headers(&conn, &state, Some(id))?;
-    if crate::db::provider_pool::source_credential(&conn, id.0)?.is_some() {
+    let managed:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM source_credentials WHERE source_id=?1)",[id.0],|r|r.get(0)).map_err(crate::db::DbError::from)?;
+    if managed {
         let old = channels::get(&conn, id)?.ok_or_else(|| ApiError::not_found("连接不存在"))?;
         let url_changed = crate::db::provider_pool::canonical_url(&body.base_url).ok()
             != crate::db::provider_pool::canonical_url(&old.base_url).ok();
@@ -593,16 +594,11 @@ async fn channels_update(
                 .as_deref()
                 != Some(k)
         });
-        let headers_changed = if let Some(next) = &headers {
-            channels::headers(&conn, &state.secrets, id)? != *next
-        } else {
-            false
-        };
-        if url_changed || secret_changed || headers_changed {
+        if url_changed || secret_changed {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "provider_pool_managed",
-                "此来源已由渠道Key池管理，请在渠道入口或Key池中修改地址、密钥和认证头",
+                "此来源已由渠道 Key 池管理，请在渠道入口或 Key 管理中修改地址、密钥和认证头",
             ));
         }
     }
@@ -623,14 +619,15 @@ async fn channels_update(
             _ => {}
         }
         if let Some(headers) = &headers {
-            channels::set_headers(c, &state.secrets, id, headers)?;
+            if managed {crate::db::provider_pool::update_non_auth_headers(c,&state.secrets,id.0,headers)?;}
+            else {channels::set_headers(c, &state.secrets, id, headers)?;}
         }
         channels::set_models(c, id, &models)?;
         if let Some(p) = &body.protocols {
             crate::protocol_config::save(c, id.0, p)?;
         }
         Ok(())
-    })?;
+    }).map_err(|e|if managed {ApiError::new(StatusCode::CONFLICT,"provider_pool_managed",e.to_string())}else{ApiError::from(e)})?;
     tracing::info!("更新渠道 {id}：{}", body.name);
 
     let l = channels::get(&conn, id)?

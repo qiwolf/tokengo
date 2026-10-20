@@ -1182,7 +1182,7 @@ pub fn Connections(
                                     ().into_any()
                                 } else {
                                     view! {
-                                        <p class="muted small">"所有值加密保存，不回显。留空保留已存值，输入替换；清空值不发送，删行移除请求头。"</p>
+                                        <p class="muted small">"所有值加密保存，不回显。留空保留已存值，输入替换；清空值不发送，删行移除请求头。同一 Key 的非认证自定义头会同步到它的全部 API 接入；认证头、密钥和地址请在渠道 Key 管理中修改。"</p>
                                         <p class="muted small">
                                             "值支持模板：" <code>"{{uuid}}"</code> "（每次请求换新 UUID）、"
                                             <code>"{{timestamp_ms}}"</code> "（当前毫秒）、"
