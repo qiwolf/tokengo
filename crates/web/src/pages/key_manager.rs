@@ -3,8 +3,9 @@ use crate::{Ctx, admin_api as api, fmt};
 use leptos::prelude::*;
 use serde_json::{Value, json};
 /// A status change only changes enabled; credentials, policy and limits remain untouched.
-fn status_patch(key: &Value) -> Result<(i64, Value, bool), String> {
+fn status_patch(key: &Value, personal: bool) -> Result<(i64, Value, bool), String> {
     if !key["revoked_at"].is_null() {return Err("此 Key 已永久撤销，不能恢复；请新建 Key。".into());}
+    if personal && key["enabled"]!=true && key["can_enable"]!=true {return Err("此 Key 不能自行恢复：可能由管理员停用、已到期或上级 Key 不可用，请联系管理员。".into());}
     let id=key["id"].as_i64().filter(|id|*id>0).ok_or("Key 身份无效，请刷新后重试。")?;
     let enabled=key["enabled"]!=true;
     Ok((id,json!({"enabled":enabled}),enabled))
@@ -273,7 +274,7 @@ pub fn KeyManager(
     };
     let toggle_enabled=move |key:Value| {
         if busy.get_untracked(){return;}
-        let (id,patch,enabled)=match status_patch(&key){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
+        let (id,patch,enabled)=match status_patch(&key,personal){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
         let owner_id=owner.get_untracked();let token=generation.get_untracked();
         busy.set(true);error.set(String::new());notice.set(String::new());
         leptos::task::spawn_local(async move {
@@ -343,7 +344,7 @@ pub fn KeyManager(
     view! {<section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
     <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"各 Key 共享用户总额度，设置 Key 上限不会增加总额度。最多32把活动 Key；已有密钥保留。"</p></Show>
     <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，点击新建 API Key 开始。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} disabled=move||busy.get()||loading.get()||revoked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else{"启用 Key"}}</button></td></tr>}}).collect_view()}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限和额度限制"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button></td></tr>}}).collect_view()}</tbody></table></div>
     <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
     <super::ModuleDialog open=editor_open busy=busy title="API Key 设置".to_string()>
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
@@ -364,14 +365,24 @@ mod tests {
     fn enabling_and_disabling_only_patch_enabled() {
         for enabled in [false,true] {
             let key=json!({"id":42,"enabled":enabled,"revoked_at":null,"name":"keep","policy":{"allowed_models":[]},"budget":{"limit_micro":123}});
-            let (id,patch,next)=status_patch(&key).unwrap();
+            let (id,patch,next)=status_patch(&key,false).unwrap();
             assert_eq!(id,42);assert_eq!(next,!enabled);assert_eq!(patch,json!({"enabled":!enabled}));
         }
     }
     #[test]
     fn revoked_or_missing_keys_cannot_be_toggled() {
-        assert!(status_patch(&json!({"id":42,"enabled":false,"revoked_at":123})).is_err());
-        assert!(status_patch(&json!({"enabled":false,"revoked_at":null})).is_err());
+        assert!(status_patch(&json!({"id":42,"enabled":false,"revoked_at":123}),false).is_err());
+        assert!(status_patch(&json!({"enabled":false,"revoked_at":null}),false).is_err());
+    }
+    #[test]
+    fn ordinary_users_only_resume_keys_the_server_allows() {
+        let mut key=json!({"id":42,"enabled":false,"revoked_at":null,"can_enable":false});
+        assert!(status_patch(&key,true).is_err());
+        assert!(status_patch(&key,false).is_ok());
+        key["can_enable"]=json!(true);
+        assert!(status_patch(&key,true).is_ok());
+        key["enabled"]=json!(true);key["can_enable"]=json!(false);
+        assert!(status_patch(&key,true).is_ok());
     }
     #[test]
     fn status_changes_use_the_role_scoped_endpoint() {
