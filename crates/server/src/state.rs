@@ -103,9 +103,15 @@ pub enum WriteJob {
 #[derive(Default)]
 struct WriteQueue {
     jobs: Mutex<Vec<WriteJob>>,
+    // Only one consumer may deliver and requeue a batch. Otherwise a newer
+    // progress batch can overtake an older one after its queue has been taken.
+    draining: Mutex<()>,
+    in_flight: std::sync::atomic::AtomicUsize,
     notify: Notify,
     /// 已经丢过多少件（只为观测/测试用）。
     queued: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    after_take: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl WriteQueue {
@@ -125,9 +131,10 @@ impl WriteQueue {
         self.notify.notify_one();
     }
 
-    /// 队列里现在还压着多少件。
+    /// 尚未完成的活：排队中 + 正在交付/准备重排的批次。
     pub fn len(&self) -> usize {
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).len()
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        jobs.len() + self.in_flight.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -389,7 +396,7 @@ impl AppState {
         self.writer.push(job);
     }
 
-    /// 队列里还压着多少件待落账的活（面板/测试用）。
+    /// 尚未完成的待落账活，包含后台正在处理的批次（面板/测试用）。
     pub fn pending_writes(&self) -> usize {
         self.writer.len()
     }
@@ -400,12 +407,24 @@ impl AppState {
     /// 卡住自己，也不会卡住请求路径。同一个模型名的多条状态只写最后一条
     /// （先写中间态没意义）。
     pub fn drain_writes(&self) -> usize {
+        let Ok(_consumer) = self.writer.draining.try_lock() else {
+            return 0;
+        };
         let taken: Vec<WriteJob> = {
             let mut q = self.writer.jobs.lock().unwrap_or_else(|e| e.into_inner());
-            std::mem::take(&mut *q)
+            let taken = std::mem::take(&mut *q);
+            // Update under the same queue lock used by len(): moving a batch
+            // to the consumer must never make outstanding work appear empty.
+            self.writer.in_flight.store(taken.len(), std::sync::atomic::Ordering::Relaxed);
+            taken
         };
         if taken.is_empty() {
             return 0;
+        }
+        #[cfg(test)]
+        {
+            let hook = self.writer.after_take.lock().unwrap().clone();
+            if let Some(hook) = hook { hook(); }
         }
         // 同一个模型名的状态倒着看，只留最新那条，再翻回原顺序。
         let mut keep: Vec<WriteJob> = Vec::with_capacity(taken.len());
@@ -455,13 +474,18 @@ impl AppState {
                 retry.push(job);
             }
         }
-        if !retry.is_empty() {
+        {
             let mut q = self.writer.jobs.lock().unwrap_or_else(|e| e.into_inner());
-            // 插回队头，别让新活插到它们前面（顺序对同一个请求的账有意义）
-            let mut rest = std::mem::take(&mut *q);
-            retry.append(&mut rest);
-            *q = retry;
-            self.writer.notify.notify_one();
+            if !retry.is_empty() {
+                // 插回队头，别让新活插到它们前面（顺序对同一个请求的账有意义）
+                let mut rest = std::mem::take(&mut *q);
+                retry.append(&mut rest);
+                *q = retry;
+                self.writer.notify.notify_one();
+            }
+            // Complete or requeue while holding the queue lock, so len() sees
+            // either queued work or owned work, never a gap between the two.
+            self.writer.in_flight.store(0, std::sync::atomic::Ordering::Relaxed);
         }
         done
     }
@@ -827,4 +851,118 @@ mod tests {
  let mut names=vec!["a".into(),"b".into()];let b=l.select(&mut names,false).unwrap();assert_eq!(names[0],"b");drop(a);drop(b);assert!(l.0.lock().unwrap().is_empty());
  }
  #[test]fn direct_traffic_counts_and_exploration_stays_first(){let l=Arc::new(ModelLoads::default());let _t=l.acquire("a");let mut names=vec!["a".into(),"b".into()];l.preview(&mut names);assert_eq!(names[0],"b");let mut names=vec!["a".into(),"b".into()];let _e=l.select(&mut names,true);assert_eq!(names[0],"a");}
+}
+
+
+#[cfg(test)]
+mod writer_concurrency_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Barrier,
+    };
+    fn fixture() -> (SharedState, std::path::PathBuf, i64) {
+        let dir = std::env::temp_dir().join(format!("writer-concurrency-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = AppState::init(Config {
+            db_path: dir.join("test.db"),
+            master_key_path: dir.join("master.key").to_string_lossy().into_owned(),
+            ..Config::default()
+        })
+        .unwrap();
+        let id =
+            crate::db::requests::start(&state.conn(), "/v1/chat/completions", "test", None, false)
+                .unwrap();
+        (state, dir, id)
+    }
+    fn progress(id: i64, channel_id: i64) -> WriteJob {
+        WriteJob::Progress(crate::db::requests::ProgressArgs {
+            request_id: id,
+            channel_id,
+            served_model: format!("source-{channel_id}"),
+            streamed: false,
+        })
+    }
+    fn pause_first_batch(state: &SharedState) -> (Arc<Barrier>, Arc<Barrier>) {
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let first = AtomicBool::new(true);
+        let a = entered.clone();
+        let b = release.clone();
+        *state.writer.after_take.lock().unwrap() = Some(Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                a.wait();
+                b.wait();
+            }
+        }));
+        (entered, release)
+    }
+    #[test]
+    fn a_busy_database_requeues_without_losing_outstanding_count_or_order() {
+        let (state, dir, id) = fixture();
+        state.enqueue_write(progress(id, 1));
+        let held = state.conn();
+        assert_eq!(state.drain_writes(), 0);
+        assert_eq!(state.pending_writes(), 1);
+        state.enqueue_write(progress(id, 2));
+        drop(held);
+        assert_eq!(state.drain_writes(), 2);
+        assert_eq!(state.pending_writes(), 0);
+        let latest: i64 = state
+            .conn()
+            .query_row("SELECT channel_id FROM requests WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(latest, 2);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn pending_writes_counts_the_batch_currently_being_delivered() {
+        let (state, dir, id) = fixture();
+        let (entered, release) = pause_first_batch(&state);
+        state.enqueue_write(progress(id, 1));
+        let worker = std::thread::spawn({
+            let state = state.clone();
+            move || state.drain_writes()
+        });
+        entered.wait();
+        let pending = state.pending_writes();
+        release.wait();
+        worker.join().unwrap();
+        assert_eq!(pending, 1, "an in-flight batch is not a completed queue");
+        assert_eq!(state.pending_writes(), 0);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn concurrent_drainers_cannot_deliver_newer_progress_before_an_older_batch() {
+        let (state, dir, id) = fixture();
+        let (entered, release) = pause_first_batch(&state);
+        state.enqueue_write(progress(id, 1));
+        let worker = std::thread::spawn({
+            let state = state.clone();
+            move || state.drain_writes()
+        });
+        entered.wait();
+        state.enqueue_write(progress(id, 2));
+        let second = state.drain_writes();
+        release.wait();
+        worker.join().unwrap();
+        state.drain_writes();
+        let latest: i64 = state
+            .conn()
+            .query_row("SELECT channel_id FROM requests WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            (second, latest),
+            (0, 2),
+            "one ordered consumer must own both delivery and requeue"
+        );
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

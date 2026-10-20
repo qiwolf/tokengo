@@ -10,7 +10,7 @@
 
 发布核对保留了原连接、账号会话、权限、价格、OAuth 绑定、历史账本及环境主密钥；启动期间旧视觉退避记录保持。已修复管理字段改变旧视觉探测指纹的问题并新增兼容回归。初次被拦截的升级曾可能唤醒既有视觉任务，其请求是否完成或收费尚不确定；不能将部署脚本未发推理扩大为全部后台活动均无调用。
 
-服务端功能对应提交 `d8635543cdb7fdbc0cb16a731947bb40b226fc53`；后续仅文档或样式更新不改变这部分代码。最终分支 CI、界面资产和审阅状态见 [PR #3](https://github.com/qiwolf/tokengo/pull/3) 与 [GitHub Actions](https://github.com/qiwolf/tokengo/actions)。CI 结论须按提交匹配，不用历史测试数量替代当前结果。
+服务商与原生档位的生产功能基线为 `d8635543cdb7fdbc0cb16a731947bb40b226fc53`，随后 `57382c8` 部署更新了卡片样式。后续并发写入修复、协议矩阵及规划文档属于新的源码改动，合并 main 不等于已升级生产；必须另行匹配运行版本与部署验收。最终分支 CI、界面资产和审阅状态见 [PR #3](https://github.com/qiwolf/tokengo/pull/3) 与 [GitHub Actions](https://github.com/qiwolf/tokengo/actions)。CI 结论须按提交匹配，不用历史测试数量替代当前结果。
 
 ## 已有有限真实验证
 

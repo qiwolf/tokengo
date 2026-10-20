@@ -48,14 +48,18 @@ Chat / Responses / Messages 有原生入口及受限文本/客户端函数工具
 
 独立 [DeepSeek Search/Fetch](docs/deepseek-search-fetch.md) 已有有限真实请求与按次入账验证，不会自动接管 Claude Code/Codex 的内置搜索工具，也不以本地价格代替供应商最终发票。[独立 OpenAI OAuth](docs/openai-oauth.md) 已有实际授权、目录、有限文本、受控单工具客户端循环及指定转换流验证；这不代表任意订阅、模型、参数或完整 Claude/Codex 功能集均通过。新增服务商分组与档位 UI 本轮依靠隔离浏览器及合成目录验收，未为其追加付费推理。
 
+### 协议回退与下一阶段
+
+Chat 与 Responses 同时可用时使用本次请求的同名原生接口；跨协议无法表示的字段明确拒绝，不放进用户消息。完整交叉矩阵、字段处理和回退逻辑图见[协议选路合同](docs/protocol-routing-matrix.md)。统一用户、自助 Key、点选权限、月套餐与自定义探针的分阶段方案见[改造方案](docs/unified-user-and-quota-plan.md)；这些新管理能力尚未实施。
+
 ### 构建与启动
 
-路线 C 目前通过开发分支和 PR 交付，尚未合并到 main；下例明确选择该分支。部署时进一步固定已审阅的提交 SHA，不按 Cargo 版本号猜功能。
+从 `main` 获取日常源码，部署时固定已审阅的提交 SHA；不要按保留的 Cargo 版本号猜测具体功能。生产升级与源码合并分别验收。
 
 需要 Rust 1.98 或更新版本、C 编译器与链接器（内置 SQLite 所需），以及 [Trunk](https://trunkrs.dev/)。先按操作系统安装编译依赖。Trunk 源码安装遇到依赖解析问题时可使用官方预编译版本，并校验下载文件。
 
 ```sh
-git clone --branch codex/protocols-and-deployment https://github.com/qiwolf/tokengo.git
+git clone --branch main https://github.com/qiwolf/tokengo.git
 cd tokengo
 cargo build --locked --release -p tokengo-server
 rustup target add wasm32-unknown-unknown

@@ -14,7 +14,7 @@ See the [changelog](CHANGELOG.md), [provider channels](docs/provider-channels.md
 
 Conversion rejects semantics it cannot represent. Responses requires full input replay; native signatures and opaque state have ownership restrictions. Native Chat inline audio is an explicit source capability, but separate audio/video/file APIs, native Gemini and arbitrary subscription conversion are not implemented. The official OAuth preview rejects some ordinary API generation fields; review its specific limitations.
 
-This branch implements these features; production acceptance is tracked in the [public acceptance status and limits](docs/acceptance-status.md). The Cargo version remains **0.34.0**. No new release or tag is implied by the development branch or this README.
+This branch implements these features; production acceptance is tracked in the [public acceptance status and limits](docs/acceptance-status.md). The Cargo version remains **0.34.0**. No new release or tag is implied by this README.
 
 ## Provider Channels and Native Parameters
 
@@ -62,12 +62,12 @@ Standalone DeepSeek Search/Fetch has limited real-request and request-unit accou
 
 ## Build From Source
 
-Route C is currently delivered on the development branch, pending merge to main. The command below selects it explicitly. Pin a reviewed commit for deployment rather than relying on the unchanged Cargo version.
+Use `main` for the current source and pin a reviewed commit for deployment rather than relying on the unchanged Cargo version. Merging source and upgrading production are separate acceptance steps.
 
 Requirements: Rust 1.98 or later, a native C compiler/linker for bundled SQLite, the wasm32 target and [Trunk](https://trunkrs.dev/). Use an official Trunk binary if a source installation fails to resolve dependencies. Install toolchain prerequisites for your operating system first.
 
 ```sh
-git clone --branch codex/protocols-and-deployment https://github.com/qiwolf/tokengo.git
+git clone --branch main https://github.com/qiwolf/tokengo.git
 cd tokengo
 cargo build --locked --release -p tokengo-server
 rustup target add wasm32-unknown-unknown
@@ -231,3 +231,7 @@ Report bugs through GitHub Issues with version, reproducible steps and redacted 
 ## License and Attribution
 
 MIT; see [LICENSE](LICENSE) and [NOTICE](NOTICE). FreeLLMAPI informed compatibility behavior. Only connect upstream services you are authorized to use and respect their terms and quotas.
+
+## Protocol matrix and next phases
+
+See the [protocol routing matrix and fallback diagram](docs/protocol-routing-matrix.md) for native selection, bounded bridging and explicit rejection. The [unified user, quota and custom-probe plan](docs/unified-user-and-quota-plan.md) describes future phased work; self-service panel Keys, monthly packages and configurable probe payloads are not implemented by this documentation update.

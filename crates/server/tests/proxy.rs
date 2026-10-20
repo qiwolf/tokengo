@@ -3675,34 +3675,101 @@ async fn review_documents_remaining_header_and_usage_boundaries() {
     assert_eq!(list["logs"][0]["input_tokens_known"],false);
 }
 
-#[tokio::test(flavor="multi_thread", worker_threads=4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fixed_delay_real_http_four_concurrency_levels_balance_the_ledger() {
-    let f=fixture();f.with_key();
-    let m=start_mock(Reply::SlowOk(200)).await;
-    let id=f.add_channel("load",&m.base,ChannelSpec::default());f.serve("mock-chat",&[id]);
+    concurrent_http_accounting(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn priced_real_http_960_requests_settle_financial_and_diagnostic_ledgers() {
+    concurrent_http_accounting(true).await;
+}
+
+async fn concurrent_http_accounting(priced: bool) {
+    let f = fixture();
+    f.with_key();
+    let m = start_mock(Reply::SlowOk(200)).await;
+    let id = f.add_channel("load", &m.base, ChannelSpec::default());
+    f.serve("mock-chat", &[id]);
     assert!(f.state.check_gateway_key(KEY));
-    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr=listener.local_addr().unwrap();
-    let server=tokio::spawn({let state=f.state.clone();async move {axum::serve(listener,app(state)).await.unwrap()}});
-    let client=reqwest::Client::builder().no_proxy().build().unwrap();
-    let mut total=0;
-    for concurrency in [16,32,64,128] {
-        let gate=Arc::new(tokio::sync::Semaphore::new(concurrency));
-        let started=std::time::Instant::now();
-        let jobs=(0..concurrency*4).map(|_| {
-            let client=client.clone();let gate=gate.clone();
+    if priced {
+        use tokengo_server::db::billing::{self, Price};
+        billing::create_price(
+            &f.state.conn(),
+            &Price {
+                id: 0,
+                channel_id: id.0,
+                model: "mock-chat".into(),
+                input_micro_per_million: 1_000_000,
+                output_micro_per_million: 1_000_000,
+                max_input_tokens: 1024,
+                max_output_tokens: 100,
+            },
+            "load-test",
+        )
+        .unwrap();
+        billing::set_budget(&f.state.conn(), "user", 1, Some(1_000_000), "load-test").unwrap();
+        f.state.spawn_writer();
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn({
+        let state = f.state.clone();
+        async move { axum::serve(listener, app(state)).await.unwrap() }
+    });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut total = 0;
+    for concurrency in [16, 32, 64, 128] {
+        let gate = Arc::new(tokio::sync::Semaphore::new(concurrency));
+        let started = std::time::Instant::now();
+        let jobs = (0..concurrency * 4).map(|_| {
+            let client = client.clone();
+            let gate = gate.clone();
             async move {
-                let _permit=gate.acquire_owned().await.unwrap();
-                let t=std::time::Instant::now();
-                let r=client.post(format!("http://{addr}/v1/chat/completions")).bearer_auth(KEY)
-                    .json(&json!({"model":"mock-chat","messages":[]})).send().await.unwrap();
-                assert_eq!(r.status(),StatusCode::OK);let v:Value=r.json().await.unwrap();
-                assert!(v["choices"].is_array());t.elapsed().as_millis()
+                let _permit = gate.acquire_owned().await.unwrap();
+                let t = std::time::Instant::now();
+                let r = client
+                    .post(format!("http://{addr}/v1/chat/completions"))
+                    .bearer_auth(KEY)
+                    .json(&if priced {
+                        json!({"model":"mock-chat","messages":[],"max_tokens":8})
+                    } else {
+                        json!({"model":"mock-chat","messages":[]})
+                    })
+                    .send()
+                    .await
+                    .unwrap();
+                let status = r.status();
+                let v: Value = r.json().await.unwrap();
+                assert_eq!(status, StatusCode::OK, "unexpected response: {v}");
+                assert!(v["choices"].is_array());
+                t.elapsed().as_millis()
             }
         });
-        let mut timings=futures_util::future::join_all(jobs).await;timings.sort_unstable();
-        println!("concurrency={concurrency} requests={} errors=0 p50={}ms p95={}ms elapsed={}ms",timings.len(),timings[timings.len()/2],timings[timings.len()*95/100],started.elapsed().as_millis());
-        total+=concurrency*4;
+        let mut timings = futures_util::future::join_all(jobs).await;
+        timings.sort_unstable();
+        println!(
+            "concurrency={concurrency} requests={} errors=0 p50={}ms p95={}ms elapsed={}ms",
+            timings.len(),
+            timings[timings.len() / 2],
+            timings[timings.len() * 95 / 100],
+            started.elapsed().as_millis()
+        );
+        total += concurrency * 4;
+    }
+    {
+        let conn = f.state.conn();
+        let (ok, running): (i64, i64) = conn
+            .query_row(
+                "SELECT sum(status='ok'),sum(status='running') FROM requests",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        println!(
+            "HTTP complete: ok={ok} running={running} deferred={}",
+            f.state.pending_writes()
+        );
     }
     // drain_writes deliberately uses try_lock: the billing retry worker can
     // briefly own SQLite even after every HTTP response has completed. Wait for
@@ -3714,12 +3781,55 @@ async fn fixed_delay_real_http_four_concurrency_levels_balance_the_ledger() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         }
-    }).await.expect("request and attempt writes must finish after HTTP load");
-    let conn=f.state.conn();
-    let (requests,ok,running):(i64,i64,i64)=conn.query_row("SELECT count(*),sum(status='ok'),sum(status='running') FROM requests",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
-    let attempts:i64=conn.query_row("SELECT count(*) FROM attempts",[],|r|r.get(0)).unwrap();
-    assert_eq!((requests,ok,running,attempts),(total as i64,total as i64,0,total as i64));
+    })
+    .await
+    .expect("request and attempt writes must finish after HTTP load");
+    let conn = f.state.conn();
+    let (requests, ok, running): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT count(*),sum(status='ok'),sum(status='running') FROM requests",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    let attempts: i64 = conn
+        .query_row("SELECT count(*) FROM attempts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        (requests, ok, running, attempts),
+        (total as i64, total as i64, 0, total as i64)
+    );
     println!("ledger requests={requests} ok={ok} running={running} attempts={attempts}");
+    let (ledger,settled,held,debit):(i64,i64,i64,i64)=conn.query_row("SELECT count(*),COALESCE(sum(status='success'),0),COALESCE(sum(status='reserved'),0),COALESCE(sum(debit_micro),0) FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+    if priced {
+        assert_eq!(
+            (ledger, settled, held, debit),
+            (total as i64, total as i64, 0, total as i64 * 4)
+        );
+        let budget = tokengo_server::db::billing::budgets(&conn, Some("user"), Some(1))
+            .unwrap()
+            .remove(0);
+        assert_eq!((budget.spent_micro, budget.reserved_micro), (debit, 0));
+    } else {
+        let unpriced: i64 = conn.query_row("SELECT count(*) FROM billing_ledger WHERE status='unpriced' AND price_id IS NULL AND debit_micro IS NULL AND settled_ms IS NOT NULL", [], |r|r.get(0)).unwrap();
+        assert_eq!((ledger,unpriced,held),(total as i64,total as i64,0),"unknown monetary costs must remain unknown, with no pending reservation");
+    }
+    let outbox = f.dir.join("t.db.billing-outbox");
+    let pending_intents = match std::fs::read_dir(outbox) {
+        Ok(entries) => entries.map(|entry| entry.expect("outbox entry must be readable"))
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json" || ext == "tmp"))
+            .count(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => panic!("outbox must be readable: {error}"),
+    };
+    assert_eq!(pending_intents, 0);
+    assert_eq!(
+        conn.query_row("PRAGMA synchronous", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2,
+        "financial durability must remain FULL"
+    );
+    println!("financial ledger={ledger} settled={settled} held={held} debit={debit} pending_intents={pending_intents}");
     server.abort();
 }
 
