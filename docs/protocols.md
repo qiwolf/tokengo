@@ -48,6 +48,16 @@ Responses 当前要求客户端完整重放 input。`previous_response_id`、服
 
 生成用量来自真实源，转换层的协议占位字段不能当作财务用量。转换到 Chat 流时请求源包含最终 usage；源仍可不报告，用量及费用因此可能未知。配置来源价格与预算见[身份与计量](identity-metering.md)。
 
+## 已知审核 telemetry 的转换边界
+
+Responses 来源 SSE 转为 Chat/Messages 时，唯一允许不映射的事件是 `response.metadata` 中的 `metadata.openai_chatgpt_moderation_metadata`。它是第一方展示用审核 telemetry，目标协议没有对应表示；转换记录会明确注明此行为，原生 Responses 仍保留原始字节。本规则不表示网关执行了审核或放宽安全控制，也不保存审核原文。
+
+envelope 仅接受 `type`、`metadata` 和可选的 `response_id` / `sequence_number`，metadata 对象必须只有这个已知 key。可选 ID 有值时须有效，已知来源 response ID 时须匹配；sequence 有值时须为非负整数。审核 key 内部遵循 opaque JSON 合同，不按其中出现的 `headers`、`verification`、`reasoning` 等同名数据字段猜测执行行为；其序列化值限64KiB、深度16、节点4096。这个任意 JSON 值不会建立有效输出、usage 或完成状态，metadata-only 或随后源错误仍在提交前失败并可 fallback。
+
+同级未知 metadata、`safety_buffering`、验证建议、headers/turn state，以及其他未知事件仍明确拒绝；签名与加密 reasoning 的既有拒绝不变。已提交内容后遇到这些不兼容语义，返回流内错误，不切源重放。固定适配备注说明转换政策，不声称该请求实际出现过审核 telemetry。
+
+行为依据是精确 [Codex0.149 Responses reader](https://github.com/openai/codex/blob/rust-v0.149.0/codex-rs/codex-api/src/sse/responses.rs)：已知审核值仅 clone 成展示事件；[core 消费者](https://github.com/openai/codex/blob/rust-v0.149.0/codex-rs/core/src/session/mod.rs)仅发送通知。控制性 metadata 有独立消费者，不能据此一起忽略。本地 HTTP 回归只用合成审核值复现公开 envelope 和已观察事件顺序，不使用真实私有审核内容。
+
 ## Claude Code 与 Codex
 
 客户端的版本、启用功能和模型能力共同决定兼容性。先固定单来源，分别验证文本、一次真实工具执行、真实标准输出回传和最终答案，再验证 fallback 与取消；本地模拟服务通过不代表真实供应商通过。

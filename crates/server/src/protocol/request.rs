@@ -895,6 +895,9 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
         return vec![];
     }
     let mut notes = vec![];
+    if to == Protocol::Responses && body["stream"] == true {
+        notes.push("Responses source moderation telemetry in the known OpenAI namespace is not mapped across protocols; control and unknown metadata remain unsupported");
+    }
     if to == Protocol::Chat && body["stream"] == true {
         notes.push(
             "converted Chat stream requests source usage; missing source meters remain unknown",

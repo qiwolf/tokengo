@@ -157,6 +157,76 @@ fn kind<'a>(frame: &'a Frame, v: &'a Value) -> &'a str {
         .or(frame.event.as_deref())
         .unwrap_or("")
 }
+/// The known namespace is opaque presentation telemetry in Codex 0.149.
+/// Its contents cannot establish output, usage, terminal state, or control actions.
+fn moderation_telemetry(frame: &Frame, value: &Value) -> Result<(), String> {
+    let envelope = value
+        .as_object()
+        .ok_or("Invalid Responses metadata envelope")?;
+    if value["type"] != "response.metadata"
+        || frame
+            .event
+            .as_deref()
+            .is_some_and(|event| event != "response.metadata")
+        || envelope.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "type" | "response_id" | "sequence_number" | "metadata"
+            )
+        })
+    {
+        return Err("Unsupported Responses metadata envelope or control fields".into());
+    }
+    if let Some(id) = envelope.get("response_id").filter(|v| !v.is_null()) {
+        if !id.as_str().is_some_and(|id| {
+            !id.trim().is_empty() && id.len() <= 512 && !id.chars().any(char::is_control)
+        }) {
+            return Err("Invalid Responses metadata response identity".into());
+        }
+    }
+    if envelope
+        .get("sequence_number")
+        .filter(|v| !v.is_null())
+        .is_some_and(|v| !v.as_u64().is_some_and(|n| n <= i64::MAX as u64))
+    {
+        return Err("Invalid Responses metadata sequence number".into());
+    }
+    let metadata = value["metadata"]
+        .as_object()
+        .ok_or("Invalid Responses metadata namespace")?;
+    if metadata.len() != 1 || !metadata.contains_key("openai_chatgpt_moderation_metadata") {
+        return Err("Unsupported Responses metadata control or unknown namespace".into());
+    }
+    let opaque = &metadata["openai_chatgpt_moderation_metadata"];
+    if serde_json::to_vec(opaque)
+        .map_err(|_| "Invalid moderation telemetry")?
+        .len()
+        > 64 * 1024
+    {
+        return Err("Moderation telemetry exceeds 64 KiB".into());
+    }
+    fn bounded(value: &Value, depth: usize, nodes: &mut usize) -> Result<(), String> {
+        *nodes += 1;
+        if depth > 16 || *nodes > 4096 {
+            return Err("Moderation telemetry exceeds depth or node bound".into());
+        }
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    bounded(item, depth + 1, nodes)?;
+                }
+            }
+            Value::Object(items) => {
+                for item in items.values() {
+                    bounded(item, depth + 1, nodes)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    bounded(opaque, 0, &mut 0)
+}
 pub struct Observer {
     pub input: Option<i64>,
     pub output: Option<i64>,
@@ -395,6 +465,7 @@ pub struct Transcoder {
     reasoning_item: String,
     reasoning_closed: bool,
     source_reasoning: Option<(u64, String)>,
+    source_response_id: Option<String>,
     message_item: String,
     next_index: u32,
     next_tool: u32,
@@ -434,6 +505,7 @@ impl Transcoder {
             reasoning_item: format!("rs_{unique}"),
             reasoning_closed: false,
             source_reasoning: None,
+            source_response_id: None,
             message_item: format!("msg_{unique}"),
             next_index: 0,
             next_tool: 0,
@@ -764,6 +836,9 @@ impl Transcoder {
                 }
             }
             Protocol::Responses => {
+                if event == "response.metadata" {
+                    return moderation_telemetry(frame, v);
+                }
                 if (event.contains("reasoning") && !matches!(event,"response.reasoning_text.delta"|"response.reasoning_text.done"))
                     || event.contains("refusal")
                     || event.contains("audio")
@@ -981,7 +1056,20 @@ impl Transcoder {
             }
             Protocol::Responses => {
                 let event = kind(frame, &v);
+                if self.source_response_id.is_none() {
+                    self.source_response_id = v["response"]["id"].as_str().map(str::to_owned);
+                }
                 match event {
+                    "response.metadata" => {
+                        if let (Some(expected), Some(actual)) =
+                            (&self.source_response_id, v["response_id"].as_str())
+                        {
+                            if expected != actual {
+                                return Err("Responses moderation telemetry belongs to a different response".into());
+                            }
+                        }
+                        // No destination representation, payload, meter, or terminal action.
+                    }
                     "response.reasoning_text.delta" | "response.reasoning_text.done" => {
                         let complete=event.ends_with(".done");
                         if v["content_index"].as_u64()!=Some(0) { return Err("Only one raw reasoning part is supported".into()); }
