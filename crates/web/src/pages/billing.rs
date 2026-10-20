@@ -4,6 +4,36 @@ use leptos::prelude::*;
 use serde_json::{json, Value};
 use wasm_bindgen::JsCast;
 
+// Price attribution uses source IDs, never provider IDs. Keep IDs internal.
+fn price_source_label(source: &Value, key: &str) -> String {
+    format!("{} · {} · {}",source["provider_name"].as_str().unwrap_or("未分组上游"),key,source["base_url"].as_str().unwrap_or(""))
+}
+fn price_sources(ctx: Ctx) -> RwSignal<Vec<(i64,String)>> {
+    let options=RwSignal::new(Vec::new());
+    leptos::task::spawn_local(async move {
+        let result=async {
+            let channels=api::request("GET","/api/channels",None).await?;
+            let mut labels=std::collections::BTreeMap::new();
+            let rows=api::rows(&channels,"channels");
+            let providers:std::collections::BTreeSet<_>=rows.iter().filter_map(|c|c["provider_id"].as_i64()).collect();
+            for id in providers {
+                let keys=api::request("GET",&format!("/api/providers/{id}/credentials"),None).await?;
+                for (position,key) in api::rows(&keys,"credentials").iter().enumerate() {
+                    if let Some(source)=key["source_id"].as_i64(){labels.insert(source,crate::provider_api::credential_label(key,position));}
+                }
+            }
+            Ok::<_,crate::api::ApiErr>(rows.into_iter().filter_map(|c|c["id"].as_i64().map(|id|(id,price_source_label(&c,labels.get(&id).map(String::as_str).unwrap_or("未命名上游 Key"))))).collect())
+        }.await;
+        match result{Ok(v)=>options.set(v),Err(e)=>ctx.note_err(&e)}
+    });
+    options
+}
+#[component]
+fn PriceSource(id: &'static str, value: RwSignal<String>, options: RwSignal<Vec<(i64,String)>>) -> impl IntoView {
+    view!{<label for=id>"供应方 / 上游 Key / API 地址"</label><select id=id required prop:value=value on:change=move|e|value.set(event_target_value(&e))><option value="">"请选择要定价的上游接入"</option>{move||options.get().into_iter().map(|(id,label)|view!{<option value=id.to_string()>{label}</option>}).collect_view()}</select>}
+}
+fn selected_price_source(value:&str,options:&[(i64,String)]) -> bool {value.parse::<i64>().ok().is_some_and(|id|options.iter().any(|(source,_)|*source==id))}
+
 // Native dialogs keep editing focused and provide Escape, focus trapping and
 // return to the button that opened them without custom keyboard handlers.
 fn billing_dialog(id: &str, open: bool) {
@@ -121,6 +151,7 @@ fn Budgets(ctx: Ctx) -> impl IntoView {
 }
 #[component]
 fn Pricing(ctx: Ctx) -> impl IntoView {
+    let sources = price_sources(ctx);
     let rows = RwSignal::new(Vec::<Value>::new());
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
@@ -151,8 +182,9 @@ fn Pricing(ctx: Ctx) -> impl IntoView {
         if busy.get_untracked() {
             return;
         }
+        if !selected_price_source(&channel.get_untracked(),&sources.get_untracked()) {error.set("请选择有效的上游接入；供应方编号不能用于定价。".into());return;}
         let values = [
-            (&channel, "渠道 ID", true),
+            (&channel, "上游接入", true),
             (&input, "输入价格", false),
             (&output, "输出价格", false),
             (&max_in, "输入 token 上限", false),
@@ -193,11 +225,11 @@ fn Pricing(ctx: Ctx) -> impl IntoView {
         });
     };
     view! {<section class="card"><header class="card-head"><h2>"价格版本"</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{channel.set(String::new());model.set(String::new());input.set("0".into());output.set("0".into());max_in.set(String::new());max_out.set(String::new());error.set(String::new());message.set(String::new());billing_dialog("price-dialog",true);}>"新建价格版本"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|load(())>"刷新价格"</button></div></header><div class="card-body">
-    <p class="muted small">"价格单位：每百万 token 的整数 microUSD。按渠道 ID + 逻辑模型匹配，最新版本生效；缺少价格表示未知成本，不等于免费。0 / 0 价格表示明确零 token 费用。上下限用于请求预占与安全封顶，不代表上游实测上下文。最多展示最近 1000 个版本。"</p>
-    <div class="table-wrap"><table><thead><tr><th>"版本 / 渠道 / 模型"</th><th>"输入 / 输出价格"</th><th>"输入 / 输出上限"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{let label=format!("v{} / #{} / {}",api::text(&r,"id"),api::text(&r,"channel_id"),api::text(&r,"model"));let price=format!("{} / {}",api::text(&r,"input_micro_per_million"),api::text(&r,"output_micro_per_million"));let caps=format!("{} / {}",api::text(&r,"max_input_tokens"),api::text(&r,"max_output_tokens"));view!{<tr><td data-label="版本 / 来源">{label}</td><td data-label="价格">{price}</td><td data-label="token 上限">{caps}</td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{channel.set(api::text(&r,"channel_id"));model.set(api::text(&r,"model"));input.set(api::text(&r,"input_micro_per_million"));output.set(api::text(&r,"output_micro_per_million"));max_in.set(api::text(&r,"max_input_tokens"));max_out.set(api::text(&r,"max_output_tokens"));error.set(String::new());message.set("已填入旧值，保存会创建新版本。".into());billing_dialog("price-dialog",true);}>"复制为新版本"</button></td></tr>}}).collect_view()}</tbody></table></div>
+    <p class="muted small">"价格单位：每百万 token 的整数 microUSD。按所选供应方的上游 Key/API 接入 + 本地映射模型名匹配，最新版本生效；缺少价格表示未知成本，不等于免费。0 / 0 价格表示明确零 token 费用。上下限用于请求预占与安全封顶，不代表上游实测上下文。最多展示最近 1000 个版本。"</p>
+    <div class="table-wrap"><table><thead><tr><th>"版本 / 上游接入 / 模型"</th><th>"输入 / 输出价格"</th><th>"输入 / 输出上限"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{let source=r["channel_id"].as_i64();let source_name=sources.get().iter().find(|(id,_)|Some(*id)==source).map(|(_,label)|label.clone()).unwrap_or_else(||"已删除的上游接入（历史价格）".into());let label=format!("v{} / {} / {}",api::text(&r,"id"),source_name,api::text(&r,"model"));let price=format!("{} / {}",api::text(&r,"input_micro_per_million"),api::text(&r,"output_micro_per_million"));let caps=format!("{} / {}",api::text(&r,"max_input_tokens"),api::text(&r,"max_output_tokens"));view!{<tr><td data-label="版本 / 来源">{label}</td><td data-label="价格">{price}</td><td data-label="token 上限">{caps}</td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{channel.set(api::text(&r,"channel_id"));model.set(api::text(&r,"model"));input.set(api::text(&r,"input_micro_per_million"));output.set(api::text(&r,"output_micro_per_million"));max_in.set(api::text(&r,"max_input_tokens"));max_out.set(api::text(&r,"max_output_tokens"));error.set(String::new());message.set("已填入旧值，保存会创建新版本。".into());billing_dialog("price-dialog",true);}>"复制为新版本"</button></td></tr>}}).collect_view()}</tbody></table></div>
     <p role="status">{move||if busy.get(){"正在请求价格…"}else if rows.get().is_empty(){"暂无价格配置。"}else{""}}</p>
     <p role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><BillingDialog id="price-dialog" title="新建价格版本" busy=busy><form on:submit=save ><fieldset disabled=move||busy.get()><div class="form-grid">
-    <label for="price-channel">"渠道 ID"</label><input id="price-channel" required type="text" inputmode="numeric" prop:value=channel aria-describedby="price-error" on:input=move|e|channel.set(event_target_value(&e))/>
+    <PriceSource id="price-channel" value=channel options=sources/>
     <label for="price-model">"逻辑模型名"</label><input id="price-model" required type="text" prop:value=model aria-describedby="price-error" on:input=move|e|model.set(event_target_value(&e))/>
     <label for="price-in">"输入价格（microUSD / 百万 token）"</label><input id="price-in" required type="text" inputmode="numeric" prop:value=input aria-describedby="price-error" on:input=move|e|input.set(event_target_value(&e))/>
     <label for="price-out">"输出价格（microUSD / 百万 token）"</label><input id="price-out" required type="text" inputmode="numeric" prop:value=output aria-describedby="price-error" on:input=move|e|output.set(event_target_value(&e))/>
@@ -207,6 +239,7 @@ fn Pricing(ctx: Ctx) -> impl IntoView {
 }
 #[component]
 fn RequestPricing(ctx: Ctx) -> impl IntoView {
+    let sources = price_sources(ctx);
     let rows = RwSignal::new(Vec::<Value>::new());
     let channel = RwSignal::new(String::new());
     let model = RwSignal::new(String::new());
@@ -237,7 +270,8 @@ fn RequestPricing(ctx: Ctx) -> impl IntoView {
         if busy.get_untracked() {
             return;
         }
-        let values = api::integer(&channel.get_untracked(), "渠道 ID", true)
+        if !selected_price_source(&channel.get_untracked(),&sources.get_untracked()) {error.set("请选择有效的上游接入；供应方编号不能用于定价。".into());return;}
+        let values = api::integer(&channel.get_untracked(), "上游接入", true)
             .and_then(|c| api::integer(&price.get_untracked(), "按次价格", false).map(|p| (c, p)));
         let (c, p) = match values {
             Ok(v) => v,
@@ -276,14 +310,14 @@ fn RequestPricing(ctx: Ctx) -> impl IntoView {
         });
     };
     view! {<section class="card"><header class="card-head"><h2>"按请求收费价格版本"</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{channel.set(String::new());model.set(String::new());price.set(String::new());error.set(String::new());message.set(String::new());billing_dialog("request-price-dialog",true);}>"新建按次价格"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|load(())>"刷新按次价格"</button></div></header><div class="card-body">
-    <p class="muted small">"Search / Fetch 按请求计费，单位为整数 microUSD / 次；独立于 token 价格。按渠道 ID + 逻辑模型匹配最新版本，0 表示明确免费。未知用量仍显示未知；预占或估算扣款不表示已确认收费次数。最多展示最近 1000 个版本。"</p>
-    <div class="table-wrap"><table><thead><tr><th>"版本 / 渠道 / 模型"</th><th>"价格 microUSD / 次"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
-        let label=format!("v{} / #{} / {}",api::text(&r,"id"),api::text(&r,"channel_id"),api::text(&r,"model"));let amount=api::text(&r,"micro_per_call");
+    <p class="muted small">"Search / Fetch 按请求计费，单位为整数 microUSD / 次；独立于 token 价格。按所选供应方的上游 Key/API 接入 + 本地映射模型名匹配最新版本，0 表示明确免费。未知用量仍显示未知；预占或估算扣款不表示已确认收费次数。最多展示最近 1000 个版本。"</p>
+    <div class="table-wrap"><table><thead><tr><th>"版本 / 上游接入 / 模型"</th><th>"价格 microUSD / 次"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
+        let source=r["channel_id"].as_i64();let source_name=sources.get().iter().find(|(id,_)|Some(*id)==source).map(|(_,label)|label.clone()).unwrap_or_else(||"已删除的上游接入（历史价格）".into());let label=format!("v{} / {} / {}",api::text(&r,"id"),source_name,api::text(&r,"model"));let amount=api::text(&r,"micro_per_call");
         view!{<tr><td data-label="版本 / 来源">{label}</td><td data-label="microUSD / 次">{amount}</td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{channel.set(api::text(&r,"channel_id"));model.set(api::text(&r,"model"));price.set(api::text(&r,"micro_per_call"));error.set(String::new());message.set("已填入旧值，保存会创建新版本。".into());billing_dialog("request-price-dialog",true);}>"复制为新版本"</button></td></tr>}
     }).collect_view()}</tbody></table></div>
     <p role="status">{move||if busy.get(){"正在请求按次价格…"}else if rows.get().is_empty(){"暂无按次价格，点击“新建按次价格”设置。"}else{""}}</p>
     <p role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><BillingDialog id="request-price-dialog" title="新建按次价格版本" busy=busy><form on:submit=save ><fieldset disabled=move||busy.get()><div class="form-grid">
-    <label for="request-price-channel">"渠道 ID"</label><input id="request-price-channel" required type="text" inputmode="numeric" prop:value=channel aria-describedby="request-price-error" on:input=move|e|channel.set(event_target_value(&e))/>
+    <PriceSource id="request-price-channel" value=channel options=sources/>
     <label for="request-price-model">"逻辑模型名"</label><input id="request-price-model" required type="text" prop:value=model aria-describedby="request-price-error" on:input=move|e|model.set(event_target_value(&e))/>
     <label for="request-price-micro">"价格（microUSD / 次）"</label><input id="request-price-micro" required type="text" inputmode="numeric" prop:value=price aria-describedby="request-price-error" on:input=move|e|price.set(event_target_value(&e))/>
     </div><p id="request-price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("request-price-dialog",false)>"取消"</button><button class="primary" type="submit">"创建按次价格版本"</button></div></fieldset></form></BillingDialog>
@@ -341,7 +375,7 @@ fn Usage(ctx: Ctx) -> impl IntoView {
         for (s, label, name) in [
             (user, "用户 ID", "user_id"),
             (key, "密钥 ID", "key_id"),
-            (channel, "渠道 ID", "channel_id"),
+            (channel, "上游接入", "channel_id"),
         ] {
             if !s.get_untracked().trim().is_empty() {
                 match api::integer(&s.get_untracked(), label, true) {
@@ -380,4 +414,10 @@ fn Usage(ctx: Ctx) -> impl IntoView {
     <button type="button" class="ghost" disabled=move||busy.get()||cursor.get().is_none()||rows.get().is_empty() on:click=move |_|{if let Some(id)=cursor.get_untracked(){fetch(format!("{}&before_id={id}",active_query.get_untracked()),true);}}>"较早一页"</button><p class="muted small">"翻页沿用最近一次查询条件；修改筛选后请点查询。空页表示已到末尾。"</p>
     <BillingDialog id="ledger-snapshot-dialog" title="账本快照"><p class="muted small">"这笔上游尝试的原始记账数据，用于核对与排障。"</p><pre class="admin-json">{move||snapshot.get()}</pre></BillingDialog>
     </div></section>}
+}
+
+#[cfg(test)] mod price_source_tests {
+ use super::*;
+ #[test] fn provider_id_cannot_be_used_as_source_id(){let rows=vec![(12,"供应方 · 主 Key".into())];assert!(!selected_price_source("3",&rows));assert!(selected_price_source("12",&rows));assert!(!selected_price_source("",&rows));}
+ #[test] fn source_label_preserves_provider_key_and_endpoint(){assert_eq!(price_source_label(&json!({"provider_name":"本地 GPU","base_url":"http://127.0.0.1:8001/v1"}),"向量 Key"),"本地 GPU · 向量 Key · http://127.0.0.1:8001/v1");}
 }
