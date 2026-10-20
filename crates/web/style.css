@@ -2054,7 +2054,7 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 .module-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .module-dialog .card { margin: 0; }
 .console-content button.ghost:not(.primary), .console-content button.chip {
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--control-border, var(--line-strong));
   background: var(--surface-2);
   color: var(--fg);
 }
