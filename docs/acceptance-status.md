@@ -4,7 +4,7 @@
 
 ## 当前代码、部署与发布分界
 
-本轮候选 **v0.34.0-qiwolf.4**：功能代码 `febb2c91ff51516716a4a40c502d7b41316796f9` 已部署至测试实例，前后端同提交，schema37、53表及历史保护核对通过。此处不是正式分发完成声明；最终 GitHub 提交、CI、原生和容器附件须在发布时另行核验。
+正式分发 **[v0.34.0-qiwolf.4](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.4)** 的源码为 `15c11c00fa31d3a498a5f86e16d23e20f2bb6503`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39469007908)通过（944通过、0失败、2忽略）；[Linux AMD64 双分发流程](https://github.com/qiwolf/tokengo/actions/runs/39469063851)通过，原生与离线镜像下载校验、GHCR按摘要匿名拉取和隔离容器初始化/重启/同卷重建均通过。本机再次运行采用 Docker Desktop 的 Linux AMD64 仿真，不宣称 ARM64 原生发行或性能验收。功能代码 `febb2c91ff51516716a4a40c502d7b41316796f9` 已部署至测试实例，前后端同提交，schema37、53表及历史保护核对通过；本轮发布没有更换该测试实例的程序。
 
 本轮前端105项、服务端库及两类集成共305项通过后，追加来源归属迁移、OAuth MIME/gzip/SSE与工具类型的必要定向回归通过。真实 OAuth Responses 最终输入15/输出5 Token，订阅USD成本未知；独立 Search/Fetch 各1次且各记录750 microUSD。三类均系统诊断、不扣用户额度。首次 OAuth 响应解析失败保留账本，修复后独立重验成功，不覆盖失败证据；本轮未重跑960次外部压力。
 
