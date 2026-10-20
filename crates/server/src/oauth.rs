@@ -1082,6 +1082,7 @@ mod tests {
         hold: std::sync::atomic::AtomicBool,
         catalog_json: Mutex<Option<Value>>,
         probe_captures:Mutex<Vec<(axum::http::HeaderMap,Value)>>,
+        probe_variant:Mutex<String>,
         hold_catalog: std::sync::atomic::AtomicBool,
     }
     impl Default for Mock {
@@ -1099,6 +1100,7 @@ mod tests {
                 hold: Default::default(),
                 catalog_json: Mutex::new(None),
                 probe_captures:Mutex::new(vec![]),
+                probe_variant:Mutex::new(String::new()),
                 hold_catalog: Default::default(),
             }
         }
@@ -1184,10 +1186,21 @@ mod tests {
         assert!(form["token"].starts_with("SYNTHETIC-ROTATING"));
         axum::http::StatusCode::OK
     }
-    async fn probe_response(State(mock):State<Arc<Mock>>,headers:axum::http::HeaderMap,Json(body):Json<Value>)->impl axum::response::IntoResponse {
+    async fn probe_response(State(mock):State<Arc<Mock>>,headers:axum::http::HeaderMap,Json(body):Json<Value>)->axum::response::Response {
+        use axum::response::IntoResponse;
         mock.probe_captures.lock().unwrap().push((headers,body));
         let data=json!({"type":"response.completed","response":{"id":"resp_probe","object":"response","status":"completed","output":[{"type":"message","id":"msg_probe","role":"assistant","status":"completed","content":[{"type":"output_text","text":"probe-oauth-ok","annotations":[]}]}],"usage":{"input_tokens":7,"output_tokens":3}}});
-        ([("content-type","text/event-stream")],format!("event: response.completed\ndata: {data}\n\n"))
+        let frame=format!("event: response.completed\ndata: {data}\n\n");
+        let variant=mock.probe_variant.lock().unwrap().clone();
+        match variant.as_str(){
+            "missing"=>axum::response::Response::new(axum::body::Body::from(frame)),
+            "wrong"=>([("content-type","application/json")],frame).into_response(),
+            "mixed"=>([("content-type","Text/Event-Stream; Charset=UTF-8")],frame).into_response(),
+            "gzip"=>([("content-type","application/octet-stream"),("content-encoding","gzip")],b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff\x75\x8f\xc1\x0a\x83\x30\x0c\x86\xef\x3e\x85\xf4\xac\xbb\xec\x30\xe8\xab\x8c\x21\x55\x83\x73\x6a\x53\x4c\x3a\x36\xa4\xef\xbe\xb4\x93\x22\x8c\x91\x43\xe0\xcf\xff\x7f\x49\xe0\x09\x96\x75\xb9\x02\x39\xb4\x04\xa7\x0e\x17\x37\x03\x43\x5f\xf4\x86\x8d\x2e\x37\xc5\x6f\x07\x4a\xab\x5f\x87\xaa\xb2\xa8\xf4\xa6\xc6\x7e\x77\x35\x6e\xc5\x16\x64\x8a\xed\x03\x3a\x3e\x64\x45\x23\x36\xec\x49\xb4\x23\x06\x3d\x3b\x2f\xc6\x6b\xde\xb6\x00\x91\x19\x62\x20\x61\x17\x1a\x32\x75\xc5\x39\x3a\x0c\xd1\x28\x30\xcb\xff\xa0\x1d\x5a\x96\xdf\x8e\xd4\xef\x9e\x86\xe1\x15\x53\xa9\x69\x95\xb8\x35\x1a\xcf\xf7\x1a\x27\xd1\x8d\xb5\x28\xc0\x51\x2e\x96\xf0\x2d\x48\x55\xca\xa7\x73\xe2\x9b\x36\x21\x70\x82\x38\xbe\x54\x19\xba\x2b\xe7\x10\x42\x51\x7c\x00\xc5\x51\x1f\x1b\x57\x01\x00\x00".as_slice()).into_response(),
+            "json"=>Json(data["response"].clone()).into_response(),
+            "invalid"=>([("content-type","text/html")],"<html>SYNTHETIC-PRIVATE-NEVER-LOG</html>").into_response(),
+            _=>([("content-type","text/event-stream")],frame).into_response(),
+        }
     }
     struct Fixture {
         state: SharedState,
@@ -1327,6 +1340,15 @@ mod tests {
         assert_eq!(body["model"],"probe-wire");assert!(body["input"].is_array());assert_eq!(body["stream"],true);assert_eq!(body["store"],false);assert_eq!(body["reasoning"]["effort"],"low");assert_eq!(body["service_tier"],"priority");assert!(body.get("max_output_tokens").is_none());assert!(body.get("max_tokens").is_none());drop(captures);
         let billing=result.billing.unwrap();assert_eq!(billing["input_tokens"],7);assert_eq!(billing["output_tokens"],3);assert!(billing["observed_cost_micro"].is_null());assert_eq!(billing["cost_status"],"subscription");
         let c=f.state.conn();let rows=db::billing::usage(&c,&Default::default()).unwrap();assert_eq!(rows.len(),1);assert_eq!(rows[0].source_snapshot["oauth_credential_revision"],2);assert_eq!((rows[0].user_id,rows[0].key_id,rows[0].request_id),(0,0,0));assert_eq!(c.query_row("SELECT count(*) FROM billing_allocations",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+    #[tokio::test]
+    async fn custom_probe_oauth_collects_sse_despite_missing_wrong_mixed_mime_and_gzip_and_accepts_json() {
+        let f=Fixture::new().await;f.state.oauth.test_api_base(&format!("{}/v1",f.mock.base.lock().unwrap()));let account=f.authorize().await;let ch=f.channel(account.id);let id=custom_probe(&f,ch);
+        for variant in ["missing","wrong","mixed","gzip","json"]{
+            *f.mock.probe_variant.lock().unwrap()=variant.into();
+            let result=crate::custom_probes::execute(&f.state,&id,false,db::now_ms()).await.unwrap();assert!(result.ok,"{variant}: {}",result.note);let billing=result.billing.unwrap();assert_eq!(billing["input_tokens"],7);assert_eq!(billing["output_tokens"],3);assert!(billing["observed_cost_micro"].is_null());
+        }
+        *f.mock.probe_variant.lock().unwrap()="invalid".into();let result=crate::custom_probes::execute(&f.state,&id,false,db::now_ms()).await.unwrap();assert!(!result.ok);assert!(result.note.contains("mime=html"));assert!(result.note.contains("http=200"));assert!(!result.note.contains("SYNTHETIC"));let billing=result.billing.unwrap();assert!(billing["input_tokens"].is_null());assert!(billing["observed_cost_micro"].is_null());
     }
     #[tokio::test]
     async fn custom_probe_oauth_expired_refresh_failure_revocation_and_binding_change_never_dispatch_stale_auth() {

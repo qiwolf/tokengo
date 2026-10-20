@@ -151,11 +151,33 @@ impl Upstream {
         let mut channel=source.clone();channel.base_url=credential.api_base.clone();channel.headers=crate::oauth::inference_headers(credential);
         let fault=||ChannelFault{message:"OAuth diagnostic response unavailable".into()};
         let mut response=self.call_via(&channel,Some(&credential.access_token),"responses",body,true,timeout,&new_uuid(),crate::db::now_ms(),None,true).await.map_err(|_|fault())?;
-        let code=response.status().as_u16();let sse=(200..300).contains(&code)&&response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v|v.to_str().ok()).is_some_and(|v|v.contains("text/event-stream"));
+        let code=response.status().as_u16();
+        let mime=response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v|v.to_str().ok()).map(str::to_ascii_lowercase);
+        let mime_bucket=match mime.as_deref(){None=>"missing",Some(s)if s.contains("text/event-stream")=>"sse",Some(s)if s.contains("json")=>"json",Some(s)if s.contains("html")=>"html",_=>"other"};
+        let encoding=response.headers().get(reqwest::header::CONTENT_ENCODING).and_then(|v|v.to_str().ok()).map(str::to_ascii_lowercase);
+        let encoding_bucket=match encoding.as_deref(){None|Some("identity")=>"identity",Some("gzip")=>"gzip",Some("br")=>"br",Some("zstd")=>"zstd",_=>"other"};
         let mut count=0usize;let mut bytes=Vec::new();let mut collector=crate::protocol::collect::ResponsesCollector::default();
-        while let Some(chunk)=response.chunk().await.map_err(|_|fault())? {if chunk.len()>limit.saturating_sub(count){return Err(fault());}count+=chunk.len();if sse {collector.feed(&chunk).map_err(|_|fault())?;if collector.observer.done{break;}}else{bytes.extend_from_slice(&chunk);}}
-        if sse {bytes=serde_json::to_vec(&collector.finish().map_err(|_|fault())?).map_err(|_|fault())?;}
-        if bytes.len()>limit{return Err(fault());}Ok((code,Bytes::from(bytes)))
+        // stream=true is authoritative. MIME is only a hint: official/proxied SSE
+        // may omit or mislabel it. A JSON success body remains compatible.
+        let mut sse=None;let mut prefix_format="empty";
+        let response_fault=|stage:&str,format:&str|ChannelFault{message:format!("oauth_response_{stage}; http={code}; mime={mime_bucket}; encoding={encoding_bucket}; format={format}")};
+        while let Some(chunk)=response.chunk().await.map_err(|_|response_fault("read",prefix_format))? {
+            if chunk.len()>limit.saturating_sub(count){return Err(response_fault("too_large",prefix_format));}count+=chunk.len();
+            if sse.is_none(){
+                bytes.extend_from_slice(&chunk);
+                if bytes.len()<3&&[0xef,0xbb,0xbf].starts_with(&bytes){continue;}
+                if bytes.starts_with(&[0xef,0xbb,0xbf]){bytes.drain(..3);}
+                let Some(first)=bytes.iter().copied().find(|b|!b.is_ascii_whitespace())else{continue};
+                let is_sse=(200..300).contains(&code)&&!matches!(first,b'{'|b'[');
+                prefix_format=if matches!(first,b'{'|b'['){"json"}else if first==0x1f||first>=0x80{"binary"}else{"sse_or_text"};
+                sse=Some(is_sse);
+                if is_sse{collector.feed(&bytes).map_err(|_|response_fault("events",prefix_format))?;bytes.clear();}
+            }else if sse==Some(true){collector.feed(&chunk).map_err(|_|response_fault("events",prefix_format))?;}else{bytes.extend_from_slice(&chunk);}
+            if sse==Some(true)&&collector.observer.done{break;}
+        }
+        if sse==Some(true){bytes=serde_json::to_vec(&collector.finish().map_err(|_|response_fault("incomplete_events",prefix_format))?).map_err(|_|response_fault("json",prefix_format))?;}
+        else if serde_json::from_slice::<serde_json::Value>(&bytes).is_err(){return Err(response_fault("invalid_json",prefix_format));}
+        if bytes.len()>limit{return Err(response_fault("too_large",prefix_format));}Ok((code,Bytes::from(bytes)))
     }
 
     /// Successful probes consume a bounded body and validate the endpoint structure.

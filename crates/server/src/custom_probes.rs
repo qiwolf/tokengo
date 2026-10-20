@@ -294,7 +294,7 @@ async fn execute_actor(state:&SharedState,id:&str,background:bool,now:i64,actor:
         guard.sent=true;
         let timeout=Duration::from_millis(probe.config.timeout_ms);
         let response=if let Some(o)=&oauth{state.upstream.custom_probe_oauth_request(&live.channel,o,payload,timeout,RESPONSE_LIMIT).await}else{state.upstream.custom_probe_request(&live.channel,live.secret.as_deref(),live.endpoint.path(),payload,timeout,RESPONSE_LIMIT).await};
-        let (code,bytes)=response.map_err(|_|"上游连接、读取或响应大小检查失败；未记录上游正文")?;
+        let (code,bytes)=match response{Ok(value)=>value,Err(error)=>{if live.oauth&&error.message.starts_with("oauth_response_"){result.note=format!("OAuth 响应检查失败：{}；未记录上游正文",error.message);return Ok(());}return Err("上游连接、读取或响应大小检查失败；未记录上游正文")}};
         result.status=Some(code);let latency=started.elapsed().as_millis()as u64;
         let (ok,note)=evaluate(&probe.config,code,&bytes,latency,live.channel.unwrap_envelope);result.ok=ok;result.note=note;
         let mut value:Value=serde_json::from_slice(&bytes).unwrap_or(Value::Null);if live.channel.unwrap_envelope{tokengo_shared::unwrap_envelope(&mut value);}
