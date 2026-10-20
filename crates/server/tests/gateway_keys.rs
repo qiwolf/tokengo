@@ -61,7 +61,7 @@ async fn slow_auth_does_not_starve_the_async_runtime() {
     let cfg=config(); let state=AppState::init(cfg.clone()).unwrap();
     sessions::set_panel_password(&state.conn(),"test-password").unwrap();
     sessions::set_gateway_key(&state.conn(),&state.secrets,"legacy-key").unwrap();
-    let login=request(state.clone(),"POST","/api/auth/login",None,json!({"password":"wrong"}));
+    let login=request(state.clone(),"POST","/api/auth/login",None,json!({"username":"admin","password":"wrong"}));
     let timer=async { let t=std::time::Instant::now(); tokio::time::sleep(std::time::Duration::from_millis(15)).await; t.elapsed() };
     let ((status,_),elapsed)=tokio::join!(login,timer);
     assert_eq!(status,StatusCode::UNAUTHORIZED);

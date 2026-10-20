@@ -47,6 +47,7 @@ pub fn app(state: SharedState) -> Router {
         .nest("/v1", routes::proxy::router())
         // 面板管理面
         .nest("/api", routes::admin::router())
+        .merge(routes::accounts::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
         .merge(routes::oauth::router())

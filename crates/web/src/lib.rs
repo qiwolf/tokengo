@@ -1,18 +1,11 @@
 //! tokengo 面板。**用 Rust 写界面（Leptos CSR → WASM），不引 npm 依赖。**
 //!
-//! 只做本机真正用得上的 5 页，导航在顶栏（照 freellmapi 面板的排法：
-//! 顶上一条横菜单、每页一个大标题加一句话、内容就是普通表格）：
-//!
-//!   1. 总览  四个数 + 最近调用 + 各条渠道的账 + 能被调用的模型名
-//!   2. 渠道  增删改查 + 自定义请求头 + 按渠道改模型名 + 「测一下」连通性
-//!   3. 模型  一行 = 渠道里勾过的名字（含保留名 auto）+ 现在走哪条、何时回头试首选 + 路由参数
-//!   4. 请求  模型、渠道、状态、延迟、token、错误原因
-//!   5. 设置  对外 key、面板口令、退出登录
-//!
-//! 后端始终是唯一数据源：面板**不做本地缓存**，每次进页面重新拉 ——
-//! 免得界面上显示的是过期状态（"看着还在用首选、其实早切走了"最坏事）。
+//! 管理员控制台与普通账号门户分离；浏览器仅使用同源 HttpOnly 会话。
+//! 后端是账号、网关状态与账本的唯一数据源，每次进入页面重新读取。
 
 pub mod api;
+pub mod account_api;
+pub mod account_ui;
 pub mod admin_api;
 pub mod fmt;
 pub mod model;
@@ -143,6 +136,7 @@ pub enum Phase {
 #[derive(Clone, Copy)]
 pub struct Ctx {
     pub phase: RwSignal<Phase>,
+    pub account: RwSignal<Option<account_api::Account>>,
     /// 当前页（同时写进 URL 的 hash，刷新与前进后退都还在这一页）
     pub page: RwSignal<Page>,
     /// 一句话提示，显示在顶栏
@@ -155,11 +149,19 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    pub fn is_root(&self)->bool {self.account.get().is_some_and(|a|a.is_root())}
+    pub fn accept_account(&self,a:account_api::Account) {
+        let root=a.is_root();self.account.set(Some(a));
+        let current=self.page.get_untracked();
+        let target=current.for_account(root);
+        self.go(target);self.phase.set(Phase::Ready);
+    }
     /// 任何接口返回 401 都走这里：清掉本地 token、退回登录页。
     /// **统一处理**才不会出现"某个页面还在傻傻重试"的情况。
     pub fn note_err(&self, e: &api::ApiErr) {
         if e.is_unauthorized() {
             api::clear_token();
+            self.account.set(None);
             self.phase.set(Phase::Login);
         }
     }
@@ -175,10 +177,13 @@ impl Ctx {
 
     /// 切页并把当前页写进 URL 的 hash —— 刷新、前进、后退都还在这一页。
     pub fn go(&self, p: Page) {
+        let p=p.for_account(self.is_root());
+        let menu_was_open=self.nav_open.get_untracked();
         self.page.set(p);
         self.toast.set(None);
         // 手机上在菜单里点完就收起菜单
         self.nav_open.set(false);
+        if menu_was_open {if let Some(el)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id("console-main")).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()){let _=el.focus();}}
         if let Some(w) = web_sys::window() {
             let _ = w.location().set_hash(p.slug());
         }
@@ -213,6 +218,7 @@ pub fn App() -> impl IntoView {
     let theme = RwSignal::new(init_theme());
     let ctx = Ctx {
         phase,
+        account:RwSignal::new(None),
         page,
         toast,
         toast_timer:RwSignal::new(None),
@@ -220,44 +226,23 @@ pub fn App() -> impl IntoView {
         theme,
     };
 
-    // 启动：问服务端要初始化状态；顺手用现有 token 试一下，能用就直接进
+    // Remove the historical bearer before any browser request. Cookie identity is authoritative.
+    api::clear_token();
     wasm_bindgen_futures::spawn_local(async move {
         match api::auth_status().await {
-            Ok(st) => {
-                if st.needs_setup {
-                    phase.set(Phase::Setup);
-                    return;
-                }
-                if api::token().is_none() {
-                    phase.set(Phase::Login);
-                    return;
-                }
-                match api::channels().await {
-                    Ok(_) => phase.set(Phase::Ready),
-                    Err(e) => {
-                        if e.is_unauthorized() {
-                            api::clear_token();
-                            ctx.say("会话过期了，请重新登录");
-                        } else {
-                            ctx.say(format!("读渠道列表失败：{}", e.message));
-                        }
-                        phase.set(Phase::Login);
-                    }
-                }
-            }
-            Err(e) => {
-                phase.set(Phase::Login);
-                ctx.say(format!("问不到服务端状态：{}", e.message));
-            }
+            Ok(st) if st.needs_setup=>phase.set(Phase::Setup),
+            Ok(_)=>match account_api::me().await {Ok(a)=>ctx.accept_account(a),Err(e)=>{phase.set(Phase::Login);if !e.is_unauthorized(){ctx.say(format!("无法恢复登录：{}",e.message));}}},
+            Err(e)=>{phase.set(Phase::Login);ctx.say(format!("无法连接网关：{}",e.message));}
         }
     });
+    Effect::new(move |_| {let title=match phase.get(){Phase::Setup=>"首次设置".to_string(),Phase::Login=>"登录".into(),Phase::Loading=>"正在连接".into(),Phase::Ready=>page.get().title().into()};if let Some(d)=web_sys::window().and_then(|w|w.document()){d.set_title(&format!("{title} · Token-Go 控制台"));}});
 
     // URL 的 hash ↔ 当前页：刷新不丢页，浏览器前进后退也能用
     {
         let cb = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
             let p = Page::from_hash();
             if p != page.get_untracked() {
-                page.set(p);
+                if ctx.account.get_untracked().is_some(){ctx.go(p);}else{page.set(p);}
             }
         }) as Box<dyn FnMut()>);
         if let Some(w) = web_sys::window() {
@@ -270,256 +255,27 @@ pub fn App() -> impl IntoView {
     view! {
         {move || match phase.get() {
             Phase::Loading => view! { <div class="centered muted">"正在连网关…"</div> }.into_any(),
-            Phase::Setup => view! { <SetupScreen ctx=ctx /> }.into_any(),
-            Phase::Login => view! { <LoginScreen ctx=ctx /> }.into_any(),
+            Phase::Setup => view! { <account_ui::AuthScreen ctx=ctx setup=true /> }.into_any(),
+            Phase::Login => view! { <account_ui::AuthScreen ctx=ctx /> }.into_any(),
             Phase::Ready => view! { <Shell ctx=ctx /> }.into_any(),
         }}
     }
 }
 
-/// 首次初始化：设面板口令，顺便定对外 key。
-#[component]
-fn SetupScreen(ctx: Ctx) -> impl IntoView {
-    let (pw, set_pw) = signal(String::new());
-    let (key, set_key) = signal(String::new());
-    let (busy, set_busy) = signal(false);
-    let (once, set_once) = signal(None::<(String, bool)>);
-
-    let submit = move |_| {
-        if busy.get_untracked() {
-            return;
-        }
-        set_busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
-            let k = key.get_untracked();
-            let k = if k.trim().is_empty() { None } else { Some(k) };
-            match api::setup(&pw.get_untracked(), k.as_deref()).await {
-                Ok(r) => {
-                    api::set_token(&r.token);
-                    set_once.set(Some((r.gateway_key.unwrap_or_default(), r.gateway_key_generated)));
-                    set_busy.set(false);
-                }
-                Err(e) => {
-                    ctx.fail(e);
-                    set_busy.set(false);
-                }
-            }
-        });
-    };
-
-    view! {
-        <div class="auth-wrap">
-            <div class="auth-card">
-                <h1>{tokengo_shared::BRAND}" 初始化"</h1>
-                <p class="muted">
-                    "第一次用，先定一个面板口令。对外 key 就是客户端填的那个 key ——
-                     留空则由这里生成一个。"
-                </p>
-                {move || match once.get() {
-                    Some((k, generated)) => view! {
-                        <div class="notice">
-                            <b>"对外 key（只显示这一次）"</b>
-                            <code class="keybox">{k}</code>
-                            <p class="muted">
-                                {move || if generated { "这是自动生成的。" } else { "" }}
-                                "库里只存哈希，之后拿不回明文，请现在记到客户端配置里。"
-                            </p>
-                            <button class="primary" on:click=move |_| ctx.phase.set(Phase::Ready)>
-                                "记好了，进面板"
-                            </button>
-                        </div>
-                    }.into_any(),
-                    None => view! {
-                        <div>
-                            <label>"面板口令"</label>
-                            <input type="password" prop:value=pw
-                                on:input=move |ev| set_pw.set(event_target_value(&ev)) />
-                            <label>"对外 key（可留空）"</label>
-                            <input type="text" prop:value=key placeholder="留空 = 自动生成"
-                                on:input=move |ev| set_key.set(event_target_value(&ev)) />
-                            <button class="primary" disabled=move || busy.get() on:click=submit>
-                                {move || if busy.get() { "正在设置…" } else { "设置并进入" }}
-                            </button>
-                        </div>
-                    }.into_any(),
-                }}
-            </div>
-        </div>
-    }
-}
-
-#[component]
-fn LoginScreen(ctx: Ctx) -> impl IntoView {
-    let (pw, set_pw) = signal(String::new());
-    let (busy, set_busy) = signal(false);
-
-    // 不带参数的闭包，才能同时给 click 和 keydown 两处用（事件类型不同，
-    // 带参数的闭包在两处会被推断成冲突的签名）
-    let submit = move || {
-        if busy.get_untracked() {
-            return;
-        }
-        set_busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
-            match api::login(&pw.get_untracked()).await {
-                Ok(r) => {
-                    api::set_token(&r.token);
-                    set_pw.set(String::new());
-                    ctx.toast.set(None);
-                    ctx.phase.set(Phase::Ready);
-                }
-                Err(e) => ctx.say(format!("登录失败：{}", e.message)),
-            }
-            set_busy.set(false);
-        });
-    };
-
-    view! {
-        <div class="auth-wrap">
-            <div class="auth-card">
-                <h1>{tokengo_shared::BRAND}" 面板"</h1>
-                <label>"口令"</label>
-                <input type="password" prop:value=pw
-                    on:input=move |ev| set_pw.set(event_target_value(&ev))
-                    on:keydown=move |ev| {
-                        if ev.key() == "Enter" {
-                            submit();
-                        }
-                    } />
-                <button class="primary" disabled=move || busy.get() on:click=move |_| submit()>
-                    {move || if busy.get() { "登录中…" } else { "登录" }}
-                </button>
-            </div>
-        </div>
-    }
-}
-
-/// 登录后的整体布局：**顶上一条横菜单** + 内容区。
-///
-/// 为什么不用左侧栏：手机上一竖列塞不下五个够大的按钮、还得做成抽屉；
-/// 顶栏横排 + 右上角一个菜单按钮更省地方，桌面端五个两字短名也排得下。
-/// 页面本身统一成「大标题 + 一句话 + 一条横线」（见 `pages::PageHead`），
-/// 于是到哪一页都知道标题在哪、按钮在哪 —— 这是照 freellmapi 面板的排法抄的。
+/// Root and user share the visual shell; user routes never mount administrator pages.
 #[component]
 fn Shell(ctx: Ctx) -> impl IntoView {
-    let logout = move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
-            // 撤销会话失败也照样退出本地登录：不能因为网络问题就退不出去
-            let _ = api::logout().await;
-            api::clear_token();
-            ctx.phase.set(Phase::Login);
-        });
-    };
-    let reload = move |_| {
-        if let Some(w) = web_sys::window() {
-            let _ = w.location().reload();
-        }
-    };
-
-    view! {
-        <div class="shell">
-            <header class="topbar">
-                <div class="topbar-inner">
-                    <button class="brand brand-home" title="返回总览" on:click=move |_| ctx.go(Page::Overview)>
-                        "Token-Go"
-                        <span class="muted small">"v" {tokengo_shared::VERSION}</span>
-                    </button>
-                    // 桌面端：五个页面横排（手机上这排会藏起来，走右上角菜单）
-                    <nav class="topnav">
-                        {Page::ALL
-                            .iter()
-                            .map(|p| {
-                                let p = *p;
-                                view! {
-                                    <button
-                                        class="nav"
-                                        class:active=move || ctx.page.get() == p
-                                        title=p.blurb()
-                                        on:click=move |_| ctx.go(p)
-                                    >
-                                        {p.title()}
-                                    </button>
-                                }
-                            })
-                            .collect_view()}
-                    </nav>
-                    <span class="spacer"></span>
-                    {move || ctx.toast.get().map(|t| view! { <span class="toast">{t}</span> })}
-                    <button
-                        class="ghost icon-btn"
-                        title=move || {
-                            if ctx.theme.get().is_light() { "切到夜间" } else { "切到日间" }
-                        }
-                        on:click=move |_| ctx.toggle_theme()
-                    >
-                        {move || if ctx.theme.get().is_light() { "☾" } else { "☀" }}
-                    </button>
-                    <div class="menu-wrap">
-                        <button
-                            class="ghost icon-btn nav-toggle"
-                            title="菜单"
-                            on:click=move |_| ctx.nav_open.update(|v| *v = !*v)
-                        >
-                            "☰"
-                        </button>
-                    </div>
-                </div>
-            </header>
-            // 菜单的遮罩与弹窗**不能待在顶栏里面**：顶栏带 backdrop-filter（毛玻璃），
-            // 它会变成 fixed 后代的包含块 —— 遮罩的 inset:0 于是只铺满 54px 高的顶栏，
-            // 点页面别处根本点不到它，菜单就关不掉（2026-10-18 用户实测报的）。
-            {move || {
-                ctx.nav_open
-                    .get()
-                    .then(|| {
-                        view! {
-                            <>
-                                <button
-                                    class="nav-scrim"
-                                    title="收起菜单"
-                                    on:click=move |_| ctx.nav_open.set(false)
-                                ></button>
-                                <div class="menu-pop">
-                                    {Page::ALL
-                                        .iter()
-                                        .map(|p| {
-                                            let p = *p;
-                                            view! {
-                                                <button
-                                                    class="menu-item"
-                                                    class:active=move || ctx.page.get() == p
-                                                    on:click=move |_| ctx.go(p)
-                                                >
-                                                    {p.title()}
-                                                </button>
-                                            }
-                                        })
-                                        .collect_view()}
-                                    <div class="menu-sep"></div>
-                                    <button class="menu-item" on:click=reload>
-                                        "重新载入面板"
-                                    </button>
-                                    <button class="menu-item danger" on:click=logout>
-                                        "退出登录"
-                                    </button>
-                                </div>
-                            </>
-                        }
-                    })
-            }}
-
-            <main class="main">
-                <section class="content">
-                    {move || match ctx.page.get() {
-                        Page::Overview => view! { <pages::overview::Overview ctx=ctx /> }.into_any(),
-                        Page::Channels => view! { <pages::channels::Channels ctx=ctx /> }.into_any(),
-                        Page::Models => view! { <pages::models::Models ctx=ctx /> }.into_any(),
-                        Page::Users => view! { <pages::users::Users ctx=ctx /> }.into_any(),
-                        Page::Billing => view! { <pages::billing::Billing ctx=ctx /> }.into_any(),
-                        Page::Settings => view! { <pages::settings::Settings ctx=ctx /> }.into_any(),
-                    }}
-                </section>
-            </main>
-        </div>
-    }
+    let busy=RwSignal::new(false);let logout_error=RwSignal::new(String::new());
+    let logout=move |_| {if busy.get_untracked(){return;}busy.set(true);logout_error.set(String::new());leptos::task::spawn_local(async move{match account_api::logout().await {Ok(())=>{ctx.account.set(None);api::clear_token();ctx.nav_open.set(false);ctx.phase.set(Phase::Login);},Err(e)=>{ctx.note_err(&e);logout_error.set(format!("退出未完成，请重试：{}",e.message));}}busy.set(false);});};
+    view! {<div class="console-layout" on:keydown=move|ev|{if ev.key()=="Escape"{ctx.nav_open.set(false);if let Some(el)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id("console-menu")).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()){let _=el.focus();}}}>
+        <a class="skip-link" href="#console-main" on:click=move|ev|{ev.prevent_default();if let Some(el)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id("console-main")).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()){let _=el.focus();}}>"跳到主内容"</a>
+        <header class="console-header"><button type="button" class="console-brand" on:click=move|_|ctx.go(if ctx.is_root(){Page::Overview}else{Page::Portal})><strong>"Token-Go"</strong><span>"私有网关"</span></button><span class="console-header-page">{move||ctx.page.get().title()}</span><span class="spacer"></span><button type="button" class="ghost console-theme" on:click=move|_|ctx.toggle_theme()>{move||if ctx.theme.get().is_light(){"切换深色"}else{"切换浅色"}}</button><button id="console-menu" type="button" class="ghost console-menu-toggle" aria-controls="console-nav" aria-expanded=move||ctx.nav_open.get().to_string() on:click=move|_|ctx.nav_open.update(|v|*v=!*v)>"菜单"</button></header>
+        <aside id="console-nav" class="console-sidebar" class:is-open=move||ctx.nav_open.get()><div class="console-nav-caption">{move||if ctx.is_root(){"网关管理"}else{"个人空间"}}</div><nav aria-label="主导航">{move||{let pages=if ctx.is_root(){Page::ALL.to_vec()}else{vec![Page::Portal]};pages.into_iter().map(|p|view!{<button type="button" class="console-nav-item" class:active=move||ctx.page.get()==p aria-current=move||if ctx.page.get()==p{Some("page")}else{None} on:click=move|_|ctx.go(p)>{p.title()}</button>}).collect_view()}}</nav>
+        <div class="console-account"><div class="console-account-label"><strong>{move||ctx.account.get().map(|a|a.label()).unwrap_or_default()}</strong><span>{move||if ctx.is_root(){"管理员"}else{"普通账号"}}</span></div><p class="muted small">{move||ctx.account.get().map(|a|a.username).unwrap_or_default()}</p><button type="button" class="console-nav-item" class:active=move||ctx.page.get()==Page::Account on:click=move|_|ctx.go(Page::Account)>"账号安全"</button><button type="button" class="console-nav-item" disabled=move||busy.get() on:click=logout>{move||if busy.get(){"正在退出…"}else{"退出登录"}}</button><span class="console-version">"v"{tokengo_shared::VERSION}</span></div></aside>
+        <main id="console-main" class="console-main" tabindex="-1"><div class="console-content"><Show when=move||!logout_error.get().is_empty()><div class="banner bad" role="alert">{move||logout_error.get()}</div></Show>
+        {move||if ctx.page.get()==Page::Account {view!{<account_ui::Profile ctx=ctx/>}.into_any()}else if !ctx.is_root(){view!{<pages::portal::Portal ctx=ctx/>}.into_any()}else{match ctx.page.get(){
+            Page::Overview=>view!{<pages::overview::Overview ctx=ctx/>}.into_any(),Page::Channels=>view!{<pages::channels::Channels ctx=ctx/>}.into_any(),Page::Models=>view!{<pages::models::Models ctx=ctx/>}.into_any(),Page::Users=>view!{<pages::users::Users ctx=ctx/>}.into_any(),Page::Accounts=>view!{<pages::accounts::Accounts ctx=ctx/>}.into_any(),Page::Billing=>view!{<pages::billing::Billing ctx=ctx/>}.into_any(),Page::Settings=>view!{<pages::settings::Settings ctx=ctx/>}.into_any(),_=>view!{<pages::overview::Overview ctx=ctx/>}.into_any(),
+        }}}
+        </div></main>{move||ctx.toast.get().map(|t|view!{<div class="console-toast" role="status">{t}</div>})}
+    </div>}
 }

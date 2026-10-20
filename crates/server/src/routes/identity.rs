@@ -63,8 +63,10 @@ pub struct AdminAuth(pub Option<AuthContext>);
 impl FromRequestParts<SharedState> for AdminAuth {
     type Rejection = ApiError;
     async fn from_request_parts(parts: &mut Parts, state: &SharedState) -> Result<Self, ApiError> {
-        if PanelAuth::from_request_parts(parts, state).await.is_ok() {
-            return Ok(AdminAuth(None));
+        match PanelAuth::from_request_parts(parts, state).await {
+            Ok(_) => return Ok(AdminAuth(None)),
+            Err(e) if parts.headers.contains_key(axum::http::header::COOKIE) => return Err(e),
+            Err(_) => {}
         }
         let VKeyAuth(auth) = VKeyAuth::from_request_parts(parts, state).await?;
         if auth.role != "admin" || !auth.effective_policy().admin_access {

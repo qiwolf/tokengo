@@ -9,6 +9,8 @@
 //! 这一层了（一个模型名 = 渠道里勾了它的那些渠道），面板只剩「模型」一页看它。
 
 pub mod channels;
+pub mod accounts;
+pub mod portal;
 pub mod users;
 pub mod billing;
 pub mod models;
@@ -28,6 +30,9 @@ pub enum Page {
     Users,
     Billing,
     Settings,
+    Accounts,
+    Portal,
+    Account,
 }
 
 impl Page {
@@ -36,9 +41,16 @@ impl Page {
         Page::Channels,
         Page::Models,
         Page::Users,
+        Page::Accounts,
         Page::Billing,
         Page::Settings,
     ];
+
+    /// UI mounting boundary mirrors the server's distinct account roles.
+    pub fn for_account(self, root:bool)->Page {
+        if root {if self==Page::Portal {Page::Overview}else{self}}
+        else if matches!(self,Page::Account|Page::Portal){self}else{Page::Portal}
+    }
 
     /// URL hash 里用的名字。
     pub fn slug(self) -> &'static str {
@@ -49,6 +61,7 @@ impl Page {
             Page::Users => "users",
             Page::Billing => "billing",
             Page::Settings => "settings",
+            Page::Accounts=>"accounts",Page::Portal=>"portal",Page::Account=>"account",
         }
     }
 
@@ -58,9 +71,10 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
-            Page::Users => "用户",
+            Page::Users => "API 用户",
             Page::Billing => "账务",
             Page::Settings => "设置",
+            Page::Accounts=>"面板账号",Page::Portal=>"我的用量",Page::Account=>"账号安全",
         }
     }
 
@@ -72,7 +86,8 @@ impl Page {
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
             Page::Users => "用户身份、虚拟密钥及其权限和限流。",
             Page::Billing => "预算、价格版本和持久化的逐次尝试账本。",
-            Page::Settings => "对外 key、面板口令、登录着的设备。",
+            Page::Settings => "网关密钥、运行参数与维护。",
+            Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人密钥元数据与用量。",Page::Account=>"当前登录账号与密码。",
         }
     }
 
@@ -89,6 +104,7 @@ impl Page {
         match name {
             "groups" | "routing" => Page::Models,
             "logs" => Page::Settings,
+            "portal"=>Page::Portal,"account"=>Page::Account,
             _ => Self::ALL
                 .iter()
                 .copied()
@@ -127,6 +143,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ordinary_accounts_cannot_mount_administrator_pages() {
+        for page in Page::ALL {assert_eq!(page.for_account(false),Page::Portal);}
+        assert_eq!(Page::Account.for_account(false),Page::Account);
+        assert_eq!(Page::Portal.for_account(true),Page::Overview);
+        assert_eq!(Page::Accounts.for_account(true),Page::Accounts);
+    }
+
+    #[test]
     fn every_page_has_a_unique_slug_and_a_title() {
         // 顶栏靠 slug 跳页，重复的 slug 会让某一页永远打不开。
         let mut slugs: Vec<&str> = Page::ALL.iter().map(|p| p.slug()).collect();
@@ -137,6 +161,6 @@ mod tests {
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
         // 总览 · 渠道 · 模型 · 用户 · 账务 · 设置
-        assert_eq!(Page::ALL.len(), 6);
+        assert_eq!(Page::ALL.len(), 7);
     }
 }

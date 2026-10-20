@@ -17,18 +17,6 @@ pub struct AuthStatus {
     pub version: String,
 }
 
-/// 面板初始化/改口令的返回：token 之外还可能回显一次明文对外 key。
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-pub struct SetupResp {
-    pub token: String,
-    #[serde(default)]
-    pub gateway_key: Option<String>,
-    #[serde(default)]
-    pub gateway_key_generated: bool,
-    #[serde(default)]
-    pub notice: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct HeaderPair {
     pub name: String,

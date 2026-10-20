@@ -293,7 +293,7 @@ async fn login_flow_and_wrong_password() {
         "POST",
         "/api/auth/login",
         None,
-        Some(json!({ "password": "nope" })),
+        Some(json!({ "username": "admin", "password": "nope" })),
     )
     .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
@@ -304,7 +304,7 @@ async fn login_flow_and_wrong_password() {
         "POST",
         "/api/auth/login",
         None,
-        Some(json!({ "password": "test-password" })),
+        Some(json!({ "username": "admin", "password": "test-password" })),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -581,7 +581,7 @@ async fn changing_the_password_invalidates_old_sessions() {
         "POST",
         "/api/auth/login",
         None,
-        Some(json!({ "password": "test-password" })),
+        Some(json!({ "username": "admin", "password": "test-password" })),
     )
     .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);

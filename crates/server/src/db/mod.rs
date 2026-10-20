@@ -3,6 +3,7 @@
 //! SQLite（rusqlite，bundled 编译，不依赖系统库），与现网 FreeLLMAPI 同一种库，
 //! 将来搬数据和对拍都方便。
 
+pub mod accounts;
 pub mod identity;
 pub mod billing;
 pub mod faults;
@@ -156,6 +157,8 @@ mod tests {
             "model_cooldowns",
             "model_invocations",
             "panel_sessions",
+            "panel_accounts",
+            "account_sessions",
             "channel_context_overrides",
             "registry_associations",
             "registry_context",

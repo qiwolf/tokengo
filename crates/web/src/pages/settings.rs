@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
-async fn copy_text(text: &str) -> bool {
+pub(crate) async fn copy_text(text: &str) -> bool {
     let Some(window) = web_sys::window() else { return false };
     // HTTP origins have no Clipboard API; denied permissions must also fall back.
     if let Ok(value) = js_sys::Reflect::get(window.navigator().as_ref(), &JsValue::from_str("clipboard")) {
@@ -243,8 +243,6 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
     let logs_open=RwSignal::new(false);
     let info = RwSignal::new(crate::model::SettingsResp::default());
     let err = RwSignal::new(None::<String>);
-    let old_pw = RwSignal::new(String::new());
-    let new_pw = RwSignal::new(String::new());
 
     // 账目维护：只让用户填一个数（保留天数），其余三行是只读实话
     let maint = RwSignal::new(crate::model::MaintenanceResp::default());
@@ -309,36 +307,11 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
         });
     };
 
-    let change_pw = move |_| {
-        let o = old_pw.get_untracked();
-        let n = new_pw.get_untracked();
-        if n.trim().is_empty() {
-            ctx.say("新口令不能为空");
-            return;
-        }
-        wasm_bindgen_futures::spawn_local(async move {
-            match api::change_password(&o, &n).await {
-                Ok(r) => {
-                    // 改口令会踢掉所有会话，服务端已经补发了一个新的
-                    api::set_token(&r.token);
-                    old_pw.set(String::new());
-                    new_pw.set(String::new());
-                    ctx.say("口令已改，其他设备上的会话已失效");
-                    reload();
-                }
-                Err(e) => {
-                    ctx.note_err(&e);
-                    ctx.say(format!("改口令失败：{}", e.message));
-                }
-            }
-        });
-    };
-
     view! {
         <div class="page">
             <PageHead
                 title="设置"
-                desc="对外 key、面板口令、登录着的设备。"
+                desc="网关密钥、运行参数与维护。"
             ><button class="ghost" on:click=move |_| reload()>"刷新"</button></PageHead>
             <div class="toolbar">
                 <span class="muted small">
@@ -422,29 +395,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
             </section>
 
-            <section class="card">
-                <header class="card-head">
-            <h2>"面板口令"</h2>
-                </header>
-                <div class="card-body">
-            <div class="panel">
-                <div class="form-grid">
-                    <label>"原口令"</label>
-                    <input type="password" prop:value=old_pw
-                        on:input=move |ev| old_pw.set(event_target_value(&ev)) />
-                    <label>"新口令"</label>
-                    <div>
-                        <input type="password" prop:value=new_pw
-                            on:input=move |ev| new_pw.set(event_target_value(&ev)) />
-                        <div class="muted small">"改完会踢掉所有设备的登录，包括现在这台（会自动重新登录）。"</div>
-                    </div>
-                </div>
-                <div class="modal-foot">
-                    <button class="primary" on:click=change_pw>"改口令"</button>
-                </div>
-            </div>
-                </div>
-            </section>
+            <section class="card"><header class="card-head"><h2>"账号安全"</h2></header><div class="card-body"><p class="muted">"登录账号与 API 密钥独立。管理员可修改自己的登录账号和密码。"</p><button class="ghost" on:click=move |_|ctx.go(crate::Page::Account)>"管理登录账号与密码"</button></div></section>
 
         <details class="fold settings-logs" on:toggle=move |ev| {if let Some(target)=ev.target(){logs_open.set(js_sys::Reflect::get(&target,&"open".into()).ok().and_then(|v|v.as_bool()).unwrap_or(false));}}>
             <summary>"运行日志"</summary>

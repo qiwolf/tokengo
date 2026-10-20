@@ -50,6 +50,7 @@ pub struct AppState {
     pub tool_rates: crate::source_rates::SourceRates,
     pub oauth: crate::oauth::OAuthRuntime,
     pub admission: crate::admission::AdmissionState,
+    pub panel_login_gate: crate::routes::accounts::LoginGate,
     pub auth_slots: Arc<tokio::sync::Semaphore>,
     pub model_loads:Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
@@ -178,6 +179,7 @@ impl AppState {
             tracing::info!("数据库已切到增量回收模式，清理腾出的空间会真的还给磁盘");
         }
 
+        db::accounts::migrate_legacy_sessions(&conn)?;
         let secrets = SecretBox::load_or_init(Path::new(&cfg.master_key_path))?;
         db::gateway_keys::hydrate_legacy(&conn, &secrets)?;
         db::channels::migrate_headers(&conn, &secrets)?;
@@ -213,6 +215,7 @@ impl AppState {
             tool_rates: Default::default(),
             oauth: crate::oauth::OAuthRuntime::new()?,
             admission: crate::admission::AdmissionState::default(),
+            panel_login_gate: Default::default(),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             model_loads:Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),

@@ -1,6 +1,6 @@
 //! 打后端接口。**面板里所有请求都从这里走一层**，好处是：
 //!
-//! - 会话 token 只在这一个地方拼进请求头，不会某个页面漏带；
+//! - 浏览器只使用同源 HttpOnly cookie，写请求统一标记供 CSRF 校验；
 //! - 401（会话过期）在这一层统一识别，界面能立刻退回登录页，而不是各页面各弹一个错；
 //! - 非 2xx 一律变成带人话的 `ApiErr`，页面上直接显示，不需要每处重新解析。
 
@@ -17,26 +17,11 @@ fn storage() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|w| w.local_storage().ok()).flatten()
 }
 
-/// 面板当前会话 token（存在浏览器 localStorage 里）。
-pub fn token() -> Option<String> {
-    storage()?
-        .get_item(TOKEN_KEY)
-        .ok()
-        .flatten()
-        .filter(|t| !t.trim().is_empty())
-}
-
-pub fn set_token(t: &str) {
-    if let Some(s) = storage() {
-        let _ = s.set_item(TOKEN_KEY, t);
-    }
-}
-
-pub fn clear_token() {
-    if let Some(s) = storage() {
-        let _ = s.remove_item(TOKEN_KEY);
-    }
-}
+/// Legacy browser helpers never read or persist a bearer credential.
+/// Kept for source compatibility; account authentication uses HttpOnly cookies.
+pub fn token() -> Option<String> { None }
+pub fn set_token(_: &str) { clear_token(); }
+pub fn clear_token() {if let Some(s)=storage(){let _=s.remove_item(TOKEN_KEY);}}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiErr {
@@ -74,9 +59,8 @@ pub(crate) async fn call(method: &str, path: &str, body: Option<Value>) -> Resul
             })
         }
     };
-    if let Some(t) = token() {
-        b = b.header("authorization", &format!("Bearer {t}"));
-    }
+    b = b.credentials(web_sys::RequestCredentials::SameOrigin);
+    if method != "GET" { b = b.header("X-Tokengo-Panel", "1"); }
     let req = match body {
         Some(v) => b
             .json(&v)
@@ -114,7 +98,7 @@ pub(crate) async fn call(method: &str, path: &str, body: Option<Value>) -> Resul
     Ok(parsed)
 }
 
-async fn typed<T: DeserializeOwned>(method: &str, path: &str, body: Option<Value>) -> Result<T, ApiErr> {
+pub(crate) async fn typed<T: DeserializeOwned>(method: &str, path: &str, body: Option<Value>) -> Result<T, ApiErr> {
     let v = call(method, path, body).await?;
     serde_json::from_value(v).map_err(|e| ApiErr {
         status: 0,
@@ -127,34 +111,6 @@ async fn typed<T: DeserializeOwned>(method: &str, path: &str, body: Option<Value
 /// 登录页要用的状态（不需要会话）。
 pub async fn auth_status() -> Result<AuthStatus, ApiErr> {
     typed("GET", "/api/auth/status", None).await
-}
-
-pub async fn login(password: &str) -> Result<SetupResp, ApiErr> {
-    typed("POST", "/api/auth/login", Some(json!({ "password": password }))).await
-}
-
-/// 首次初始化：设面板口令 + 对外 key（不传 key 就由服务端生成一个）。
-pub async fn setup(password: &str, gateway_key: Option<&str>) -> Result<SetupResp, ApiErr> {
-    typed(
-        "POST",
-        "/api/auth/setup",
-        Some(json!({ "password": password, "gateway_key": gateway_key })),
-    )
-    .await
-}
-
-pub async fn logout() -> Result<(), ApiErr> {
-    let body = json!({ "token": token() });
-    call("POST", "/api/auth/logout", Some(body)).await.map(|_| ())
-}
-
-pub async fn change_password(old: &str, new: &str) -> Result<SetupResp, ApiErr> {
-    typed(
-        "PUT",
-        "/api/auth/password",
-        Some(json!({ "old_password": old, "new_password": new })),
-    )
-    .await
 }
 
 pub async fn channels() -> Result<Vec<Channel>, ApiErr> {

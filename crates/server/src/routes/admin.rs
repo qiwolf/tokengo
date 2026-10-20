@@ -1,7 +1,8 @@
 //! 管理面：面板用的接口。只做面板真需要的，不做上游那 24 个管理路由。
 //!
 //! 鉴权：登录后拿到一个会话 token，之后每个请求带
-//! `Authorization: Bearer <token>` 或 Cookie `tokengo_session=<token>`。
+//! 兼容运维 `Authorization: Bearer <token>`；新浏览器使用独立HttpOnly账号Cookie。
+//! Cookie写操作必须通过统一CSRF门，普通面板账号不能进入管理面。
 //! 除 `ping` / `auth/*` 外，**所有接口都要过会话门**。
 
 use axum::extract::{FromRequestParts, Path, Query, State};
@@ -63,11 +64,11 @@ fn router_inner() -> Router<SharedState> {
         // —— 无鉴权 ——
         .route("/ping", get(ping))
         .route("/auth/status", get(auth_status))
-        .route("/auth/setup", post(auth_setup))
-        .route("/auth/login", post(auth_login))
-        .route("/auth/logout", post(auth_logout))
+        .route("/auth/setup", post(auth_setup).layer(axum::middleware::map_response(super::accounts::json_errors)))
+        .route("/auth/login", post(auth_login).layer(axum::middleware::map_response(super::accounts::json_errors)))
+        .route("/auth/logout", post(auth_logout).layer(axum::middleware::map_response(super::accounts::json_errors)))
         // —— 需要登录 ——
-        .route("/auth/password", put(auth_change_password))
+        .route("/auth/password", put(auth_change_password).layer(axum::middleware::map_response(super::accounts::json_errors)))
         .route("/channels", get(channels_list).post(channels_create))
         .route("/channels/{id}", put(channels_update).delete(channels_delete))
         .route("/channels/{id}/enabled", put(channels_set_enabled))
@@ -123,17 +124,12 @@ impl FromRequestParts<SharedState> for PanelAuth {
         parts: &mut Parts,
         state: &SharedState,
     ) -> Result<Self, Self::Rejection> {
-        let token = bearer_token(parts)
-            .or_else(|| cookie_token(parts))
-            .ok_or_else(|| ApiError::unauthorized("未登录"))?;
-        let ok = sessions::check_session(&state.conn(), &token).unwrap_or(false);
-        if !ok {
-            return Err(ApiError::unauthorized("会话已失效，请重新登录"));
-        }
+        super::accounts::root_authorize(parts, state).await?;
         Ok(PanelAuth)
     }
 }
 
+#[cfg(test)]
 fn bearer_token(parts: &Parts) -> Option<String> {
     let raw = parts.headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
     let t = raw.strip_prefix("Bearer ").or_else(|| raw.strip_prefix("bearer "))?;
@@ -141,6 +137,7 @@ fn bearer_token(parts: &Parts) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
+#[cfg(test)]
 fn cookie_token(parts: &Parts) -> Option<String> {
     let raw = parts.headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
     for kv in raw.split(';') {
@@ -195,6 +192,8 @@ async fn auth_setup(
     headers: axum::http::HeaderMap,
     Json(body): Json<SetupBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    super::accounts::legacy_request_headers(&headers)?;
+    crate::db::accounts::password(&body.password).map_err(|e|ApiError::bad_request(e.to_string()))?;
     let conn = state.conn();
     if sessions::has_panel_password(&conn)? {
         return Err(ApiError::bad_request("口令已设置过，请走登录"));
@@ -226,6 +225,8 @@ async fn auth_setup(
 
 #[derive(Deserialize)]
 struct LoginBody {
+    #[serde(default)]
+    username: Option<String>,
     password: String,
 }
 
@@ -234,6 +235,12 @@ async fn auth_login(
     headers: axum::http::HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    super::accounts::legacy_request_headers(&headers)?;
+    let username = body.username.as_deref().ok_or_else(|| ApiError::bad_request("登录需要用户名和密码"))?;
+    if body.password.len()>256 { return Err(ApiError::unauthorized("账号或密码错误")); }
+    state.panel_login_gate.check(&username.to_ascii_lowercase())?;
+    let root = crate::db::accounts::root(&state.conn())?.ok_or_else(|| ApiError::unauthorized("账号或密码错误"))?;
+    let username_ok = root.account.username.eq_ignore_ascii_case(username);
     let hash = settings::get(&state.conn(), settings::PANEL_PASSWORD_HASH)?
         .ok_or_else(|| ApiError::bad_request("还没设置口令，请先初始化"))?;
     let slot = state.auth_slots.clone().try_acquire_owned()
@@ -244,9 +251,10 @@ async fn auth_login(
         sessions::verify_password(&body.password, &verify_hash)
     }).await.map_err(|e| ApiError::internal(e.to_string()))?;
     let conn = state.conn();
-    if !ok || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str()) {
+    if !ok || !username_ok || !crate::db::accounts::legacy_root_valid(&conn)? || crate::db::accounts::root(&conn)?.is_none_or(|now|now.version!=root.version || now.account.username!=root.account.username) || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str()) {
         return Err(ApiError::unauthorized("口令不对"));
     }
+    state.panel_login_gate.success(&username.to_ascii_lowercase());
     sessions::purge_expired(&conn)?;
     let token = sessions::create_session(&conn, client_ip(&headers).as_deref())?;
     Ok(Json(serde_json::json!({ "ok": true, "token": token })))
@@ -259,8 +267,10 @@ struct TokenBody {
 
 async fn auth_logout(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<TokenBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    super::accounts::legacy_request_headers(&headers)?;
     if let Some(t) = body.token {
         sessions::revoke_session(&state.conn(), &t)?;
     }
@@ -274,17 +284,27 @@ struct ChangePasswordBody {
 }
 
 async fn auth_change_password(
-    _auth: PanelAuth,
+    auth: super::accounts::RootGrant,
     State(state): State<SharedState>,
     Json(body): Json<ChangePasswordBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
-    if !sessions::check_panel_password(&conn, &body.old_password)? {
+    crate::db::accounts::password(&body.new_password).map_err(|e|ApiError::bad_request(e.to_string()))?;
+    let root = crate::db::accounts::root(&state.conn())?.ok_or_else(|| ApiError::unauthorized("未登录"))?;
+    state.panel_login_gate.check(&root.account.username)?;
+    if !super::accounts::verify(&state, body.old_password, root.hash.clone()).await? {
         return Err(ApiError::unauthorized("原口令不对"));
     }
-    sessions::set_panel_password(&conn, &body.new_password)?;
-    // 改口令会踢掉所有会话，包括自己，所以这里重新发一个
-    let token = sessions::create_session(&conn, None)?;
+    let hash = super::accounts::hash(&state, body.new_password).await?;
+    let conn = state.conn();
+    if !auth.valid(&conn)? || crate::db::accounts::root(&conn)?.is_none_or(|a|a.version!=root.version || a.hash!=root.hash) {
+        return Err(ApiError::unauthorized("会话已失效"));
+    }
+    let token = crate::db::accounts::atomic(&conn, || {
+        sessions::set_panel_hash(&conn, &hash)?;
+        crate::db::accounts::audit(&conn,root.account.id,"panel.password",root.account.id)?;
+        sessions::create_session(&conn, None)
+    })?;
+    state.panel_login_gate.success(&root.account.username);
     Ok(Json(serde_json::json!({ "ok": true, "token": token })))
 }
 
