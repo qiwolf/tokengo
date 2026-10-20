@@ -49,6 +49,7 @@ def main():
         shutil.copytree(ROOT / 'deploy', tree / 'deploy', ignore=shutil.ignore_patterns('__pycache__'))
         shutil.copy2(ROOT / 'docs/deployment.md', tree / 'deployment.md')
         shutil.copy2(ROOT / 'LICENSE', tree / 'LICENSE')
+        shutil.copy2(ROOT / 'NOTICE', tree / 'NOTICE')
         manifest = {'commit': commit, 'target': 'x86_64-unknown-linux-gnu', 'rust': '1.98.0',
                     'trunk': '0.21.14', 'cargo_lock_sha256': digest(ROOT / 'Cargo.lock')}
         (tree / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

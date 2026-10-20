@@ -35,7 +35,7 @@ sha256sum --check ./*.sha256
 python3 /path/to/checkout/deploy/manage.py verify ./*.tar.gz
 ```
 
-`release-check.yml` 在同一 checkout 执行 native workspace release 和 `trunk build --release --locked`，验证包内 ELF64 x86_64、前端 index/JS/WASM 以及全部文件校验和，再保存 14 天的 Actions artifact。现有测试 CI 保持独立；release-check 不部署、不创建 GitHub Release，也不注入生产密钥。Trunk 的固定版本与 `--locked` 来源可核对[官方版本清单](https://github.com/trunk-rs/trunk/blob/v0.21.14/Cargo.toml)和[官方构建配置](https://github.com/trunk-rs/trunk/blob/v0.21.14/src/config/models/build.rs)。Trunk 首次可能下载与 Rust wasm-bindgen 版本匹配的工具及 wasm-opt，构建机需具备相应出网条件。
+`release-check.yml` 在同一 checkout 执行 native workspace release 和 `trunk build --release --locked`，验证包内 ELF64 x86_64、前端 index/JS/WASM 以及全部文件校验和，再保存 14 天的 Actions artifact。测试 CI 保持独立；PR 和手动构建只留制品。`qiwolf/tokengo` 的 `v*-qiwolf.*` 标签在打包和容器隔离验收成功后，将同一镜像推送 GHCR、按摘要拉取并再次烟测，然后创建带双版本附件的 GitHub Release。发布流程不连接生产服务器，也不注入生产密钥。Trunk 的固定版本与 `--locked` 来源可核对[官方版本清单](https://github.com/trunk-rs/trunk/blob/v0.21.14/Cargo.toml)和[官方构建配置](https://github.com/trunk-rs/trunk/blob/v0.21.14/src/config/models/build.rs)。Trunk 首次可能下载与 Rust wasm-bindgen 版本匹配的工具及 wasm-opt，构建机需具备相应出网条件。
 
 包内 `manifest.json` 记录完整 source commit、target、Rust/Trunk 版本和 Cargo.lock SHA256；`checksums.json` 覆盖全部交付文件。校验和用于发现传输/文件损坏，不是签名或来源认证：从可信 Actions run 获取，并核对提交 SHA，不能信任来历不明的压缩包及其随附校验和。PR artifact 只用于审阅。
 

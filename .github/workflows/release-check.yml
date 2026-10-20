@@ -3,7 +3,6 @@ name: Linux release package
 'on':
   pull_request:
   push:
-    branches: ['**']
     tags: ['v*']
   workflow_dispatch:
 
@@ -100,3 +99,105 @@ jobs:
           path: ${{ runner.temp }}/tokengo-release/*
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish verified native package and GHCR image
+    needs: release-check
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-qiwolf.') && github.repository == 'qiwolf/tokengo'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Download native package from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tokengo-linux-x86_64-${{ github.sha }}
+          path: release/native
+      - name: Download container package from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tokengo-image-linux-amd64-${{ github.sha }}
+          path: release/image
+      - name: Verify exact release inputs
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          (cd release/native && sha256sum --check ./*.sha256)
+          (cd release/image && sha256sum --check image-SHA256SUMS)
+          python3 deploy/manage.py verify release/native/*.tar.gz
+          python3 - <<'PY'
+          import json, os, tarfile
+          from pathlib import Path
+          sha = os.environ['GITHUB_SHA']
+          with tarfile.open(next(Path('release/native').glob('*.tar.gz'))) as archive:
+              manifests = [m for m in archive.getmembers() if m.name.count('/') == 1 and m.name.endswith('/manifest.json')]
+              assert len(manifests) == 1
+              assert json.load(archive.extractfile(manifests[0]))['commit'] == sha
+          image = json.loads(Path('release/image/image-manifest.json').read_text())
+          assert image['source_commit'] == sha and image['architecture'] == 'amd64' and image['os'] == 'linux'
+          assert Path('docs/releases/' + os.environ['RELEASE_TAG'] + '.md').is_file()
+          PY
+      - name: Load verified offline image
+        run: |
+          docker load -i release/image/tokengo-$GITHUB_SHA-linux-amd64.tar.gz
+          test "$(docker image inspect tokengo:sha-$GITHUB_SHA --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+          test "$(docker image inspect tokengo:sha-$GITHUB_SHA --format '{{.Os}}/{{.Architecture}}')" = 'linux/amd64'
+      - name: Require successful main CI for this exact commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/ci.yml/runs?head_sha={os.environ['GITHUB_SHA']}&event=push&per_page=20"
+          for _ in range(60):
+              data = json.loads(subprocess.check_output(['gh', 'api', endpoint], text=True))
+              runs = [r for r in data['workflow_runs'] if r['head_branch'] == 'main']
+              if any(r['conclusion'] == 'success' for r in runs):
+                  print('Exact-commit main Rust/WASM CI passed')
+                  break
+              if runs and all(r['status'] == 'completed' for r in runs):
+                  raise SystemExit('Exact-commit main CI did not pass; nothing published')
+              time.sleep(10)
+          else:
+              raise SystemExit('Exact-commit main CI not successful within 10 minutes; nothing published')
+          PY
+      - name: Push version, commit and latest image tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for tag in "$RELEASE_TAG" "sha-$GITHUB_SHA" latest; do
+            docker tag "tokengo:sha-$GITHUB_SHA" "$image:$tag"
+            docker push "$image:$tag"
+          done
+          digest="$(docker image inspect "$image:$RELEASE_TAG" --format '{{index .RepoDigests 0}}')"
+          test "${digest%@*}" = "$image"
+          echo "PUBLISHED_IMAGE=$digest" >> "$GITHUB_ENV"
+          docker pull "$digest"
+          test "$(docker image inspect "$digest" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+          printf '%s\n' "$digest" > release/image/registry-image.txt
+          (cd release/image && sha256sum registry-image.txt >> image-SHA256SUMS)
+      - name: Test the registry image with a disposable data volume
+        run: python3 deploy/container/smoke.py "$PUBLISHED_IMAGE"
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cp "docs/releases/$RELEASE_TAG.md" release-notes.md
+          printf '\n发布源码提交：`%s`。\n\n容器镜像：`%s`。\n' "$GITHUB_SHA" "$PUBLISHED_IMAGE" >> release-notes.md
+          gh release create "$RELEASE_TAG" release/native/* release/image/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
+            --title "$RELEASE_TAG · 控制台、探针与 OAuth 工具诊断" --notes-file release-notes.md
+      - name: Log out from registry
+        if: always()
+        run: docker logout ghcr.io

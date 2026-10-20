@@ -2,7 +2,26 @@
 
 镜像包含同一源码提交的 Rust 服务端、CLI 和完整 WASM 控制台，不需要在运行主机安装 Rust、Node.js 或 Nginx。默认源码多阶段构建；Linux CI 也将已经校验的同提交原生包封装成镜像，并验证隔离容器的启动、鉴权、WASM、重启持久化及停止行为。
 
-本仓库同时提供直接部署的 Linux 原生包与离线容器镜像两种交付方式。已发布版本可在 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 下载相应资产，以该版本实际附件为准。镜像不自动推送公共镜像仓库。CI 的 `tokengo-image-linux-amd64-<SHA>` 是可下载的离线镜像制品，保留14天；需长期保存的版本请自行下载归档。源码构建支持宿主架构，当前分发 CI 目标为 Linux AMD64；不能把 Apple Silicon 本机构建称为已验收的 ARM64 发布版。
+本仓库同时提供直接部署的 Linux 原生包与容器两种交付方式。已发布版本可在 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 下载原生包、离线镜像及校验和。从 `v0.34.0-qiwolf.4` 起，fork 版本标签经 CI 验证后还推送至 `ghcr.io/qiwolf/tokengo`；普通 PR 和手动构建只生成审阅制品，不发布。Actions 制品保留14天，长期分发以 Releases 附件和 GHCR 为准。当前发布架构为 **Linux AMD64**；ARM64 尚未验收。
+
+## 从镜像仓库安装
+
+从同一 Release 下载 `compose.yaml`、`container.env.example`，复制后者为 `.env`，设置明确版本：
+
+```sh
+TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.4
+```
+
+然后在包含这两个配置文件的目录执行：
+
+```sh
+docker compose pull
+docker compose up -d --no-build
+docker compose ps
+curl --fail http://127.0.0.1:3160/readyz
+```
+
+Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，将 `TOKENGO_IMAGE` 改为其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
 
 ## 从源码构建并首次启动
 
