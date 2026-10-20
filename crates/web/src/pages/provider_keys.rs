@@ -187,6 +187,20 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
             if reveal_generation.try_get_untracked()==Some(generation){reveal_busy.set(false);}
         });
     });
+    // Switching views removes the clicked control. Restore focus only after the
+    // new view has rendered; input edits must not retrigger this effect.
+    Effect::new(move |_| {
+        let opened=open.get();
+        let view=modal_view.get();
+        form_open.get();
+        if !opened {return;}
+        let callback=wasm_bindgen::closure::Closure::once_into_js(move || {
+            if open.try_get_untracked()==Some(true) && modal_view.try_get_untracked()==Some(view) {
+                focus_modal(provider_id);
+            }
+        });
+        if let Some(window)=web_sys::window(){let _=window.request_animation_frame(callback.unchecked_ref());}
+    });
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         if busy.get_untracked() {
