@@ -54,6 +54,21 @@ fn BillingDialog(id: &'static str, title: &'static str, #[prop(optional)] busy: 
     </dialog>}
 }
 
+fn ledger_identity(row: &Value) -> (String, String, String) {
+    if row["auth_snapshot"]["kind"] == "admin_diagnostic" {
+        let name = row["auth_snapshot"]["probe_name"].as_str().unwrap_or("自定义探针");
+        let trigger = if row["auth_snapshot"]["trigger"] == "scheduled" { "定时执行" } else { "手动执行" };
+        let origin = format!("账本 {} · 系统诊断 · 来源 {}", api::text(row,"id"), api::text(row,"channel_id"));
+        let who = format!("系统诊断 · {name} · {trigger} · {}", api::text(row,"model"));
+        let cost = row["observed_cost_micro"].as_i64().map(|v| v.to_string()).unwrap_or_else(|| "未知".into());
+        (origin, who, format!("不扣用户费用 / {cost} / —"))
+    } else {
+        (format!("{} / 请求 {} / 渠道 {}",api::text(row,"id"),api::text(row,"request_id"),api::text(row,"channel_id")),
+         format!("用户 {} / key {} / {}",api::text(row,"user_id"),api::text(row,"key_id"),api::text(row,"model")),
+         format!("{} / {} / {}",api::text(row,"debit_micro"),api::text(row,"observed_cost_micro"),api::text(row,"reserved_micro")))
+    }
+}
+
 #[component]
 pub fn Billing(ctx: Ctx) -> impl IntoView {
     view! {<div class="page admin-page"><PageHead title="账务" desc="管理用户和密钥额度、模型价格，并查询每次调用的扣费记录。"/><Budgets ctx=ctx/><Pricing ctx=ctx/><RequestPricing ctx=ctx/><Usage ctx=ctx/></div>}
@@ -406,9 +421,9 @@ fn Usage(ctx: Ctx) -> impl IntoView {
     </div><button class="primary" type="submit">"查询 / 返回最新页"</button></fieldset></form>
     <p id="usage-error" role="alert">{move||error.get()}</p><p role="status">{move||if busy.get(){"正在加载账本…"}else if loaded.get()&&rows.get().is_empty(){"当前条件下没有记录。"}else{""}}</p>
     <div aria-live="polite">{move||api::billing_page_summary(&rows.get()).into_iter().map(|line|view!{<p class="muted small">{line}</p>}).collect_view()}</div>
-    <p class="muted small">"汇总仅针对当前筛选的本页尝试，非全账户总额。按次收费 0 / 1 / 未知分别保留；token 列对按次项目不适用。"</p>
+    <p class="muted small">"系统诊断单独标识，不扣用户额度；来源成本未知时显示未知。汇总仅针对当前筛选的本页尝试，非全账户总额。按次收费 0 / 1 / 未知分别保留；token 列对按次项目不适用。"</p>
     <div class="table-wrap"><table><thead><tr><th>"ID / 请求 / 来源"</th><th>"身份 / 模型"</th><th>"状态 / 用量依据"</th><th>"计费单位 / 收费次数"</th><th>"输入 / 输出 token"</th><th>"扣款 / 成本 / 预占 microUSD"</th><th>"快照"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
-        let origin=format!("{} / 请求 {} / 渠道 {}",api::text(&r,"id"),api::text(&r,"request_id"),api::text(&r,"channel_id"));let who=format!("用户 {} / key {} / {}",api::text(&r,"user_id"),api::text(&r,"key_id"),api::text(&r,"model"));let state=format!("{} / {} / {}{}",api::text(&r,"status"),api::text(&r,"outcome"),api::text(&r,"usage_certainty"),if r["overrun"]==true{" / 超额"}else{""});let tokens=api::billed_tokens(&r);let units=format!("{} / {}",api::billing_unit_label(&r),api::billed_requests(&r));let money=format!("{} / {} / {}",api::text(&r,"debit_micro"),api::text(&r,"observed_cost_micro"),api::text(&r,"reserved_micro"));let detail=api::pretty(&r);
+        let (origin,who,money)=ledger_identity(&r);let state=format!("{} / {} / {}{}",api::text(&r,"status"),api::text(&r,"outcome"),api::text(&r,"usage_certainty"),if r["overrun"]==true{" / 超额"}else{""});let tokens=api::billed_tokens(&r);let units=format!("{} / {}",api::billing_unit_label(&r),api::billed_requests(&r));let detail=api::pretty(&r);
         view!{<tr><td data-label="记录">{origin}</td><td data-label="身份 / 模型">{who}</td><td data-label="状态">{state}</td><td data-label="计费单位 / 收费次数">{units}</td><td data-label="token">{tokens}</td><td data-label="扣款 / 成本 / 预占">{money}</td><td data-label="快照"><button type="button" class="ghost" on:click=move |_|{snapshot.set(detail.clone());billing_dialog("ledger-snapshot-dialog",true);}>"查看账本快照"</button></td></tr>}
     }).collect_view()}</tbody></table></div>
     <button type="button" class="ghost" disabled=move||busy.get()||cursor.get().is_none()||rows.get().is_empty() on:click=move |_|{if let Some(id)=cursor.get_untracked(){fetch(format!("{}&before_id={id}",active_query.get_untracked()),true);}}>"较早一页"</button><p class="muted small">"翻页沿用最近一次查询条件；修改筛选后请点查询。空页表示已到末尾。"</p>
@@ -418,6 +433,11 @@ fn Usage(ctx: Ctx) -> impl IntoView {
 
 #[cfg(test)] mod price_source_tests {
  use super::*;
+ #[test] fn diagnostic_identity_does_not_invent_a_user_or_zero_cost(){
+  let row=json!({"id":8,"user_id":0,"key_id":0,"request_id":0,"channel_id":9,"model":"tool", "debit_micro":0,"observed_cost_micro":null,"auth_snapshot":{"kind":"admin_diagnostic","probe_name":"搜索检查","trigger":"scheduled"}});
+  let (origin,who,money)=ledger_identity(&row);assert!(who.contains("系统诊断 · 搜索检查 · 定时执行"));assert!(!who.contains("用户 0"));assert!(!origin.contains("请求 0"));assert!(money.contains("未知"));assert!(money.contains("不扣用户费用"));
+ }
+ #[test] fn ordinary_usage_keeps_its_real_user(){let (_,who,_)=ledger_identity(&json!({"user_id":7,"key_id":8,"model":"chat"}));assert!(who.contains("用户 7 / key 8"));}
  #[test] fn provider_id_cannot_be_used_as_source_id(){let rows=vec![(12,"供应方 · 主 Key".into())];assert!(!selected_price_source("3",&rows));assert!(selected_price_source("12",&rows));assert!(!selected_price_source("",&rows));}
  #[test] fn source_label_preserves_provider_key_and_endpoint(){assert_eq!(price_source_label(&json!({"provider_name":"本地 GPU","base_url":"http://127.0.0.1:8001/v1"}),"向量 Key"),"本地 GPU · 向量 Key · http://127.0.0.1:8001/v1");}
 }
