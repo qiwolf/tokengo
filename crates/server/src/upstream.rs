@@ -138,11 +138,30 @@ impl Upstream {
         uuid: &str,
         now_ms: i64,
     ) -> Result<u16, ChannelFault> {
+        self.probe_report(channel, secret, path, body, timeout, uuid, now_ms).await.map(|v|v.0)
+    }
+
+    /// Diagnostic variant: bounded, credential-redacted upstream error message.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn probe_report(
+        &self, channel:&Channel, secret:Option<&str>, path:&str, body:Bytes,
+        timeout:Duration, uuid:&str, now_ms:i64,
+    ) -> Result<(u16,Option<String>),ChannelFault> {
         let mut r = self
             .call(channel, secret, path, body, false, timeout, uuid, now_ms, None)
             .await?;
         let status = r.status().as_u16();
-        if !(200..300).contains(&status) { return Ok(status); }
+        if !(200..300).contains(&status) {
+            let mut bytes=Vec::new();
+            while let Some(chunk)=r.chunk().await.map_err(|_|ChannelFault{message:"读取诊断错误响应失败".into()})? {
+                let take=chunk.len().min(4096usize.saturating_sub(bytes.len()));
+                bytes.extend_from_slice(&chunk[..take]);
+                if bytes.len()==4096 {break;}
+            }
+            let mut redactions=channel.headers.iter().map(|(_,v)|v.as_str()).collect::<Vec<_>>();
+            if let Some(secret)=secret {redactions.push(secret);}
+            return Ok((status,probe_error_note(&bytes,&redactions)));
+        }
         let mut bytes = Vec::new();
         while let Some(chunk) = r.chunk().await.map_err(|e| ChannelFault { message: format!("probe body read failed: {e}") })? {
             if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
@@ -154,7 +173,7 @@ impl Upstream {
             .map_err(|e| ChannelFault { message: format!("invalid probe JSON: {e}") })?;
         if channel.unwrap_envelope { tokengo_shared::unwrap_envelope(&mut v); }
         validate_response(&v, path).map_err(|message| ChannelFault { message })?;
-        Ok(status)
+        Ok((status,None))
     }
 
     /// 「测视觉」用：要状态码 **和** 正文开头 —— 判断"它到底看没看见图"得看模型
@@ -714,8 +733,26 @@ pub(crate) fn validate_response(v: &serde_json::Value, path: &str) -> Result<(),
     if valid { Ok(()) } else { Err(format!("invalid or empty upstream {path} response")) }
 }
 
+/// Only expose structured error fields, never arbitrary HTML or a full response body.
+fn probe_error_note(bytes:&[u8],redactions:&[&str])->Option<String> {
+    let value:serde_json::Value=serde_json::from_slice(bytes).ok()?;
+    let message=value.pointer("/error/message").or_else(||value.get("message")).or_else(||value.get("error")).and_then(|v|v.as_str())?;
+    let mut safe=message.to_string();
+    for raw in redactions.iter().filter(|s|!s.is_empty()) {safe=safe.replace(raw,"[已隐藏凭据]");}
+    Some(safe.chars().filter(|c|!c.is_control()||*c==' ').take(512).collect())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn probe_errors_are_structured_bounded_and_redacted() {
+        let v=super::probe_error_note(br#"{"error":{"message":"quota exhausted secret-key custom-header"}}"#,&["secret-key","custom-header"]).unwrap();
+        assert!(!v.contains("secret-key"));assert!(!v.contains("custom-header"));assert!(v.contains("quota exhausted"));
+        assert!(super::probe_error_note(b"<html>secret</html>",&[]).is_none());
+        let bytes=serde_json::to_vec(&serde_json::json!({"message":"x".repeat(2000)})).unwrap();
+        assert_eq!(super::probe_error_note(&bytes,&[]).unwrap().chars().count(),512);
+    }
+
     use super::*;
     use tokengo_shared::ChannelId;
 

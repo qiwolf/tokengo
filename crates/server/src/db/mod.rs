@@ -7,6 +7,7 @@ pub mod provider_channels;
 pub mod provider_pool;
 pub mod accounts;
 pub mod identity;
+pub mod lifecycle;
 pub mod billing;
 pub mod faults;
 pub mod catalog;

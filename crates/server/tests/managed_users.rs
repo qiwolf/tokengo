@@ -815,3 +815,44 @@ async fn busy_hashing_or_revoked_root_cannot_leave_half_created_users() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn delete_user_revokes_login_and_keys_retains_history_and_cannot_resurrect() {
+    let f=Fixture::new();
+    let(s,v,_)=f.admin("POST","/api/managed-users",json!({"username":"delete-me","display_name":"Delete Me","password":PASSWORD,"limit_micro":10000})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");let id=v["user"]["id"].as_i64().unwrap();
+    let(_,cookie)=f.login("delete-me",PASSWORD).await;
+    let(s,v,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"retained-key"})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");let key=v["key"]["id"].as_i64().unwrap();let secret=v["secret"].as_str().unwrap().to_owned();
+    assert!(f.state.authenticate_context(secret.clone()).await.is_some());
+    {
+        let c=f.state.conn();c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,user_id,key_id) VALUES(1,'/v1/chat/completions','m','success',?1,?2)",rusqlite::params![id,key]).unwrap();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms) VALUES('kept',?1,?2,1,99,'m',0,0,0,7,'success',1)",rusqlite::params![id,key]).unwrap();
+    }
+    assert_eq!(f.req("DELETE",&format!("/api/managed-users/{id}"),Some(&cookie),None,true,None,json!(null)).await.0,StatusCode::FORBIDDEN);
+    let(s,v,_)=f.admin("DELETE",&format!("/api/managed-users/{id}"),json!(null)).await;assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(v["archived"],true);
+    assert!(f.state.authenticate_context(secret).await.is_none());
+    assert_eq!(f.req("GET","/api/account/keys",Some(&cookie),None,false,None,json!(null)).await.0,StatusCode::UNAUTHORIZED);
+    assert_eq!(f.req("POST","/api/account/login",None,None,true,Some("http://localhost"),json!({"username":"delete-me","password":PASSWORD})).await.0,StatusCode::UNAUTHORIZED);
+    let(s,v,_)=f.admin("GET","/api/managed-users",json!(null)).await;assert_eq!(s,StatusCode::OK);assert!(!v["users"].as_array().unwrap().iter().any(|u|u["id"]==id));
+    assert_eq!(f.admin("PATCH",&format!("/api/managed-users/{id}"),json!({"enabled":true})).await.0,StatusCode::NOT_FOUND);
+    assert_eq!(f.admin("DELETE","/api/managed-users/1",json!(null)).await.0,StatusCode::FORBIDDEN);
+    let c=f.state.conn();
+    assert_eq!(c.query_row("SELECT name FROM users WHERE id=?1",[id],|r|r.get::<_,String>(0)).unwrap(),"Delete Me");
+    assert_eq!(c.query_row("SELECT debit_micro FROM billing_ledger WHERE user_id=?1",[id],|r|r.get::<_,i64>(0)).unwrap(),7);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM requests WHERE user_id=?1",[id],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM gateway_keys WHERE id=?1 AND enabled=0 AND revoked_at IS NOT NULL",[key],|r|r.get::<_,i64>(0)).unwrap(),1);
+}
+
+#[tokio::test]
+async fn delete_user_requires_csrf_and_rolls_back_unsettled_user() {
+    let f=Fixture::new();let id=f.user("busy-user");
+    let(_,root_cookie)=f.login("admin",PASSWORD).await;
+    assert_eq!(f.req("DELETE",&format!("/api/managed-users/{id}"),Some(&root_cookie),None,false,None,json!(null)).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(f.req("DELETE",&format!("/api/managed-users/{id}"),Some(&root_cookie),None,true,Some("https://foreign.invalid"),json!(null)).await.0,StatusCode::FORBIDDEN);
+    f.state.conn().execute("INSERT INTO requests(ts_ms,endpoint,model,status,user_id) VALUES(1,'/v1/chat/completions','m','running',?1)",[id]).unwrap();
+    let(s,v,_)=f.admin("DELETE",&format!("/api/managed-users/{id}"),json!(null)).await;assert_eq!(s,StatusCode::CONFLICT,"{v}");
+    assert!(db::identity::user(&f.state.conn(),id).unwrap().unwrap().enabled);
+    assert!(!db::lifecycle::archived_user(&f.state.conn(),id).unwrap());
+    assert_eq!(f.admin("DELETE","/api/managed-users/999999",json!(null)).await.0,StatusCode::NOT_FOUND);
+}

@@ -249,40 +249,11 @@ async fn delete(
 ) -> Result<Json<Value>, ApiError> {
     let c = s.conn();
     require(&c, id)?;
-    let alias_reference: bool = c
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM user_virtual_targets WHERE provider_id=?1)",
-            [id],
-            |r| r.get(0),
-        )
-        .map_err(db::DbError::from)?;
-    if alias_reference {
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "provider_in_use",
-            "渠道仍被用户虚拟路由引用，请先修改虚拟目标或停用渠道",
-        ));
-    }
-    if !pool::credentials(&c, id)?.is_empty() {
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "provider_not_empty",
-            "渠道仍有凭据或历史来源引用，请停用保留，不能级联删除",
-        ));
-    }
-    // One guarded statement: a concurrent membership can never be cascaded away.
-    let deleted = db::in_tx(&c, |c| {
-        Ok(c.execute("DELETE FROM provider_channels WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM provider_connections WHERE provider_id=?1)", [id])?)
-    })?;
-    if deleted == 0 {
-        require(&c, id)?;
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "provider_not_empty",
-            "服务商仍有关联连接，请先移动/删除连接；不会级联删除连接或历史",
-        ));
-    }
-    Ok(Json(json!({"deleted":true})))
+    let names = db::in_tx(&c, |c| db::lifecycle::delete_provider(c,id))
+        .map_err(|e| ApiError::new(axum::http::StatusCode::CONFLICT,"provider_delete_blocked",e.to_string()))?;
+    drop(c);
+    changed(&s,names);
+    Ok(Json(json!({"deleted":true,"history_preserved":true})))
 }
 async fn assign(
     _root: PanelAuth,

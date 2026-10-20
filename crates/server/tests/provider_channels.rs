@@ -660,50 +660,36 @@ async fn shared_provider_never_broadens_existing_connection_acl() {
 }
 
 #[tokio::test]
-async fn provider_delete_requires_empty_group_and_preserves_connections_and_history() {
-    let f = Fixture::new().await;
-    let p = f.provider("delete only empty").await;
-    let a = f.channel("http://127.0.0.1:1").await;
-    f.assign(a, Some(p)).await;
-    let snapshot = protected_connection_snapshot(&f.state.conn());
-    let before = db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
-        .unwrap()
-        .unwrap();
-    let (s, v) = f
-        .req("DELETE", &format!("/api/providers/{p}"), json!(null))
-        .await;
-    assert_eq!(s, 409, "{v}");
-    assert!(v["error"]["message"].as_str().unwrap().contains("停用保留"));
-    assert_eq!(protected_connection_snapshot(&f.state.conn()), snapshot);
-    assert_eq!(
-        db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
-            .unwrap()
-            .unwrap(),
-        before
-    );
-    assert!(db::provider_channels::exists(&f.state.conn(), p).unwrap());
-    f.assign(a, None).await;
-    let (s, v) = f
-        .req("DELETE", &format!("/api/providers/{p}"), json!(null))
-        .await;
-    assert_eq!(s, 409, "{v}"); // Credential history remains after moving the source.
-    assert!(
-        db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
-            .unwrap()
-            .is_some()
-    );
-    let empty = f.provider("truly empty").await;
-    let (s, v) = f
-        .req("DELETE", &format!("/api/providers/{empty}"), json!(null))
-        .await;
-    assert_eq!(s, 200, "{v}");
-    assert_eq!(v["deleted"], true);
-    assert_eq!(
-        f.req("DELETE", &format!("/api/providers/{empty}"), json!(null))
-            .await
-            .0,
-        404
-    );
+async fn provider_delete_cascades_config_preserves_history_and_other_provider() {
+    let f=Fixture::new().await;
+    let p=f.provider("delete with keys").await;
+    let q=f.provider("keep").await;
+    let a=f.channel("http://127.0.0.1:1").await;
+    let b=f.channel("http://127.0.0.1:2").await;
+    f.assign(a,Some(p)).await;f.assign(b,Some(q)).await;
+    {
+        let c=f.state.conn();
+        let mut u=db::identity::user(&c,1).unwrap().unwrap();u.policy.allowed_channels=Some(vec![a,b]);db::identity::update_user(&c,&u).unwrap();
+        c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(1,'/v1/chat/completions','m','success',?1)",[a]).unwrap();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms,price_snapshot) VALUES('retained-history',1,1,991,?1,'m',0,0,0,7,'success',1,'snapshot')",[a]).unwrap();
+        c.execute("INSERT INTO user_virtual_models(user_id,name,normalized_name,enabled,mode,timezone,default_positions_json,version,created_ms,updated_ms) VALUES(1,'private','private',1,'scheduled','UTC','[1,2]',1,1,1)",[]).unwrap();let vm=c.last_insert_rowid();
+        c.execute("INSERT INTO user_virtual_targets VALUES(?1,1,?2,'m',1,0),(?1,2,?3,'m',1,0)",rusqlite::params![vm,p,q]).unwrap();
+        c.execute("INSERT INTO user_virtual_windows VALUES(?1,1,127,0,1440,'[2,1]')",[vm]).unwrap();
+    }
+    let before=db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(b)).unwrap().unwrap();
+    let(s,v)=f.req("DELETE",&format!("/api/providers/{p}"),json!(null)).await;assert_eq!(s,200,"{v}");assert_eq!(v["history_preserved"],true);
+    let c=f.state.conn();
+    assert!(!db::provider_channels::exists(&c,p).unwrap());assert!(db::channels::get(&c,tokengo_shared::ChannelId(a)).unwrap().is_none());
+    assert_eq!(db::channels::get(&c,tokengo_shared::ChannelId(b)).unwrap().unwrap(),before);
+    assert_eq!(db::identity::user(&c,1).unwrap().unwrap().policy.allowed_channels,Some(vec![b]));
+    assert_eq!(c.query_row("SELECT price_snapshot FROM billing_ledger WHERE attempt_id='retained-history'",[],|r|r.get::<_,String>(0)).unwrap(),"snapshot");
+    assert_eq!(c.query_row("SELECT channel_id FROM requests",[],|r|r.get::<_,i64>(0)).unwrap(),a);
+    assert_eq!(c.query_row("SELECT default_positions_json FROM user_virtual_models",[],|r|r.get::<_,String>(0)).unwrap(),"[1]");
+    assert_eq!(c.query_row("SELECT target_positions_json FROM user_virtual_windows",[],|r|r.get::<_,String>(0)).unwrap(),"[1]");
+    assert_eq!(c.query_row("SELECT provider_id FROM user_virtual_targets",[],|r|r.get::<_,i64>(0)).unwrap(),q);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    drop(c);
+    assert_eq!(f.req("DELETE",&format!("/api/providers/{p}"),json!(null)).await.0,404);
 }
 
 #[tokio::test]
@@ -762,89 +748,20 @@ async fn provider_delete_requires_root_and_browser_csrf() {
 }
 
 #[tokio::test]
-async fn connection_delete_rejects_dependencies_and_preserves_history() {
-    let f = Fixture::new().await;
-    let a = f.channel("http://127.0.0.1:1").await;
-    let b = f.channel("http://127.0.0.1:2").await;
-    let before = db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
-        .unwrap()
-        .unwrap();
-    let assert_blocked = |v: &Value| {
-        assert!(
-            v["error"]["message"].as_str().unwrap().contains("停用"),
-            "{v}"
-        )
-    };
+async fn connection_delete_cleans_explicit_grants_without_broadening_and_retains_ledger() {
+    let f=Fixture::new().await;let a=f.channel("http://127.0.0.1:1").await;
     {
-        let c = f.state.conn();
-        let mut user = db::identity::user(&c, 1).unwrap().unwrap();
-        user.policy.allowed_channels = Some(vec![a]);
-        db::identity::update_user(&c, &user).unwrap();
-    }
-    let (s, v) = f
-        .req("DELETE", &format!("/api/channels/{a}"), json!(null))
-        .await;
-    assert_eq!(s, 409, "{v}");
-    assert_blocked(&v);
-    assert_eq!(
-        db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
-            .unwrap()
-            .unwrap(),
-        before
-    );
-    {
-        let c = f.state.conn();
-        let mut u = db::identity::user(&c, 1).unwrap().unwrap();
-        u.policy.allowed_channels = None;
-        db::identity::update_user(&c, &u).unwrap();
-        db::route_policy::save(
-            &c,
-            "m",
-            &db::route_policy::RoutePolicy {
-                channel_ids: Some(vec![a]),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    }
-    let (s, v) = f
-        .req("DELETE", &format!("/api/channels/{a}"), json!(null))
-        .await;
-    assert_eq!(s, 409, "{v}");
-    assert_blocked(&v);
-    db::route_policy::delete(&f.state.conn(), "m").unwrap();
-    {
-        let c = f.state.conn();
+        let c=f.state.conn();let mut u=db::identity::user(&c,1).unwrap().unwrap();u.policy.allowed_channels=Some(vec![a]);u.policy.allowed_models=Some(vec!["m".into()]);db::identity::update_user(&c,&u).unwrap();
+        let mut key=db::identity::keys(&c,1).unwrap().remove(0);key.policy.allowed_channels=Some(vec![a]);db::identity::update_key(&c,&key).unwrap();
+        db::route_policy::save(&c,"m",&db::route_policy::RoutePolicy{channel_ids:Some(vec![a]),..Default::default()}).unwrap();
         c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms) VALUES('retained-history',1,1,991,?1,'m',0,0,0,0,'success',1)",[a]).unwrap();
     }
-    let (s, v) = f
-        .req("DELETE", &format!("/api/channels/{a}"), json!(null))
-        .await;
-    assert_eq!(s, 409, "{v}");
-    assert_blocked(&v);
-    assert_eq!(
-        f.state
-            .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM billing_ledger WHERE attempt_id='retained-history'",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        f.req("DELETE", &format!("/api/channels/{b}"), json!(null))
-            .await
-            .0,
-        200
-    );
-    assert_eq!(
-        f.req("DELETE", &format!("/api/channels/{b}"), json!(null))
-            .await
-            .0,
-        404
-    );
+    let(s,v)=f.req("DELETE",&format!("/api/channels/{a}"),json!(null)).await;assert_eq!(s,200,"{v}");
+    let c=f.state.conn();let u=db::identity::user(&c,1).unwrap().unwrap();assert_eq!(u.policy.allowed_channels,Some(vec![]));assert_eq!(u.policy.allowed_models,Some(vec![]));
+    assert_eq!(db::identity::keys(&c,1).unwrap()[0].policy.allowed_channels,Some(vec![]));
+    assert_eq!(db::route_policy::load(&c,"m").unwrap().channel_ids,Some(vec![]));
+    assert_eq!(c.query_row("SELECT channel_id FROM billing_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),a);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check",[],|r|r.get::<_,i64>(0)).unwrap(),0);
 }
 
 fn protected_connection_snapshot(c: &rusqlite::Connection) -> Vec<(String, Vec<Vec<String>>)> {
@@ -885,99 +802,59 @@ fn protected_connection_snapshot(c: &rusqlite::Connection) -> Vec<(String, Vec<V
 }
 
 #[tokio::test]
-async fn connection_delete_blocks_oauth_key_acl_session_and_invalid_pins_without_mutation() {
-    let f = Fixture::new().await;
-    for reason in [
-        "oauth",
-        "key_acl",
-        "pin",
-        "invalid_pin",
-        "request",
-        "attempt",
-    ] {
-        let a = f.channel("http://127.0.0.1:1").await;
+async fn deletion_busy_and_invalid_config_roll_back_every_change() {
+    for reason in ["running","reserved","invalid_pin"] {
+        let f=Fixture::new().await;let p=f.provider("blocked").await;let a=f.channel("http://127.0.0.1:1").await;f.assign(a,Some(p)).await;
         {
-            let c = f.state.conn();
-            match reason {
-                "oauth" => {
-                    c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('test','issuer',?1,?1,'revoked','[]',0,0)",[format!("test-{a}")]).unwrap();
-                    let account = c.last_insert_rowid();
-                    c.execute(
-                        "INSERT INTO oauth_channel_bindings(channel_id,account_id) VALUES(?1,?2)",
-                        rusqlite::params![a, account],
-                    )
-                    .unwrap();
-                }
-                "key_acl" => {
-                    let mut k = db::identity::keys(&c, 1).unwrap().remove(0);
-                    k.policy.allowed_channels = Some(vec![a]);
-                    db::identity::update_key(&c, &k).unwrap();
-                }
-                "pin" => {
-                    c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms) VALUES(?1,?2,1)",rusqlite::params![format!("pin-{a}"),json!({"channel":a,"generation":1,"upstream_model":"exact-M","protocol":"chat"}).to_string()]).unwrap();
-                }
-                "invalid_pin" => {
-                    c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms) VALUES(?1,'invalid json',1)",[format!("pin-{a}")]).unwrap();
-                }
-                "request" => {
-                    c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(1,'/v1/chat/completions','m','running',?1)",[a]).unwrap();
-                }
-                "attempt" => {
-                    let request =
-                        db::requests::start(&c, "/v1/chat/completions", "m", None, false).unwrap();
-                    db::requests::add_attempt_args(
-                        &c,
-                        &db::requests::AttemptArgs {
-                            request_id: request,
-                            ordinal: 1,
-                            channel_id: a,
-                            outcome: "success".into(),
-                            http_status: Some(200),
-                            duration_ms: 1,
-                            error: None,
-                            first_byte_ms: None,
-                            model_name: "m".into(),
-                            upstream_model: "exact-M".into(),
-                        },
-                    )
-                    .unwrap();
-                }
-                _ => unreachable!(),
+            let c=f.state.conn();match reason {
+                "running"=>{c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(1,'/v1/chat/completions','m','running',?1)",[a]).unwrap();},
+                "reserved"=>{c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,status,created_ms) VALUES('busy',1,1,991,?1,'m',0,0,5,'reserved',1)",[a]).unwrap();},
+                _=>{c.execute("INSERT INTO protocol_sessions VALUES('bad','invalid json',1)",[]).unwrap();}
             }
         }
-        let before = protected_connection_snapshot(&f.state.conn());
-        let (s, v) = f
-            .req("DELETE", &format!("/api/channels/{a}"), json!(null))
-            .await;
-        assert_eq!(s, 409, "{reason}: {v}");
-        assert_eq!(v["error"]["type"], "connection_in_use");
-        let category = match reason {
-            "oauth" => "OAuth绑定",
-            "key_acl" => "API Key来源授权",
-            "pin" => "原生会话绑定",
-            "invalid_pin" => "记录无效",
-            "request" => "请求历史/进行中请求",
-            "attempt" => "来源尝试历史",
-            _ => unreachable!(),
-        };
-        assert!(
-            v["error"]["message"].as_str().unwrap().contains(category),
-            "{reason}: {v}"
-        );
-        assert_eq!(
-            protected_connection_snapshot(&f.state.conn()),
-            before,
-            "{reason}"
-        );
-        // A corrupt pin blocks every removal until explicitly repaired; restore this test record.
-        if reason == "invalid_pin" {
-            f.state
-                .conn()
-                .execute(
-                    "DELETE FROM protocol_sessions WHERE key=?1",
-                    [format!("pin-{a}")],
-                )
-                .unwrap();
+        let before=protected_connection_snapshot(&f.state.conn());
+        for path in [format!("/api/providers/{p}"),format!("/api/channels/{a}")] {
+            let(s,v)=f.req("DELETE",&path,json!(null)).await;assert_eq!(s,409,"{reason}: {v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);
         }
+        assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap().len(),1);
     }
+}
+
+#[tokio::test]
+async fn deleting_credential_carrier_keeps_shared_key_and_remaining_mapping() {
+    let f=Fixture::new().await;let p=f.provider("shared key").await;
+    let a=f.channel("http://127.0.0.1:1").await;let b=f.channel("http://127.0.0.1:1").await;
+    f.assign(a,Some(p)).await;f.assign(b,Some(p)).await;
+    let key=db::provider_pool::credentials(&f.state.conn(),p).unwrap();assert_eq!(key.len(),1);assert_eq!(key[0].source_ids,vec![a,b]);let key=key[0].id;
+    let(s,v)=f.req("DELETE",&format!("/api/channels/{a}"),json!(null)).await;assert_eq!(s,200,"{v}");
+    let c=f.state.conn();let keys=db::provider_pool::credentials(&c,p).unwrap();assert_eq!(keys.len(),1);assert_eq!(keys[0].id,key);assert_eq!(keys[0].source_ids,vec![b]);
+    assert_eq!(db::channels::secret(&c,&f.state.secrets,tokengo_shared::ChannelId(b)).unwrap().as_deref(),Some("fixed-upstream-secret"));
+    assert_eq!(c.query_row("SELECT secret_source_id FROM provider_credentials WHERE id=?1",[key],|r|r.get::<_,i64>(0)).unwrap(),b);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    drop(c);
+    let(s,v)=f.req("DELETE",&format!("/api/channels/{b}"),json!(null)).await;assert_eq!(s,200,"{v}");assert!(db::provider_pool::credentials(&f.state.conn(),p).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn deleting_scheduled_only_target_disables_alias_without_falling_through_to_default() {
+    use tokengo_server::db::user_virtual_routes as vr;
+    use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+    let calls=Arc::new(AtomicUsize::new(0));let observed=calls.clone();
+    let(up,task)=serve(Router::new().route("/chat/completions",post(move||{let n=observed.clone();async move {n.fetch_add(1,Ordering::SeqCst);Json(json!({"choices":[{"message":{"role":"assistant","content":"B must not receive this"},"finish_reason":"stop"}]}))}}))).await;
+    let f=Fixture::new().await;let p=f.provider("A window").await;let q=f.provider("B default").await;
+    let a=f.channel("http://127.0.0.1:1").await;let b=f.channel(&up).await;f.assign(a,Some(p)).await;f.assign(b,Some(q)).await;
+    let alias={let c=f.state.conn();vr::create(&c,1,&vr::Config{name:"private-scheduled".into(),enabled:true,mode:"scheduled".into(),timezone:"UTC".into(),targets:vec![vr::Target{provider_id:p,logical_model:"m".into(),switch_on_429:true,switch_on_400:false},vr::Target{provider_id:q,logical_model:"m".into(),switch_on_429:true,switch_on_400:false}],windows:vec![vr::Window{days_mask:127,start_minute:0,end_minute:1440,target_positions:vec![1]}],default_positions:vec![2]}).unwrap()};
+    assert_eq!(vr::resolve(&f.state.conn(),1,"private-scheduled",0).unwrap().unwrap().targets[0].provider_id,p);
+    let(s,v)=f.req("DELETE",&format!("/api/providers/{p}"),json!(null)).await;assert_eq!(s,200,"{v}");
+    {
+        let c=f.state.conn();let saved=vr::list(&c,1).unwrap();assert_eq!(saved.len(),1);assert!(!saved[0].config.enabled);assert_eq!(saved[0].config.targets[0].provider_id,q);assert_eq!(saved[0].config.default_positions,vec![1]);assert!(saved[0].config.windows[0].target_positions.is_empty());
+        assert_eq!(vr::resolve(&c,1,"private-scheduled",0).unwrap_err().code,"virtual_route_forbidden");
+        let mut invalid=saved[0].config.clone();invalid.enabled=true;assert!(vr::replace(&c,1,alias.id,saved[0].version,&invalid).is_err(),"must repair empty window before re-enabling");
+    }
+    assert_eq!(f.chat("private-scheduled").await,StatusCode::FORBIDDEN);
+    assert_eq!(calls.load(Ordering::SeqCst),0,"deleting A must not route the former A window to default B");
+    // Removing the remaining target also keeps the disabled alias readable for repair.
+    let(s,v)=f.req("DELETE",&format!("/api/providers/{q}"),json!(null)).await;assert_eq!(s,200,"{v}");
+    let saved=vr::list(&f.state.conn(),1).unwrap();assert!(saved[0].config.targets.is_empty());assert!(!saved[0].config.enabled);
+    task.abort();
 }

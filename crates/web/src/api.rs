@@ -159,8 +159,9 @@ pub async fn delete_channel(id: i64) -> Result<(), ApiErr> {
 }
 
 /// 测一下连通性。`kind` 是 `chat` 或 `embeddings`。
-pub async fn probe_channel(id: i64, kind: &str) -> Result<ProbeResp, ApiErr> {
-    typed("POST", &format!("/api/channels/{id}/probe?kind={kind}"), None).await
+pub async fn probe_channel(id: i64, kind: &str, model: &str) -> Result<ProbeResp, ApiErr> {
+    let model=js_sys::encode_uri_component(model).as_string().unwrap_or_default();
+    typed("POST", &format!("/api/channels/{id}/probe?kind={kind}&model={model}"), None).await
 }
 
 /// 拉这条渠道的上游模型清单（真打它的 `GET /v1/models`）。

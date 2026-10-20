@@ -652,118 +652,19 @@ async fn channels_delete(
     let tx = conn
         .unchecked_transaction()
         .map_err(crate::db::DbError::from)?;
-    if let Some(reason) = channel_delete_dependency(&tx, id)? {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "connection_in_use",
-            format!(
-                "连接仍被{reason}引用，无法删除；请解除可变配置引用，或停用连接并保留配置与历史"
-            ),
-        ));
-    }
-    channels::delete(&tx, cid)?;
+    let names = crate::db::lifecycle::delete_source(&tx,id).map_err(|e|ApiError::new(StatusCode::CONFLICT,"source_delete_blocked",e.to_string()))?;
     tx.commit().map_err(crate::db::DbError::from)?;
-    tracing::info!("删除渠道 #{id}");
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-// Explicit references must never be silently removed or left dangling by deletion.
-fn channel_delete_dependency(
-    c: &rusqlite::Connection,
-    id: i64,
-) -> Result<Option<String>, ApiError> {
-    let pooled: bool = c
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM source_credentials WHERE source_id=?1)",
-            [id],
-            |r| r.get(0),
-        )
-        .map_err(crate::db::DbError::from)?;
-    if pooled {
-        return Ok(Some("渠道凭据池（请停用Key，来源ID需保留）".into()));
-    }
-    for (table, label) in [
-        ("oauth_channel_bindings", "OAuth绑定"),
-        ("requests", "请求历史/进行中请求"),
-        ("attempts", "来源尝试历史"),
-        ("billing_ledger", "财务账本"),
-    ] {
-        let exists: bool = c
-            .query_row(
-                &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE channel_id=?1)"),
-                [id],
-                |r| r.get(0),
-            )
-            .map_err(crate::db::DbError::from)?;
-        if exists {
-            return Ok(Some(label.into()));
-        }
-    }
-    for (table, label) in [
-        ("users", "用户来源授权"),
-        ("gateway_keys", "API Key来源授权"),
-    ] {
-        let mut st = c
-            .prepare(&format!("SELECT policy_json FROM {table}"))
-            .map_err(crate::db::DbError::from)?;
-        let rows = st
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(crate::db::DbError::from)?;
-        for raw in rows {
-            let raw = raw.map_err(crate::db::DbError::from)?;
-            let Ok(policy) = serde_json::from_str::<crate::db::identity::Policy>(&raw) else {
-                return Ok(Some(format!("无法确认的{label}（策略无效）")));
-            };
-            if policy
-                .allowed_channels
-                .as_ref()
-                .is_some_and(|ids| ids.contains(&id))
-            {
-                return Ok(Some(label.into()));
-            }
-        }
-    }
-    let mut st = c
-        .prepare("SELECT value FROM settings WHERE key LIKE 'model_routing:%'")
-        .map_err(crate::db::DbError::from)?;
-    let rows = st
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(crate::db::DbError::from)?;
-    for raw in rows {
-        let raw = raw.map_err(crate::db::DbError::from)?;
-        let Ok(policy) = serde_json::from_str::<crate::db::route_policy::RoutePolicy>(&raw) else {
-            return Ok(Some("无法确认的模型回退配置（策略无效）".into()));
-        };
-        if policy
-            .channel_ids
-            .as_ref()
-            .is_some_and(|ids| ids.contains(&id))
-        {
-            return Ok(Some("模型回退配置".into()));
-        }
-    }
-    let mut st = c
-        .prepare("SELECT pin_json FROM protocol_sessions")
-        .map_err(crate::db::DbError::from)?;
-    let rows = st
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(crate::db::DbError::from)?;
-    for raw in rows {
-        let raw = raw.map_err(crate::db::DbError::from)?;
-        let Ok(pin) = serde_json::from_str::<crate::protocol_sessions::Pin>(&raw) else {
-            return Ok(Some("无法确认的原生会话绑定（记录无效）".into()));
-        };
-        if pin.channel == id {
-            return Ok(Some("原生会话绑定".into()));
-        }
-    }
-    Ok(None)
+    drop(conn);
+    let mut routing = state.routing();
+    for name in names { routing.restore(&name,Default::default()); }
+    Ok(Json(serde_json::json!({ "ok": true,"history_preserved":true })))
 }
 
 #[derive(Deserialize)]
 struct ProbeQuery {
     /// 探活打哪个端点：chat（默认）或 embeddings。
     kind: Option<String>,
+    model: Option<String>,
 }
 
 /// 一条"能真发请求"的渠道：解密好的密钥 + 自定义头 + 配的模型名。
@@ -808,6 +709,14 @@ fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<O
     }))
 }
 
+fn diagnostic_model(models:&[channels::ModelMapping],requested:Option<&str>)->Result<Option<String>,ApiError> {
+    let mapping=if let Some(name)=requested {
+        if name.trim().is_empty(){return Err(ApiError::bad_request("请选择要诊断的模型"));}
+        Some(models.iter().find(|m|m.model==name&&m.enabled).ok_or_else(||ApiError::bad_request("所选模型未在此 Key 启用；请重新选择"))?)
+    } else {models.iter().find(|m|m.enabled&&!m.model.trim().is_empty())};
+    Ok(mapping.map(|m|m.upstream.as_deref().filter(|u|!u.trim().is_empty()).unwrap_or(&m.model).to_string()))
+}
+
 /// 面板上的「测一下」：**真发一个请求到这条渠道**，回的绿点才是真的。
 ///
 /// 三条纪律：
@@ -839,15 +748,7 @@ async fn channels_probe(
         ..
     } = ready;
 
-    let model = models
-        .iter()
-        .find_map(|m| m.upstream.clone().filter(|u| !u.trim().is_empty()))
-        .or_else(|| {
-            models
-                .iter()
-                .map(|m| m.model.clone())
-                .find(|n| !n.trim().is_empty())
-        });
+    let model = diagnostic_model(&models,q.model.as_deref())?;
 
     let Some(model) = model else {
         return Ok(Json(serde_json::json!({
@@ -869,7 +770,7 @@ async fn channels_probe(
     let t0 = now_ms();
     let r = state
         .upstream
-        .probe(
+        .probe_report(
             &channel,
             secret.as_deref(),
             endpoint.path(),
@@ -882,15 +783,16 @@ async fn channels_probe(
     let latency = now_ms() - t0;
 
     let (ok, status, note) = match r {
-        Ok(code) => {
+        Ok((code, upstream_note)) => {
             let kind = tokengo_shared::routing::classify_status(code);
-            let note = match kind {
-                tokengo_shared::routing::AttemptOutcome::Success => "通了".to_string(),
-                tokengo_shared::routing::AttemptOutcome::ChannelFault => {
-                    format!("这条渠道自己的毛病（HTTP {code}）")
-                }
-                _ => format!("上游不接受这个请求（HTTP {code}），多半是模型名或参数不对"),
+            let mut note = match code {
+                200..=299 => "诊断请求成功；仅代表本次所选模型调用成功".to_string(),
+                400 => "上游拒绝本次请求；请核对所选模型、映射及参数，不能据此判断整个 Key 停服".to_string(),
+                401|403 => "上游鉴权或权限检查失败；请核对 Key 和所选模型的访问权限".to_string(),
+                429 => "上游返回限流或额度不足；需结合上游说明判断，不能仅凭 429 认定 Key 已停服".to_string(),
+                _ => format!("本次诊断收到上游 HTTP {code}；不代表该 Key 的全部模型均不可用"),
             };
+            if let Some(detail)=upstream_note.filter(|s|!s.is_empty()){note.push_str("；上游说明：");note.push_str(&detail);}
             (
                 kind == tokengo_shared::routing::AttemptOutcome::Success,
                 Some(code),
@@ -2094,6 +1996,16 @@ async fn maintenance_prune(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagnostic_selection_uses_requested_mapping_and_rejects_unavailable_models() {
+        use crate::db::channels::ModelMapping;
+        let mut off=ModelMapping::new("disabled",Some("disabled-upstream".into()),false);off.enabled=false;
+        let rows=vec![off,ModelMapping::new("first",Some("up-first".into()),false),ModelMapping::new("second",Some("up-second".into()),false)];
+        assert_eq!(super::diagnostic_model(&rows,Some("second")).unwrap(),Some("up-second".into()));
+        assert_eq!(super::diagnostic_model(&rows,None).unwrap(),Some("up-first".into()));
+        for name in ["disabled","unknown",""] {assert!(super::diagnostic_model(&rows,Some(name)).is_err());}
+    }
+
     use super::*;
 
     fn parts_with(pairs: &[(&str, &str)]) -> Parts {

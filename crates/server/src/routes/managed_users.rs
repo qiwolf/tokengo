@@ -41,7 +41,7 @@ fn nullable<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Option<i64>>, D::E
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/managed-users", get(list).post(create))
-        .route("/api/managed-users/{id}", patch(update))
+        .route("/api/managed-users/{id}", patch(update).delete(delete))
         .route("/api/managed-users/{id}/login-credential", post(add_login))
         .route("/api/account/keys", get(own_keys).post(own_create))
         .route(
@@ -174,6 +174,17 @@ async fn create(
     .map_err(invalid)?;
     Ok(Json(json!({"user":value})))
 }
+async fn delete(root: RootGrant, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<Value>,ApiError> {
+    let c=state.conn();
+    require_root(&root,&c)?;
+    identity::user(&c,id)?.ok_or_else(||ApiError::not_found("用户不存在"))?;
+    if id==1 { return Err(ApiError::new(axum::http::StatusCode::FORBIDDEN,"protected_user","管理员身份不能删除，请在账号安全中管理")); }
+    full(&c)?;
+    credentials::atomic(&c,||db::lifecycle::archive_user(&c,id,root.actor_account_id()))
+        .map_err(|e|ApiError::new(axum::http::StatusCode::CONFLICT,"user_delete_blocked",e.to_string()))?;
+    Ok(Json(json!({"deleted":true,"archived":true,"history_preserved":true})))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UserPatch {

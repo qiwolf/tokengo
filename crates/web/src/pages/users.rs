@@ -22,6 +22,8 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Value>::new());
     let roots = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
+    let delete_target=RwSignal::new(None::<Value>);
+    let delete_open=RwSignal::new(false);
     let owner = RwSignal::new(None::<i64>);
     let editing = RwSignal::new(false);
     let keys_open = RwSignal::new(false);
@@ -72,10 +74,9 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
                                 (
                                     c.id,
                                     format!(
-                                        "{} · {} · #{}",
+                                        "{} · {}",
                                         c.provider_name.unwrap_or_else(|| "未分组".into()),
-                                        c.name,
-                                        c.id
+                                        c.name
                                     ),
                                 )
                             })
@@ -215,11 +216,24 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             busy.set(false);
         });
     };
+    let delete_user=move |_| {
+        if busy.get_untracked(){return;}
+        let Some(row)=delete_target.get_untracked()else{return;};
+        let Some(id)=row["id"].as_i64()else{return;};
+        busy.set(true);error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::request("DELETE",&format!("/api/managed-users/{id}"),None).await {
+                Ok(_)=>{delete_open.set(false);delete_target.set(None);editing.set(false);owner.set(None);password.set(String::new());notice.set("用户已删除；登录和 API Key 已撤销，账务历史保留。".into());revision.update(|n|*n+=1);}
+                Err(e)=>{ctx.note_err(&e);error.set(e.message);}
+            }
+            busy.set(false);
+        });
+    };
     view! {<div class="page admin-page users-page"><PageHead title="用户" desc="管理登录账号、模型权限和消费上限；用户登录后可自行创建 API Key。"/>
     <Show when=move||!editing.get()>
     <section class="card"><header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
     <div class="card-body"><div class="policy-limits"><label class="account-field"><span>"搜索用户 / 登录名"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><label class="account-check"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用用户"</label></div>
-    <p role="alert">{move||list_error.get()}</p><p role="status">{move||if loading.get(){"正在读取用户…"}else if rows.get().is_empty(){"还没有用户，点击新建用户即可开始。"}else{""}}</p>
+    <p role="status">{move||notice.get()}</p><p role="alert">{move||list_error.get()}</p><p role="status">{move||if loading.get(){"正在读取用户…"}else if rows.get().is_empty(){"还没有用户，点击新建用户即可开始。"}else{""}}</p>
     <div class="table-wrap"><table><thead><tr><th>"用户"</th><th>"登录账号"</th><th>"状态 / 额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||api::rows(u,"accounts").iter().any(|a|api::text(a,"username").to_lowercase().contains(&query)))}).map(|u|{
         let id=u["id"].as_i64().unwrap_or(0);
         let n=api::text(&u,"name");
@@ -227,14 +241,15 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         let names=if names.is_empty(){"未设置登录".into()}else{names};
         let state=if u["enabled"]==true{"已启用"}else{"已停用"};
         let quota=policy::budget_label(&u["budget"]);
+        let delete_row=u.clone();let can_delete=id!=1;
         view!{<tr><td data-label="用户"><strong>{n}</strong></td><td data-label="登录账号">{names}</td><td data-label="状态 / 额度">{state}<div class="muted small">{quota}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{
             owner.set(Some(id));username.set(login_username(&u).unwrap_or_default());name.set(api::text(&u,"name"));password.set(String::new());enabled.set(u["enabled"]==true);draft.set(u["policy"].clone());limit.set(u["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);keys_open.set(false);editing.set(true);
-        }>"管理"</button></td></tr>}
+        }>"管理"</button><button type="button" class="ghost danger" disabled=move||busy.get()||!can_delete title=if can_delete{"删除用户并撤销其登录和 API Key，保留账务历史"}else{"管理员身份请在账号安全中管理"} on:click=move |_|{delete_target.set(Some(delete_row.clone()));error.set(String::new());delete_open.set(true);}>"删除用户"</button></td></tr>}
     }).collect_view()}</tbody></table></div>
     <p class="account-help">{move||roots.get().first().map(|a|format!("管理员 {} 的登录名和密码在账号安全中管理。",api::text(a,"username"))).unwrap_or_default()}</p><button type="button" class="text-link" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></div></section></Show>
     <Show when=move||editing.get()>
     <div class="user-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{editing.set(false);keys_open.set(false);owner.set(None);password.set(String::new());}>"返回用户列表"</button></div>
-    <section class="card"><header class="card-head"><h2>{move||selected.get().map(|v|format!("管理用户：{}",api::text(&v,"name"))).unwrap_or_else(||"新建用户".into())}</h2></header>
+    <section class="card"><header class="card-head"><h2>{move||selected.get().map(|v|format!("管理用户：{}",api::text(&v,"name"))).unwrap_or_else(||"新建用户".into())}</h2><Show when=move||selected.get().is_some_and(|u|u["id"].as_i64()!=Some(1))><button type="button" class="ghost danger" disabled=move||busy.get() on:click=move |_|{delete_target.set(selected.get_untracked());error.set(String::new());delete_open.set(true);}>"删除用户"</button></Show></header>
     <Show when=move||selected.get().is_some()><nav class="user-section-nav" aria-label="用户管理功能"><button type="button" class="ghost" aria-pressed=move||(!keys_open.get()).to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(false)>"账号与授权"</button><button type="button" class="ghost" aria-pressed=move||keys_open.get().to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(true)>"API Key"</button></nav></Show>
     <Show when=move||!keys_open.get()><div class="card-body"><form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()>
     <section class="user-form-section" aria-labelledby="user-account-heading"><h3 id="user-account-heading">"登录与基本资料"</h3>
@@ -248,7 +263,11 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     <p id="user-error" role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p><div class="user-actions"><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button><button type="button" class="ghost" on:click=move |_|{editing.set(false);owner.set(None);password.set(String::new());}>"取消"</button></div></fieldset></form></div></Show>
     </section>
     <Show when=move||keys_open.get()&&owner.get().is_some()><KeyManager ctx=ctx owner=owner models=models channels=channels form_busy=busy/></Show>
-    </Show></div>}
+    </Show><super::ModuleDialog open=delete_open busy=busy title="删除用户".to_string()>
+        <p>{move||delete_target.get().map(|u|format!("确定删除用户“{}”？",api::text(&u,"name"))).unwrap_or_default()}</p>
+        <p>"此操作会撤销该用户的登录会话和全部 API Key，移除其调用策略及授权。历史请求和账单会保留用于核对。删除后不能从用户列表恢复。"</p>
+        <p class="banner bad" role="alert">{move||error.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|delete_open.set(false)>"取消"</button><button type="button" class="danger" disabled=move||busy.get() on:click=delete_user>"确认删除用户"</button></div>
+    </super::ModuleDialog></div>}
 }
 
 #[cfg(test)]

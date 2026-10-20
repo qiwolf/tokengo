@@ -204,6 +204,15 @@ pub fn Connections(
 ) -> impl IntoView {
     let all_providers = StoredValue::new(providers);
     let rows = RwSignal::new(Vec::<Channel>::new());
+    let credential_labels=RwSignal::new(std::collections::BTreeMap::<i64,String>::new());
+    let credential_states=RwSignal::new(std::collections::BTreeMap::<i64,bool>::new());
+    if let Some(provider_id)=provider_id {leptos::task::spawn_local(async move {
+        match crate::admin_api::request("GET",&format!("/api/providers/{provider_id}/credentials"),None).await {
+            Ok(v)=>{let mut names=std::collections::BTreeMap::new();let mut states=std::collections::BTreeMap::new();for (position,row) in crate::admin_api::rows(&v,"credentials").iter().enumerate(){let label=crate::provider_api::credential_label(row,position);if let Some(ids)=row["source_ids"].as_array(){for id in ids {if let Some(id)=id.as_i64(){names.insert(id,label.clone());states.insert(id,row["enabled"]==true);}}}}credential_labels.set(names);credential_states.set(states);},
+            Err(e)=>ctx.note_err(&e),
+        }
+    });}
+
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let form = RwSignal::new(Form::Closed);
@@ -212,6 +221,8 @@ pub fn Connections(
     let mutation_error = RwSignal::new(String::new());
     Effect::new(move |_| { if !editor_open.get() { form.set(Form::Closed); } });
     let probe_kind = RwSignal::new("chat".to_string());
+    let probe_models = RwSignal::new(std::collections::BTreeMap::<i64,String>::new());
+    let probe_busy = RwSignal::new(false);
     let probe_msg = RwSignal::new(None::<(i64, String, bool)>);
 
     // 弹窗停在哪一段
@@ -583,7 +594,7 @@ pub fn Connections(
 
     let remove = move |l: Channel| {
         let ok = web_sys::window()
-            .and_then(|w| w.confirm_with_message(&format!("确定删除连接「{}」？仅无依赖的连接可以删除。若被 OAuth、用户/Key授权、路由、会话或历史账本引用，系统会阻止删除并说明原因，请改为停用以保留历史。成功删除会移除该连接的地址、凭据与模型映射。", l.name)).ok())
+            .and_then(|w| w.confirm_with_message(&format!("确定删除上游接入「{}」？将清理其模型映射、相关授权和策略引用；若这是 Key 的最后一个接入，也会删除该 Key。调用与账务历史保留。", l.name)).ok())
             .unwrap_or(false);
         if !ok {
             return;
@@ -639,15 +650,19 @@ pub fn Connections(
     };
 
     let probe = move |l: Channel| {
+        if probe_busy.get_untracked(){return;}
         let kind = probe_kind.get_untracked();
+        let model=probe_models.get_untracked().get(&l.id).cloned().unwrap_or_default();
+        if model.is_empty(){probe_msg.set(Some((l.id,"请先选择需要测试的模型。".into(),false)));return;}
+        probe_busy.set(true);
         probe_msg.set(Some((l.id, "正在真发一个请求…".into(), true)));
         wasm_bindgen_futures::spawn_local(async move {
-            match api::probe_channel(l.id, &kind).await {
+            match api::probe_channel(l.id, &kind, &model).await {
                 Ok(r) => {
                     let mut s = String::new();
-                    s.push_str(if r.ok { "通了" } else { "没通" });
+                    s.push_str(if r.ok { "本次测试成功" } else { "本次测试失败" });
                     if let Some(m) = &r.model_sent {
-                        s.push_str(&format!("；发给上游的模型名是 {m}"));
+                        s.push_str(&format!("；上游模型： {m}"));
                     }
                     if let Some(code) = r.http_status {
                         s.push_str(&format!("；HTTP {code}"));
@@ -658,6 +673,7 @@ pub fn Connections(
                     if !r.has_secret {
                         s.push_str("；注意：这条渠道没配密钥");
                     }
+                    if !r.ok {match r.http_status {Some(400)=>s.push_str("；请核对所选模型、协议和请求参数，不能据此判断 Key 已停服"),Some(429)=>s.push_str("；上游限流或额度限制，请检查供应方的速率与余额；不能据此判断 Key 已停服"),_=>{}}}
                     if let Some(n) = &r.note {
                         // 成功时 note 就是"通了"，前面已经写过一次，别重复
                         if !(r.ok && n == "通了") {
@@ -671,6 +687,7 @@ pub fn Connections(
                     probe_msg.set(Some((l.id, format!("测不了：{}", e.message), false)));
                 }
             }
+            probe_busy.set(false);
         });
     };
 
@@ -871,13 +888,13 @@ pub fn Connections(
     };
 
     view! {
-        <div class="page">
+        <div class="page provider-diagnostics">
             <PageHead
-                title="连接设置"
-                desc="服务商内部的接口与凭据。编辑或删除在每条连接右侧；有历史或授权引用时请使用停用。"
+                title="上游接入"
+                desc="按 Key 与 API 地址检查接入、编辑自定义上游请求头，以及调整服务商分组。"
             >
                 <>
-                    <button type="button" class="primary" on:click=open_new>"新建连接"</button>
+                    <button type="button" class="primary" on:click=open_new>"新建上游接入"</button>
                     <button type="button" class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
                         {move || if busy.get() { "刷新中…" } else { "刷新" }}
                     </button>
@@ -913,7 +930,7 @@ pub fn Connections(
                         return view! {
                             <div class="empty">
                                 <p>"此服务商还没有连接。"</p>
-                                <p>"点击「新建连接」填写接口地址和凭据，再启用所需模型。"</p>
+                                <p>"点击“添加上游接入”填写地址和凭据，再选择可用模型。"</p>
                             </div>
                         }.into_any();
                     }
@@ -921,9 +938,14 @@ pub fn Connections(
                     v.into_iter()
                         .enumerate()
                         .map(|(idx, l)| {
+                            let display_name=credential_labels.get().get(&l.id).cloned().unwrap_or_else(||"上游接入".into());
+                            let key_enabled=credential_states.get().get(&l.id).copied();
                             let l2 = l.clone();
                             let l3 = l.clone();
                             let l4 = l.clone();
+                            let l_headers = l.clone();
+                            let probe_id=l.id;
+                            let probe_options=l.models.iter().filter(|m|m.enabled).map(|m|m.model.clone()).collect::<Vec<_>>();
                             let l_up = l.clone();
                             let l_down = l.clone();
                             let first_one = idx == 0;
@@ -936,20 +958,20 @@ pub fn Connections(
                             // 摘要跟路由口径一致（严格白名单）：只认勾上的那些；一个都没勾 =
                             // 这条渠道现在什么都不能用。
                             let enabled_models=l.models.iter().filter(|m|m.enabled).count();
-                            let model_txt=if l.models.is_empty(){"未配置模型".to_string()}else{format!("启用 {} / 已配置 {}",enabled_models,l.models.len())};
+                            let model_txt=if l.models.is_empty(){"未配置模型".to_string()}else{format!("{} 个启用 / {} 个已配置",enabled_models,l.models.len())};
                             view! {
                                 <div class="chan-card">
                                     <div class="chan-head">
                                         <span class="chan-id">
-                                            {format!("连接 #{} · 第 {} 位",l.id,idx+1)}
+                                            {format!("优先顺序 {}",idx+1)}
                                         </span>
-                                        <b class="chan-name">{l.name.clone()}</b>{(!l.account_status.is_empty()).then(||view!{<span class="tag warn">{l.account_status.clone()}</span>})}
+                                        <b class="chan-name">{display_name}</b>{key_enabled.map(|enabled|view!{<span class=if enabled{"tag ok"}else{"tag warn"}>{if enabled{"Key 已启用"}else{"Key 已停用"}}</span>})}{(!l.account_status.is_empty()).then(||view!{<span class="tag warn">{l.account_status.clone()}</span>})}
                                         <span class="spacer"></span>
                                         {
                                             let (cls, tip) = if l.enabled {
-                                                ("switch on", "点一下停用：不会再往这家上游发请求")
+                                                ("switch on", "停用此 API 接入；Key 整体启停请在管理上游 Key 中操作")
                                             } else {
-                                                ("switch", "点一下启用")
+                                                ("switch", "启用此 API 接入；仍受 Key、模型和渠道状态约束")
                                             };
                                             let tg = toggle_enabled.clone();
                                             let l2 = l.clone();
@@ -957,7 +979,7 @@ pub fn Connections(
                                                 <button type="button" class=cls title=tip on:click=move |_| tg(l2.clone())>
                                                     <span class="knob"></span>
                                                     <span class="switch-text">
-                                                        {if l.enabled { "启用" } else { "停用" }}
+                                                        {if l.enabled { "接入启用" } else { "接入停用" }}
                                                     </span>
                                                 </button>
                                             }
@@ -975,8 +997,8 @@ pub fn Connections(
                                                 view! { <span class="tag warn">"没有"</span> }.into_any()
                                             }}
                                         </span>
-                                        <span>{format!("请求头：{}", l.headers.len())}</span>
-                                        <span>{format!("模型名：{model_txt}")}</span>
+                                        <button type="button" class="ghost" title="随请求发送给上游服务的自定义 HTTP 请求头" on:click=move |_|{open_edit(l_headers.clone());tab.set(TAB_HEADERS.to_string());}>{format!("自定义上游请求头（{}）", l.headers.len())}</button>
+                                        <span>{format!("模型：{model_txt}")}</span>
                                         {l.unwrap_envelope.then(|| view! {
                                             <span class="tag">"响应解包"</span>
                                         })}
@@ -1002,16 +1024,15 @@ pub fn Connections(
                                             "↓"
                                         </button>
                                         <button type="button" class="ghost" on:click=move |_| {open_edit(l2.clone());tab.set(TAB_BASIC.to_string());}>
-                                            "编辑连接"
+                                            "编辑接入"
                                         </button>
-                                        <button type="button" class="ghost" on:click=move |_| probe(l3.clone())>
-                                            "测一下"
-                                        </button>
+
                                         <button type="button" class="ghost danger" on:click=move |_| remove(l4.clone())>
-                                            "删除连接"
+                                            "删除接入"
                                         </button>
                                     </div>
-                                    <details><summary>"移动到其他服务商 / 未分组"</summary><super::provider_channels::Assignment ctx=ctx connection=l.clone() providers=all_providers.get_value() reload=membership_changed/></details>
+                                    <div class="probe-model-select"><label for=format!("probe-model-{probe_id}")>"测试模型"</label><select id=format!("probe-model-{probe_id}") prop:value=move||probe_models.get().get(&probe_id).cloned().unwrap_or_default() on:change=move|e|probe_models.update(|m|{m.insert(probe_id,event_target_value(&e));})><option value="">"请选择已启用的模型"</option>{probe_options.into_iter().map(|m|view!{<option value=m.clone()>{m.clone()}</option>}).collect_view()}</select><button type="button" class="ghost" disabled=move||probe_busy.get() on:click=move |_|probe(l3.clone())>"测试所选模型"</button></div>
+                                    <details><summary>"调整服务商分组"</summary><super::provider_channels::Assignment ctx=ctx connection=l.clone() providers=all_providers.get_value() reload=membership_changed/></details>
                                     {show_probe.then(|| view! {
                                         <div class=move || if pok { "chan-probe ok" } else { "chan-probe bad" }>
                                             {pmsg.clone()}
@@ -1025,7 +1046,7 @@ pub fn Connections(
                 }}
             </div>
 
-            <super::ModuleDialog open=editor_open busy=mutating title="连接配置".to_string()>
+            <super::ModuleDialog open=editor_open busy=mutating title="上游接入配置".to_string()>
             {move || if form.get() == Form::Closed {
                 ().into_any()
             } else {
@@ -1037,7 +1058,7 @@ pub fn Connections(
                 view! {
                     <div class="channel-editor">
                             <div class="modal-head">
-                                <h2>{if editing { "编辑连接" } else { "新建连接" }}</h2>
+                                <h2>{if editing { "编辑接入" } else { "新建上游接入" }}</h2>
                                 <span class="muted small">
                                     {move || {
                                         let models = f_models.get().len();
@@ -1060,7 +1081,7 @@ pub fn Connections(
                                     class:active=move || tab.get() == TAB_HEADERS
                                     on:click=move |_| tab.set(TAB_HEADERS.to_string())
                                 >
-                                    "请求头"
+                                    "自定义上游请求头"
                                     <span class="tag muted">{move || f_headers.get().len()}</span>
                                 </button>
                                 <button type="button"

@@ -233,7 +233,10 @@ fn model_details_open() -> bool {
 pub fn Models(ctx:Ctx)->impl IntoView {
     let auto_policy_open=RwSignal::new(false);
     let route_policy_open=RwSignal::new(false);
+    let route_policy_busy=RwSignal::new(false);
     let policy=RwSignal::new(crate::model::AutoPolicy::default());
+    let policy_busy=RwSignal::new(false);
+    let policy_message=RwSignal::new(String::new());
     let order=RwSignal::new(Vec::<String>::new());
     let ordering=RwSignal::new(false);
     let routes=RwSignal::new(Vec::<NameRoute>::new());
@@ -256,7 +259,17 @@ pub fn Models(ctx:Ctx)->impl IntoView {
         });
     };
     reload();let timer=crate::every(5000,reload);on_cleanup(move ||crate::stop_timer(timer));
-    let save_policy=move |p:crate::model::AutoPolicy|{wasm_bindgen_futures::spawn_local(async move {match api::save_auto_policy(&p).await {Ok(())=>{policy.set(p);reload();},Err(e)=>ctx.say(e.message)}});};
+    let save_policy=move |p:crate::model::AutoPolicy|{
+        if policy_busy.get_untracked(){return;} policy_busy.set(true);policy_message.set(String::new());
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::save_auto_policy(&p).await {
+                Ok(())=>{match api::auto_policy().await {Ok(saved)=>{policy.set(saved.policy);order.set(saved.order);policy_message.set("自动选择策略已保存，并重新读取确认。".into());},Err(e)=>{ctx.note_err(&e);policy_message.set(format!("已提交，重新读取确认失败：{}",e.message));}}
+                    if let Ok(r)=api::model_routes().await{routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);}},
+                Err(e)=>{ctx.note_err(&e);policy_message.set(e.message);}
+            }
+            policy_busy.set(false);
+        });
+    };
     let move_model=move |name:String,up:bool|{wasm_bindgen_futures::spawn_local(async move {match api::move_model(&name,up).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
     let toggle_model=move |name:String,enabled:bool|{wasm_bindgen_futures::spawn_local(async move {match api::set_model_enabled(&name,enabled).await{Ok(())=>{ctx.say(if enabled{"模型已启用"}else{"模型已停用"});reload();},Err(e)=>ctx.say(e.message)}});};
     let channel_name=move |id:i64|chans.get().iter().find(|c|c.id==id).map(|c|c.name.clone()).unwrap_or_else(||format!("渠道 #{id}"));
@@ -264,21 +277,22 @@ pub fn Models(ctx:Ctx)->impl IntoView {
         <div class="page model-observatory">
             <PageHead title="模型" desc="汇总服务商中已启用且可路由的对外模型；推理档位作为参数，不另建模型名。"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
             {move ||err.get().map(|e|view!{<div class="banner bad">{e}</div>})}
-            <div class="toolbar"><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|auto_policy_open.set(true)>"自动选择与路由策略"</button><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|route_policy_open.set(true)>"模型路由与回退约束"</button></div><super::ModuleDialog open=auto_policy_open title="自动选择与路由策略".to_string()><section class="route-spotlight">
-                <div class="auto-header"><div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div><div class="auto-header-actions">                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
+            <div class="toolbar"><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|auto_policy_open.set(true)>"自动选择与路由策略"</button><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|route_policy_open.set(true)>"模型路由与回退约束"</button></div><super::ModuleDialog open=auto_policy_open busy=policy_busy title="自动选择与路由策略".to_string()><section class="route-spotlight">
+                <div class="auto-header"><div class="route-spotlight-head"><h2>"自动选择模型"</h2><code>"auto"</code></div><div class="auto-header-actions">                    <label class="pick"><input type="checkbox" disabled=move||policy_busy.get() prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"允许 5% 请求探索其他候选"</label>
                     <button on:click=move |_|{ordering.update(|v|*v=!*v);auto_policy_open.set(false);}>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button></div></div>
-                <div class="policy-controls">{[("sequence","顺序优先"),("balanced","轮流调用"),("fastest","速度优先"),("stable","稳定优先"),("idle","空闲优先")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
+                <p class="muted small">"客户端将模型名填写为 auto 时，网关会在下面的已接入模型中按所选策略选择，并在失败时尝试其他候选。这里配置的是跨模型自动选择；单个模型的上游 Key 顺序请使用“模型路由与回退约束”。显示的候选来自服务端实时状态，会随配置与可用性变化。"</p><div class="policy-controls">{[("sequence","顺序优先"),("balanced","轮流调用"),("fastest","速度优先"),("stable","稳定优先"),("idle","空闲优先")].into_iter().map(|(key,label)|view!{<button type="button" disabled=move||policy_busy.get() aria-pressed=move||policy.get().strategy==key class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
 
                 </div>
                 {move ||{
                     let a=auto.get();
-                    if !a.available{return view!{<p class="muted">"暂无已勾选的可用模型"</p>}.into_any();}
+                    if !a.available{return view!{<p class="muted">"暂无可参与 auto 的模型。请先接入并启用模型，再在该模型的路由约束中允许参与自动选择。"</p>}.into_any();}
                     view!{<div class="route-selections">{[("chat","对话"),("embeddings","嵌入"),("rerank","重排")].into_iter().filter_map(|(kind,label)|{
                         let names=auto_list(&a,kind);if names.is_empty(){return None;}
-                        let first=names[0].clone();let rest=names.join(" → ");
-                        Some(view!{<div class="route-selection"><small>{label}</small><b>{first}</b><span class="muted small">{move || match policy.get().strategy.as_str(){"sequence"=>"从第一模型开始，失败才切换","balanced"=>"轮流分配，失败换下一模型","fastest"=>"优先响应更快的模型","idle"=>"优先当前在途请求更少的模型",_=>"优先近期更稳定的模型"}}</span><details><summary>"候选顺序"</summary><p>{rest}</p></details></div>})
+                        let candidates=names.to_vec();let count=candidates.len();
+                        Some(view!{<div class="route-selection"><h3>{format!("{label} · {count} 个候选模型")}</h3><span class="muted small">{move || match policy.get().strategy.as_str(){"sequence"=>"从第一模型开始，失败才切换","balanced"=>"轮流分配，失败换下一模型","fastest"=>"优先响应更快的模型","idle"=>"优先当前在途请求更少的模型",_=>"优先近期更稳定的模型"}}</span><ol>{candidates.into_iter().map(|name|view!{<li><code>{name}</code></li>}).collect_view()}</ol></div>})
                     }).collect_view()}</div>}.into_any()
                 }}
+                <p role="status">{move||if policy_busy.get(){"正在保存自动选择策略…".into()}else{policy_message.get()}}</p>
             </section>
             </super::ModuleDialog><Show when=move ||ordering.get()><div class="toolbar"><p>"使用卡片中的上移、下移调整顺序。"</p><button type="button" class="primary" on:click=move |_|ordering.set(false)>"完成排序"</button></div></Show><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
             <nav class="kind-tabs">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) on:click=move |_|tab.set(key.into())>{k.title}<span class="tab-n">{move ||tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())).collect::<Vec<_>>()))[i]}</span></button>}}).collect_view()}</nav>
@@ -316,7 +330,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     </article>}
                 }).collect_view().into_any()
             }}</div>
-            <super::ModuleDialog open=route_policy_open title="模型路由与回退约束".to_string()><super::route_policy::RoutePolicy ctx=ctx/></super::ModuleDialog>
+            <super::ModuleDialog open=route_policy_open busy=route_policy_busy title="模型路由与回退约束".to_string()><super::route_policy::RoutePolicy ctx=ctx open=route_policy_open saving=route_policy_busy/></super::ModuleDialog>
         </div>
     }
 }

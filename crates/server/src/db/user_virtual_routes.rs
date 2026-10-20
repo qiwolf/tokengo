@@ -94,6 +94,12 @@ fn positions(v: &[usize], n: usize) -> bool {
             .all(|(i, p)| *p > 0 && *p <= n && !v[..i].contains(p))
 }
 pub fn validate_shape(v: &Config) -> Result<(), VirtualError> {
+    validate_stored_shape(v, false)
+}
+// Deleting a provider may leave a disabled route with an empty target or time slot.
+// Readers must still expose it for repair; writes and re-enabling always use strict validation.
+fn validate_stored_shape(v: &Config, allow_incomplete: bool) -> Result<(), VirtualError> {
+    let incomplete = allow_incomplete && !v.enabled;
     let name = v.name.trim();
     if name.is_empty()
         || name.chars().count() > 128
@@ -108,7 +114,7 @@ pub fn validate_shape(v: &Config) -> Result<(), VirtualError> {
     {
         return Err(invalid("仅支持顺序/时段模式及Asia/Shanghai或UTC时区"));
     }
-    if v.targets.is_empty()
+    if (v.targets.is_empty() && !incomplete)
         || v.targets.len() > 16
         || v.windows.len() > 64
         || !positions(&v.default_positions, v.targets.len())
@@ -139,7 +145,7 @@ pub fn validate_shape(v: &Config) -> Result<(), VirtualError> {
             || w.days_mask > 127
             || w.start_minute >= w.end_minute
             || w.end_minute > 1440
-            || w.target_positions.is_empty()
+            || (w.target_positions.is_empty() && !incomplete)
             || !positions(&w.target_positions, v.targets.len())
         {
             return Err(invalid("时段须为有效的半开区间；跨午夜请拆成两段"));
@@ -335,7 +341,7 @@ pub fn list(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
             default_positions: serde_json::from_str(&defaults)
                 .map_err(|_| DbError::Other("Invalid virtual defaults".into()))?,
         };
-        validate_shape(&config)
+        validate_stored_shape(&config, true)
             .map_err(|_| DbError::Other("Invalid persisted virtual route".into()))?;
         out.push(VirtualModel {
             id,

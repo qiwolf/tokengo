@@ -219,6 +219,7 @@ pub fn validate_role(role: &str) -> Result<()> {
     Ok(())
 }
 pub fn user(c: &Connection, id: i64) -> Result<Option<User>> {
+    if super::lifecycle::archived_user(c,id)? { return Ok(None); }
     let row = c
         .query_row(
             "SELECT id,name,role,enabled,policy_json,created_at_ms FROM users WHERE id=?1",
@@ -248,7 +249,7 @@ pub fn user(c: &Connection, id: i64) -> Result<Option<User>> {
     .transpose()
 }
 pub fn users(c: &Connection) -> Result<Vec<User>> {
-    let mut q = c.prepare("SELECT id FROM users ORDER BY id")?;
+    let mut q = c.prepare("SELECT id FROM users WHERE NOT EXISTS(SELECT 1 FROM settings WHERE key='deleted_user:'||users.id) ORDER BY id")?;
     let ids = q
         .query_map([], |r| r.get::<_, i64>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
