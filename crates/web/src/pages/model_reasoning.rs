@@ -27,6 +27,7 @@ pub(crate) fn capability_label(c: &ReasoningCapability) -> String {
 }
 #[component]
 pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(optional)] label: Option<String>) -> impl IntoView {
+    let diagnostics_open = RwSignal::new(false);
     let model = StoredValue::new(model);
     let data = RwSignal::new(ReasoningCapability::default());
     let manual = RwSignal::new(String::new());
@@ -113,10 +114,10 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(opt
             name
         )
     };
-    view! {<section class="reasoning-config"><h3>{label.unwrap_or_else(||if channel.is_some(){"推理设置".into()}else{"推理设置（请先保存模型）".into()})}</h3><p>{move||capability_label(&data.get())}</p><p class="muted small">{move||data.get().default_effort.map(|v|format!("当前默认档位：{v}（{}）",if data.get().configured_default{"已配置"}else{"服务商默认"})).unwrap_or_else(||"当前跟随服务商默认设置。".into())}</p><p class="account-help">"先更新模型信息，查看服务商公布的档位，再选择默认值。未公布档位时保持默认；客户端指定的推理档位优先生效。"</p><details class="reasoning-diagnostics"><summary>"识别依据与高级说明"</summary><p class="muted small">{move||data.get().reason}</p><p class="muted small">"更新模型信息不会发送推理请求，识别结果不代表实际调用已验证。具体能力以当前接入协议为准。推理档位使用模型原生参数，不另建模型名；客户端显式指定的 reasoning.effort、reasoning_effort 和 service_tier 优先。"</p></details>
+    view! {<section class="reasoning-config"><h3>{label.unwrap_or_else(||if channel.is_some(){"推理设置".into()}else{"推理设置（请先保存模型）".into()})}</h3><p>{move||capability_label(&data.get())}</p><p class="muted small">{move||data.get().default_effort.map(|v|format!("当前默认档位：{v}（{}）",if data.get().configured_default{"已配置"}else{"服务商默认"})).unwrap_or_else(||"当前跟随服务商默认设置。".into())}</p><p class="account-help">"先更新模型信息，查看服务商公布的档位，再选择默认值。未公布档位时保持默认；客户端指定的推理档位优先生效。"</p><button type="button" class="ghost" on:click=move |_|diagnostics_open.set(true)>"识别依据与高级说明"</button><super::ModuleDialog open=diagnostics_open title="推理能力识别依据".to_string()><p class="muted small">{move||data.get().reason}</p><p class="muted small">"更新模型信息不会发送推理请求，识别结果不代表实际调用已验证。具体能力以当前接入协议为准。推理档位使用模型原生参数，不另建模型名；客户端显式指定的 reasoning.effort、reasoning_effort 和 service_tier 优先。"</p></super::ModuleDialog>
     <button type="button" class="ghost" disabled=move||busy.get()||channel.is_none() on:click=refresh>"更新模型信息"</button><form class="account-form" on:submit=save><div class="account-field reasoning-default-field"><label for=field("default")>"默认推理档位"</label><select id=field("default") prop:value=default disabled=move||busy.get()||channel.is_none()||!loaded.get() on:change=move|e|default.set(event_target_value(&e))><option value="">"使用服务商默认"</option>{move||data.get().levels.into_iter().map(|level|view!{<option value=level.clone()>{level.clone()}</option>}).collect_view()}</select></div>
     <label class="pick"><input type="checkbox" disabled=move||busy.get()||!loaded.get() prop:checked=manual_on on:change=move|e|manual_on.set(event_target_checked(&e))/>{"人工确认支持档位"}</label><Show when=move||manual_on.get()><div class="account-field"><label for=field("manual")>"已明确确认的档位（逗号分隔）"</label><input id=field("manual") prop:value=manual on:input=move|e|manual.set(event_target_value(&e)) aria-describedby=field("help")/><p id=field("help") class="account-help">"仅填写你已核实支持的值，来源会标为人工确认。先保存档位，再选择默认；关闭后恢复目录判断。"</p></div></Show>
-    <p class="account-error" role="alert">{move||error.get()}</p><p class="account-success" role="status">{move||message.get()}</p><button type="submit" class="ghost" disabled=move||busy.get()||channel.is_none()||!loaded.get()>{move||if busy.get(){"正在保存…"}else{"保存推理参数"}}</button></form></section>}
+    <p class="account-error" role="alert">{move||error.get()}</p><p class="account-success" role="status">{move||message.get()}</p><button type="submit" class="primary" disabled=move||busy.get()||channel.is_none()||!loaded.get()>{move||if busy.get(){"正在保存…"}else{"保存推理参数"}}</button></form></section>}
 }
 #[cfg(test)]
 mod tests {

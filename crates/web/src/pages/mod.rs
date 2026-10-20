@@ -144,6 +144,36 @@ pub fn PageHead(
     }
 }
 
+/// Focused editor/detail surface. The browser handles modal focus containment and
+/// restores the launching control; Escape and the close button update the same state.
+#[component]
+pub fn ModuleDialog(open: RwSignal<bool>, title: String, #[prop(optional)] busy: Option<RwSignal<bool>>, children: Children) -> impl IntoView {
+    use wasm_bindgen::JsCast;
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let id = format!("module-dialog-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let title_id = format!("{id}-title");
+    let effect_id = id.clone();
+    Effect::new(move |_| {
+        let wanted = open.get();
+        if let Some(dialog) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(&effect_id)) {
+            if wanted != dialog.has_attribute("open") {
+                let method = if wanted { "showModal" } else { "close" };
+                if let Ok(function) = js_sys::Reflect::get(dialog.as_ref(), &method.into()).and_then(|v| v.dyn_into::<js_sys::Function>()) {
+                    let _ = function.call0(dialog.as_ref());
+                }
+            }
+        }
+    });
+    view! {
+        <dialog id=id class="module-dialog console-content" aria-labelledby=title_id.clone()
+            on:cancel=move |ev: web_sys::Event| { ev.prevent_default(); if !busy.map(|s|s.get_untracked()).unwrap_or(false) { open.set(false); } }
+            on:close=move |_| { if open.get_untracked() { open.set(false); } }>
+            <header class="module-dialog-header"><h2 id=title_id.clone()>{title}</h2><button type="button" class="ghost" autofocus disabled=move ||busy.map(|s|s.get()).unwrap_or(false) on:click=move |_|open.set(false)>"关闭"</button></header>
+            <div class="module-dialog-body">{children()}</div>
+        </dialog>
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -27,7 +27,7 @@ pub fn Portal(ctx: Ctx) -> impl IntoView {
         });
     };
     load(None);
-    view! {<div class="page portal-page"><PageHead title="我的空间" desc="管理自己的 API Key，查看用量和费用；全部 Key 共享你的总额度。"><button class="ghost" disabled=move||busy.get() on:click=move|_|load(None)>"刷新"</button></PageHead>
+    view! {<div class="page portal-page"><PageHead title="我的空间" desc="管理自己的 API Key，查看用量和费用；全部 Key 共享你的总额度。"><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(None)>"刷新"</button></PageHead>
     <Show when=move||!error.get().is_empty()><div class="banner bad" role="alert">{move||error.get()}</div></Show>
     <Show when=move||busy.get()&&data.get().is_none()><div class="account-loading" role="status">"正在读取你的用量…"</div></Show>
     {move||data.get().map(|p|{let summary=p.usage.summary;let before=p.usage.next_before_id;
@@ -35,6 +35,6 @@ pub fn Portal(ctx: Ctx) -> impl IntoView {
     <super::key_manager::KeyManager ctx=ctx owner=owner models=models channels=channels personal=true/>
     <section class="card"><header class="card-head"><h2>"用量记录"</h2><span class="muted small">"最新在前 · 每页 25 条"</span></header><div class="card-body">
     {if p.usage.entries.is_empty(){view!{<p class="account-empty">"这页暂无调用记录。"</p>}.into_any()}else{view!{<div class="table-wrap"><table><thead><tr><th>"时间"</th><th>"模型"</th><th>"计费单位"</th><th>"输入 / 输出 tokens"</th><th>"结果"</th><th>"扣费"</th></tr></thead><tbody>{p.usage.entries.into_iter().map(|e|{let tokens=api::entry_tokens(&e);let debit=api::debit(e.debit_micro);let unit=if e.billing_unit=="request"{"按次"}else{"token"};let outcome=e.outcome.unwrap_or_else(||e.status.clone());view!{<tr><td data-label="时间">{fmt::ts_short(e.created_ms)}</td><td data-label="模型">{e.model}</td><td data-label="计费单位">{unit}</td><td data-label="输入 / 输出 tokens" class="num">{tokens}</td><td data-label="结果">{outcome}</td><td data-label="扣费" class="num">{debit}</td></tr>}}).collect_view()}</tbody></table></div>}.into_any()}}
-    <div class="account-actions"><button class="ghost" disabled=move||busy.get() on:click=move|_|load(None)>"回到最新"</button><button class="ghost" disabled=move||busy.get()||before.is_none() on:click=move|_|load(before)>"较早记录"</button></div></div></section>}
+    <div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(None)>"回到最新"</button><button type="button" class="ghost" disabled=move||busy.get()||before.is_none() on:click=move|_|load(before)>"较早记录"</button></div></div></section>}
     })}</div>}
 }

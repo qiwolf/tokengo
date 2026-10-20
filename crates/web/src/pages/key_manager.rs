@@ -13,6 +13,7 @@ pub fn KeyManager(
 ) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
+    let editor_open = RwSignal::new(false);
     let name = RwSignal::new(String::new());
     let draft = RwSignal::new(policy::default_policy());
     let base = RwSignal::new(policy::default_policy());
@@ -34,6 +35,7 @@ pub fn KeyManager(
         secret.set(None);
         rows.set(vec![]);
         selected.set(None);
+        editor_open.set(false);
         name.set(String::new());
         expiry.set(String::new());
         limit.set(String::new());
@@ -131,6 +133,9 @@ pub fn KeyManager(
                 loading.set(false);
             }
         });
+    });
+    Effect::new(move |_| {
+        if !editor_open.get() { secret.set(None); }
     });
     let reset = move || {
         selected.set(None);
@@ -238,13 +243,15 @@ pub fn KeyManager(
                         busy.set(false);
                         return;
                     }
+                    let has_new_secret = new_secret.is_some();
                     secret.set(new_secret);
                     rows.update(|r| {
                         r.retain(|k| k["id"] != row["id"]);
                         r.insert(0, row.clone());
                     });
                     selected.set(Some(row));
-                    notice.set("密钥已保存；明文只在本次创建后显示。".into());
+                    notice.set(if has_new_secret {"密钥已创建，请立即保存明文。"} else {"密钥设置已保存。"}.into());
+                    if !has_new_secret && error.get_untracked().is_empty() { editor_open.set(false); }
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -255,6 +262,7 @@ pub fn KeyManager(
         });
     };
     let revoke = move |_| {
+        if busy.get_untracked() { return; }
         let Some(k) = selected.get_untracked() else {
             return;
         };
@@ -299,17 +307,19 @@ pub fn KeyManager(
             busy.set(false);
         });
     };
-    view! {<section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></header><div class="card-body">
+    view! {<section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
     <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"各 Key 共享用户总额度，设置 Key 上限不会增加总额度。最多32把活动 Key；已有密钥保留。"</p></Show>
-    <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，可在下方创建。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());}>"管理"</button></td></tr>}}).collect_view()}</tbody></table></div>
-    <hr/><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|reset()>"新建 API Key"</button><h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
+    <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，点击新建 API Key 开始。"}else{""}}</p>
+    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button></td></tr>}}).collect_view()}</tbody></table></div>
+    <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
+    <super::ModuleDialog open=editor_open busy=busy title="API Key 设置".to_string()>
+    <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
     <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
     <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label>
     <PolicyEditor policy=draft models=models channels=channels prefix=if personal{"my-key"}else{"admin-key"} admin=!personal/>
     <div class="policy-limits"><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p>
-    <div class="account-actions"><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset></form>
+    <div class="account-actions"><button class="ghost" type="button" on:click=move |_|editor_open.set(false)>"取消"</button><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset></form>
     <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p>
     {move||secret.get().map(|s|view!{<div class="one-time-key" role="status"><h3>"请立即保存 API Key"</h3><p>"关闭后无法再次查看。未写入浏览器持久存储。"</p><code class="one-time-secret">{s}</code><button class="ghost" type="button" on:click=move |_|secret.set(None)>"已保存，隐藏明文"</button></div>})}
-    </div></section>}
+    </super::ModuleDialog>}
 }

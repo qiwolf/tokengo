@@ -223,8 +223,16 @@ fn kind_source_label(source: &str) -> &'static str {
     }
 }
 
+// Polling must not replace the card DOM while its editor/detail dialog is open.
+// Check again after the request to cover opening a dialog during an in-flight poll.
+fn model_details_open() -> bool {
+    web_sys::window().and_then(|w|w.document()).and_then(|d|d.query_selector(".compact-model-dialog[open]").ok().flatten()).is_some()
+}
+
 #[component]
 pub fn Models(ctx:Ctx)->impl IntoView {
+    let auto_policy_open=RwSignal::new(false);
+    let route_policy_open=RwSignal::new(false);
     let policy=RwSignal::new(crate::model::AutoPolicy::default());
     let order=RwSignal::new(Vec::<String>::new());
     let ordering=RwSignal::new(false);
@@ -235,11 +243,15 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     let visibility=RwSignal::new("enabled".to_string());let search=RwSignal::new(String::new());let tab=RwSignal::new("chat".to_string());
     let sort_score=RwSignal::new(false);let updated=RwSignal::new(0i64);
     let reload=move || {
-        if busy.get_untracked(){return;} busy.set(true);
+        if busy.get_untracked() || model_details_open(){return;} busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            match api::model_routes().await {Ok(r)=>{routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);err.set(None);},Err(e)=>{ctx.note_err(&e);err.set(Some(e.message));}}
-            if let Ok(c)=api::channels().await{chans.set(c);}
-            if let Ok(p)=api::auto_policy().await{policy.set(p.policy);order.set(p.order);}
+            let routing_result=api::model_routes().await;
+            let channels_result=api::channels().await;
+            let policy_result=api::auto_policy().await;
+            if model_details_open(){busy.set(false);return;}
+            match routing_result {Ok(r)=>{routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);err.set(None);},Err(e)=>{ctx.note_err(&e);err.set(Some(e.message));}}
+            if let Ok(c)=channels_result{chans.set(c);}
+            if let Ok(p)=policy_result{policy.set(p.policy);order.set(p.order);}
             busy.set(false);
         });
     };
@@ -252,9 +264,9 @@ pub fn Models(ctx:Ctx)->impl IntoView {
         <div class="page model-observatory">
             <PageHead title="模型" desc="汇总服务商中已启用且可路由的对外模型；推理档位作为参数，不另建模型名。"><button class="ghost" disabled=move ||busy.get() on:click=move |_|reload()>"刷新"</button></PageHead>
             {move ||err.get().map(|e|view!{<div class="banner bad">{e}</div>})}
-            <details class="model-advanced"><summary>"高级：自动选择与路由策略"</summary><section class="route-spotlight">
+            <div class="toolbar"><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|auto_policy_open.set(true)>"自动选择与路由策略"</button><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|route_policy_open.set(true)>"模型路由与回退约束"</button></div><super::ModuleDialog open=auto_policy_open title="自动选择与路由策略".to_string()><section class="route-spotlight">
                 <div class="auto-header"><div class="route-spotlight-head"><h2>"自动选择"</h2><code>"auto"</code></div><div class="auto-header-actions">                    <label class="pick"><input type="checkbox" prop:checked=move ||policy.get().explore on:change=move |e|{let mut p=policy.get_untracked();p.explore=event_target_checked(&e);save_policy(p);}/>"模型探索 · 5%"</label>
-                    <button on:click=move |_|ordering.update(|v|*v=!*v)>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button></div></div>
+                    <button on:click=move |_|{ordering.update(|v|*v=!*v);auto_policy_open.set(false);}>{move ||if ordering.get(){"结束排序"}else{"调整模型顺序"}}</button></div></div>
                 <div class="policy-controls">{[("sequence","顺序优先"),("balanced","轮流调用"),("fastest","速度优先"),("stable","稳定优先"),("idle","空闲优先")].into_iter().map(|(key,label)|view!{<button class:active=move ||policy.get().strategy==key on:click=move |_|{let mut p=policy.get_untracked();p.strategy=key.into();save_policy(p);}>{label}</button>}).collect_view()}
 
                 </div>
@@ -268,7 +280,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     }).collect_view()}</div>}.into_any()
                 }}
             </section>
-            </details><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
+            </super::ModuleDialog><Show when=move ||ordering.get()><div class="toolbar"><p>"使用卡片中的上移、下移调整顺序。"</p><button type="button" class="primary" on:click=move |_|ordering.set(false)>"完成排序"</button></div></Show><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
             <nav class="kind-tabs">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) on:click=move |_|tab.set(key.into())>{k.title}<span class="tab-n">{move ||tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())).collect::<Vec<_>>()))[i]}</span></button>}}).collect_view()}</nav>
             <div class="model-controls"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="all">"全部"</option></select><input type="search" placeholder="搜索模型名称" aria-label="搜索模型名称" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
             <div class="score-model-list">{move ||{
@@ -281,7 +293,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     let toggle_name=r.name.clone();let channel_available=!r.channels.is_empty();let model_enabled=r.enabled;
                     let visible_name=r.name.clone();let s=r.runtime.clone();
                     let dialog_id=format!("model-details-{}",js_sys::encode_uri_component(&r.name));
-                    let trigger_dialog=dialog_id.clone();
+                    let trigger_dialog=dialog_id.clone();let visibility_dialog=dialog_id.clone();
                     let detail_title=format!("{} 的详情与统计",r.name);
                     let labels=source_labels(&r);
                     let supplier_summary=if labels.is_empty(){"未分组".to_string()}else{labels.join("、")};
@@ -296,7 +308,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         <dialog class="compact-model-dialog" id=dialog_id aria-label=detail_title><div class="compact-model-dialog-head"><h2>{r.name.clone()}</h2><form method="dialog"><button type="submit" class="ghost" autofocus>"关闭"</button></form></div><div class="model-detail-grid">
                             <section class="compact-model-statistics"><h3>"运行统计"</h3><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></section>
-                            <section><h3>"展示与连接"</h3><p class="muted small">"隐藏仅从模型清单和 auto 排除，旧别名显式调用仍可用；全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>reload(),Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
+                            <section><h3>"展示与连接"</h3><p class="muted small">"隐藏仅从模型清单和 auto 排除，旧别名显式调用仍可用；全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();let close_id=visibility_dialog.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>{if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&close_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}ctx.say("模型展示设置已保存");reload();},Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
                             <section><h3>"能力信息"</h3><dl><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
@@ -304,7 +316,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     </article>}
                 }).collect_view().into_any()
             }}</div>
-            <details class="model-advanced"><summary>"高级：模型路由与回退约束"</summary><super::route_policy::RoutePolicy ctx=ctx/></details>
+            <super::ModuleDialog open=route_policy_open title="模型路由与回退约束".to_string()><super::route_policy::RoutePolicy ctx=ctx/></super::ModuleDialog>
         </div>
     }
 }

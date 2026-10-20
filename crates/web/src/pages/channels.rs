@@ -207,6 +207,10 @@ pub fn Connections(
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let form = RwSignal::new(Form::Closed);
+    let editor_open = RwSignal::new(false);
+    let mutating = RwSignal::new(false);
+    let mutation_error = RwSignal::new(String::new());
+    Effect::new(move |_| { if !editor_open.get() { form.set(Form::Closed); } });
     let probe_kind = RwSignal::new("chat".to_string());
     let probe_msg = RwSignal::new(None::<(i64, String, bool)>);
 
@@ -327,7 +331,7 @@ pub fn Connections(
         reset_pull();
         form_ver.update(|v| *v += 1);
         tab.set(TAB_BASIC.to_string());
-        form.set(Form::New);
+        form.set(Form::New);editor_open.set(true);
     };
 
     let open_edit = move |l: Channel| {
@@ -354,7 +358,7 @@ pub fn Connections(
         // 编辑已有渠道：直接停在「模型」那一栏 —— 这一栏才是「挑这条渠道认哪些名字、
         // 去上游拉清单」的地方，停在「基本信息」会让人以为没处可拉（用户实测反馈过）。
         tab.set(TAB_MODELS.to_string());
-        form.set(Form::Edit(l.id));
+        form.set(Form::Edit(l.id));editor_open.set(true);
         // 打开就把它**上次问到**的清单读出来（读库，不联网）：省一次上游请求
         // （有的上游要花钱、有限流），也让人一眼看见「上次问到几点」。
         // 要刷新得点上面那个按钮 —— 面板不替你偷偷问上游。
@@ -383,10 +387,12 @@ pub fn Connections(
     };
 
     let save = move |_| {
+        if mutating.get_untracked(){return;}
+        mutation_error.set(String::new());
         let name = f_name.get_untracked().trim().to_string();
         let url = f_url.get_untracked().trim().to_string();
         if name.is_empty() || url.is_empty() {
-            ctx.say("名称和接口地址都得填");
+            mutation_error.set("名称和接口地址都得填".into());ctx.say("名称和接口地址都得填");
             return;
         }
         let dup = duplicate_client_names(&f_models.get_untracked());
@@ -423,6 +429,7 @@ pub fn Connections(
             Some(key)
         };
 
+        mutating.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             match api::save_channel(
                 id,
@@ -472,7 +479,7 @@ pub fn Connections(
                                     if let Some(cb) = on_changed {
                                         cb.run(());
                                     }
-                                    return;
+                                    mutating.set(false);return;
                                 }
                             }
                             ctx.say(format!(
@@ -480,7 +487,7 @@ pub fn Connections(
                             ));
                         }
                         None => {
-                            form.set(Form::Closed);
+                            form.set(Form::Closed);editor_open.set(false);
                             ctx.say(format!("连接已保存{tail}{made_note}"));
                         }
                     }
@@ -491,13 +498,17 @@ pub fn Connections(
                 }
                 Err(e) => {
                     ctx.note_err(&e);
-                    ctx.say(format!("保存失败：{}", e.message));
+                    mutation_error.set(format!("保存失败：{}",e.message));ctx.say(format!("保存失败：{}", e.message));
                 }
             }
+            mutating.set(false);
         });
     };
 
     let clear_key = move |_| {
+        if mutating.get_untracked(){return;}
+        if !web_sys::window().and_then(|w|w.confirm_with_message("清空此连接已保存的上游密钥？使用它的模型调用可能立即失败。此操作无法恢复原密钥。").ok()).unwrap_or(false){return;}
+        mutation_error.set(String::new());
         let Form::Edit(id) = form.get_untracked() else {
             return;
         };
@@ -517,6 +528,7 @@ pub fn Connections(
         protocol_error.set(String::new());
         let headers = f_headers.get_untracked();
         let (models, _) = mappings_to_save(&f_models.get_untracked());
+        mutating.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
             match api::save_channel(
@@ -543,9 +555,10 @@ pub fn Connections(
                 }
                 Err(e) => {
                     ctx.note_err(&e);
-                    ctx.say(format!("清空失败：{}", e.message));
+                    mutation_error.set(format!("清空失败：{}",e.message));ctx.say(format!("清空失败：{}", e.message));
                 }
             }
+            mutating.set(false);
         });
     };
 
@@ -864,8 +877,8 @@ pub fn Connections(
                 desc="服务商内部的接口与凭据。编辑或删除在每条连接右侧；有历史或授权引用时请使用停用。"
             >
                 <>
-                    <button class="primary" on:click=open_new>"新建连接"</button>
-                    <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
+                    <button type="button" class="primary" on:click=open_new>"新建连接"</button>
+                    <button type="button" class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
                         {move || if busy.get() { "刷新中…" } else { "刷新" }}
                     </button>
                 </>
@@ -874,14 +887,14 @@ pub fn Connections(
             <div class="toolbar">
                 <span class="seg">
                     <span class="seg-label">"「测一下」发的是"</span>
-                    <button
+                    <button type="button"
                         class="chip"
                         class:active=move || probe_kind.get() == "chat"
                         on:click=move |_| probe_kind.set("chat".into())
                     >
                         "对话请求"
                     </button>
-                    <button
+                    <button type="button"
                         class="chip"
                         class:active=move || probe_kind.get() == "embeddings"
                         on:click=move |_| probe_kind.set("embeddings".into())
@@ -941,7 +954,7 @@ pub fn Connections(
                                             let tg = toggle_enabled.clone();
                                             let l2 = l.clone();
                                             view! {
-                                                <button class=cls title=tip on:click=move |_| tg(l2.clone())>
+                                                <button type="button" class=cls title=tip on:click=move |_| tg(l2.clone())>
                                                     <span class="knob"></span>
                                                     <span class="switch-text">
                                                         {if l.enabled { "启用" } else { "停用" }}
@@ -972,7 +985,7 @@ pub fn Connections(
                                         })}
                                     </div>
                                     <div class="chan-actions">
-                                        <button
+                                        <button type="button"
                                             class="ghost"
                                             disabled=first_one
                                             title="调整全局连接优先级：请求会更早尝试，可能跨服务商连接"
@@ -980,7 +993,7 @@ pub fn Connections(
                                         >
                                             "↑"
                                         </button>
-                                        <button
+                                        <button type="button"
                                             class="ghost"
                                             disabled=last_one
                                             title="调整全局连接优先级：请求会更晚尝试，可能跨服务商连接"
@@ -988,13 +1001,13 @@ pub fn Connections(
                                         >
                                             "↓"
                                         </button>
-                                        <button class="ghost" on:click=move |_| {open_edit(l2.clone());tab.set(TAB_BASIC.to_string());}>
+                                        <button type="button" class="ghost" on:click=move |_| {open_edit(l2.clone());tab.set(TAB_BASIC.to_string());}>
                                             "编辑连接"
                                         </button>
-                                        <button class="ghost" on:click=move |_| probe(l3.clone())>
+                                        <button type="button" class="ghost" on:click=move |_| probe(l3.clone())>
                                             "测一下"
                                         </button>
-                                        <button class="ghost danger" on:click=move |_| remove(l4.clone())>
+                                        <button type="button" class="ghost danger" on:click=move |_| remove(l4.clone())>
                                             "删除连接"
                                         </button>
                                     </div>
@@ -1012,6 +1025,7 @@ pub fn Connections(
                 }}
             </div>
 
+            <super::ModuleDialog open=editor_open busy=mutating title="连接配置".to_string()>
             {move || if form.get() == Form::Closed {
                 ().into_any()
             } else {
@@ -1021,8 +1035,7 @@ pub fn Connections(
                     _ => None,
                 };
                 view! {
-                    <div class="modal-backdrop">
-                        <div class="modal channel-editor">
+                    <div class="channel-editor">
                             <div class="modal-head">
                                 <h2>{if editing { "编辑连接" } else { "新建连接" }}</h2>
                                 <span class="muted small">
@@ -1035,14 +1048,14 @@ pub fn Connections(
                             </div>
 
                             <div class="modal-tabs">
-                                <button
+                                <button type="button"
                                     class="tab"
                                     class:active=move || tab.get() == TAB_BASIC
                                     on:click=move |_| tab.set(TAB_BASIC.to_string())
                                 >
                                     "基本信息"
                                 </button>
-                                <button
+                                <button type="button"
                                     class="tab"
                                     class:active=move || tab.get() == TAB_HEADERS
                                     on:click=move |_| tab.set(TAB_HEADERS.to_string())
@@ -1050,7 +1063,7 @@ pub fn Connections(
                                     "请求头"
                                     <span class="tag muted">{move || f_headers.get().len()}</span>
                                 </button>
-                                <button
+                                <button type="button"
                                     class="tab"
                                     class:active=move || tab.get() == TAB_MODELS
                                     on:click=move |_| tab.set(TAB_MODELS.to_string())
@@ -1184,11 +1197,11 @@ pub fn Connections(
                                                                             } />
                                                                     </td>
                                                                     <td>
-                                                                        <button class="ghost" on:click=move |_| {
+                                                                        <button type="button" class="ghost" on:click=move |_| {
                                                                             f_headers.update(|v| { if let Some(x)=v.get_mut(i) { x.value.clear(); x.action=Some("clear".into()); } });
                                                                             form_ver.update(|v| *v += 1);
                                                                         }>"清空值"</button>
-                                                                        <button class="ghost danger" on:click=move |_| {
+                                                                        <button type="button" class="ghost danger" on:click=move |_| {
                                                                             f_headers.update(|v| { v.remove(i); });
                                                                             form_ver.update(|v| *v += 1);
                                                                         }>"删"</button>
@@ -1202,7 +1215,7 @@ pub fn Connections(
                                             </tbody>
                                         </table>
                                         </div>
-                                        <button class="ghost" on:click=move |_| {
+                                        <button type="button" class="ghost" on:click=move |_| {
                                             f_headers.update(|v| v.push(HeaderPair::default()));
                                             form_ver.update(|v| *v += 1);
                                         }>"加一个请求头"</button>
@@ -1218,7 +1231,7 @@ pub fn Connections(
                                         <div class="pull-bar">
                                             // 这是「模型」段的主操作，用默认的描边按钮（.ghost 是纯文字，
                                             // 用户实测反馈「看着不像能点的」）
-                                            <button
+                                            <button type="button"
                                                 disabled=move || pulling.get() || channel_id.is_none()
                                                 on:click=pull
                                             >
@@ -1250,8 +1263,8 @@ pub fn Connections(
                                                 placeholder="按关键字过滤，如 deepseek"
                                                 on:input=move |ev| pull_filter.set(event_target_value(&ev))
                                             />
-                                            <button class="ghost" on:click=select_shown>"全选当前"</button>
-                                            <button class="ghost" on:click=unselect_shown>"取消当前"</button>
+                                            <button type="button" class="ghost" on:click=select_shown>"全选当前"</button>
+                                            <button type="button" class="ghost" on:click=unselect_shown>"取消当前"</button>
                                             <span class="muted small">
                                                 {move || {
                                                     let total = pulled.get().len();
@@ -1425,7 +1438,7 @@ pub fn Connections(
                                                                         </label>
                                                                         <code class="m-name">{name.clone()}</code>
                                                                         <span class="spacer"></span>
-                                                                        <button class="ghost" on:click=open_me>
+                                                                        <button type="button" class="ghost" on:click=open_me>
                                                                             {move || if is_open_btn() { "收起" } else { "详情" }}
                                                                         </button>
                                                                     </div>
@@ -1523,7 +1536,7 @@ pub fn Connections(
                                                                                         } />
                                                                                     "能收图"
                                                                                 </label>
-                                                                                <button
+                                                                                <button type="button"
                                                                                     class="ghost"
                                                                                     disabled=move || vt_busy.get().is_some()
                                                                                     on:click=move |_| {
@@ -1588,19 +1601,19 @@ pub fn Connections(
                             </div>
 
                             <div class="modal-foot">
-                                <button class="primary" on:click=save>"保存"</button>
+                                <Show when=move||!mutation_error.get().is_empty()><p class="banner bad" role="alert">{move||mutation_error.get()}</p></Show><button type="button" class="primary" disabled=move||mutating.get() on:click=save>"保存"</button>
                                 {editing
                                     .then(|| {
-                                        view! { <button class="ghost danger" on:click=clear_key>"清空密钥"</button> }
+                                        view! { <button type="button" class="ghost danger" disabled=move||mutating.get() on:click=clear_key>"清空密钥"</button> }
                                     })}
-                                <button class="ghost" on:click=move |_| form.set(Form::Closed)>
+                                <button type="button" class="ghost" disabled=move||mutating.get() on:click=move |_| {form.set(Form::Closed);editor_open.set(false);}>
                                     "取消"
                                 </button>
                             </div>
-                        </div>
                     </div>
                 }.into_any()
             }}
+            </super::ModuleDialog>
         </div>
     }
 }
@@ -1864,8 +1877,8 @@ fn ContextCapacity(
             <p>{move || data.get()["override_tokens"].as_i64().map(|n|format!("当前用户确认：{n} tokens（优先）")).unwrap_or_else(||"尚无用户确认容量".into())}</p>
             <div class="row">
                 <input type="number" min="1" step="1" placeholder="正整数 tokens" prop:value=move ||capacity.get() on:input=move |ev|capacity.set(event_target_value(&ev)) />
-                <button disabled=move ||busy.get() on:click=move |_|save_capacity(false)>"保存"</button>
-                <button disabled=move ||busy.get() || data.get()["override_tokens"].is_null() on:click=move |_|save_capacity(true)>"清除"</button>
+                <button type="button" disabled=move ||busy.get() on:click=move |_|save_capacity(false)>"保存"</button>
+                <button type="button" disabled=move ||busy.get() || data.get()["override_tokens"].is_null() on:click=move |_|save_capacity(true)>"清除"</button>
             </div>
             <p class="bad-text">{move ||message.get()}</p>
         </div>

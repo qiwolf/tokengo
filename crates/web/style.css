@@ -699,8 +699,8 @@ button:disabled:hover { background: var(--surface); border-color: var(--line); }
   background: color-mix(in oklab, var(--btn-solid) 88%, var(--fg));
   border-color: transparent;
 }
-.ghost { background: none; border-color: transparent; color: var(--fg-2); }
-.ghost:hover { background: var(--surface-2); color: var(--fg); border-color: transparent; }
+.ghost { background: var(--surface-2); border-color: var(--line-strong); color: var(--fg); }
+.ghost:hover { background: var(--surface); color: var(--fg); border-color: var(--accent); }
 .ghost.danger { color: var(--bad); }
 .ghost.danger:hover { background: var(--bad-soft); }
 /* 页头那一组操作要像一组：次按钮也带边 —— 光秃秃两个字挨着实心主按钮，看着像没对齐 */
@@ -2026,3 +2026,45 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 }
 
 @media (max-width: 1100px) { .score-model-list { grid-template-columns:minmax(0,1fr); } }
+
+/* Focused editors and details share one modal surface and one action hierarchy. */
+.module-dialog {
+  box-sizing: border-box;
+  width: min(768px, calc(100% - 32px));
+  max-width: calc(100% - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  margin: auto;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.module-dialog:not([open]) { display: none; }
+.module-dialog::backdrop { background: hsl(222 24% 9% / .6); }
+.module-dialog-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 16px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.module-dialog-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; line-height: 24px; overflow-wrap: anywhere; }
+.module-dialog-header > button { flex: 0 0 auto; }
+.module-dialog-body { padding: 24px; min-width: 0; }
+.module-dialog-body > :first-child { margin-top: 0; }
+.module-dialog-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.module-dialog .account-form, .module-dialog .form-grid { max-width: 100%; min-width: 0; }
+.module-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.module-dialog .card { margin: 0; }
+.console-content button.ghost:not(.primary), .console-content button.chip {
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.console-content button.ghost.danger { border-color: var(--bad); color: var(--bad); }
+.console-content button.ghost:hover:not(:disabled), .console-content button.chip:hover:not(:disabled) { border-color: var(--accent); background: var(--surface); }
+.console-content button:focus-visible, .console-content summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.console-content button[aria-pressed="true"], .console-content button.chip.active { border-color: var(--accent); color: var(--accent); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }
+.console-content details > summary { border: 1px solid var(--line-strong); border-radius: 8px; padding: 12px 16px; background: var(--surface-2); color: var(--fg); cursor: pointer; }
+@media (max-width: 600px) {
+  .module-dialog { width: calc(100% - 16px); max-width: calc(100% - 16px); max-height: calc(100dvh - 16px); }
+  .module-dialog-body { padding: 16px; }
+  .module-dialog-actions > button { flex: 1 1 auto; }
+}

@@ -24,7 +24,10 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let cooldown_now=RwSignal::new(0i64);
     let clear_busy=RwSignal::new(false);
     let category = RwSignal::new(0usize);
-    let metric_open = RwSignal::new(None::<String>);
+    let metric_open = RwSignal::new(false);
+    let metric_detail = RwSignal::new((String::new(), String::new()));
+    let stats_open = RwSignal::new(false);
+    let callable_open = RwSignal::new(false);
 
     let reload = move || {
         if busy.get_untracked() { return; }
@@ -33,7 +36,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             let h = hours.get_untracked();
             match api::stats(h).await {
                 Ok(s) => {
-                    stats.set(s);
+                    if !metric_open.get_untracked(){stats.set(s);}
                     err.set(None);
                 }
                 Err(e) => {
@@ -65,6 +68,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
 
     let recent_busy = RwSignal::new(false);
     let expanded = RwSignal::new(None::<i64>);
+    let request_open = RwSignal::new(false);
     let detail = RwSignal::new(None::<RequestDetail>);
     let detail_error = RwSignal::new(None::<String>);
     let detail_busy = RwSignal::new(false);
@@ -73,6 +77,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         detail_generation.update(|v| *v += 1);
         let generation = detail_generation.get_untracked();
         expanded.set(Some(id));
+        request_open.set(true);
         detail.set(None);
         detail_error.set(None);
         detail_busy.set(true);
@@ -180,8 +185,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     <div class="stat"><div class="stat-title">"失败数"</div><div class="stat-value">{move || fmt::num(stats.get().stats.failed)}</div></div>
                     <div class="stat"><div class="stat-title">"Token"</div><div class="stat-value">{move || {let s=stats.get().stats; fmt::compact_tokens(s.input_tokens+s.output_tokens)}}</div></div>
                 </div>
-                <details class="overview-stat-details">
-                    <summary>"统计详情"</summary>
+                <div class="overview-stat-details"><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|stats_open.set(true)>"查看统计详情"</button></div>
+                <super::ModuleDialog open=stats_open title="统计详情".to_string()><div class="overview-stat-details">
                     <dl>
                         <div><dt>"成功"</dt><dd>{move || fmt::num(stats.get().stats.ok)}</dd></div>
                         <div><dt>"取消"</dt><dd>{move || fmt::num(stats.get().stats.canceled)}</dd></div>
@@ -192,7 +197,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         <div><dt>"未完整报告"</dt><dd>{move || format!("{} 次",fmt::num(stats.get().stats.usage.unknown_requests))}</dd></div>
                         <div><dt>"历史来源不确定"</dt><dd>{move || format!("{} 次",fmt::num(stats.get().stats.usage.legacy_requests))}</dd></div>
                     </dl>
-                </details>
+                </div></super::ModuleDialog>
             </section>
             </div>
 
@@ -221,7 +226,6 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         key=|id| *id
                         children=move |id| {
                             let row = Memo::new(move |_| recent.with(|rows| rows.iter().find(|r| r.id == id).cloned()).or_else(|| detail.get().filter(|d| d.request.id == id).map(|d| d.request)));
-                            let opened = move || expanded.get() == Some(id);
                             view! {
                                 <article class="recent-call" data-request-id=id>
                                     {move || row.get().map(|r| {
@@ -244,19 +248,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                                 {r.has_image.then(|| view! { <span class="tag vision">"带图"</span> })}
                                             }
                                         })}
-                                    <button class="ghost" aria-expanded=opened on:click=move |_| {
-                                        if opened() { expanded.set(None); }
-                                        else { open_detail(id); }
-                                    }>{move || if opened() {"收起"} else {"详情"}}</button>
+                                    <button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|open_detail(id)>"查看请求详情"</button>
                                     </div>
-                                    <Show when=opened>
-                                        <section class="request-inspector" aria-label="请求详情" aria-live="polite">
-                                            <header><h3>{format!("请求 #{id}")}</h3></header>
-                                            <Show when=move || detail_busy.get()><p class="muted">"加载详情…"</p></Show>
-                                            {move || detail_error.get().map(|e| view! { <div class="banner bad" role="alert">{e}</div> })}
-                                            {move || detail.get().filter(|d|d.request.id==id).map(|mut d| {if let Some(r)=recent.with(|rows|rows.iter().find(|r|r.id==id).cloned()){d.request=r;} view! { <RequestDetailView detail=d/> }})}
-                                        </section>
-                                    </Show>
                                 </article>
                             }
                         }
@@ -279,9 +272,9 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                             _=>Vec::new(),
                         };
                         if items.is_empty(){return view!{<div class="empty">"当前时间窗口暂无记录"</div>}.into_any();}
-                        items.into_iter().enumerate().map(|(i,(title,primary,secondary,detail))|{
-                            let key=format!("{}:{i}:{title}",category.get());let opened=metric_open.get().as_deref()==Some(&key);let clickkey=key.clone();
-                            view!{<article class="metric-card"><div class="metric-head"><b>{title}</b><button class="ghost" aria-expanded=opened on:click=move |_| metric_open.update(|v|*v=if v.as_ref()==Some(&clickkey){None}else{Some(clickkey.clone())})>{if opened {"收起"} else {"详情"}}</button></div><div class="metric-primary">{primary}</div>{(!secondary.is_empty()).then(||view!{<div class="metric-secondary">{secondary}</div>})}{opened.then(||view!{<div class="metric-detail">{detail}</div>})}</article>}
+                        items.into_iter().map(|(title,primary,secondary,detail)|{
+                            let title_for_action=title.clone();
+                            view!{<article class="metric-card"><div class="metric-head"><b>{title}</b><button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_| {metric_detail.set((title_for_action.clone(),detail.clone()));metric_open.set(true);}>"查看详情"</button></div><div class="metric-primary">{primary}</div>{(!secondary.is_empty()).then(||view!{<div class="metric-secondary">{secondary}</div>})}</article>}
                         }).collect_view().into_any()
                     }}
                     </div>
@@ -314,8 +307,8 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                     }}</div>
                 </section>
             </Show>
-            <details class="fold callable-models">
-                <summary>"能被调用的模型名"</summary>
+            <button type="button" class="ghost" aria-haspopup="dialog" on:click=move |_|callable_open.set(true)>"查看可调用模型"</button>
+            <super::ModuleDialog open=callable_open title="可调用模型".to_string()>
                 <header class="card-head">
 
                 </header>
@@ -380,7 +373,16 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                 }}
             </div>
                 </div>
-            </details>
+            </super::ModuleDialog>
+            <super::ModuleDialog open=metric_open title="统计明细".to_string()><h3>{move ||metric_detail.get().0}</h3><p>{move ||metric_detail.get().1}</p></super::ModuleDialog>
+            <super::ModuleDialog open=request_open title="请求详情".to_string()>
+                <section class="request-inspector" aria-live="polite">
+                    <h3>{move ||expanded.get().map(|id|format!("请求 #{id}")).unwrap_or_default()}</h3>
+                    <Show when=move ||detail_busy.get()><p class="muted">"加载详情…"</p></Show>
+                    {move ||detail_error.get().map(|e|view!{<div class="banner bad" role="alert">{e}</div>})}
+                    {move ||detail.get().filter(|d|Some(d.request.id)==expanded.get()).map(|mut d|{if let Some(r)=recent.with(|rows|rows.iter().find(|r|r.id==d.request.id).cloned()){d.request=r;}view!{<RequestDetailView detail=d/>}})}
+                </section>
+            </super::ModuleDialog>
         </div>
     }
 }

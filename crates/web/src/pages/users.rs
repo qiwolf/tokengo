@@ -217,7 +217,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     };
     view! {<div class="page admin-page users-page"><PageHead title="用户" desc="管理登录账号、模型权限和消费上限；用户登录后可自行创建 API Key。"/>
     <Show when=move||!editing.get()>
-    <section class="card"><header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
+    <section class="card"><header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
     <div class="card-body"><div class="policy-limits"><label class="account-field"><span>"搜索用户 / 登录名"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><label class="account-check"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用用户"</label></div>
     <p role="alert">{move||list_error.get()}</p><p role="status">{move||if loading.get(){"正在读取用户…"}else if rows.get().is_empty(){"还没有用户，点击新建用户即可开始。"}else{""}}</p>
     <div class="table-wrap"><table><thead><tr><th>"用户"</th><th>"登录账号"</th><th>"状态 / 额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||api::rows(u,"accounts").iter().any(|a|api::text(a,"username").to_lowercase().contains(&query)))}).map(|u|{
@@ -227,13 +227,13 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         let names=if names.is_empty(){"未设置登录".into()}else{names};
         let state=if u["enabled"]==true{"已启用"}else{"已停用"};
         let quota=policy::budget_label(&u["budget"]);
-        view!{<tr><td data-label="用户"><strong>{n}</strong></td><td data-label="登录账号">{names}</td><td data-label="状态 / 额度">{state}<div class="muted small">{quota}</div></td><td data-label="操作"><button class="ghost" disabled=move||busy.get() on:click=move |_|{
+        view!{<tr><td data-label="用户"><strong>{n}</strong></td><td data-label="登录账号">{names}</td><td data-label="状态 / 额度">{state}<div class="muted small">{quota}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{
             owner.set(Some(id));username.set(login_username(&u).unwrap_or_default());name.set(api::text(&u,"name"));password.set(String::new());enabled.set(u["enabled"]==true);draft.set(u["policy"].clone());limit.set(u["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);keys_open.set(false);editing.set(true);
         }>"管理"</button></td></tr>}
     }).collect_view()}</tbody></table></div>
-    <p class="account-help">{move||roots.get().first().map(|a|format!("管理员 {} 的登录名和密码在账号安全中管理。",api::text(a,"username"))).unwrap_or_default()}</p><button class="text-link" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></div></section></Show>
+    <p class="account-help">{move||roots.get().first().map(|a|format!("管理员 {} 的登录名和密码在账号安全中管理。",api::text(a,"username"))).unwrap_or_default()}</p><button type="button" class="text-link" on:click=move |_|ctx.go(Page::Account)>"账号安全"</button></div></section></Show>
     <Show when=move||editing.get()>
-    <div class="user-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|{editing.set(false);keys_open.set(false);owner.set(None);password.set(String::new());}>"返回用户列表"</button></div>
+    <div class="user-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{editing.set(false);keys_open.set(false);owner.set(None);password.set(String::new());}>"返回用户列表"</button></div>
     <section class="card"><header class="card-head"><h2>{move||selected.get().map(|v|format!("管理用户：{}",api::text(&v,"name"))).unwrap_or_else(||"新建用户".into())}</h2></header>
     <Show when=move||selected.get().is_some()><nav class="user-section-nav" aria-label="用户管理功能"><button type="button" class="ghost" aria-pressed=move||(!keys_open.get()).to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(false)>"账号与授权"</button><button type="button" class="ghost" aria-pressed=move||keys_open.get().to_string() disabled=move||busy.get() on:click=move |_|keys_open.set(true)>"API Key"</button></nav></Show>
     <Show when=move||!keys_open.get()><div class="card-body"><form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()>

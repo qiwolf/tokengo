@@ -29,18 +29,22 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
     let busy = RwSignal::new(false);
     let err = RwSignal::new(None::<String>);
     let now = RwSignal::new(crate::now_ms());
-    let opened = RwSignal::new(false); // 「临时开 debug」的二次确认
 
     let level_word = move || level_label(&level.get());
 
+    let generation=RwSignal::new(0u64);
     let reload = move || {
+        generation.update(|v|*v+=1);
+        let current=generation.get_untracked();
         busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let lv = pick_level.get_untracked();
             let lv = if lv == "all" { None } else { Some(lv) };
             let kw = keyword.get_untracked();
             let kw = if kw.trim().is_empty() { None } else { Some(kw) };
-            match api::logs_live(lv, kw, limit.get_untracked()).await {
+            let result=api::logs_live(lv, kw, limit.get_untracked()).await;
+            if generation.get_untracked()!=current{return;}
+            match result {
                 Ok(v) => {
                     lines.set(v.lines);
                     kept.set(v.kept);
@@ -100,13 +104,9 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
                         Some(m) if m > 0 => format!("日志级别已开到 {lv}，{m} 分钟后自动收回"),
                         _ => format!("日志级别已设成 {lv}"),
                     });
-                    // 立刻拉一次：能马上看到 debug 行冒出来，才叫"好用"
-                    let lv = pick_level.get_untracked();
-                    let lv = if lv == "all" { None } else { Some(lv) };
-                    if let Ok(v) = api::logs_live(lv, None, limit.get_untracked()).await {
-                        lines.set(v.lines);
-                        kept.set(v.kept);
-                    }
+                    busy.set(false);
+                    reload();
+                    return;
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -146,16 +146,9 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
                         <button
                             class="ghost"
                             disabled=move || busy.get()
-                            on:click=move |_| {
-                                if opened.get_untracked() {
-                                    opened.set(false);
-                                    set_level_now("info", None);
-                                } else {
-                                    opened.set(true);
-                                }
-                            }
+                            on:click=move |_|set_level_now("info", None)
                         >
-                            {move || if opened.get() { "再点一次：长期开 info" } else { "改回 info" }}
+                            "恢复 info 日志"
                         </button>
                     </div>
                 </div>
@@ -217,7 +210,7 @@ pub fn Logs(ctx: Ctx) -> impl IntoView {
                         }
                     }
                 />
-                <button class="primary" on:click=move |_| reload()>"筛"</button>
+                <button class="primary" on:click=move |_| reload()>"筛选日志"</button>
             </div>
 
             <section class="card">
