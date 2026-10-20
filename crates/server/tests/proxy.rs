@@ -4169,7 +4169,10 @@ fn nonstream_request_budget_is_shared_across_candidates() {
 
 #[tokio::test]
 async fn cancel_nonstream_releases_without_failure() {
-    let f=fixture();f.with_key();let m=start_mock(Reply::SlowOk(800)).await;
+    let f=fixture();f.with_key();
+    let entered=Arc::new(tokio::sync::Notify::new());
+    let release=Arc::new(tokio::sync::Notify::new());
+    let m=start_mock(Reply::HeldOk(entered.clone(),release.clone())).await;
     let a=f.add_channel("cancel-json",&m.base,ChannelSpec::default());f.serve("mock-chat",&[a]);
     let state=f.state.clone();
     let task=tokio::spawn(async move {
@@ -4177,8 +4180,10 @@ async fn cancel_nonstream_releases_without_failure() {
             .body(axum::body::Body::from(json!({"model":"mock-chat","messages":[]}).to_string())).unwrap();
         app(state).oneshot(req).await
     });
-    for _ in 0..100 {if m.count()>0 {break;} tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
+    tokio::time::timeout(std::time::Duration::from_secs(30),entered.notified()).await
+        .expect("the upstream must receive the request before cancellation");
     assert_eq!(m.count(),1);task.abort();let _=task.await;
+    release.notify_one();
     assert_eq!(f.request_rows()[0].0,"canceled");
     let row=tokengo_server::db::policy::rows(&f.state.conn(),"mock-chat").unwrap().remove(0);
     assert_eq!((row.failures,row.until_ms,row.lease_until),(0,0,0));

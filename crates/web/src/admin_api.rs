@@ -6,8 +6,8 @@ use serde_json::Value;
 pub async fn request(method: &str, path: &str, body: Option<Value>) -> Result<Value, ApiErr> {
     let value = call(method, path, body).await?;
     let base = path.split('?').next().unwrap_or(path);
-    let required = if base == "/api/users" && method == "GET" {
-        Some(("users", true))
+    let required = if matches!(base, "/api/users" | "/api/account/keys") && method == "GET" {
+        Some((if base == "/api/users" {"users"} else {"keys"}, true))
     } else if base.starts_with("/api/users/") && base.ends_with("/keys") && method == "GET" {
         Some(("keys", true))
     } else if base == "/api/pricing" {

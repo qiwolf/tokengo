@@ -197,7 +197,7 @@ pub fn entry_tokens(e: &Entry) -> String {
     }
 }
 pub fn debit(v: Option<i64>) -> String {
-    v.map(|n| format!("{} 微单位", crate::fmt::num(n)))
+    v.map(|n| format!("{} USD", crate::fmt::usd_input(n)))
         .unwrap_or_else(|| "未知 / 未定价".into())
 }
 #[cfg(test)]
@@ -241,7 +241,8 @@ mod tests {
         let e:Entry=serde_json::from_value(json!({"id":1,"request_id":2,"key_id":3,"model":"search","billing_unit":"request","status":"unpriced","outcome":"ok","input_tokens":null,"output_tokens":null,"usage_certainty":"unpriced","debit_micro":null,"created_ms":0,"settled_ms":1})).unwrap();
         assert_eq!(entry_tokens(&e), "不适用（按次）");
         assert_eq!(debit(None), "未知 / 未定价");
-        assert_eq!(debit(Some(0)), "0 微单位");
+        assert_eq!(debit(Some(0)), "0 USD");
+        assert_eq!(debit(Some(21)), "0.000021 USD");
     }
 }
 /// Root changes its own login identifier only after confirming the current password.

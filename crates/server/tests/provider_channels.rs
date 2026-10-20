@@ -658,3 +658,324 @@ async fn shared_provider_never_broadens_existing_connection_acl() {
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[tokio::test]
+async fn provider_delete_requires_empty_group_and_preserves_connections_and_history() {
+    let f = Fixture::new().await;
+    let p = f.provider("delete only empty").await;
+    let a = f.channel("http://127.0.0.1:1").await;
+    f.assign(a, Some(p)).await;
+    let snapshot = protected_connection_snapshot(&f.state.conn());
+    let before = db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
+        .unwrap()
+        .unwrap();
+    let (s, v) = f
+        .req("DELETE", &format!("/api/providers/{p}"), json!(null))
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("请先移动/删除连接"));
+    assert_eq!(protected_connection_snapshot(&f.state.conn()), snapshot);
+    assert_eq!(
+        db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
+            .unwrap()
+            .unwrap(),
+        before
+    );
+    assert!(db::provider_channels::exists(&f.state.conn(), p).unwrap());
+    f.assign(a, None).await;
+    let (s, v) = f
+        .req("DELETE", &format!("/api/providers/{p}"), json!(null))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["deleted"], true);
+    assert!(
+        db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        f.req("DELETE", &format!("/api/providers/{p}"), json!(null))
+            .await
+            .0,
+        404
+    );
+}
+
+#[tokio::test]
+async fn provider_delete_requires_root_and_browser_csrf() {
+    let f = Fixture::new().await;
+    let p = f.provider("protected delete").await;
+    let c = reqwest::Client::new();
+    let path = format!("{}/api/providers/{p}", f.base);
+    assert_eq!(c.delete(&path).send().await.unwrap().status(), 401);
+    assert_eq!(
+        c.delete(&path)
+            .bearer_auth("provider-test-key")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let login = c
+        .post(format!("{}/api/account/login", f.base))
+        .header("host", "localhost")
+        .header("X-Tokengo-Panel", "1")
+        .json(&json!({"username":"admin","password":"test-password-1234"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    assert_eq!(
+        c.delete(&path)
+            .header("host", "localhost")
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert!(db::provider_channels::exists(&f.state.conn(), p).unwrap());
+    assert_eq!(
+        c.delete(&path)
+            .header("host", "localhost")
+            .header("cookie", cookie)
+            .header("X-Tokengo-Panel", "1")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+}
+
+#[tokio::test]
+async fn connection_delete_rejects_dependencies_and_preserves_history() {
+    let f = Fixture::new().await;
+    let a = f.channel("http://127.0.0.1:1").await;
+    let b = f.channel("http://127.0.0.1:2").await;
+    let before = db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
+        .unwrap()
+        .unwrap();
+    let assert_blocked = |v: &Value| {
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("停用"),
+            "{v}"
+        )
+    };
+    {
+        let c = f.state.conn();
+        let mut user = db::identity::user(&c, 1).unwrap().unwrap();
+        user.policy.allowed_channels = Some(vec![a]);
+        db::identity::update_user(&c, &user).unwrap();
+    }
+    let (s, v) = f
+        .req("DELETE", &format!("/api/channels/{a}"), json!(null))
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_blocked(&v);
+    assert_eq!(
+        db::channels::get(&f.state.conn(), tokengo_shared::ChannelId(a))
+            .unwrap()
+            .unwrap(),
+        before
+    );
+    {
+        let c = f.state.conn();
+        let mut u = db::identity::user(&c, 1).unwrap().unwrap();
+        u.policy.allowed_channels = None;
+        db::identity::update_user(&c, &u).unwrap();
+        db::route_policy::save(
+            &c,
+            "m",
+            &db::route_policy::RoutePolicy {
+                channel_ids: Some(vec![a]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    let (s, v) = f
+        .req("DELETE", &format!("/api/channels/{a}"), json!(null))
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_blocked(&v);
+    db::route_policy::delete(&f.state.conn(), "m").unwrap();
+    {
+        let c = f.state.conn();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms) VALUES('retained-history',1,1,991,?1,'m',0,0,0,0,'success',1)",[a]).unwrap();
+    }
+    let (s, v) = f
+        .req("DELETE", &format!("/api/channels/{a}"), json!(null))
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_blocked(&v);
+    assert_eq!(
+        f.state
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM billing_ledger WHERE attempt_id='retained-history'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        f.req("DELETE", &format!("/api/channels/{b}"), json!(null))
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        f.req("DELETE", &format!("/api/channels/{b}"), json!(null))
+            .await
+            .0,
+        404
+    );
+}
+
+fn protected_connection_snapshot(c: &rusqlite::Connection) -> Vec<(String, Vec<Vec<String>>)> {
+    [
+        "channels",
+        "channel_models",
+        "channel_secrets",
+        "channel_headers",
+        "provider_connections",
+        "users",
+        "gateway_keys",
+        "oauth_accounts",
+        "oauth_channel_bindings",
+        "requests",
+        "attempts",
+        "billing_ledger",
+        "settings",
+        "protocol_sessions",
+    ]
+    .into_iter()
+    .map(|table| {
+        let mut st = c
+            .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+            .unwrap();
+        let count = st.column_count();
+        let values = st
+            .query_map([], |row| {
+                Ok((0..count)
+                    .map(|i| format!("{:?}", row.get_ref(i).unwrap()))
+                    .collect::<Vec<_>>())
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        (table.to_string(), values)
+    })
+    .collect()
+}
+
+#[tokio::test]
+async fn connection_delete_blocks_oauth_key_acl_session_and_invalid_pins_without_mutation() {
+    let f = Fixture::new().await;
+    for reason in [
+        "oauth",
+        "key_acl",
+        "pin",
+        "invalid_pin",
+        "request",
+        "attempt",
+    ] {
+        let a = f.channel("http://127.0.0.1:1").await;
+        {
+            let c = f.state.conn();
+            match reason {
+                "oauth" => {
+                    c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('test','issuer',?1,?1,'revoked','[]',0,0)",[format!("test-{a}")]).unwrap();
+                    let account = c.last_insert_rowid();
+                    c.execute(
+                        "INSERT INTO oauth_channel_bindings(channel_id,account_id) VALUES(?1,?2)",
+                        rusqlite::params![a, account],
+                    )
+                    .unwrap();
+                }
+                "key_acl" => {
+                    let mut k = db::identity::keys(&c, 1).unwrap().remove(0);
+                    k.policy.allowed_channels = Some(vec![a]);
+                    db::identity::update_key(&c, &k).unwrap();
+                }
+                "pin" => {
+                    c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms) VALUES(?1,?2,1)",rusqlite::params![format!("pin-{a}"),json!({"channel":a,"generation":1,"upstream_model":"exact-M","protocol":"chat"}).to_string()]).unwrap();
+                }
+                "invalid_pin" => {
+                    c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms) VALUES(?1,'invalid json',1)",[format!("pin-{a}")]).unwrap();
+                }
+                "request" => {
+                    c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(1,'/v1/chat/completions','m','running',?1)",[a]).unwrap();
+                }
+                "attempt" => {
+                    let request =
+                        db::requests::start(&c, "/v1/chat/completions", "m", None, false).unwrap();
+                    db::requests::add_attempt_args(
+                        &c,
+                        &db::requests::AttemptArgs {
+                            request_id: request,
+                            ordinal: 1,
+                            channel_id: a,
+                            outcome: "success".into(),
+                            http_status: Some(200),
+                            duration_ms: 1,
+                            error: None,
+                            first_byte_ms: None,
+                            model_name: "m".into(),
+                            upstream_model: "exact-M".into(),
+                        },
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+        }
+        let before = protected_connection_snapshot(&f.state.conn());
+        let (s, v) = f
+            .req("DELETE", &format!("/api/channels/{a}"), json!(null))
+            .await;
+        assert_eq!(s, 409, "{reason}: {v}");
+        assert_eq!(v["error"]["type"], "connection_in_use");
+        let category = match reason {
+            "oauth" => "OAuth绑定",
+            "key_acl" => "API Key来源授权",
+            "pin" => "原生会话绑定",
+            "invalid_pin" => "记录无效",
+            "request" => "请求历史/进行中请求",
+            "attempt" => "来源尝试历史",
+            _ => unreachable!(),
+        };
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains(category),
+            "{reason}: {v}"
+        );
+        assert_eq!(
+            protected_connection_snapshot(&f.state.conn()),
+            before,
+            "{reason}"
+        );
+        // A corrupt pin blocks every removal until explicitly repaired; restore this test record.
+        if reason == "invalid_pin" {
+            f.state
+                .conn()
+                .execute(
+                    "DELETE FROM protocol_sessions WHERE key=?1",
+                    [format!("pin-{a}")],
+                )
+                .unwrap();
+        }
+    }
+}

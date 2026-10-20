@@ -553,9 +553,105 @@ async fn channels_delete(
     if channels::get(&conn, cid)?.is_none() {
         return Err(ApiError::not_found(format!("渠道 {cid} 不存在")));
     }
-    channels::delete(&conn, cid)?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(crate::db::DbError::from)?;
+    if let Some(reason) = channel_delete_dependency(&tx, id)? {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "connection_in_use",
+            format!(
+                "连接仍被{reason}引用，无法删除；请解除可变配置引用，或停用连接并保留配置与历史"
+            ),
+        ));
+    }
+    channels::delete(&tx, cid)?;
+    tx.commit().map_err(crate::db::DbError::from)?;
     tracing::info!("删除渠道 #{id}");
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// Explicit references must never be silently removed or left dangling by deletion.
+fn channel_delete_dependency(
+    c: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<String>, ApiError> {
+    for (table, label) in [
+        ("oauth_channel_bindings", "OAuth绑定"),
+        ("requests", "请求历史/进行中请求"),
+        ("attempts", "来源尝试历史"),
+        ("billing_ledger", "财务账本"),
+    ] {
+        let exists: bool = c
+            .query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE channel_id=?1)"),
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(crate::db::DbError::from)?;
+        if exists {
+            return Ok(Some(label.into()));
+        }
+    }
+    for (table, label) in [
+        ("users", "用户来源授权"),
+        ("gateway_keys", "API Key来源授权"),
+    ] {
+        let mut st = c
+            .prepare(&format!("SELECT policy_json FROM {table}"))
+            .map_err(crate::db::DbError::from)?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(crate::db::DbError::from)?;
+        for raw in rows {
+            let raw = raw.map_err(crate::db::DbError::from)?;
+            let Ok(policy) = serde_json::from_str::<crate::db::identity::Policy>(&raw) else {
+                return Ok(Some(format!("无法确认的{label}（策略无效）")));
+            };
+            if policy
+                .allowed_channels
+                .as_ref()
+                .is_some_and(|ids| ids.contains(&id))
+            {
+                return Ok(Some(label.into()));
+            }
+        }
+    }
+    let mut st = c
+        .prepare("SELECT value FROM settings WHERE key LIKE 'model_routing:%'")
+        .map_err(crate::db::DbError::from)?;
+    let rows = st
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(crate::db::DbError::from)?;
+    for raw in rows {
+        let raw = raw.map_err(crate::db::DbError::from)?;
+        let Ok(policy) = serde_json::from_str::<crate::db::route_policy::RoutePolicy>(&raw) else {
+            return Ok(Some("无法确认的模型回退配置（策略无效）".into()));
+        };
+        if policy
+            .channel_ids
+            .as_ref()
+            .is_some_and(|ids| ids.contains(&id))
+        {
+            return Ok(Some("模型回退配置".into()));
+        }
+    }
+    let mut st = c
+        .prepare("SELECT pin_json FROM protocol_sessions")
+        .map_err(crate::db::DbError::from)?;
+    let rows = st
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(crate::db::DbError::from)?;
+    for raw in rows {
+        let raw = raw.map_err(crate::db::DbError::from)?;
+        let Ok(pin) = serde_json::from_str::<crate::protocol_sessions::Pin>(&raw) else {
+            return Ok(Some("无法确认的原生会话绑定（记录无效）".into()));
+        };
+        if pin.channel == id {
+            return Ok(Some("原生会话绑定".into()));
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Deserialize)]

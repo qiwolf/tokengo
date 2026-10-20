@@ -12,10 +12,13 @@ pub(crate) fn model_connections(channels: &[Channel], provider: i64, model: &str
         .collect()
 }
 /// Main counts match the default public model table; compatibility aliases are separate.
-pub(crate) fn model_counts(models:&[p::ProviderModel])->(usize,usize,usize) {
-    let public=models.iter().filter(|m|m.visible).count();
-    let enabled=models.iter().filter(|m|m.visible&&m.global_enabled&&!m.routable_connection_ids.is_empty()).count();
-    (enabled,public,models.len()-public)
+pub(crate) fn model_counts(models: &[p::ProviderModel]) -> (usize, usize, usize) {
+    let public = models.iter().filter(|m| m.visible).count();
+    let enabled = models
+        .iter()
+        .filter(|m| m.visible && m.global_enabled && !m.routable_connection_ids.is_empty())
+        .count();
+    (enabled, public, models.len() - public)
 }
 pub(crate) fn all_enabled(model: &p::ProviderModel) -> bool {
     !model.declared_connection_ids.is_empty()
@@ -53,6 +56,7 @@ pub fn Providers(ctx: Ctx) -> impl IntoView {
     let err = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let name = RwSignal::new(String::new());
+    let ungrouped_open = RwSignal::new(false);
     let reload = Callback::new(move |()| {
         busy.set(true);
         leptos::task::spawn_local(async move {
@@ -103,13 +107,13 @@ pub fn Providers(ctx: Ctx) -> impl IntoView {
             }
         });
     };
-    view! {<div class="page provider-page"><super::PageHead title="渠道" desc="按服务商管理已配置模型；连接的地址、凭据与协议在高级设置中独立保留。"><button class="ghost" disabled=move||busy.get() on:click=move|_|reload.run(())>"刷新"</button></super::PageHead>
+    view! {<div class="page provider-page"><super::PageHead title="渠道" desc="一个服务商一个渠道。直接编辑服务商、管理模型启停；接口地址和凭据在连接详情内设置。"><button class="ghost" disabled=move||busy.get() on:click=move|_|reload.run(())>"刷新"</button></super::PageHead>
     <form class="provider-create" on:submit=create><div class="account-field"><label for="provider-name">"服务商名称"</label><input id="provider-name" required=true maxlength="128" placeholder="如：OpenAI、DeepSeek、本地推理服务" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></div><button type="submit" class="primary" disabled=move||busy.get()>"新建服务商"</button></form>
     <Show when=move||!err.get().is_empty()><p class="banner bad" role="alert">{move||err.get()}</p></Show>
     <Show when=move||busy.get()&&providers.get().is_empty()><p role="status">"正在读取服务商…"</p></Show>
-    <div class="provider-list">{move||providers.get().into_iter().map(|provider|view!{<ProviderCard ctx=ctx provider=provider channels=channels.get() reload=reload/>}).collect_view()}</div>
+    <div class="provider-list">{move||providers.get().into_iter().map(|provider|view!{<ProviderCard ctx=ctx provider=provider channels=channels.get() all_providers=providers.get() reload=reload/>}).collect_view()}</div>
     <Show when=move||!busy.get()&&providers.get().is_empty()><p class="account-empty">"尚未设置服务商。请新建名称，再将已有连接明确归属。系统不会按网址或模型名猜测。"</p></Show>
-    <section class="card provider-ungrouped"><header class="card-head"><h2>"未分组连接"</h2><span>{move||format!("{} 条",channels.get().iter().filter(|c|c.provider_id.is_none()).count())}</span></header><div class="card-body"><p class="muted small">"旧连接保持原 ID 与配置。选择服务商仅修改归属，不合并凭据、预算、并发或路由顺序。"</p>{move||channels.get().into_iter().filter(|c|c.provider_id.is_none()).map(|c|view!{<Assignment ctx=ctx connection=c providers=providers.get() reload=reload/>}).collect_view()}<details class="provider-advanced"><summary>"高级：未分组连接设置 / 新建连接"</summary><super::channels::Connections ctx=ctx on_changed=reload/></details></div></section>
+    <section class="card provider-ungrouped"><header class="card-head"><h2>"未分组与旧连接"</h2><span>{move||format!("{} 条",channels.get().iter().filter(|c|c.provider_id.is_none()).count())}</span><button class="ghost" aria-expanded=move||ungrouped_open.get().to_string() on:click=move |_|ungrouped_open.update(|v|*v=!*v)>{move||if ungrouped_open.get(){"收起"}else{"查看与整理"}}</button></header><Show when=move||ungrouped_open.get()><div class="card-body"><p class="muted small">"此处保留旧配置，停用项不会作为服务商模型铺开。可在各连接详情中选择服务商；ID、凭据和历史保持独立。"</p><super::channels::Connections ctx=ctx on_changed=reload providers=providers.get()/></div></Show></section>
     </div>}
 }
 #[component]
@@ -117,11 +121,15 @@ fn ProviderCard(
     ctx: Ctx,
     provider: p::Provider,
     channels: Vec<Channel>,
+    all_providers: Vec<p::Provider>,
     reload: Callback<()>,
 ) -> impl IntoView {
     let id = provider.id;
-    let open = RwSignal::new(false);
-    let show_compat=RwSignal::new(false);
+    let open = RwSignal::new(provider.models.is_empty());
+    let editing = RwSignal::new(false);
+    let connections_open = RwSignal::new(false);
+    let all_providers = StoredValue::new(all_providers);
+    let show_compat = RwSignal::new(false);
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let edited = RwSignal::new(provider.name.clone());
@@ -130,15 +138,18 @@ fn ProviderCard(
     let channels = StoredValue::new(channels);
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
+        if busy.get_untracked() {
+            return;
+        }
+        let captured_name = edited.get_untracked().trim().to_string();
+        let captured_enabled = enabled.get_untracked();
+        if captured_name.is_empty() {
+            error.set("请输入服务商名称。".into());
+            return;
+        }
         busy.set(true);
         leptos::task::spawn_local(async move {
-            match p::save(
-                Some(id),
-                edited.get_untracked().trim(),
-                enabled.get_untracked(),
-            )
-            .await
-            {
+            match p::save(Some(id), &captured_name, captured_enabled).await {
                 Ok(()) => reload.run(()),
                 Err(e) => {
                     ctx.note_err(&e);
@@ -148,30 +159,82 @@ fn ProviderCard(
             busy.set(false);
         });
     };
-    view! {<section class="card provider-card"><header class="provider-heading"><div><h2>{provider.get_value().name}</h2><p class="muted small">{{let p=provider.get_value();let (enabled,public,_)=model_counts(&p.models);format!("启用 {enabled} / 已配置 {public} 个模型 · {} 个连接",p.connection_ids.len())}}</p>{let (_,_,hidden)=model_counts(&provider.get_value().models);(hidden>0).then(||view!{<p class="muted small">{format!("另有 {hidden} 个兼容别名")}</p>})}</div><span class="tag">{if provider.get_value().enabled{"渠道启用"}else{"渠道停用"}}</span><button class="ghost" aria-expanded=move||open.get().to_string() on:click=move|_|open.update(|v|*v=!*v)>{move||if open.get(){"收起"}else{"管理模型"}}</button></header>
+    let remove = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        let p = provider.get_value();
+        let message = if p.connection_ids.is_empty() {
+            format!(
+                "确定删除空服务商「{}」？仅删除此服务商分组，不删除任何历史记录。",
+                p.name
+            )
+        } else {
+            format!(
+                "服务商「{}」仍有 {} 个连接，系统会阻止删除。请先在连接设置中移动或删除无依赖连接；有关联历史的连接请停用保留。继续检查删除条件？",
+                p.name,
+                p.connection_ids.len()
+            )
+        };
+        if !web_sys::window()
+            .and_then(|w| w.confirm_with_message(&message).ok())
+            .unwrap_or(false)
+        {
+            return;
+        }
+        busy.set(true);
+        error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match p::remove(id).await {
+                Ok(()) => reload.run(()),
+                Err(e) => {
+                    ctx.note_err(&e);
+                    error.set(e.message);
+                    open.set(true);
+                    connections_open.set(true);
+                }
+            }
+            busy.set(false);
+        });
+    };
+    view! {<section class="card provider-card"><header class="provider-heading"><div><h2>{provider.get_value().name}</h2><p class="muted small">{{let p=provider.get_value();let (enabled,public,_)=model_counts(&p.models);format!("启用 {enabled} / 已配置 {public} 个模型 · {} 个连接",p.connection_ids.len())}}</p>{let (_,_,hidden)=model_counts(&provider.get_value().models);(hidden>0).then(||view!{<p class="muted small">{format!("另有 {hidden} 个兼容别名")}</p>})}</div><span class="tag">{if provider.get_value().enabled{"渠道启用"}else{"渠道停用"}}</span><button class="ghost" disabled=move||busy.get() aria-expanded=move||open.get().to_string() on:click=move|_|open.update(|v|*v=!*v)>{move||if open.get(){"收起模型"}else{"管理模型"}}</button><button class="ghost" disabled=move||busy.get() aria-expanded=move||editing.get().to_string() on:click=move |_|editing.update(|v|*v=!*v)>"编辑服务商"</button><button class="ghost danger" disabled=move||busy.get() on:click=remove>"删除服务商"</button></header>
+    <Show when=move||editing.get()><div class="card-body"><h3>"编辑服务商"</h3><form class="provider-edit" on:submit=save><div class="account-field"><label for=format!("provider-edit-{id}")>"服务商名称"</label><input id=format!("provider-edit-{id}") required=true maxlength="128" prop:value=edited on:input=move|e|edited.set(event_target_value(&e))/></div><label class="pick"><input type="checkbox" prop:checked=enabled on:change=move|e|enabled.set(event_target_checked(&e))/>"启用此服务商"</label><button class="primary" disabled=move||busy.get()>"保存服务商"</button><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|editing.set(false)>"取消"</button></form><p class="muted small">"停用整个服务商会停止其全部模型的路由，保留连接、密钥、授权和历史。"</p></div></Show>
+    <Show when=move||!error.get().is_empty()><div class="card-body"><p class="banner bad" role="alert">{move||error.get()}</p></div></Show>
     <Show when=move||open.get()><div class="card-body"><p class="muted small">"这里的开关只控制此服务商内该模型的已列连接。停用保留映射与能力配置；全局模型开关在模型页。"</p>
-    <label class="pick"><input type="checkbox" prop:checked=show_compat on:change=move|e|show_compat.set(event_target_checked(&e))/>{format!("显示兼容隐藏模型（{}）",provider.get_value().models.iter().filter(|m|!m.visible).count())}</label><Show when=move||!show_compat.get()&&provider.get_value().models.iter().all(|m|!m.visible)><p class="muted small">"没有公开展示的模型。可以显示兼容隐藏项，或在连接设置中添加标准模型名。"</p></Show><Show when=move||!error.get().is_empty()><p class="banner bad" role="alert">{move||error.get()}</p></Show>
+    <label class="pick"><input type="checkbox" prop:checked=show_compat on:change=move|e|show_compat.set(event_target_checked(&e))/>{format!("显示兼容隐藏模型（{}）",provider.get_value().models.iter().filter(|m|!m.visible).count())}</label><Show when=move||!show_compat.get()&&provider.get_value().models.iter().all(|m|!m.visible)><p class="muted small">"没有公开展示的模型。可以显示兼容隐藏项，或在连接设置中添加标准模型名。"</p></Show>
     {if provider.get_value().models.is_empty(){view!{<p class="account-empty">"尚未配置模型，请在下方连接设置中配置映射。"</p>}.into_any()}else{view!{<div class="table-wrap"><table class="provider-model-table"><thead><tr><th>"对外模型名"</th><th>"上游模型"</th><th>"原生协议"</th><th>"连接"</th><th>"此渠道内模型"</th><th>"详情"</th></tr></thead><tbody>{move||provider.get_value().models.into_iter().filter(|m|m.visible||show_compat.get()).map(|m|{let connections=model_connections(&channels.get_value(),id,&m.name);let upstream:Vec<_>=connections.iter().flat_map(|c|c.models.iter().filter(|p|p.model==m.name).map(|p|p.upstream.clone().unwrap_or_else(||p.model.clone()))).collect::<BTreeSet<_>>().into_iter().collect();let protocols=protocol_names(&connections);let on=all_enabled(&m);let mixed=!m.enabled_connection_ids.is_empty()&&!on;let target=m.name.clone();let target_for_details=m.name.clone();let detail_open=RwSignal::new(false);let scope=m.declared_connection_ids.clone();let detail=connections.iter().map(|c|format!("#{} {}：{}",c.id,c.name,if c.models.iter().any(|p|p.model==m.name&&p.enabled){"模型启用"}else{"模型停用"})).collect::<Vec<_>>().join("；");view!{<tr><td data-label="对外模型名"><code>{m.name}</code>{(!m.global_enabled).then(||view!{<span class="tag warn">"全局已停用"</span>})}</td><td data-label="上游模型">{upstream.join(" / ")}</td><td data-label="原生协议">{protocols}</td><td data-label="连接">{format!("可路由 {} / 已配置 {}",m.routable_connection_ids.len(),scope.len())}</td><td data-label="此渠道内模型"><button class="ghost" disabled=move||busy.get() aria-label=format!("{}此渠道内模型 {} 的全部 {} 个连接",if on{"停用"}else{"启用"},target,scope.len()) on:click=move|_|{if busy.get_untracked(){return;}busy.set(true);let n=target.clone();let ids=scope.clone();leptos::task::spawn_local(async move{match p::toggle(id,&n,!on,&ids).await{Ok(())=>reload.run(()),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>{if on{"已启用 · 停用"}else if mixed{"部分启用 · 全部启用"}else{"已停用 · 启用"}}</button></td><td data-label="详情"><details on:toggle=move|ev|{detail_open.set(ev.target().and_then(|t|t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e|e.has_attribute("open")));}><summary>"连接与推理参数"</summary><p>{detail}</p><Show when=move||detail_open.get()>{connections.clone().into_iter().map(|c|view!{<super::model_reasoning::ReasoningConfig ctx=ctx channel=Some(c.id) model=target_for_details.clone()/>}).collect_view()}</Show></details></td></tr>}}).collect_view()}</tbody></table></div>}.into_any()}}
-    <details class="provider-advanced"><summary>"高级：服务商与连接设置"</summary><form class="provider-edit" on:submit=save><div class="account-field"><label for=format!("provider-edit-{id}")>"服务商名称"</label><input id=format!("provider-edit-{id}") required=true maxlength="128" prop:value=edited on:input=move|e|edited.set(event_target_value(&e))/></div><label class="pick"><input type="checkbox" prop:checked=enabled on:change=move|e|enabled.set(event_target_checked(&e))/>{"启用整个服务商渠道"}</label><p class="muted small">"停用后其全部连接不参与路由，单个模型配置保留。"</p><button class="primary" disabled=move||busy.get()>"保存服务商"</button></form>{channels.get_value().into_iter().filter(|c|c.provider_id==Some(id)).map(|c|view!{<Assignment ctx=ctx connection=c providers=vec![] reload=reload/>}).collect_view()}<super::channels::Connections ctx=ctx provider_id=id on_changed=reload/></details>
+    <details class="provider-advanced" prop:open=connections_open on:toggle=move|ev|connections_open.set(ev.target().and_then(|t|t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e|e.has_attribute("open")))><summary>{format!("连接设置（{}）：地址、凭据、编辑与删除",provider.get_value().connection_ids.len())}</summary><p class="muted small">"连接是服务商内部的独立凭据或部署。每个连接保留原ID；不会把同名连接自动合并，也不会因整理页面删除任何配置。"</p><Show when=move||connections_open.get()><super::channels::Connections ctx=ctx provider_id=id on_changed=reload providers=all_providers.get_value()/></Show></details>
     </div></Show></section>}
 }
 #[component]
-fn Assignment(
+pub(crate) fn Assignment(
     ctx: Ctx,
     connection: Channel,
     providers: Vec<p::Provider>,
     reload: Callback<()>,
 ) -> impl IntoView {
-    let selected = RwSignal::new(String::new());
+    let selected = RwSignal::new(
+        connection
+            .provider_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+    );
     let busy = RwSignal::new(false);
     let err = RwSignal::new(String::new());
     let id = connection.id;
     let assigned = connection.provider_id.is_some();
-    let fixed_assignment=assigned&&providers.is_empty();
-    let assignment_label=connection.provider_name.clone().unwrap_or_else(||format!("已归属服务商 #{}",connection.provider_id.unwrap_or(0)));
+    let fixed_assignment = assigned && providers.is_empty();
+    let assignment_label = connection
+        .provider_name
+        .clone()
+        .unwrap_or_else(|| format!("已归属服务商 #{}", connection.provider_id.unwrap_or(0)));
     let submit = move |_| {
         busy.set(true);
-        let target = selected.get_untracked().parse::<i64>().ok();
+        let target = if fixed_assignment {
+            None
+        } else {
+            selected.get_untracked().parse::<i64>().ok()
+        };
         leptos::task::spawn_local(async move {
             match p::assign(id, target).await {
                 Ok(()) => reload.run(()),
@@ -183,7 +246,7 @@ fn Assignment(
             busy.set(false);
         });
     };
-    view! {<div class="provider-assignment"><strong>{format!("连接 #{} · {}",id,connection.name)}</strong>{if fixed_assignment{view!{<span class="muted small">{format!("当前归属：{assignment_label}")}</span>}.into_any()}else{view!{<label class="sr-only" for=format!("assign-{id}")>"服务商归属"</label><select id=format!("assign-{id}") prop:value=selected on:change=move|e|selected.set(event_target_value(&e))><option value="">"未分组"</option>{providers.into_iter().map(|p|view!{<option value=p.id.to_string()>{p.name}</option>}).collect_view()}</select>}.into_any()}}<button class="ghost" disabled=move||busy.get() on:click=submit>{if assigned{"移至未分组"}else{"保存归属"}}</button><Show when=move||!err.get().is_empty()><span class="bad-text" role="alert">{move||err.get()}</span></Show></div>}
+    view! {<div class="provider-assignment"><strong>{format!("连接 #{} · {}",id,connection.name)}</strong>{if fixed_assignment{view!{<span class="muted small">{format!("当前归属：{assignment_label}")}</span>}.into_any()}else{view!{<label class="sr-only" for=format!("assign-{id}")>"服务商归属"</label><select id=format!("assign-{id}") prop:value=selected on:change=move|e|selected.set(event_target_value(&e))><option value="">"未分组"</option>{providers.into_iter().map(|p|view!{<option value=p.id.to_string()>{p.name}</option>}).collect_view()}</select>}.into_any()}}<button class="ghost" disabled=move||busy.get() on:click=submit>{if fixed_assignment{"移至未分组"}else{"保存归属"}}</button><Show when=move||!err.get().is_empty()><span class="bad-text" role="alert">{move||err.get()}</span></Show></div>}
 }
 #[cfg(test)]
 mod tests {
@@ -207,18 +270,32 @@ mod tests {
         assert_eq!(model_connections(&[a, b], 7, "same").len(), 1);
     }
     #[test]
-    fn main_counts_match_visible_table_and_separate_compatibility_aliases(){
-        let model=|visible,global_enabled,routable|p::ProviderModel{name:"no-suffix-inference".into(),visible,global_enabled,declared_connection_ids:vec![1],enabled_connection_ids:vec![1],routable_connection_ids:if routable{vec![1]}else{vec![]}};
-        let rows=vec![model(true,true,true),model(true,false,true),model(true,true,false),model(false,true,true),model(false,true,true),model(false,true,true)];
-        assert_eq!(model_counts(&rows),(1,3,3));
-        assert_eq!(model_counts(&[]),(0,0,0));
+    fn main_counts_match_visible_table_and_separate_compatibility_aliases() {
+        let model = |visible, global_enabled, routable| p::ProviderModel {
+            name: "no-suffix-inference".into(),
+            visible,
+            global_enabled,
+            declared_connection_ids: vec![1],
+            enabled_connection_ids: vec![1],
+            routable_connection_ids: if routable { vec![1] } else { vec![] },
+        };
+        let rows = vec![
+            model(true, true, true),
+            model(true, false, true),
+            model(true, true, false),
+            model(false, true, true),
+            model(false, true, true),
+            model(false, true, true),
+        ];
+        assert_eq!(model_counts(&rows), (1, 3, 3));
+        assert_eq!(model_counts(&[]), (0, 0, 0));
     }
     #[test]
     fn partial_enable_is_not_all_enabled() {
         let mut m = p::ProviderModel {
             name: "m".into(),
             global_enabled: true,
-            visible:true,
+            visible: true,
             declared_connection_ids: vec![1, 2],
             enabled_connection_ids: vec![1],
             routable_connection_ids: vec![1],

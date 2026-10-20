@@ -5,6 +5,7 @@
 
 pub mod providers;
 pub mod accounts;
+pub mod managed_users;
 pub mod oauth;
 pub mod identity;
 pub mod billing;

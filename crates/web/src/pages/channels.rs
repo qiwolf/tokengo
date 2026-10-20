@@ -5,11 +5,11 @@
 
 use leptos::prelude::*;
 
+use crate::Ctx;
 use crate::api;
 use crate::fmt;
 use crate::model::{Channel, HeaderPair, ModelPair, UpstreamModel};
 use crate::pages::PageHead;
-use crate::Ctx;
 
 /// 上游清单一次最多显示这么多行（真有上游报上千个模型，全塞进 DOM 会卡）。
 const SHOW_LIMIT: usize = 200;
@@ -19,13 +19,30 @@ const TAB_BASIC: &str = "basic";
 const TAB_HEADERS: &str = "headers";
 const TAB_MODELS: &str = "models";
 
-fn catalog_model_kind<'a>(m:&'a UpstreamModel,known:&'a [crate::model::NameRoute])->&'a str {
- let kind=m.kind.as_deref().filter(|k|!k.is_empty()).or_else(||known.iter().find(|r|tokengo_shared::same_model_name(&r.name,&m.id)).map(|r|r.kind.as_str())).unwrap_or("");
- match kind {"chat"|"embeddings"|"rerank"|"image"|"audio"|"video"=>kind,_=>"unknown"}
+fn catalog_model_kind<'a>(m: &'a UpstreamModel, known: &'a [crate::model::NameRoute]) -> &'a str {
+    let kind = m
+        .kind
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .or_else(|| {
+            known
+                .iter()
+                .find(|r| tokengo_shared::same_model_name(&r.name, &m.id))
+                .map(|r| r.kind.as_str())
+        })
+        .unwrap_or("");
+    match kind {
+        "chat" | "embeddings" | "rerank" | "image" | "audio" | "video" => kind,
+        _ => "unknown",
+    }
 }
 
 /// 按关键字过滤上游报的模型名（大小写不敏感），最多取 `limit` 个。
-pub(crate) fn filter_catalog(all: &[UpstreamModel], filter: &str, limit: usize) -> Vec<UpstreamModel> {
+pub(crate) fn filter_catalog(
+    all: &[UpstreamModel],
+    filter: &str,
+    limit: usize,
+) -> Vec<UpstreamModel> {
     let needle = filter.trim().to_lowercase();
     all.iter()
         .filter(|m| needle.is_empty() || m.id.to_lowercase().contains(&needle))
@@ -41,7 +58,7 @@ pub(crate) fn mapping_for<'a>(rows: &'a [ModelPair], client: &str) -> Option<&'a
 
 /// 此连接的映射存在且启用时勾选；停用映射仍保留配置。
 pub(crate) fn is_in_use(rows: &[ModelPair], client: &str) -> bool {
-    mapping_for(rows, client).is_some_and(|m|m.enabled)
+    mapping_for(rows, client).is_some_and(|m| m.enabled)
 }
 
 /// 加一条映射：客户端名字 = `name`，上游同名（上游那栏留空 = 同名发出去）。
@@ -51,11 +68,14 @@ pub(crate) fn add_mapping(rows: &mut Vec<ModelPair>, name: &str) -> bool {
     if name.is_empty() || is_in_use(rows, name) {
         return false;
     }
-    if let Some(m)=rows.iter_mut().find(|m|m.model.trim()==name){m.enabled=true;return true;}
+    if let Some(m) = rows.iter_mut().find(|m| m.model.trim() == name) {
+        m.enabled = true;
+        return true;
+    }
     rows.push(ModelPair {
         model: name.to_string(),
-        enabled:true,
-        reasoning:None,
+        enabled: true,
+        reasoning: None,
         upstream: None,
         // 刚加进来的名字**不许猜能力**：要标能看图得点这一条的「测一下能不能看图」。
         vision: false,
@@ -77,7 +97,17 @@ pub(crate) fn add_many(rows: &mut Vec<ModelPair>, names: &[String]) -> usize {
 }
 
 /// Disable a mapping without losing its source alias or capability settings.
-pub(crate) fn disable_mapping(rows:&mut [ModelPair],client:&str)->usize {if let Some(m)=rows.iter_mut().find(|m|m.model.trim()==client.trim()&&m.enabled){m.enabled=false;1}else{0}}
+pub(crate) fn disable_mapping(rows: &mut [ModelPair], client: &str) -> usize {
+    if let Some(m) = rows
+        .iter_mut()
+        .find(|m| m.model.trim() == client.trim() && m.enabled)
+    {
+        m.enabled = false;
+        1
+    } else {
+        0
+    }
+}
 
 /// 删掉「客户端名字 = client」的映射，回删了几条。
 #[cfg(test)]
@@ -139,8 +169,8 @@ pub(crate) fn mappings_to_save(rows: &[ModelPair]) -> (Vec<ModelPair>, usize) {
             .map(str::to_string);
         out.push(ModelPair {
             model: client.to_string(),
-            enabled:m.enabled,
-            reasoning:m.reasoning.clone(),
+            enabled: m.enabled,
+            reasoning: m.reasoning.clone(),
             upstream,
             vision: m.vision,
             drop_fields: m.drop_fields.clone(),
@@ -161,10 +191,18 @@ enum Form {
 }
 
 #[component]
-pub fn Channels(ctx:Ctx)->impl IntoView {view!{<super::provider_channels::Providers ctx=ctx/>}}
+pub fn Channels(ctx: Ctx) -> impl IntoView {
+    view! {<super::provider_channels::Providers ctx=ctx/>}
+}
 
 #[component]
-pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(optional)] on_changed:Option<Callback<()>>) -> impl IntoView {
+pub fn Connections(
+    ctx: Ctx,
+    #[prop(optional)] provider_id: Option<i64>,
+    #[prop(optional)] on_changed: Option<Callback<()>>,
+    #[prop(optional)] providers: Vec<crate::provider_api::Provider>,
+) -> impl IntoView {
+    let all_providers = StoredValue::new(providers);
     let rows = RwSignal::new(Vec::<Channel>::new());
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
@@ -183,17 +221,26 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
     // 打开弹窗先读库把它显示出来 —— 不用为了看一眼清单又去骚扰一次上游。
     let cat_at = RwSignal::new(0i64);
     let pull_filter = RwSignal::new(String::new());
-    let catalog_kind=RwSignal::new("all".to_string());
-    let known_kinds=RwSignal::new(Vec::<crate::model::NameRoute>::new());
-    leptos::task::spawn_local(async move {if let Ok(r)=api::model_routes().await {known_kinds.set(r.models);}});
-    let visible_catalog=move ||{
-        let known=known_kinds.get();let selected=catalog_kind.get();
-        pulled.get().into_iter().filter(|m|selected=="all" || catalog_model_kind(m,&known)==selected).collect::<Vec<_>>()
+    let catalog_kind = RwSignal::new("all".to_string());
+    let known_kinds = RwSignal::new(Vec::<crate::model::NameRoute>::new());
+    leptos::task::spawn_local(async move {
+        if let Ok(r) = api::model_routes().await {
+            known_kinds.set(r.models);
+        }
+    });
+    let visible_catalog = move || {
+        let known = known_kinds.get();
+        let selected = catalog_kind.get();
+        pulled
+            .get()
+            .into_iter()
+            .filter(|m| selected == "all" || catalog_model_kind(m, &known) == selected)
+            .collect::<Vec<_>>()
     };
     // 「加一个自己的名字」输入框里正打着的字
     // 模型那一段的结构变化（勾/取消/加/删/拉到清单）后 +1 —— 只有它会重排那一列。
     // **打字不重排**，否则正在输入的框会丢焦点。
-    let new_alias=RwSignal::new(String::new());
+    let new_alias = RwSignal::new(String::new());
     let mver = RwSignal::new(0u32);
     // 哪一条的「详情」摊开了（键 = 客户端名字）
     let m_open = RwSignal::new(None::<String>);
@@ -212,7 +259,9 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
     // 这条渠道的非流式响应要不要剥壳（cline.bot 那种 `{"data": {…}, "success": true}`）
     let f_unwrap = RwSignal::new(false);
-    let f_protocols = RwSignal::new(String::from(r#"{"native":["chat"],"allow_conversion":false}"#));
+    let f_protocols = RwSignal::new(String::from(
+        r#"{"native":["chat"],"allow_conversion":false}"#,
+    ));
     let protocol_error = RwSignal::new(String::new());
     // 这条渠道「同时最多几发」：0 = 不限。填了就在网关门口排队/换渠道，
     // 免得一次铺开几十发把上游那把 key 打成 429（上游多数是按凭据限并发的）。
@@ -237,7 +286,11 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         wasm_bindgen_futures::spawn_local(async move {
             match api::channels().await {
                 Ok(v) => {
-                    rows.set(v.into_iter().filter(|c|c.provider_id==provider_id).collect());
+                    rows.set(
+                        v.into_iter()
+                            .filter(|c| c.provider_id == provider_id)
+                            .collect(),
+                    );
                     err.set(None);
                 }
                 Err(e) => {
@@ -249,6 +302,12 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         });
     };
     reload();
+    let membership_changed = Callback::new(move |()| {
+        reload();
+        if let Some(cb) = on_changed {
+            cb.run(());
+        }
+    });
 
     let open_new = move |_| {
         f_name.set(String::new());
@@ -259,7 +318,9 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
         f_unwrap.set(false);
-        f_protocols.set(String::from(r#"{"native":["chat"],"allow_conversion":false}"#));
+        f_protocols.set(String::from(
+            r#"{"native":["chat"],"allow_conversion":false}"#,
+        ));
         protocol_error.set(String::new());
         f_cap.set(0);
         f_cap_text.set("0".to_string());
@@ -282,7 +343,9 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
         f_unwrap.set(l.unwrap_envelope);
-        f_protocols.set(crate::admin_api::pretty(&l.protocols.unwrap_or_else(||serde_json::json!({"native":["chat"],"allow_conversion":false}))));
+        f_protocols.set(crate::admin_api::pretty(&l.protocols.unwrap_or_else(
+            || serde_json::json!({"native":["chat"],"allow_conversion":false}),
+        )));
         protocol_error.set(String::new());
         f_cap.set(l.max_concurrent);
         f_cap_text.set(l.max_concurrent.to_string());
@@ -307,7 +370,10 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
             pulled.set(if r.info.is_empty() {
                 r.models
                     .into_iter()
-                    .map(|id| UpstreamModel { id, ..Default::default() })
+                    .map(|id| UpstreamModel {
+                        id,
+                        ..Default::default()
+                    })
                     .collect()
             } else {
                 r.info
@@ -341,14 +407,36 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let cap = parse_cap(&f_cap_text.get_untracked());
-        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) { Ok(v) => v, Err(e) => {protocol_error.set(e); tab.set(TAB_BASIC.to_string()); return;} };
+        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) {
+            Ok(v) => v,
+            Err(e) => {
+                protocol_error.set(e);
+                tab.set(TAB_BASIC.to_string());
+                return;
+            }
+        };
         protocol_error.set(String::new());
         // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
-        let key_arg = if key.trim().is_empty() { None } else { Some(key) };
+        let key_arg = if key.trim().is_empty() {
+            None
+        } else {
+            Some(key)
+        };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_channel(id, &name, &url, enabled, unwrap, cap, key_arg.as_deref(), &headers, &models, &protocols)
-                .await
+            match api::save_channel(
+                id,
+                &name,
+                &url,
+                enabled,
+                unwrap,
+                cap,
+                key_arg.as_deref(),
+                &headers,
+                &models,
+                &protocols,
+            )
+            .await
             {
                 Ok(new_id) => {
                     let tail = if skipped > 0 {
@@ -364,19 +452,42 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                         // 这样能马上用它的 URL/密钥去问上游有哪些模型，不用先关再点编辑
                         Some(i) => {
                             form.set(Form::Edit(i));
-                            f_headers.update(|v| for h in v { h.original_name=Some(h.name.clone()); h.action=Some("keep".into()); h.value.clear(); });
+                            f_headers.update(|v| {
+                                for h in v {
+                                    h.original_name = Some(h.name.clone());
+                                    h.action = Some("keep".into());
+                                    h.value.clear();
+                                }
+                            });
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
                             tab.set(TAB_MODELS.to_string());
-                            if provider_id.is_some(){if let Err(e)=crate::provider_api::assign(i,provider_id).await {ctx.say(format!("连接已建立但归属保存失败：{}；请在未分组连接中重试",e.message));reload();if let Some(cb)=on_changed{cb.run(());}return;}}
-                            ctx.say(format!("连接已新建{tail}{made_note} —— 接着点「获取上游模型」"));
+                            if provider_id.is_some() {
+                                if let Err(e) = crate::provider_api::assign(i, provider_id).await {
+                                    ctx.say(format!(
+                                        "连接已建立但归属保存失败：{}；请在未分组连接中重试",
+                                        e.message
+                                    ));
+                                    reload();
+                                    if let Some(cb) = on_changed {
+                                        cb.run(());
+                                    }
+                                    return;
+                                }
+                            }
+                            ctx.say(format!(
+                                "连接已新建{tail}{made_note} —— 接着点「获取上游模型」"
+                            ));
                         }
                         None => {
                             form.set(Form::Closed);
                             ctx.say(format!("连接已保存{tail}{made_note}"));
                         }
                     }
-                    reload();if let Some(cb)=on_changed{cb.run(());}
+                    reload();
+                    if let Some(cb) = on_changed {
+                        cb.run(());
+                    }
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -395,17 +506,40 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let cap = parse_cap(&f_cap_text.get_untracked());
-        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) { Ok(v) => v, Err(e) => {protocol_error.set(e); tab.set(TAB_BASIC.to_string()); return;} };
+        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) {
+            Ok(v) => v,
+            Err(e) => {
+                protocol_error.set(e);
+                tab.set(TAB_BASIC.to_string());
+                return;
+            }
+        };
         protocol_error.set(String::new());
         let headers = f_headers.get_untracked();
         let (models, _) = mappings_to_save(&f_models.get_untracked());
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
-            match api::save_channel(Some(id), &name, &url, enabled, unwrap, cap, Some(""), &headers, &models, &protocols).await {
+            match api::save_channel(
+                Some(id),
+                &name,
+                &url,
+                enabled,
+                unwrap,
+                cap,
+                Some(""),
+                &headers,
+                &models,
+                &protocols,
+            )
+            .await
+            {
                 Ok(_) => {
                     f_key_note.set("已清空这条渠道的密钥。");
                     ctx.say("密钥已清空");
-                    reload();if let Some(cb)=on_changed{cb.run(());}
+                    reload();
+                    if let Some(cb) = on_changed {
+                        cb.run(());
+                    }
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -420,7 +554,12 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
     let move_one = move |l: Channel, up: bool| {
         wasm_bindgen_futures::spawn_local(async move {
             match api::move_channel(l.id, up).await {
-                Ok(()) => {reload();if let Some(cb)=on_changed{cb.run(());}},
+                Ok(()) => {
+                    reload();
+                    if let Some(cb) = on_changed {
+                        cb.run(());
+                    }
+                }
                 Err(e) => {
                     ctx.note_err(&e);
                     ctx.say(format!("挪不动：{}", e.message));
@@ -431,7 +570,7 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
 
     let remove = move |l: Channel| {
         let ok = web_sys::window()
-            .and_then(|w| w.confirm_with_message(&format!("确定删除连接「{}」？将删除其模型映射与连接配置，历史账本保留。", l.name)).ok())
+            .and_then(|w| w.confirm_with_message(&format!("确定删除连接「{}」？仅无依赖的连接可以删除。若被 OAuth、用户/Key授权、路由、会话或历史账本引用，系统会阻止删除并说明原因，请改为停用以保留历史。成功删除会移除该连接的地址、凭据与模型映射。", l.name)).ok())
             .unwrap_or(false);
         if !ok {
             return;
@@ -440,10 +579,17 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
             match api::delete_channel(l.id).await {
                 Ok(()) => {
                     ctx.say("连接已删除");
-                    reload();if let Some(cb)=on_changed{cb.run(());}
+                    reload();
+                    if let Some(cb) = on_changed {
+                        cb.run(());
+                    }
                 }
                 Err(e) => {
                     ctx.note_err(&e);
+                    err.set(Some(format!(
+                        "删除被阻止：{}。可以先停用此连接，保留原ID与历史。",
+                        e.message
+                    )));
                     ctx.say(format!("删除失败：{}", e.message));
                 }
             }
@@ -462,11 +608,18 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                     } else {
                         format!("渠道「{name}」已停用 —— 不会再往这家上游发请求")
                     });
-                    reload();if let Some(cb)=on_changed{cb.run(());}
+                    reload();
+                    if let Some(cb) = on_changed {
+                        cb.run(());
+                    }
                 }
                 Err(e) => {
                     ctx.note_err(&e);
-                    ctx.say(format!("{}没成功：{}", if want { "启用" } else { "停用" }, e.message));
+                    ctx.say(format!(
+                        "{}没成功：{}",
+                        if want { "启用" } else { "停用" },
+                        e.message
+                    ));
                 }
             }
         });
@@ -526,11 +679,19 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         )));
         wasm_bindgen_futures::spawn_local(async move {
             let up = upstream.trim().to_string();
-            let up_arg = if up.is_empty() { None } else { Some(up.as_str()) };
+            let up_arg = if up.is_empty() {
+                None
+            } else {
+                Some(up.as_str())
+            };
             match api::vision_test(channel_id, &model, up_arg).await {
                 Ok(r) => {
                     vt_busy.set(None);
-                    let mut s = if r.ok { "能看图".to_string() } else { "没测出来".to_string() };
+                    let mut s = if r.ok {
+                        "能看图".to_string()
+                    } else {
+                        "没测出来".to_string()
+                    };
                     if let Some(m) = &r.model_sent {
                         s.push_str(&format!("；发给上游的是 {m}"));
                     }
@@ -565,7 +726,9 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                         if r.applied {
                             s.push_str("；已顺手勾上「能看图」");
                         } else {
-                            s.push_str("；先在屏幕上勾上了「能看图」—— 这一条还没存过，点「保存」写进网关");
+                            s.push_str(
+                                "；先在屏幕上勾上了「能看图」—— 这一条还没存过，点「保存」写进网关",
+                            );
                         }
                     }
                     vt_msg.set(Some((channel_id, s, r.ok)));
@@ -591,14 +754,30 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
             match api::refresh_channel_metadata(id).await {
                 Ok(r) => {
                     pulling.set(false);
-                    let mut s=if r.ok {format!("已获取 {} 个模型",r.count)}else{"获取失败".into()};
+                    let mut s = if r.ok {
+                        format!("已获取 {} 个模型", r.count)
+                    } else {
+                        "获取失败".into()
+                    };
                     if r.ok {
                         cat_at.set(r.fetched_at);
-                        if let Some(ms)=r.latency_ms{s.push_str(&format!(" · {}",fmt::dur(ms)));}
-                        if !r.added.is_empty() || !r.removed.is_empty(){s.push_str(&format!(" · 新增 {} / 减少 {}",r.added.len(),r.removed.len()));}
+                        if let Some(ms) = r.latency_ms {
+                            s.push_str(&format!(" · {}", fmt::dur(ms)));
+                        }
+                        if !r.added.is_empty() || !r.removed.is_empty() {
+                            s.push_str(&format!(
+                                " · 新增 {} / 减少 {}",
+                                r.added.len(),
+                                r.removed.len()
+                            ));
+                        }
                     } else {
-                        if let Some(code)=r.http_status{s.push_str(&format!(" · HTTP {code}"));}
-                        if let Some(note)=&r.note{s.push_str(&format!("：{note}"));}
+                        if let Some(code) = r.http_status {
+                            s.push_str(&format!(" · HTTP {code}"));
+                        }
+                        if let Some(note) = &r.note {
+                            s.push_str(&format!("：{note}"));
+                        }
                     }
                     pull_msg.set(Some((s, r.ok)));
                     pull_filter.set(String::new());
@@ -607,7 +786,10 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                     pulled.set(if r.info.is_empty() {
                         r.models
                             .into_iter()
-                            .map(|id| UpstreamModel { id, ..Default::default() })
+                            .map(|id| UpstreamModel {
+                                id,
+                                ..Default::default()
+                            })
                             .collect()
                     } else {
                         r.info
@@ -644,7 +826,9 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         if added == 0 {
             ctx.say("现在显示的名字都已经在用着");
         } else {
-            ctx.say(format!("加了 {added} 条 —— 要改上游实际叫的名字，点那一条的「详情」"));
+            ctx.say(format!(
+                "加了 {added} 条 —— 要改上游实际叫的名字，点那一条的「详情」"
+            ));
         }
     };
 
@@ -667,7 +851,9 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         if removed == 0 {
             ctx.say("现在显示的名字本来就没在用");
         } else {
-            ctx.say(format!("取消了 {removed} 条（这些模型在此连接停用，配置保留）"));
+            ctx.say(format!(
+                "取消了 {removed} 条（这些模型在此连接停用，配置保留）"
+            ));
         }
     };
 
@@ -675,7 +861,7 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
         <div class="page">
             <PageHead
                 title="连接设置"
-                desc="高级设置：连接 ID、地址、凭据与协议独立保留。名称仅用于识别此连接。"
+                desc="服务商内部的接口与凭据。编辑或删除在每条连接右侧；有历史或授权引用时请使用停用。"
             >
                 <>
                     <button class="primary" on:click=open_new>"新建连接"</button>
@@ -713,8 +899,8 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                     if v.is_empty() {
                         return view! {
                             <div class="empty">
-                                <p>"还没有渠道。"</p>
-                                <p>"点右上角「新建渠道」加一条上游 —— 填上它的地址和密钥，就能把请求转过去了。"</p>
+                                <p>"此服务商还没有连接。"</p>
+                                <p>"点击「新建连接」填写接口地址和凭据，再启用所需模型。"</p>
                             </div>
                         }.into_any();
                     }
@@ -736,18 +922,13 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                             let show_probe = pid == Some(l.id) && !pmsg.is_empty();
                             // 摘要跟路由口径一致（严格白名单）：只认勾上的那些；一个都没勾 =
                             // 这条渠道现在什么都不能用。
-                            let model_txt = if l.models.is_empty() {
-                                "一个都没勾（现在不能用）".to_string()
-                            } else if l.vision_count > 0 {
-                                format!("只认这 {} 个（{} 条能看图）", l.models.len(), l.vision_count)
-                            } else {
-                                format!("只认这 {} 个", l.models.len())
-                            };
+                            let enabled_models=l.models.iter().filter(|m|m.enabled).count();
+                            let model_txt=if l.models.is_empty(){"未配置模型".to_string()}else{format!("启用 {} / 已配置 {}",enabled_models,l.models.len())};
                             view! {
                                 <div class="chan-card">
                                     <div class="chan-head">
                                         <span class="chan-id">
-                                            "第 " {idx + 1} " 位"
+                                            {format!("连接 #{} · 第 {} 位",l.id,idx+1)}
                                         </span>
                                         <b class="chan-name">{l.name.clone()}</b>{(!l.account_status.is_empty()).then(||view!{<span class="tag warn">{l.account_status.clone()}</span>})}
                                         <span class="spacer"></span>
@@ -807,16 +988,17 @@ pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(o
                                         >
                                             "↓"
                                         </button>
-                                        <button class="ghost" on:click=move |_| open_edit(l2.clone())>
-                                            "编辑"
+                                        <button class="ghost" on:click=move |_| {open_edit(l2.clone());tab.set(TAB_BASIC.to_string());}>
+                                            "编辑连接"
                                         </button>
                                         <button class="ghost" on:click=move |_| probe(l3.clone())>
                                             "测一下"
                                         </button>
                                         <button class="ghost danger" on:click=move |_| remove(l4.clone())>
-                                            "删除"
+                                            "删除连接"
                                         </button>
                                     </div>
+                                    <details><summary>"移动到其他服务商 / 未分组"</summary><super::provider_channels::Assignment ctx=ctx connection=l.clone() providers=all_providers.get_value() reload=membership_changed/></details>
                                     {show_probe.then(|| view! {
                                         <div class=move || if pok { "chan-probe ok" } else { "chan-probe bad" }>
                                             {pmsg.clone()}
@@ -1437,8 +1619,8 @@ mod tests {
     fn mapping(model: &str, upstream: Option<&str>) -> ModelPair {
         ModelPair {
             model: model.to_string(),
-            enabled:true,
-            reasoning:None,
+            enabled: true,
+            reasoning: None,
             upstream: upstream.map(str::to_string),
             vision: false,
             drop_fields: String::new(),
@@ -1446,16 +1628,47 @@ mod tests {
     }
 
     #[test]
-    fn disable_and_reenable_preserve_mapping_configuration(){let mut rows=vec![mapping("m",Some("upstream"))];rows[0].vision=true;rows[0].drop_fields="field".into();assert_eq!(disable_mapping(&mut rows,"m"),1);assert!(!is_in_use(&rows,"m"));let saved=mappings_to_save(&rows).0;assert_eq!(saved.len(),1);assert!(!saved[0].enabled);assert!(saved[0].vision);assert_eq!(saved[0].upstream.as_deref(),Some("upstream"));assert_eq!(saved[0].drop_fields,"field");assert!(add_mapping(&mut rows,"m"));assert_eq!(rows.len(),1);assert!(rows[0].enabled);assert!(rows[0].vision);}
+    fn disable_and_reenable_preserve_mapping_configuration() {
+        let mut rows = vec![mapping("m", Some("upstream"))];
+        rows[0].vision = true;
+        rows[0].drop_fields = "field".into();
+        assert_eq!(disable_mapping(&mut rows, "m"), 1);
+        assert!(!is_in_use(&rows, "m"));
+        let saved = mappings_to_save(&rows).0;
+        assert_eq!(saved.len(), 1);
+        assert!(!saved[0].enabled);
+        assert!(saved[0].vision);
+        assert_eq!(saved[0].upstream.as_deref(), Some("upstream"));
+        assert_eq!(saved[0].drop_fields, "field");
+        assert!(add_mapping(&mut rows, "m"));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].enabled);
+        assert!(rows[0].vision);
+    }
     #[test]
     fn filter_is_case_insensitive_and_limited() {
         let all = vec![up("deepseek-v4.1-flash"), up("BGE-M3"), up("gpt-oss")];
         let ids = |v: Vec<UpstreamModel>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
         assert_eq!(filter_catalog(&all, "", 10).len(), 3, "不过滤就全列");
-        assert_eq!(ids(filter_catalog(&all, "deep", 10)), vec!["deepseek-v4.1-flash"]);
-        assert_eq!(ids(filter_catalog(&all, "BGE", 10)), vec!["BGE-M3"], "过滤不分大小写");
-        assert_eq!(ids(filter_catalog(&all, "  gpt  ", 10)), vec!["gpt-oss"], "两头空白忽略");
-        assert_eq!(filter_catalog(&all, "", 2).len(), 2, "显示有上限，免得塞爆 DOM");
+        assert_eq!(
+            ids(filter_catalog(&all, "deep", 10)),
+            vec!["deepseek-v4.1-flash"]
+        );
+        assert_eq!(
+            ids(filter_catalog(&all, "BGE", 10)),
+            vec!["BGE-M3"],
+            "过滤不分大小写"
+        );
+        assert_eq!(
+            ids(filter_catalog(&all, "  gpt  ", 10)),
+            vec!["gpt-oss"],
+            "两头空白忽略"
+        );
+        assert_eq!(
+            filter_catalog(&all, "", 2).len(),
+            2,
+            "显示有上限，免得塞爆 DOM"
+        );
         assert!(filter_catalog(&all, "没有这个名字", 10).is_empty());
     }
 
@@ -1487,17 +1700,27 @@ mod tests {
     /// 不然用户不知道自己的「能看图」/「要丢的字段」跟着没了。
     #[test]
     fn unticking_removes_it_and_reports_what_would_be_lost() {
-        let mut rows = vec![mapping("auto", Some("v4.1flash")), mapping("v4.1flash", None)];
+        let mut rows = vec![
+            mapping("auto", Some("v4.1flash")),
+            mapping("v4.1flash", None),
+        ];
         rows[1].vision = true;
 
         assert!(!mapping_has_config(&rows, "auto"), "这条路没配过东西");
-        assert!(mapping_has_config(&rows, "v4.1flash"), "标过能看图，取消前要问一句");
+        assert!(
+            mapping_has_config(&rows, "v4.1flash"),
+            "标过能看图，取消前要问一句"
+        );
         assert!(!mapping_has_config(&rows, "没有的名字"));
 
         assert_eq!(drop_mapping(&mut rows, "v4.1flash"), 1);
         assert_eq!(rows.len(), 1, "只删同名的那一条，别名那条不动");
         assert_eq!(rows[0].model, "auto");
-        assert_eq!(drop_mapping(&mut rows, "v4.1flash"), 0, "再删一次什么也不删");
+        assert_eq!(
+            drop_mapping(&mut rows, "v4.1flash"),
+            0,
+            "再删一次什么也不删"
+        );
         // 别名那条也在用它，但键是客户端名字
         assert!(!is_in_use(&rows, "v4.1flash"));
         assert!(is_in_use(&rows, "auto"));
@@ -1506,7 +1729,10 @@ mod tests {
     #[test]
     fn bulk_ticking_never_double_adds() {
         let mut rows: Vec<ModelPair> = Vec::new();
-        let list: Vec<String> = ["a", "b", "a", "  ", "c"].iter().map(|s| s.to_string()).collect();
+        let list: Vec<String> = ["a", "b", "a", "  ", "c"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(add_many(&mut rows, &list), 3, "重复的和空名字不算");
         assert_eq!(add_many(&mut rows, &list), 0);
         assert_eq!(rows.len(), 3);
@@ -1531,8 +1757,8 @@ mod tests {
         let rows = vec![
             ModelPair {
                 model: "  auto  ".into(),
-                enabled:true,
-                reasoning:None,
+                enabled: true,
+                reasoning: None,
                 upstream: Some("   ".into()),
                 vision: true,
                 drop_fields: "reasoning_effort".into(),
@@ -1548,16 +1774,28 @@ mod tests {
         assert!(out[0].vision, "已经实测标上的能力不许被抹掉");
         assert_eq!(out[0].drop_fields, "reasoning_effort");
         assert_eq!(out[1].model, "bge-m3");
-        assert_eq!(out[1].upstream.as_deref(), Some("BAAI/bge-m3"), "两头空白去掉");
+        assert_eq!(
+            out[1].upstream.as_deref(),
+            Some("BAAI/bge-m3"),
+            "两头空白去掉"
+        );
     }
-
 }
 
 // ─────────── 渠道页加模型 = 顺手建组（2026-10-18，按用户要求改） ───────────
 
 #[component]
-fn ContextCapacity(channel: Option<i64>, model: String, upstream: String, ctx: Ctx) -> impl IntoView {
-    let upstream = if upstream.trim().is_empty() { model.clone() } else { upstream };
+fn ContextCapacity(
+    channel: Option<i64>,
+    model: String,
+    upstream: String,
+    ctx: Ctx,
+) -> impl IntoView {
+    let upstream = if upstream.trim().is_empty() {
+        model.clone()
+    } else {
+        upstream
+    };
     let model = StoredValue::new(model);
     let upstream = StoredValue::new(upstream);
     let data = RwSignal::new(serde_json::Value::Null);
@@ -1565,28 +1803,58 @@ fn ContextCapacity(channel: Option<i64>, model: String, upstream: String, ctx: C
     let message = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let load = move || {
-        let Some(id) = channel else { message.set("请先保存模型映射，再设置上下文".into()); return; };
+        let Some(id) = channel else {
+            message.set("请先保存模型映射，再设置上下文".into());
+            return;
+        };
         busy.set(true);
         leptos::task::spawn_local(async move {
             match api::context_capacity(id, &model.get_value(), &upstream.get_value()).await {
-                Ok(v) => { capacity.set(v["override_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default()); data.set(v); message.set(String::new()); },
-                Err(e) => { ctx.note_err(&e); message.set(e.message); }
+                Ok(v) => {
+                    capacity.set(
+                        v["override_tokens"]
+                            .as_i64()
+                            .map(|n| n.to_string())
+                            .unwrap_or_default(),
+                    );
+                    data.set(v);
+                    message.set(String::new());
+                }
+                Err(e) => {
+                    ctx.note_err(&e);
+                    message.set(e.message);
+                }
             }
             busy.set(false);
         });
     };
     load();
-    let save_capacity = move |clear:bool| {
-        let Some(id)=channel else {return;};
-        let tokens=if clear {None} else {
+    let save_capacity = move |clear: bool| {
+        let Some(id) = channel else {
+            return;
+        };
+        let tokens = if clear {
+            None
+        } else {
             match capacity.get_untracked().parse::<i64>() {
-                Ok(n) if n>0=>Some(n), _=>{message.set("请输入正整数 tokens".into());return;}
+                Ok(n) if n > 0 => Some(n),
+                _ => {
+                    message.set("请输入正整数 tokens".into());
+                    return;
+                }
             }
         };
         busy.set(true);
         leptos::task::spawn_local(async move {
-            match api::set_context_override(id,&model.get_value(),&upstream.get_value(),tokens).await {
-                Ok(())=>load(), Err(e)=>{ctx.note_err(&e);message.set(e.message);busy.set(false);}
+            match api::set_context_override(id, &model.get_value(), &upstream.get_value(), tokens)
+                .await
+            {
+                Ok(()) => load(),
+                Err(e) => {
+                    ctx.note_err(&e);
+                    message.set(e.message);
+                    busy.set(false);
+                }
             }
         });
     };

@@ -10,7 +10,7 @@ This fork builds on upstream **v0.34.0** and retains that Cargo version. Use the
 
 The fork provides native Chat, Responses and Messages endpoints, strict text/client-function conversion in all six directions, embeddings, reranking, model listing and standalone DeepSeek Search/Fetch. Users, scoped virtual keys, ancestor quotas, ordered fallback, versioned prices, budgets and durable per-attempt accounting share one executor. Configure source capabilities explicitly; a model name is not evidence of support.
 
-See the [changelog](CHANGELOG.md), [provider channels](docs/provider-channels.md), [panel accounts](docs/account-login.md), [protocols and clients](docs/protocols.md), [identity and metering](docs/identity-metering.md), [routing](docs/logical-routing.md), [Search/Fetch](docs/deepseek-search-fetch.md), [independent OpenAI OAuth](docs/openai-oauth.md), and [deployment](docs/deployment.md). Implementation and local tests do not establish acceptance by every real provider, subscription or CLI.
+See the [changelog](CHANGELOG.md), [provider channels](docs/provider-channels.md), [accounts and self-service Keys](docs/account-login.md), [protocols and clients](docs/protocols.md), [identity and metering](docs/identity-metering.md), [routing](docs/logical-routing.md), [Search/Fetch](docs/deepseek-search-fetch.md), [independent OpenAI OAuth](docs/openai-oauth.md), [requirements coverage](docs/requirements-status.md), and [deployment](docs/deployment.md). Implementation and local tests do not establish acceptance by every real provider, subscription or CLI.
 
 Conversion rejects semantics it cannot represent. Responses requires full input replay; native signatures and opaque state have ownership restrictions. Native Chat inline audio is an explicit source capability, but separate audio/video/file APIs, native Gemini and arbitrary subscription conversion are not implemented. The official OAuth preview rejects some ordinary API generation fields; review its specific limitations.
 
@@ -34,9 +34,9 @@ For example, send the following to `POST /v1/responses` only if the current acco
 
 ## Accounts, Keys and Observability
 
-Panel login uses a username, password and same-origin HttpOnly cookie, separate from API users and virtual keys. The initial administrator is `admin`; changing its login name or password requires the current password and revokes all sessions. Administrators create ordinary panel accounts explicitly linked to an API user. Their portal shows only safe key metadata and their own usage. Disabling a panel account does not disable API users or VKeys.
+Login uses a username, password and same-origin HttpOnly cookie. The initial root administrator is `admin`; changing its name or password requires the current password and revokes sessions. The unified Users page creates an ordinary user, login credentials and permissions together. Existing users can gain login without changing Key or ledger ownership. Owners manage their own Keys and usage after browser login; disabling a user blocks both login and API calls. Root retains its independent security identity.
 
-Multiple VKeys per API user support model/connection/paid-source permissions, quotas and ancestor restrictions. Ordered fallback respects those controls and budgets. A stream may fail over before output is committed; committed output is never replayed on another source. See [identity and metering](docs/identity-metering.md) and [logical routing](docs/logical-routing.md).
+Multiple VKeys per user support model/connection/paid-source permissions, quotas and ancestor restrictions. Ordered fallback respects those controls and budgets. A stream may fail over before output is committed; committed output is never replayed on another source. See [identity and metering](docs/identity-metering.md) and [logical routing](docs/logical-routing.md).
 
 The overview shows real request metrics, active progress and grouping by type, connection, model and client. Billing exposes immutable prices, budgets and per-attempt ledgers. The current dashboard emphasizes metrics and detail lists; it is not a complete cost-trend charting or general BI suite. Token and request-unit billing remain separate, and missing usage or unpriced costs are not displayed as known zero.
 
@@ -53,7 +53,7 @@ Standalone DeepSeek Search/Fetch has limited real-request and request-unit accou
 - Priority routing, retries, failover, recovery, automatic selection and channel concurrency limits.
 - Separate non-streaming completion deadlines and streaming inactivity timeouts.
 - Route image input only to channels marked as capable; do not silently discard images.
-- API users and VKeys, separate panel accounts with cookie login, and encrypted stored upstream secrets.
+- Unified Users, point-and-click user/Key policies, browser self-service Keys, cookie login and encrypted upstream secrets.
 - Request/attempt accounting, running-request progress, runtime logs and retention controls.
 - Track missing usage separately from explicitly reported zero usage.
 - Administrator console and scoped user portal, with responsive light/dark layouts and a separate diagnostic log entry.
@@ -97,7 +97,7 @@ Open http://127.0.0.1:3160/ui/ and initialize your administrator password before
 2. Create a provider in Channels. Explicitly assign old connections or add a connection under its advanced settings; its name identifies a connection, not a second provider. Set the URL for its actual native protocol and supply credentials.
 3. Fetch catalog metadata and enable the desired standard model names. Configure upstream aliases when needed. The provider, connection and model must all be enabled.
 4. Configure purpose, input capability and native defaults only from actual declarations or explicit confirmation; unknown capability is not guessed from a name.
-5. In API Users, create API users and VKeys with suitable scopes and quotas. Configure real prices before using monetary budgets. Create a separate linked Panel Account when a user needs browser access.
+5. In Users, create a login name, display name and initial password, select model/connection permissions and limits, and optionally set a monetary cap. Configure real source prices before using monetary budgets. Enable login within an existing user when needed. Ordinary users then sign in to My Usage and Keys to create their own Keys within their user permissions and budget.
 6. Point the client at `http://127.0.0.1:3160/v1` with a VKey and an allowed configured model name.
 
 ## Environment Variables
@@ -234,4 +234,4 @@ MIT; see [LICENSE](LICENSE) and [NOTICE](NOTICE). FreeLLMAPI informed compatibil
 
 ## Protocol matrix and next phases
 
-See the [protocol routing matrix and fallback diagram](docs/protocol-routing-matrix.md) for native selection, bounded bridging and explicit rejection. The [unified user, quota and custom-probe plan](docs/unified-user-and-quota-plan.md) describes future phased work; self-service panel Keys, monthly packages and configurable probe payloads are not implemented by this documentation update.
+See the [protocol routing matrix and fallback diagram](docs/protocol-routing-matrix.md) for native selection, bounded bridging and explicit rejection. The first unified-user phase implements atomic user/login creation, browser self-service Keys and point-and-click policies. It adds no schema, user expiry or self-service toggle; browser self-service creation has a fixed 32-active-Key cap. Monetary caps are not raw Token packages. Monthly entitlements, cumulative Token quota and custom probes remain future work. See [requirements coverage](docs/requirements-status.md), the [phased plan](docs/unified-user-and-quota-plan.md) and [acceptance status](docs/acceptance-status.md) for implementation and verification boundaries.

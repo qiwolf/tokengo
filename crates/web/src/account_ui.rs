@@ -169,6 +169,6 @@ pub fn RenameForm(ctx: Ctx) -> impl IntoView {
     <p class="muted">"当前账号："<strong>{move||ctx.account.get().map(|a|a.username).unwrap_or_default()}</strong></p>
     <div class="account-field"><label for="profile-username">"新登录账号"</label><input id="profile-username" name="new_username" autocomplete="off" autocapitalize="none" spellcheck="false" required=true minlength="3" maxlength="64" aria-describedby="profile-help profile-error" aria-invalid=move||(!error.get().is_empty()).to_string() prop:value=name on:input=move|ev|{name.set(event_target_value(&ev));error.set(String::new());}/></div>
     <PasswordField id="profile-password" label="当前密码" value=password autocomplete="current-password" error=error describedby="profile-help profile-error"/>
-    <p id="profile-help" class="account-help">"账号会保存为小写。修改后旧账号名立即失效，所有管理会话退出；权限与 API 用户绑定不变。"</p><div id="profile-error" class="account-error" role="alert">{move||error.get()}</div><button type="submit" class="primary" disabled=move||busy.get()>{move||if busy.get(){"正在更新…"}else{"更新账号并退出"}}</button>
+    <p id="profile-help" class="account-help">"账号会保存为小写。修改后旧账号名立即失效，所有管理会话退出；现有模型授权、额度与 API Key 不变。"</p><div id="profile-error" class="account-error" role="alert">{move||error.get()}</div><button type="submit" class="primary" disabled=move||busy.get()>{move||if busy.get(){"正在更新…"}else{"更新账号并退出"}}</button>
     </form></div></section>}
 }

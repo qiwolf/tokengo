@@ -191,3 +191,6 @@ mod tests {
         assert_eq!(ctx(1_048_576), "1M", "一位小数，整数不留 .0");
     }
 }
+
+/// Exact decimal USD projection from integer microUSD, without floating-point loss.
+pub fn usd_input(n:i64)->String {let n=i128::from(n);let sign=if n<0{"-"}else{""};let n=n.abs();let mut s=format!("{sign}{}.{:06}",n/1_000_000,n%1_000_000);while s.ends_with('0'){s.pop();}if s.ends_with('.') {s.pop();}s}

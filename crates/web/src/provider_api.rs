@@ -2,10 +2,13 @@
 use crate::api::{ApiErr, call, typed};
 use serde::Deserialize;
 use serde_json::json;
-fn yes()->bool{true}
+fn yes() -> bool {
+    true
+}
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct ProviderModel {
-    #[serde(default="yes")] pub visible:bool,
+    #[serde(default = "yes")]
+    pub visible: bool,
     pub name: String,
     pub global_enabled: bool,
     pub declared_connection_ids: Vec<i64>,
@@ -66,4 +69,11 @@ pub async fn toggle_connection(connection: i64, model: &str, enabled: bool) -> R
     )
     .await
     .map(|_| ())
+}
+
+/// Only empty providers can be removed. Sources and historical identities never cascade.
+pub async fn remove(id: i64) -> Result<(), ApiErr> {
+    call("DELETE", &format!("/api/providers/{id}"), None)
+        .await
+        .map(|_| ())
 }

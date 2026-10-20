@@ -15,7 +15,7 @@ use tokengo_shared::{same_model_name, ChannelId};
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/providers", get(list).post(create))
-        .route("/api/providers/{id}", put(update))
+        .route("/api/providers/{id}", put(update).delete(delete))
         .route("/api/channels/{id}/provider", put(assign))
         .route("/api/providers/{id}/models/enabled", put(group_model))
         .route("/api/channels/{id}/models/enabled", put(connection_model))
@@ -174,6 +174,27 @@ async fn update(
     drop(c);
     changed(&s, names);
     Ok(Json(json!({"provider":row})))
+}
+async fn delete(
+    _root: PanelAuth,
+    State(s): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let c = s.conn();
+    require(&c, id)?;
+    // One guarded statement: a concurrent membership can never be cascaded away.
+    let deleted = db::in_tx(&c, |c| {
+        Ok(c.execute("DELETE FROM provider_channels WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM provider_connections WHERE provider_id=?1)", [id])?)
+    })?;
+    if deleted == 0 {
+        require(&c, id)?;
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "provider_not_empty",
+            "服务商仍有关联连接，请先移动/删除连接；不会级联删除连接或历史",
+        ));
+    }
+    Ok(Json(json!({"deleted":true})))
 }
 async fn assign(
     _root: PanelAuth,

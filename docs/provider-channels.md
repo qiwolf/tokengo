@@ -11,6 +11,7 @@
 | GET /api/providers | 无 | `{providers:[Provider],ungrouped_connection_ids:[id]}` |
 | POST /api/providers | `{name,enabled?:true}` | `{provider:Provider}` |
 | PUT /api/providers/{id} | `{name,enabled}` | `{provider:Provider}` |
+| DELETE /api/providers/{id} | 无 | 空服务商 `{deleted:true}`；有关联连接返回409 `provider_not_empty` |
 | PUT /api/channels/{id}/provider | `{provider_id:id或null}` | `{ok:true}` |
 | PUT /api/providers/{id}/models/enabled | `{model,enabled,connection_ids:[id]}` | `{ok:true,updated_connection_ids:[id]}` |
 | PUT /api/channels/{id}/models/enabled | `{model,enabled}` | `{ok:true}` |
@@ -26,3 +27,19 @@ GET /api/model-routes保留所有原字段，新增visible及sources：`{connect
 ReasoningCapabilities字段为`{status,levels,source,reason,default_effort,configured_default,manual_levels}`。按每个连接+logical读取，不把多个来源档位求并集冒充所有来源都支持。目录真实声明或明确人工声明才可生成levels；单独boolean reasoning不推断low/high。默认仅在客户端未传原生参数时补充，配置null表示沿供应商默认；Chat reasoning_effort与Responses reasoning.effort由受测转换器处理。不通过模型名后缀选择推理档位，无法表示的协议语义仍拒绝。旧OAuth连接级low/medium/high绑定枚举保留兼容；新档位默认通过mapping配置，不重建OAuth账号或表。
 
 本轮不迁移或重写历史账本/价格/密钥/连接ID、不做真实供应商推理验收。新增能力的实际回归与部署状态另见交付证据。
+
+
+## 渠道界面与删除边界
+
+渠道首页以服务商为主体，每张卡直接提供“管理模型”“编辑服务商”“删除服务商”。编辑服务商可修改名称和总启停，不需要先找高级设置。模型列表的开关控制此服务商内该逻辑模型的显式连接集合；停用不删除映射、原生档位或其他模型配置。
+
+接口地址、凭据、协议和各连接ID在“连接设置”详情内展开，不把每条同名技术连接铺在渠道首页。未分组与旧连接默认收起，仍可按原ID编辑、停用或移动到明确服务商；页面整理不会自动合并或删除来源。编辑连接直接打开基本信息，模型映射仍可在同一编辑器切换管理。
+
+删除均需明确确认，并由后端再次检查，不能仅靠前端隐藏按钮：
+
+- 只有空服务商可以删除。存在关联连接时返回409 `provider_not_empty`；应先移动连接，或删除符合条件的无依赖连接。删除服务商不会级联删除连接。
+- 连接 `DELETE /api/channels/{id}` 仅允许没有业务依赖的来源。若有 OAuth 绑定、用户或API Key的来源白名单、模型回退配置、原生会话来源固定，或请求/尝试/财务历史引用，返回409 `connection_in_use`，错误说明具体阻止类别。无法解析的授权或会话记录也保守拒绝，不把“无法确认”当作无依赖。
+- 有历史引用的连接本轮不提供物理删除或归档迁移，请使用现有停用开关：停止参与新路由，保留来源ID、模型映射、授权、OAuth绑定和完整历史。不会自动解除引用、改写ACL或删除旧账本以满足删除条件。
+- 无依赖连接可在确认后真正删除，移除该连接的地址、凭据与模型等从属配置；不存在返回404。删除条件和删除在同一个事务中检查执行。
+
+本轮没有新增schema或归档系统；上述保护不宣称彻底静默正在执行的所有后台任务。编辑、停用、移动和删除的实际发布状态以[验收状态](acceptance-status.md)为准。

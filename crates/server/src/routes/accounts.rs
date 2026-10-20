@@ -199,6 +199,7 @@ pub struct RootGrant {
     account_id: i64,
 }
 impl RootGrant {
+    pub(crate) fn actor_account_id(&self) -> i64 { self.account_id }
     pub(crate) fn valid(&self, c: &rusqlite::Connection) -> db::Result<bool> {
         if self.browser {
             Ok(accounts::authenticate(c, &self.raw)?.is_some_and(|a| a.account.role == "root"))
@@ -267,6 +268,13 @@ async fn root_grant(parts: &Parts, state: &SharedState) -> Result<RootGrant, Api
 pub struct Browser {
     pub credential: Credential,
     raw: String,
+}
+impl Browser {
+    pub(crate) fn owner(&self, c: &rusqlite::Connection) -> Result<Option<i64>, ApiError> {
+        let current = accounts::authenticate(c, &self.raw)?.ok_or_else(denied)?;
+        if current.account.role == "root" { return Ok(None); }
+        Ok(current.account.user_id)
+    }
 }
 impl FromRequestParts<SharedState> for Browser {
     type Rejection = ApiError;

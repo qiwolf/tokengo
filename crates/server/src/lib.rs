@@ -50,6 +50,7 @@ pub fn app(state: SharedState) -> Router {
         .nest("/api", routes::admin::router())
         .merge(routes::providers::router())
         .merge(routes::accounts::router())
+        .merge(routes::managed_users::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
         .merge(routes::oauth::router())

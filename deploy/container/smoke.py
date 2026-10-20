@@ -71,6 +71,10 @@ def main():
         exit_code = json.loads(docker('inspect', name))[0]['State']['ExitCode']
         assert exit_code == 0, 'expected graceful exit, got ' + str(exit_code)
         docker('start', name)
+        # Docker may allocate a new host port when a dynamic binding restarts.
+        restarted = json.loads(docker('inspect', name))[0]
+        port = restarted['NetworkSettings']['Ports']['3160/tcp'][0]['HostPort']
+        base = 'http://127.0.0.1:' + port
         ready()
         assert json.loads(request('/api/auth/status'))['needs_setup'] is False
         key_after = docker('exec', name, 'sha256sum', '/data/master.key').split()[0]

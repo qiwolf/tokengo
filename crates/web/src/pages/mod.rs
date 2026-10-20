@@ -12,6 +12,8 @@ pub mod channels;
 pub mod provider_channels;
 pub mod model_reasoning;
 pub mod accounts;
+pub mod policy_editor;
+pub mod key_manager;
 pub mod portal;
 pub mod users;
 pub mod billing;
@@ -43,7 +45,6 @@ impl Page {
         Page::Channels,
         Page::Models,
         Page::Users,
-        Page::Accounts,
         Page::Billing,
         Page::Settings,
     ];
@@ -73,10 +74,10 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
-            Page::Users => "API 用户",
+            Page::Users => "用户",
             Page::Billing => "账务",
             Page::Settings => "设置",
-            Page::Accounts=>"面板账号",Page::Portal=>"我的用量",Page::Account=>"账号安全",
+            Page::Accounts=>"用户",Page::Portal=>"我的空间",Page::Account=>"账号安全",
         }
     }
 
@@ -106,7 +107,7 @@ impl Page {
         match name {
             "groups" | "routing" => Page::Models,
             "logs" => Page::Settings,
-            "portal"=>Page::Portal,"account"=>Page::Account,
+            "portal"=>Page::Portal,"account"=>Page::Account,"accounts"=>Page::Users,
             _ => Self::ALL
                 .iter()
                 .copied()
@@ -163,6 +164,8 @@ mod tests {
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
         // 总览 · 渠道 · 模型 · 用户 · 账务 · 设置
-        assert_eq!(Page::ALL.len(), 7);
+        assert_eq!(Page::ALL.len(), 6);
+        assert!(!Page::ALL.contains(&Page::Accounts));
+        assert_eq!(Page::Users.title(), "用户");
     }
 }
