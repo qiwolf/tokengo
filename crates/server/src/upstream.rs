@@ -126,6 +126,26 @@ impl Upstream {
             .map_err(|e| ChannelFault { message: fault_message(&url, &e) })
     }
 
+    /// Custom diagnostics never follow redirects, expose raw errors, or buffer an unbounded body.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn custom_probe_request(&self,channel:&Channel,secret:Option<&str>,path:&str,body:Bytes,timeout:Duration,limit:usize)->Result<(u16,Bytes),ChannelFault> {
+        let uuid=new_uuid();let now=crate::db::now_ms();
+        let mut headers=build_headers(channel,secret,&uuid,now,None);
+        if path.trim_start_matches('/')=="messages" {
+            if !channel.headers.iter().any(|(name,_)|name.eq_ignore_ascii_case("authorization")) {
+                headers.retain(|(name,_)|!name.eq_ignore_ascii_case("authorization"));
+                if !headers.iter().any(|(name,_)|name.eq_ignore_ascii_case("x-api-key")) {if let Some(secret)=secret.filter(|s|!s.trim().is_empty()){headers.push(("x-api-key".into(),secret.trim().into()));}}
+            }
+            if !headers.iter().any(|(name,_)|name.eq_ignore_ascii_case("anthropic-version")){headers.push(("anthropic-version".into(),"2023-06-01".into()));}
+        }
+        let fault=||ChannelFault{message:"custom probe transport failed".into()};
+        let mut request=self.models_client.post(join_url(&channel.base_url,path)).header(reqwest::header::CONTENT_TYPE,"application/json").header(reqwest::header::ACCEPT,"application/json").body(body).timeout(timeout);
+        for(name,value)in headers {let mut value=reqwest::header::HeaderValue::from_str(&value).map_err(|_|fault())?;value.set_sensitive(true);request=request.header(name,value);}
+        let mut response=request.send().await.map_err(|_|fault())?;let status=response.status().as_u16();let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await.map_err(|_|fault())? {if chunk.len()>limit.saturating_sub(bytes.len()){return Err(fault());}bytes.extend_from_slice(&chunk);}
+        Ok((status,Bytes::from(bytes)))
+    }
+
     /// Successful probes consume a bounded body and validate the endpoint structure.
     #[allow(clippy::too_many_arguments)]
     pub async fn probe(

@@ -22,6 +22,7 @@ pub mod gateway_key;
 pub mod janitor;
 pub mod logging;
 pub mod prober;
+pub mod custom_probes;
 pub mod type_detector;
 pub mod vision_detector;
 pub mod routes;
@@ -49,6 +50,7 @@ pub fn app(state: SharedState) -> Router {
         // 面板管理面
         .nest("/api", routes::admin::router())
         .merge(routes::providers::router())
+        .merge(custom_probes::router())
         .merge(routes::accounts::router())
         .merge(routes::managed_users::router())
         .merge(routes::virtual_models::router())

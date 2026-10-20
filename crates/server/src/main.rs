@@ -37,6 +37,7 @@ async fn run() -> anyhow::Result<()> {
 
     // 后台探活：无流量时也要按时回头试首选渠道，否则 10 分钟回切机制在夜里等于没有
     tokengo_server::prober::spawn(state.clone());
+    tokengo_server::custom_probes::spawn(state.clone());
     tokengo_server::type_detector::spawn(state.clone());
     tokengo_server::vision_detector::spawn(state.clone());
     tokengo_server::capability_detector::spawn(state.clone());
