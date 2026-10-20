@@ -18,16 +18,21 @@ def docker(*args):
 def main():
     image = sys.argv[1] if len(sys.argv) > 1 else 'tokengo:local'
     name = 'tokengo-smoke-' + uuid.uuid4().hex[:12]
+    containers = [name]
     volume = name + '-data'
     docker('volume', 'create', volume)
-    try:
-        docker('run', '-d', '--name', name, '--read-only', '--cap-drop', 'ALL',
+
+    def start_container(container_name):
+        docker('run', '-d', '--name', container_name, '--read-only', '--cap-drop', 'ALL',
                '--security-opt', 'no-new-privileges:true', '--tmpfs', '/tmp:rw,size=64m,mode=1777',
                '--mount', 'type=volume,src=' + volume + ',dst=/data',
                '-p', '127.0.0.1::3160', image)
-        info = json.loads(docker('inspect', name))[0]
+        info = json.loads(docker('inspect', container_name))[0]
         port = info['NetworkSettings']['Ports']['3160/tcp'][0]['HostPort']
-        base = 'http://127.0.0.1:' + port
+        return info, 'http://127.0.0.1:' + port
+
+    try:
+        info, base = start_container(name)
 
         def request(path, body=None):
             data = None if body is None else json.dumps(body).encode()
@@ -50,6 +55,9 @@ def main():
         assert docker('exec', name, 'id', '-u') == '10001'
         assert info['HostConfig']['ReadonlyRootfs'] is True
         docker('exec', name, '/usr/local/bin/tokengo-healthcheck')
+        # CLI has version/routing subcommands; it does not implement --help.
+        # version is local and must not contact a server or an upstream.
+        assert docker('exec', name, '/opt/tokengo/bin/tokengo', 'version').startswith('tokengo ')
         assert json.loads(request('/api/auth/status'))['needs_setup'] is True
         html = request('/ui/').decode()
         wasm_paths = re.findall(r'[\"\'](/ui/[\w.-]+\.wasm)[\"\']', html)
@@ -66,6 +74,7 @@ def main():
         request('/api/auth/setup', {'password': secrets.token_urlsafe(32)})
         assert json.loads(request('/api/auth/status'))['needs_setup'] is False
         key_before = docker('exec', name, 'sha256sum', '/data/master.key').split()[0]
+        db_inode = docker('exec', name, 'stat', '-c', '%i', '/data/tokengo.db')
         assert docker('exec', name, 'stat', '-c', '%a:%u', '/data/master.key') == '600:10001'
         docker('stop', '-t', '150', name)
         exit_code = json.loads(docker('inspect', name))[0]['State']['ExitCode']
@@ -83,12 +92,30 @@ def main():
         docker('exec', name, '/usr/local/bin/tokengo-healthcheck')
         docker('stop', '-t', '150', name)
         assert json.loads(docker('inspect', name))[0]['State']['ExitCode'] == 0
+        # Recreate the container, keeping only its volume. Restart alone could
+        # accidentally pass if state were stored in the container filesystem.
+        docker('rm', name)
+        name += '-recreated'
+        containers.append(name)
+        recreated, base = start_container(name)
+        assert recreated['Id'] != info['Id']
+        assert recreated['Image'] == info['Image']
+        ready()
+        assert json.loads(request('/api/auth/status'))['needs_setup'] is False
+        assert docker('exec', name, 'stat', '-c', '%i', '/data/tokengo.db') == db_inode
+        assert docker('exec', name, 'sha256sum', '/data/master.key').split()[0] == key_before
+        assert docker('exec', name, 'stat', '-c', '%a:%u', '/data/master.key') == '600:10001'
+        docker('exec', name, '/usr/local/bin/tokengo-healthcheck')
+        docker('stop', '-t', '150', name)
+        assert json.loads(docker('inspect', name))[0]['State']['ExitCode'] == 0
         print(json.dumps({'image': image, 'image_id': info['Image'], 'result': 'passed',
                           'checks': ['nonroot', 'read-only-root', 'readyz-json', 'wasm-served',
                                      'admin-auth', 'fresh-setup', 'persistent-db-and-master-key',
-                                     'key-permissions', 'graceful-stop-and-restart']}, indent=2))
+                                     'key-permissions', 'cli-version', 'graceful-stop-and-restart',
+                                     'container-recreation-with-existing-volume']}, indent=2))
     finally:
-        subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for container_name in containers:
+            subprocess.run(['docker', 'rm', '-f', container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['docker', 'volume', 'rm', volume], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
