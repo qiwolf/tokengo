@@ -1982,3 +1982,45 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
   .compact-model-dialog .model-telemetry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .provider-key-modal .provider-key-row-actions > button { border:1px solid var(--line); border-radius:8px; background:var(--surface-2); padding:8px 12px; }
+
+.provider-key-original button[aria-disabled="true"] { opacity:.6; cursor:progress; }
+
+/* Model toolbar: reserve filter and action widths before giving search the remaining space. */
+.console-layout .console-content .model-controls {
+  display: grid;
+  grid-template-columns: auto 192px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.console-layout .console-content .model-controls > label {
+  margin: 0;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.console-layout .console-content .model-controls > input,
+.console-layout .console-content .model-controls > select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 48px;
+  font-size: 16px;
+}
+.console-layout .console-content .model-controls > button {
+  min-height: 48px;
+  height: 48px;
+  white-space: nowrap;
+}
+@media (max-width: 46rem) {
+  .console-layout .console-content .model-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+  }
+  .console-layout .console-content .model-controls > input {
+    grid-column: 1 / -1;
+  }
+  .console-layout .console-content .model-controls > button {
+    width: 100%;
+  }
+}
