@@ -220,6 +220,7 @@ async fn source(State(s): State<Arc<Source>>, OriginalUri(uri): OriginalUri) -> 
     } else {
         match s.mode {
             0 => full(moderation()),
+            5 => full(moderation()).replace(&complete(), &event(json!({"type":"response.completed","response":{"id":"resp_fixture","status":"completed","output":[],"usage":{"input_tokens":11,"output_tokens":5}}}))),
             1 => {
                 created()
                     + &event(moderation())
@@ -483,4 +484,27 @@ async fn metadata_then_error_falls_back_without_waiting_for_open_source_eof() {
     assert_eq!(f.src.bad.load(Ordering::SeqCst), 1);
     assert_eq!(f.src.good.load(Ordering::SeqCst), 1);
     f.ledger(2);
+}
+
+#[tokio::test]
+async fn real_http_sparse_final_output_finishes_without_fallback_or_lost_usage() {
+    let f = Fixture::new(5).await;
+    let r = f.call(false).await;
+    assert_eq!(r.status(), 200);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("OK") && body.contains("[DONE]") && !body.contains("\"error\""));
+    assert_eq!(f.src.bad.load(Ordering::SeqCst), 1);
+    assert_eq!(f.src.good.load(Ordering::SeqCst), 0);
+    f.ledger(1);
+    let rows = db::billing::usage(&f.state.conn(), &Default::default()).unwrap();
+    assert_eq!(rows[0].input_tokens, Some(11));
+    assert_eq!(rows[0].output_tokens, Some(5));
+}
+#[tokio::test]
+async fn native_sparse_final_output_bytes_are_unchanged() {
+    let f = Fixture::new(5).await;
+    let r = f.call(true).await;
+    let expected=full(moderation()).replace(&complete(),&event(json!({"type":"response.completed","response":{"id":"resp_fixture","status":"completed","output":[],"usage":{"input_tokens":11,"output_tokens":5}}})));
+    assert_eq!(r.text().await.unwrap(), expected);
+    f.ledger(1);
 }

@@ -466,6 +466,7 @@ pub struct Transcoder {
     reasoning_closed: bool,
     source_reasoning: Option<(u64, String)>,
     source_response_id: Option<String>,
+    sparse_proof: super::sparse::SparseProof,
     message_item: String,
     next_index: u32,
     next_tool: u32,
@@ -506,6 +507,7 @@ impl Transcoder {
             reasoning_closed: false,
             source_reasoning: None,
             source_response_id: None,
+            sparse_proof: super::sparse::SparseProof::default(),
             message_item: format!("msg_{unique}"),
             next_index: 0,
             next_tool: 0,
@@ -946,9 +948,10 @@ impl Transcoder {
         self.text(&delta, out)
     }
     fn response_snapshot(&mut self, response: &Value, out: &mut Vec<u8>) -> Result<(), String> {
-        let Some(items) = response["output"].as_array() else {
-            return Ok(());
-        };
+        let items = response["output"].as_array().ok_or("Responses terminal output must be an array")?;
+        if items.is_empty() {
+            return self.sparse_proof.finish(response, &self.text);
+        }
         let mut full_text = String::new();
         for (i, item) in items.iter().enumerate() {
             match item["type"].as_str() {
@@ -1056,6 +1059,7 @@ impl Transcoder {
             }
             Protocol::Responses => {
                 let event = kind(frame, &v);
+                self.sparse_proof.observe(event, &v);
                 if self.source_response_id.is_none() {
                     self.source_response_id = v["response"]["id"].as_str().map(str::to_owned);
                 }
@@ -1761,7 +1765,7 @@ mod tests {
         out.extend(
             t.feed(&frame(
                 None,
-                json!({"type":"response.completed","response":{"status":"completed"}}),
+                json!({"type":"response.completed","response":{"id":"resp_done_only","status":"completed","output":[{"id":"msg_done_only","type":"message","role":"assistant","content":[{"type":"output_text","text":"done only","annotations":[]}]}]}}),
             ))
             .unwrap(),
         );

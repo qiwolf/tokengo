@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 mod request;
 mod response;
+mod sparse;
 pub mod sse;
 pub mod collect;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
