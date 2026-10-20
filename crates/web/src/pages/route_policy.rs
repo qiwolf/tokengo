@@ -41,6 +41,30 @@ impl PolicyDraft {
     }
 }
 
+/// Managed provider keys share one scheduling policy. Ungrouped sources remain independent.
+fn target_group(id:i64, channels:&[Channel])->(bool,i64){
+    match channels.iter().find(|c|c.id==id).and_then(|c|c.provider_id){Some(provider)=>(true,provider),None=>(false,id)}
+}
+fn selected_groups(targets:&[i64],channels:&[Channel])->Vec<Vec<i64>>{
+    let mut groups:Vec<Vec<i64>>=Vec::new();
+    for id in targets{let key=target_group(*id,channels);if let Some(group)=groups.iter_mut().find(|g|target_group(g[0],channels)==key){group.push(*id);}else{groups.push(vec![*id]);}}
+    groups
+}
+fn move_provider_group(targets:&mut Vec<i64>,channels:&[Channel],id:i64,up:bool){
+    let mut groups=selected_groups(targets,channels);let key=target_group(id,channels);
+    if let Some(index)=groups.iter().position(|g|target_group(g[0],channels)==key){
+        let next=if up{index.checked_sub(1)}else{(index+1<groups.len()).then_some(index+1)};
+        if let Some(next)=next{groups.swap(index,next);*targets=groups.into_iter().flatten().collect();}
+    }
+}
+fn select_target(targets:&mut Vec<i64>,channels:&[Channel],id:i64,selected:bool){
+    if !selected{targets.retain(|existing|*existing!=id);return;}
+    if targets.contains(&id){return;}
+    let key=target_group(id,channels);
+    let at=targets.iter().rposition(|other|target_group(*other,channels)==key).map(|i|i+1).unwrap_or(targets.len());
+    targets.insert(at,id);
+}
+
 #[component]
 fn NumberOverride(id: &'static str, label: &'static str, value: Signal<String>, set: Callback<String>, max:u64, #[prop(default=0)] min:u64) -> impl IntoView {
     view!{<label for=id>{label}<input id=id type="number" min=min max=max step="1" placeholder="留空继承全局" prop:value=value on:input=move|e|set.run(event_target_value(&e))/></label>}
@@ -95,6 +119,12 @@ pub fn RoutePolicy(ctx: Ctx, open: RwSignal<bool>, #[prop(optional)] saving: Opt
     let apply=move |delete:bool| {
         if busy.get_untracked(){return;}
         let Some(name)=loaded.get_untracked() else{return;};
+        if !delete && draft.get_untracked().ordered {
+            let declared=routes.get_untracked().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();
+            let selected=draft.get_untracked().targets;
+            if selected.is_empty() || !selected.iter().any(|id|declared.contains(id)) {error.set("请至少勾选一个已接入此模型的上游 Key。".into());return;}
+            if selected.iter().any(|id|!declared.contains(id)) {error.set("已保存的 Key 范围包含不再接入此模型的项目，请重新选择服务商和 Key 后保存。".into());return;}
+        }
         let payload=if delete{None}else{match draft.get_untracked().payload(){Ok(v)=>Some(v),Err(e)=>{error.set(e);return;}}};
         busy.set(true);error.set(String::new());message.set(String::new());
         leptos::task::spawn_local(async move {
@@ -109,13 +139,27 @@ pub fn RoutePolicy(ctx: Ctx, open: RwSignal<bool>, #[prop(optional)] saving: Opt
             busy.set(false);
         });
     };
-    view!{<section class="admin-section route-policy-form"><p class="muted small">"为指定的本地模型设置上游 Key 的调用顺序、重试与超时。只使用该模型已接入的 Key；未选中的 Key 不参与该模型的路由。"</p>
+    view!{<section class="admin-section route-policy-form"><p class="muted small">"为指定的本地模型选择服务商顺序、可用 Key 范围、重试与超时。只使用该模型已接入且勾选的 Key。"</p>
     <fieldset disabled=move||busy.get()><label for="routing-model">"选择本地模型"<select id="routing-model" prop:value=model on:change=move|e|load(event_target_value(&e))><option value="">"请选择模型"</option>{move||routes.get().into_iter().filter(|r|r.name!="auto").map(|r|view!{<option value=r.name.clone()>{r.name.clone()}</option>}).collect_view()}</select></label>
-    <Show when=move||loaded.get().is_some()><h3>"上游 Key 与调用顺序"</h3><label class="pick"><input type="checkbox" prop:checked=move||draft.get().ordered on:change=move|e|{let checked=event_target_checked(&e);draft.update(|d|{d.ordered=checked;if checked && d.targets.is_empty(){let name=loaded.get_untracked().unwrap_or_default();d.targets=routes.get_untracked().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();}});}/>"单独设置此模型的 Key 顺序"</label>
-    <p class="muted small">"未勾选时继承全局顺序。勾选后，按下面列表从上到下尝试；启停状态仍以渠道和 Key 设置为准。"</p>
+    <Show when=move||loaded.get().is_some()><h3>"服务商顺序与 Key 范围"</h3><label class="pick"><input type="checkbox" prop:checked=move||draft.get().ordered on:change=move|e|{let checked=event_target_checked(&e);draft.update(|d|{d.ordered=checked;if checked && d.targets.is_empty(){let name=loaded.get_untracked().unwrap_or_default();d.targets=routes.get_untracked().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();}});}/>"单独设置此模型的服务商顺序与 Key 范围"</label>
+    <p class="muted small">"未勾选时继承全局设置。勾选后可调整服务商整组的先后顺序，并选择组内可用 Key。同一服务商内部按渠道设置的 Key 策略、优先级及用户粘性选择，不按这里的 Key 展示顺序调用。已停用的渠道或 Key 不会参与请求。"</p>
     <Show when=move||draft.get().ordered>{move||{
-        let name=loaded.get().unwrap_or_default();let ids=routes.get().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();let selected=draft.get().targets;let mut list:Vec<_>=channels.get().into_iter().filter(|c|ids.contains(&c.id)).collect();list.sort_by_key(|c|selected.iter().position(|id|*id==c.id).unwrap_or(usize::MAX));
-        view!{<div class="table-wrap"><table><thead><tr><th>"参与调用"</th><th>"供应方 / 上游 Key"</th><th>"顺序"</th></tr></thead><tbody>{list.into_iter().map(|c|{let id=c.id;let provider_id=c.provider_id;let has_multiple_urls=channels.get_untracked().iter().filter(|other|other.provider_id==provider_id).map(|other|other.base_url.clone()).collect::<BTreeSet<_>>().len()>1;let endpoint=if has_multiple_urls{format!(" · {}",c.base_url)}else{String::new()};let label=format!("{} · {}{}{}",c.provider_name.unwrap_or_else(||"未分组".into()),key_labels.get().get(&id).cloned().unwrap_or_else(||"未命名上游 Key".into()),endpoint,if c.enabled&&c.provider_enabled{""}else{"（已停用）"});view!{<tr><td><input type="checkbox" aria-label=format!("参与调用：{label}") prop:checked=move||draft.get().targets.contains(&id) on:change=move|e|{let checked=event_target_checked(&e);draft.update(|d|if checked{if !d.targets.contains(&id){d.targets.push(id)}}else{d.targets.retain(|n|*n!=id)});}/></td><td>{label}</td><td><div class="toolbar"><button type="button" class="ghost" disabled=move||draft.get().targets.iter().position(|n|*n==id).map(|i|i==0).unwrap_or(true) on:click=move|_|draft.update(|d|{if let Some(i)=d.targets.iter().position(|n|*n==id){if i>0{d.targets.swap(i,i-1)}}})>"上移"</button><button type="button" class="ghost" disabled=move||draft.get().targets.iter().position(|n|*n==id).map(|i|i+1==draft.get().targets.len()).unwrap_or(true) on:click=move|_|draft.update(|d|{if let Some(i)=d.targets.iter().position(|n|*n==id){if i+1<d.targets.len(){d.targets.swap(i,i+1)}}})>"下移"</button></div></td></tr>}}).collect_view()}</tbody></table></div>}
+        let name=loaded.get().unwrap_or_default();let ids=routes.get().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();
+        let available:Vec<_>=channels.get().into_iter().filter(|c|ids.contains(&c.id)).collect();
+        let selected=draft.get().targets;
+        let mut group_keys:Vec<_>=selected_groups(&selected,&available).iter().map(|g|target_group(g[0],&available)).collect();
+        for c in &available{let key=target_group(c.id,&available);if !group_keys.contains(&key){group_keys.push(key);}}
+        view!{<div>{group_keys.into_iter().map(|key|{
+            let rows:Vec<_>=available.iter().filter(|c|target_group(c.id,&available)==key).cloned().collect();
+            let first=rows.first().map(|c|c.id).unwrap_or(key.1);
+            let provider=rows.first().and_then(|c|c.provider_name.clone()).unwrap_or_else(||"未分组上游".into());
+            view!{<fieldset class="admin-section"><legend>{provider}</legend><div class="toolbar"><span class="muted small">"服务商顺序"</span><button type="button" class="ghost" disabled=move||{let selected=draft.get().targets;let c=channels.get();selected_groups(&selected,&c).iter().position(|g|target_group(g[0],&c)==key).map(|i|i==0).unwrap_or(true)} on:click=move|_|draft.update(|d|move_provider_group(&mut d.targets,&channels.get_untracked(),first,true))>"服务商上移"</button><button type="button" class="ghost" disabled=move||{let selected=draft.get().targets;let c=channels.get();let groups=selected_groups(&selected,&c);groups.iter().position(|g|target_group(g[0],&c)==key).map(|i|i+1==groups.len()).unwrap_or(true)} on:click=move|_|draft.update(|d|move_provider_group(&mut d.targets,&channels.get_untracked(),first,false))>"服务商下移"</button></div><div class="table-wrap"><table><thead><tr><th>"参与调用"</th><th>"上游 Key"</th></tr></thead><tbody>{rows.into_iter().map(|c|{
+                let id=c.id;let provider_id=c.provider_id;let has_multiple_urls=channels.get_untracked().iter().filter(|other|other.provider_id==provider_id).map(|other|other.base_url.clone()).collect::<BTreeSet<_>>().len()>1;
+                let endpoint=if has_multiple_urls{format!(" · {}",c.base_url)}else{String::new()};
+                let label=format!("{}{}{}",key_labels.get().get(&id).cloned().unwrap_or_else(||"未命名上游 Key".into()),endpoint,if c.enabled&&c.provider_enabled{""}else{"（已停用）"});
+                view!{<tr><td><input type="checkbox" aria-label=format!("参与调用：{label}") prop:checked=move||draft.get().targets.contains(&id) on:change=move|e|{let checked=event_target_checked(&e);draft.update(|d|select_target(&mut d.targets,&channels.get_untracked(),id,checked));}/></td><td>{label}</td></tr>}
+            }).collect_view()}</tbody></table></div></fieldset>}
+        }).collect_view()}</div>}
     }}</Show>
     <h3>"重试与恢复"</h3><div class="form-grid">
     <NumberOverride id="routing-retry" label="每个目标重试次数（0–2）" value=Signal::derive(move||draft.get().retry) set=Callback::new(move|v|draft.update(|d|d.retry=v)) max=2/>
@@ -136,4 +180,9 @@ mod tests {
     #[test] fn inheritance_is_omission_not_false_or_zero(){let d=PolicyDraft::default();assert_eq!(d.payload().unwrap(),json!({}));let mut d=d;d.retry="0".into();d.reprobe="0".into();d.probe="false".into();d.auto="false".into();assert_eq!(d.payload().unwrap(),json!({"retry_times":0,"reprobe_interval_ms":0,"probe_enabled":false,"include_in_auto":false}));}
     #[test] fn roundtrip_keeps_order_and_all_timeout_overrides(){let v=json!({"channel_ids":[8,2],"retry_times":2,"reprobe_interval_ms":12345,"probe_enabled":true,"include_in_auto":false,"attempt_timeout_ms":1,"nonstream_timeout_ms":75000,"request_budget_ms":3600000});assert_eq!(PolicyDraft::read(&v).payload().unwrap(),v);}
     #[test] fn invalid_input_never_creates_an_api_payload(){for v in [json!({"channel_ids":[]}),json!({"channel_ids":[2,2]}),json!({"retry_times":3}),json!({"reprobe_interval_ms":86400001}),json!({"attempt_timeout_ms":0}),json!({"request_budget_ms":3600001})]{assert!(PolicyDraft::read(&v).payload().is_err(),"{v}");}let mut d=PolicyDraft::default();d.retry="0.5".into();assert!(d.payload().is_err());}
+    fn sources()->Vec<Channel>{vec![Channel{id:1,provider_id:Some(10),..Default::default()},Channel{id:2,provider_id:Some(10),..Default::default()},Channel{id:3,provider_id:Some(20),..Default::default()},Channel{id:4,provider_id:None,..Default::default()},Channel{id:5,provider_id:None,..Default::default()}]}
+    #[test] fn provider_view_does_not_change_legacy_interleaved_order(){let ids=vec![1,3,2,4,5];assert_eq!(selected_groups(&ids,&sources()),vec![vec![1,2],vec![3],vec![4],vec![5]]);assert_eq!(ids,vec![1,3,2,4,5]);}
+    #[test] fn moving_provider_moves_all_selected_keys_preserving_other_groups(){let mut ids=vec![1,3,2,4,5];move_provider_group(&mut ids,&sources(),3,true);assert_eq!(ids,vec![3,1,2,4,5]);move_provider_group(&mut ids,&sources(),4,false);assert_eq!(ids,vec![3,1,2,5,4]);let before=ids.clone();move_provider_group(&mut ids,&sources(),3,true);assert_eq!(ids,before);}
+    #[test] fn adding_key_keeps_provider_keys_together_without_rewriting_others(){let mut ids=vec![1,3,4,5];select_target(&mut ids,&sources(),2,true);assert_eq!(ids,vec![1,2,3,4,5]);select_target(&mut ids,&sources(),2,true);assert_eq!(ids,vec![1,2,3,4,5]);select_target(&mut ids,&sources(),1,false);assert_eq!(ids,vec![2,3,4,5]);}
+
 }
