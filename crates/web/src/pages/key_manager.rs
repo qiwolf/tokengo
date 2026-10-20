@@ -2,6 +2,16 @@ use super::policy_editor::{self as policy, PolicyEditor};
 use crate::{Ctx, admin_api as api, fmt};
 use leptos::prelude::*;
 use serde_json::{Value, json};
+/// A status change only changes enabled; credentials, policy and limits remain untouched.
+fn status_patch(key: &Value) -> Result<(i64, Value, bool), String> {
+    if !key["revoked_at"].is_null() {return Err("此 Key 已永久撤销，不能恢复；请新建 Key。".into());}
+    let id=key["id"].as_i64().filter(|id|*id>0).ok_or("Key 身份无效，请刷新后重试。")?;
+    let enabled=key["enabled"]!=true;
+    Ok((id,json!({"enabled":enabled}),enabled))
+}
+fn key_path(personal: bool,id:i64)->String {
+    if personal {format!("/api/account/keys/{id}")}else{format!("/api/vkeys/{id}")}
+}
 #[component]
 pub fn KeyManager(
     ctx: Ctx,
@@ -261,6 +271,29 @@ pub fn KeyManager(
             busy.set(false);
         });
     };
+    let toggle_enabled=move |key:Value| {
+        if busy.get_untracked(){return;}
+        let (id,patch,enabled)=match status_patch(&key){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
+        let owner_id=owner.get_untracked();let token=generation.get_untracked();
+        busy.set(true);error.set(String::new());notice.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::request("PATCH",&key_path(personal,id),Some(patch)).await {
+                Ok(v)=>{
+                    if owner.get_untracked()==owner_id&&generation.get_untracked()==token {
+                        let mut row=v["key"].clone();
+                        if row["id"].as_i64()!=Some(id){error.set("状态更新结果不完整，请刷新确认。".into());}
+                        else {
+                            if row["budget"].is_null(){row["budget"]=key["budget"].clone();}
+                            rows.update(|r|{if let Some(existing)=r.iter_mut().find(|k|k["id"].as_i64()==Some(id)){*existing=row.clone();}});
+                            notice.set(if enabled{"Key 已启用；仍受用户权限、到期时间和额度限制。"}else{"Key 已停用，可随时重新启用。"}.into());
+                        }
+                    }
+                },
+                Err(e)=>{if owner.get_untracked()==owner_id&&generation.get_untracked()==token{ctx.note_err(&e);error.set(e.message);}},
+            }
+            busy.set(false);
+        });
+    };
     let revoke = move |_| {
         if busy.get_untracked() { return; }
         let Some(k) = selected.get_untracked() else {
@@ -310,7 +343,7 @@ pub fn KeyManager(
     view! {<section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
     <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"各 Key 共享用户总额度，设置 Key 上限不会增加总额度。最多32把活动 Key；已有密钥保留。"</p></Show>
     <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，点击新建 API Key 开始。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button></td></tr>}}).collect_view()}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} disabled=move||busy.get()||loading.get()||revoked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else{"启用 Key"}}</button></td></tr>}}).collect_view()}</tbody></table></div>
     <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
     <super::ModuleDialog open=editor_open busy=busy title="API Key 设置".to_string()>
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
@@ -318,8 +351,31 @@ pub fn KeyManager(
     <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label>
     <PolicyEditor policy=draft models=models channels=channels prefix=if personal{"my-key"}else{"admin-key"} admin=!personal/>
     <div class="policy-limits"><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p>
-    <div class="account-actions"><button class="ghost" type="button" on:click=move |_|editor_open.set(false)>"取消"</button><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset></form>
+    <div class="account-actions"><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset><div class="account-actions"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></form>
     <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p>
     {move||secret.get().map(|s|view!{<div class="one-time-key" role="status"><h3>"请立即保存 API Key"</h3><p>"关闭后无法再次查看。未写入浏览器持久存储。"</p><code class="one-time-secret">{s}</code><button class="ghost" type="button" on:click=move |_|secret.set(None)>"已保存，隐藏明文"</button></div>})}
     </super::ModuleDialog>}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn enabling_and_disabling_only_patch_enabled() {
+        for enabled in [false,true] {
+            let key=json!({"id":42,"enabled":enabled,"revoked_at":null,"name":"keep","policy":{"allowed_models":[]},"budget":{"limit_micro":123}});
+            let (id,patch,next)=status_patch(&key).unwrap();
+            assert_eq!(id,42);assert_eq!(next,!enabled);assert_eq!(patch,json!({"enabled":!enabled}));
+        }
+    }
+    #[test]
+    fn revoked_or_missing_keys_cannot_be_toggled() {
+        assert!(status_patch(&json!({"id":42,"enabled":false,"revoked_at":123})).is_err());
+        assert!(status_patch(&json!({"enabled":false,"revoked_at":null})).is_err());
+    }
+    #[test]
+    fn status_changes_use_the_role_scoped_endpoint() {
+        assert_eq!(key_path(true,42),"/api/account/keys/42");
+        assert_eq!(key_path(false,42),"/api/vkeys/42");
+    }
 }
