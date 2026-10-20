@@ -13,6 +13,12 @@ fn status_patch(key: &Value, personal: bool) -> Result<(i64, Value, bool), Strin
 fn key_path(personal: bool,id:i64)->String {
     if personal {format!("/api/account/keys/{id}")}else{format!("/api/vkeys/{id}")}
 }
+fn new_key_policy(base: Value, personal: bool) -> Value {
+    if !personal { return base; }
+    // Parent grants are inherited, not historical explicit grants of a new Key.
+    // The existing save path materializes that inheritance within the parent's bounds.
+    let mut inherited = base; inherited["allowed_models"] = Value::Null; inherited
+}
 /// A Key task replaces its host panel when embedded, rather than stacking dialogs.
 #[component]
 fn KeyEditorSurface(open: RwSignal<bool>, busy: RwSignal<bool>, embedded: bool, children: ChildrenFn) -> impl IntoView {
@@ -131,6 +137,7 @@ pub fn KeyManager(
                                     .map(policy::money_input)
                                     .unwrap_or_default(),
                             );
+                            // This account endpoint already applies model_routes.visible and user permissions.
                             models.set(
                                 v["models"]
                                     .as_array()
@@ -165,7 +172,7 @@ pub fn KeyManager(
     let reset = move || {
         selected.set(None);
         name.set(String::new());
-        draft.set(base.get_untracked());
+        draft.set(new_key_policy(base.get_untracked(),personal));
         expiry.set(String::new());
         limit.set(if personal {
             user_budget.get_untracked()["limit_micro"]
@@ -403,4 +410,17 @@ mod tests {
         assert_eq!(key_path(true,42),"/api/account/keys/42");
         assert_eq!(key_path(false,42),"/api/vkeys/42");
     }
+    #[test]
+    fn new_personal_key_inherits_parent_without_offering_hidden_names_as_own_history() {
+        let mut parent=policy::default_policy();parent["allowed_models"]=json!(["visible","hidden"]);parent["allowed_channels"]=json!([]);
+        let draft=new_key_policy(parent.clone(),true);
+        assert!(draft["allowed_models"].is_null());
+        let saved=policy::inherit_policy(draft,&parent);
+        assert_eq!(saved["allowed_models"],parent["allowed_models"]);
+        assert_eq!(saved["allowed_channels"],json!([]));
+        assert_eq!(new_key_policy(parent.clone(),false),parent);
+        parent["allowed_models"]=json!([]);
+        assert_eq!(policy::inherit_policy(new_key_policy(parent.clone(),true),&parent)["allowed_models"],json!([]));
+    }
+
 }

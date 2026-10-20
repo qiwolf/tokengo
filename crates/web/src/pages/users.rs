@@ -103,13 +103,6 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             }
             match crate::api::channels().await {
                 Ok(v) => {
-                    let mut m = v
-                        .iter()
-                        .flat_map(|c| c.models.iter().map(|m| m.model.clone()))
-                        .collect::<Vec<_>>();
-                    m.sort();
-                    m.dedup();
-                    models.set(m);
                     channels.set(
                         v.into_iter()
                             .map(|c| {
@@ -131,6 +124,14 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
                         "模型选项读取失败：{}。已有授权保留；请刷新后编辑。",
                         e.message
                     ));
+                }
+            }
+            match crate::api::model_routes().await {
+                Ok(catalog) => models.set(policy::visible_model_names(&catalog)),
+                Err(e) => {
+                    // Do not fall back to channel declarations: they include hidden models.
+                    models.set(Vec::new()); ctx.note_err(&e);
+                    list_error.set(format!("可见模型目录读取失败：{}。已有授权保留，当前不提供新增模型选项。",e.message));
                 }
             }
             loading.set(false);

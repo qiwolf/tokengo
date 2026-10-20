@@ -74,6 +74,26 @@ fn toggle(p: RwSignal<Value>, k: &str, value: Value, on: bool) {
         p[k] = json!(a);
     })
 }
+/// Only the server's visible catalog can introduce grants. Historical names are
+/// returned separately and never become unselected options for new grants.
+pub fn visible_model_names(routes: &crate::model::ModelRoutesResp) -> Vec<String> {
+    let mut names = routes.models.iter().filter(|m|m.visible).map(|m|m.name.clone()).collect::<Vec<_>>();
+    names.sort(); names.dedup(); names
+}
+fn authorization_options(policy: &Value, visible: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut choices = visible.iter().filter(|n|!n.is_empty()).cloned().collect::<Vec<_>>();
+    choices.sort(); choices.dedup();
+    let mut retained = policy["allowed_models"].as_array().into_iter().flatten()
+        .filter_map(Value::as_str).filter(|name| !choices.iter().any(|c|c.as_str()==*name))
+        .map(str::to_owned).collect::<Vec<_>>();
+    retained.sort(); retained.dedup();
+    (choices, retained)
+}
+fn revoke_model(policy: &mut Value, name: &str) {
+    if let Some(models) = policy["allowed_models"].as_array_mut() {
+        models.retain(|model|model.as_str()!=Some(name));
+    }
+}
 pub fn inherit_policy(mut p: Value, parent: &Value) -> Value {
     for field in [
         "allowed_models",
@@ -130,7 +150,22 @@ pub fn PolicyEditor(
     view! {<div class="policy-editor">
     <Show when=move||validate(&policy.get()).is_err()><p class="banner bad" role="alert">{move||validate(&policy.get()).err().unwrap_or_default()}</p></Show>
     <Show when=move||show_access><div class="account-field"><label for=format!("{prefix}-models")>"模型授权"</label><select id=format!("{prefix}-models") prop:value=move||mode(&policy.get(),"allowed_models") on:change=move|e|set_mode(policy,"allowed_models",&event_target_value(&e))><option value="all">{if admin{"所有当前及未来模型"}else{"继承用户的模型权限"}}</option><option value="selected">"仅勾选的模型（未选即禁止）"</option></select></div>
-    <Show when=move||!policy.get()["allowed_models"].is_null()><label class="account-field"><span>"搜索模型"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_models"].as_array().cloned().unwrap_or_default();let catalog=models.get();let mut options=catalog.clone();for v in &current{if let Some(n)=v.as_str(){if !options.iter().any(|o|o==n){options.push(n.into())}}}options.sort();options.dedup();let query=search.get().to_lowercase();options.into_iter().filter(|n|n.to_lowercase().contains(&query)).map(|n|{let checked=current.iter().any(|x|x.as_str()==Some(n.as_str()));let label=if catalog.contains(&n){n.clone()}else{format!("{n} · 已有兼容授权")};view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_models",json!(n),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div><p class="account-help">"未勾选任何模型表示禁止调用；已有隐藏或兼容授权保留在列表中。"</p></Show>
+    <Show when=move||!policy.get()["allowed_models"].is_null()>
+    <label class="account-field"><span>"搜索可见模型"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label>
+    <div class="policy-options">{move||{
+        let p=policy.get(); let current=p["allowed_models"].as_array().cloned().unwrap_or_default();
+        let (choices,_)=authorization_options(&p,&models.get()); let query=search.get().to_lowercase();
+        choices.into_iter().filter(|n|n.to_lowercase().contains(&query)).map(|n|{
+            let checked=current.iter().any(|x|x.as_str()==Some(n.as_str()));let label=n.clone();
+            view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_models",json!(n),event_target_checked(&e))/>{label}</label>}
+        }).collect_view()
+    }}</div>
+    <p class="account-help">"这里只列出可见模型。未勾选任何模型且没有保留授权时，禁止调用。"</p>
+    <Show when=move||!authorization_options(&policy.get(),&models.get()).1.is_empty()>
+    <details class="policy-retained-grants"><summary>{move||format!("已有兼容授权 {} 项",authorization_options(&policy.get(),&models.get()).1.len())}</summary>
+        <p class="account-help">"这些模型已隐藏或不在当前目录中。保存其他设置会保留原授权；撤销后不再可选，取消编辑可放弃本次撤销。"</p>
+        <div class="policy-options">{move||authorization_options(&policy.get(),&models.get()).1.into_iter().map(|n|{let label=n.clone();view!{<div class="account-check"><span>{label}</span><button type="button" class="ghost danger" aria-label=format!("撤销 {n} 的已有兼容授权") on:click=move |_|policy.update(|p|revoke_model(p,&n))>"撤销授权"</button></div>}}).collect_view()}</div>
+    </details></Show></Show>
     <label class="account-check"><input type="checkbox" prop:checked=move||policy.get()["allow_paid"].as_bool().unwrap_or(true) on:change=move|e|policy.update(|p|p["allow_paid"]=json!(event_target_checked(&e)))/>"允许使用付费来源（仍受用户和 Key 余额共同约束）"</label>
     </Show><Show when=move||show_limits><div class="policy-limits">{[("rpm","每分钟请求数"),("tpm","每分钟 Token 上限"),("max_concurrent","最大并发")].into_iter().map(|(key,label)|view!{<label class="account-field"><span>{label}</span><input type="number" min="1" step="1" placeholder="继承 / 不额外限制" prop:value=move||policy.get()[key].as_u64().map(|n|n.to_string()).unwrap_or_default() on:input=move|e|{let s=event_target_value(&e);policy.update(|p|p[key]=if s.is_empty(){Value::Null}else{s.parse::<u64>().map(|n|json!(n)).unwrap_or_else(|_|json!(s))})}/></label>}).collect_view()}</div>
     </Show><Show when=move||show_access><details><summary>"高级：来源范围"</summary><label class="account-field"><span>"可用来源"</span><select prop:value=move||mode(&policy.get(),"allowed_channels") on:change=move|e|set_mode(policy,"allowed_channels",&event_target_value(&e))><option value="all">"继承 / 不额外限制"</option><option value="selected">"仅勾选的来源（未选即禁止）"</option></select></label><Show when=move||!policy.get()["allowed_channels"].is_null()><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_channels"].as_array().cloned().unwrap_or_default();let mut options=channels.get();for id in current.iter().filter_map(Value::as_i64){if !options.iter().any(|(n,_)|*n==id){options.push((id,format!("已有来源 #{id}")))}}options.into_iter().map(|(id,label)|{let checked=current.contains(&json!(id));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_channels",json!(id),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div></Show></details>
@@ -185,4 +220,47 @@ mod tests {
         assert_eq!(optional_limit("").unwrap(), None);
         assert!(optional_limit("-1").is_err());
     }
+    #[test]
+    fn authorization_catalog_uses_real_visibility_not_model_suffixes() {
+        let routes=crate::model::ModelRoutesResp {
+            models:vec![
+                crate::model::NameRoute{name:"visible-high".into(),visible:true,..Default::default()},
+                crate::model::NameRoute{name:"ordinary-hidden".into(),visible:false,..Default::default()},
+                crate::model::NameRoute{name:"visible-high".into(),visible:true,..Default::default()},
+            ],..Default::default()
+        };
+        let visible=visible_model_names(&routes);
+        assert_eq!(visible,vec!["visible-high"]);
+        let mut p=default_policy();p["allowed_models"]=json!([]);
+        let (choices,retained)=authorization_options(&p,&visible);
+        assert_eq!(choices,vec!["visible-high"]);
+        assert!(retained.is_empty(),"ungranted hidden names must never appear as choices");
+    }
+    #[test]
+    fn historical_hidden_and_unknown_grants_are_separate_and_lossless() {
+        let mut p=default_policy();p["allowed_models"]=json!(["visible","hidden","unknown-legacy"]);
+        let original=p["allowed_models"].clone();
+        let (choices,retained)=authorization_options(&p,&["visible".into()]);
+        assert_eq!(choices,vec!["visible"]);
+        assert_eq!(retained,vec!["hidden","unknown-legacy"]);
+        p["rpm"]=json!(8);assert!(validate(&p).is_ok());
+        assert_eq!(p["allowed_models"],original,"editing limits cannot rewrite the model ACL");
+        revoke_model(&mut p,"hidden");
+        assert_eq!(p["allowed_models"],json!(["visible","unknown-legacy"]));
+        let (choices,retained)=authorization_options(&p,&["visible".into()]);
+        assert!(!choices.iter().any(|n|n=="hidden"));
+        assert_eq!(retained,vec!["unknown-legacy"],"revoked historical grants cannot be re-added from the chooser");
+    }
+    #[test]
+    fn revoking_last_legacy_grant_keeps_explicit_deny_and_catalog_failure_never_widens() {
+        let mut p=default_policy();p["allowed_models"]=json!(["hidden"]);
+        let (choices,retained)=authorization_options(&p,&[]);
+        assert!(choices.is_empty());assert_eq!(retained,vec!["hidden"]);
+        revoke_model(&mut p,"hidden");
+        assert_eq!(p["allowed_models"],json!([]));assert_eq!(mode(&p,"allowed_models"),"selected");
+        revoke_model(&mut p,"absent");assert_eq!(p["allowed_models"],json!([]));
+        p["allowed_models"]=Value::Null;revoke_model(&mut p,"absent");
+        assert!(p["allowed_models"].is_null(),"no-op revoke cannot invent a whitelist");
+    }
+
 }
