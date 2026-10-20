@@ -21,7 +21,7 @@ fn row(c: &Connection, id: i64) -> Ledger {
 fn protected(c: &Connection) -> Vec<Vec<Vec<String>>> {
     ["billing_budgets","billing_allocations"].iter().map(|table| {
         let mut q=c.prepare(&format!("SELECT * FROM {table} ORDER BY rowid")).unwrap();let n=q.column_count();
-        q.query_map([],|r|Ok((0..n).map(|i|format!("{:?}",r.get_ref(i).unwrap())).collect())).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        let rows=q.query_map([],|r|Ok((0..n).map(|i|format!("{:?}",r.get_ref(i).unwrap())).collect())).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap(); rows
     }).collect()
 }
 fn fixture() -> Connection {
@@ -106,4 +106,12 @@ fn invalid_units_and_cross_unit_settlement_cannot_finish_a_reservation() {
     let c=fixture();let token=reserve(&c,"diag-invalid-token","chat",false,false);let search=reserve(&c,"diag-invalid-search","search",true,false);
     for result in [billing::settle_diagnostic(&c,token,Some(-1),Some(0),None,"ok"),billing::settle_diagnostic(&c,token,None,None,Some(1),"ok"),billing::settle_diagnostic(&c,search,Some(1),None,Some(1),"ok"),billing::settle_diagnostic(&c,search,None,None,Some(2),"ok"),billing::settle_diagnostic(&c,search,None,None,None,"reserved")] {assert!(result.is_err());}
     assert_eq!(row(&c,token).status,"reserved");assert_eq!(row(&c,search).status,"reserved");
+}
+
+#[test]
+fn reused_attempt_must_match_model_source_and_billing_mode_not_only_snapshots() {
+    let c=fixture();reserve(&c,"diag-context","model",false,false);
+    for (source_id,model,request,subscription) in [(SOURCE,"different-model",false,false),(SOURCE+1,"model",false,false),(SOURCE,"model",true,false),(SOURCE,"model",false,true)] {
+        assert!(billing::reserve_diagnostic(&c,"diag-context",source_id,model,request,subscription,&auth(false),&source()).is_err(),"same attempt cannot change model/source/unit/subscription with unchanged snapshots");
+    }
 }
