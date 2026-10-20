@@ -3,9 +3,43 @@ use std::{hash::{Hash,Hasher},time::Duration};
 use crate::{SharedState,db::{self,channels,model_routes,now_ms},gateway::EndpointKind};
 use tokengo_shared::ModelKind;
 
-fn fingerprint(row:&channels::ChannelRow)->String {
-    let mut h=std::collections::hash_map::DefaultHasher::new();
-    format!("{:?}",row).hash(&mut h); h.finish().to_string()
+// v32 persisted fingerprints hash the Debug bytes of ChannelRow/ModelMapping.
+// Keep that exact projection: grouping and the new mapping switch are not source
+// identity. Eligibility is still checked by channels_for/provider_enabled.
+struct V32Mapping<'a>(&'a channels::ModelMapping);
+impl std::fmt::Debug for V32Mapping<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelMapping")
+            .field("model", &self.0.model)
+            .field("upstream", &self.0.upstream)
+            .field("vision", &self.0.vision)
+            .field("drop_fields", &self.0.drop_fields)
+            .finish()
+    }
+}
+struct V32Channel<'a>(&'a channels::ChannelRow);
+impl std::fmt::Debug for V32Channel<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let row = self.0;
+        let models: Vec<_> = row.models.iter().map(V32Mapping).collect();
+        f.debug_struct("ChannelRow")
+            .field("id", &row.id)
+            .field("name", &row.name)
+            .field("base_url", &row.base_url)
+            .field("enabled", &row.enabled)
+            .field("has_secret", &row.has_secret)
+            .field("unwrap_envelope", &row.unwrap_envelope)
+            .field("max_concurrent", &row.max_concurrent)
+            .field("priority", &row.priority)
+            .field("headers", &row.headers)
+            .field("models", &models)
+            .finish()
+    }
+}
+fn fingerprint(row: &channels::ChannelRow) -> String {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}", V32Channel(row)).hash(&mut h);
+    h.finish().to_string()
 }
 fn answer(text:&str)->String {
     let Ok(mut v)=serde_json::from_str::<serde_json::Value>(text) else{return String::new()};
@@ -30,6 +64,7 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
             if route.kind!=ModelKind::Chat || route.kind_conflict {continue;}
             for mut channel in model_routes::channels_for(&conn,&route.name)? {
                 let Some(row)=channels::get(&conn,channel.id)? else{continue};
+                if !crate::protocol_config::background_probe_allowed(&conn,channel.id.0)? {continue;}
                 if crate::db::faults::has_fault(&conn,channel.id.0,Some(&route.name))? {continue;}
                 let fp=fingerprint(&row);
                 let old=conn.query_row("SELECT fingerprint,tries,next_at,status FROM model_vision_checks WHERE channel_id=?1 AND model_name=?2",rusqlite::params![channel.id.0,route.name],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,String>(3)?))).ok();
@@ -81,3 +116,74 @@ pub async fn tick(state:&SharedState)->db::Result<()> {
     Ok(())
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn only_an_explicit_correct_answer_passes(){assert!(correct(r#"{"choices":[{"message":{"content":"红色"}}]}"#));assert!(!correct(r#"{"choices":[{"message":{"content":"我看不到图片，可能是红色"}}]}"#));assert!(!correct(r#"{"choices":[]}"#));}}
+
+#[cfg(test)]
+mod fingerprint_contract_tests {
+    use super::*;
+    use tokengo_shared::ChannelId;
+    const V32_HASH: &str = "11489058105077496160";
+    fn legacy_row() -> channels::ChannelRow {
+        channels::ChannelRow {
+            provider_id: None,
+            provider_name: None,
+            provider_enabled: true,
+            id: ChannelId(9),
+            name: "legacy".into(),
+            base_url: "https://fixture.invalid/v1".into(),
+            enabled: true,
+            has_secret: true,
+            unwrap_envelope: false,
+            max_concurrent: 2,
+            priority: 7,
+            headers: vec![("x-test".into(), "static".into())],
+            models: vec![channels::ModelMapping {
+                enabled: true,
+                model: "logical".into(),
+                upstream: Some("upstream".into()),
+                vision: true,
+                drop_fields: vec!["vendor".into()],
+            }],
+        }
+    }
+    #[test]
+    fn fingerprint_keeps_fixed_v32_debug_hash_contract() {
+        assert_eq!(fingerprint(&legacy_row()), V32_HASH);
+    }
+    #[test]
+    fn provider_metadata_and_model_switch_do_not_reset_existing_backoff() {
+        let original = legacy_row();
+        let mut assigned = original.clone();
+        assigned.provider_id = Some(12);
+        assigned.provider_name = Some("Provider A".into());
+        let mut renamed = assigned.clone();
+        renamed.provider_name = Some("Provider B".into());
+        let mut disabled = renamed.clone();
+        disabled.provider_enabled = false;
+        let mut mapping_off = disabled.clone();
+        mapping_off.models[0].enabled = false;
+        for row in [original, assigned, renamed, disabled, mapping_off] {
+            // Existing v32 records keep their tries/next_at when the fingerprint matches.
+            assert_eq!(fingerprint(&row), V32_HASH);
+        }
+    }
+    #[test]
+    fn source_and_vision_contract_changes_still_invalidate_fingerprint() {
+        let original = legacy_row();
+        let old = fingerprint(&original);
+        let mut upstream = original.clone();
+        upstream.models[0].upstream = Some("different".into());
+        let mut vision = original.clone();
+        vision.models[0].vision = false;
+        let mut headers = original.clone();
+        headers.headers[0].1 = "different".into();
+        let mut url = original.clone();
+        url.base_url = "https://other.invalid/v1".into();
+        let mut dropped = original.clone();
+        dropped.models[0].drop_fields.push("another".into());
+        let mut connection_off = original.clone();
+        connection_off.enabled = false;
+        for changed in [upstream, vision, headers, url, dropped, connection_off] {
+            assert_ne!(fingerprint(&changed), old);
+        }
+    }
+}

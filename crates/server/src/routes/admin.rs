@@ -1,7 +1,8 @@
 //! 管理面：面板用的接口。只做面板真需要的，不做上游那 24 个管理路由。
 //!
 //! 鉴权：登录后拿到一个会话 token，之后每个请求带
-//! `Authorization: Bearer <token>` 或 Cookie `tokengo_session=<token>`。
+//! 兼容运维 `Authorization: Bearer <token>`；新浏览器使用独立HttpOnly账号Cookie。
+//! Cookie写操作必须通过统一CSRF门，普通面板账号不能进入管理面。
 //! 除 `ping` / `auth/*` 外，**所有接口都要过会话门**。
 
 use axum::extract::{FromRequestParts, Path, Query, State};
@@ -63,11 +64,11 @@ fn router_inner() -> Router<SharedState> {
         // —— 无鉴权 ——
         .route("/ping", get(ping))
         .route("/auth/status", get(auth_status))
-        .route("/auth/setup", post(auth_setup))
-        .route("/auth/login", post(auth_login))
-        .route("/auth/logout", post(auth_logout))
+        .route("/auth/setup", post(auth_setup).layer(axum::middleware::map_response(super::accounts::json_errors)))
+        .route("/auth/login", post(auth_login).layer(axum::middleware::map_response(super::accounts::json_errors)))
+        .route("/auth/logout", post(auth_logout).layer(axum::middleware::map_response(super::accounts::json_errors)))
         // —— 需要登录 ——
-        .route("/auth/password", put(auth_change_password))
+        .route("/auth/password", put(auth_change_password).layer(axum::middleware::map_response(super::accounts::json_errors)))
         .route("/channels", get(channels_list).post(channels_create))
         .route("/channels/{id}", put(channels_update).delete(channels_delete))
         .route("/channels/{id}/enabled", put(channels_set_enabled))
@@ -123,17 +124,12 @@ impl FromRequestParts<SharedState> for PanelAuth {
         parts: &mut Parts,
         state: &SharedState,
     ) -> Result<Self, Self::Rejection> {
-        let token = bearer_token(parts)
-            .or_else(|| cookie_token(parts))
-            .ok_or_else(|| ApiError::unauthorized("未登录"))?;
-        let ok = sessions::check_session(&state.conn(), &token).unwrap_or(false);
-        if !ok {
-            return Err(ApiError::unauthorized("会话已失效，请重新登录"));
-        }
+        super::accounts::root_authorize(parts, state).await?;
         Ok(PanelAuth)
     }
 }
 
+#[cfg(test)]
 fn bearer_token(parts: &Parts) -> Option<String> {
     let raw = parts.headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
     let t = raw.strip_prefix("Bearer ").or_else(|| raw.strip_prefix("bearer "))?;
@@ -141,6 +137,7 @@ fn bearer_token(parts: &Parts) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
+#[cfg(test)]
 fn cookie_token(parts: &Parts) -> Option<String> {
     let raw = parts.headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
     for kv in raw.split(';') {
@@ -195,6 +192,8 @@ async fn auth_setup(
     headers: axum::http::HeaderMap,
     Json(body): Json<SetupBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    super::accounts::legacy_request_headers(&headers)?;
+    crate::db::accounts::password(&body.password).map_err(|e|ApiError::bad_request(e.to_string()))?;
     let conn = state.conn();
     if sessions::has_panel_password(&conn)? {
         return Err(ApiError::bad_request("口令已设置过，请走登录"));
@@ -226,6 +225,8 @@ async fn auth_setup(
 
 #[derive(Deserialize)]
 struct LoginBody {
+    #[serde(default)]
+    username: Option<String>,
     password: String,
 }
 
@@ -234,6 +235,12 @@ async fn auth_login(
     headers: axum::http::HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    super::accounts::legacy_request_headers(&headers)?;
+    let username = body.username.as_deref().ok_or_else(|| ApiError::bad_request("登录需要用户名和密码"))?;
+    if body.password.len()>256 { return Err(ApiError::unauthorized("账号或密码错误")); }
+    state.panel_login_gate.check(&username.to_ascii_lowercase())?;
+    let root = crate::db::accounts::root(&state.conn())?.ok_or_else(|| ApiError::unauthorized("账号或密码错误"))?;
+    let username_ok = root.account.username.eq_ignore_ascii_case(username);
     let hash = settings::get(&state.conn(), settings::PANEL_PASSWORD_HASH)?
         .ok_or_else(|| ApiError::bad_request("还没设置口令，请先初始化"))?;
     let slot = state.auth_slots.clone().try_acquire_owned()
@@ -244,9 +251,10 @@ async fn auth_login(
         sessions::verify_password(&body.password, &verify_hash)
     }).await.map_err(|e| ApiError::internal(e.to_string()))?;
     let conn = state.conn();
-    if !ok || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str()) {
+    if !ok || !username_ok || !crate::db::accounts::legacy_root_valid(&conn)? || crate::db::accounts::root(&conn)?.is_none_or(|now|now.version!=root.version || now.account.username!=root.account.username) || settings::get(&conn, settings::PANEL_PASSWORD_HASH)?.as_deref() != Some(hash.as_str()) {
         return Err(ApiError::unauthorized("口令不对"));
     }
+    state.panel_login_gate.success(&username.to_ascii_lowercase());
     sessions::purge_expired(&conn)?;
     let token = sessions::create_session(&conn, client_ip(&headers).as_deref())?;
     Ok(Json(serde_json::json!({ "ok": true, "token": token })))
@@ -259,8 +267,10 @@ struct TokenBody {
 
 async fn auth_logout(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<TokenBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    super::accounts::legacy_request_headers(&headers)?;
     if let Some(t) = body.token {
         sessions::revoke_session(&state.conn(), &t)?;
     }
@@ -274,17 +284,27 @@ struct ChangePasswordBody {
 }
 
 async fn auth_change_password(
-    _auth: PanelAuth,
+    auth: super::accounts::RootGrant,
     State(state): State<SharedState>,
     Json(body): Json<ChangePasswordBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let conn = state.conn();
-    if !sessions::check_panel_password(&conn, &body.old_password)? {
+    crate::db::accounts::password(&body.new_password).map_err(|e|ApiError::bad_request(e.to_string()))?;
+    let root = crate::db::accounts::root(&state.conn())?.ok_or_else(|| ApiError::unauthorized("未登录"))?;
+    state.panel_login_gate.check(&root.account.username)?;
+    if !super::accounts::verify(&state, body.old_password, root.hash.clone()).await? {
         return Err(ApiError::unauthorized("原口令不对"));
     }
-    sessions::set_panel_password(&conn, &body.new_password)?;
-    // 改口令会踢掉所有会话，包括自己，所以这里重新发一个
-    let token = sessions::create_session(&conn, None)?;
+    let hash = super::accounts::hash(&state, body.new_password).await?;
+    let conn = state.conn();
+    if !auth.valid(&conn)? || crate::db::accounts::root(&conn)?.is_none_or(|a|a.version!=root.version || a.hash!=root.hash) {
+        return Err(ApiError::unauthorized("会话已失效"));
+    }
+    let token = crate::db::accounts::atomic(&conn, || {
+        sessions::set_panel_hash(&conn, &hash)?;
+        crate::db::accounts::audit(&conn,root.account.id,"panel.password",root.account.id)?;
+        sessions::create_session(&conn, None)
+    })?;
+    state.panel_login_gate.success(&root.account.username);
     Ok(Json(serde_json::json!({ "ok": true, "token": token })))
 }
 
@@ -293,6 +313,9 @@ async fn auth_change_password(
 fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json::Value {
     serde_json::json!({
         "id": l.id.0,
+        "provider_id":l.provider_id,
+        "provider_name":l.provider_name,
+        "provider_enabled":l.provider_enabled,
         "name": l.name,
         "base_url": l.base_url,
         "enabled": l.enabled,
@@ -300,11 +323,14 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "account_status": crate::db::faults::rows(c).unwrap_or_default().into_iter().find(|r|r.channel_id==l.id.0 && r.model.is_empty()).map(|r|if r.ready {"等待恢复试用".to_string()}else if r.lease_until>now_ms(){"恢复试用中".into()}else{r.reason}).unwrap_or_default(),
         "unwrap_envelope": l.unwrap_envelope,
         "max_concurrent": l.max_concurrent,
+        "protocols": crate::protocol_config::load(c,l.id.0).ok(),
         // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
         "priority": l.priority,
         "headers": l.headers.iter().map(|(n, _)| serde_json::json!({"name": n, "original_name": n, "value": "********", "action": "keep"})).collect::<Vec<_>>(),
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
+            "enabled":m.enabled,
+            "reasoning":crate::reasoning_capabilities::for_mapping(c,l.id.0,&m.model).ok(),
             "upstream": m.upstream,
             "vision": m.vision,
             "drop_fields": m.drop_fields_text(),
@@ -338,6 +364,8 @@ struct HeaderIn {
 
 #[derive(Deserialize)]
 struct ModelIn {
+    #[serde(default)]
+    enabled: Option<bool>,
     model: String,
     upstream: Option<String>,
     /// 这个模型名在这条渠道上能不能吃图片输入（面板上的「能看图」勾选）。
@@ -350,6 +378,8 @@ struct ModelIn {
 
 #[derive(Deserialize)]
 struct ChannelBody {
+    #[serde(default)]
+    protocols: Option<crate::protocol_config::Capabilities>,
     name: String,
     base_url: String,
     #[serde(default = "default_true")]
@@ -429,6 +459,7 @@ impl ChannelBody {
             let upstream = input.upstream.as_deref().map(str::trim)
                 .filter(|name| !name.is_empty()).map(str::to_string);
             let mut mapping = channels::ModelMapping::new(model, upstream, input.vision);
+            mapping.enabled = input.enabled.unwrap_or(true);
             mapping.drop_fields = channels::ModelMapping::drop_fields_from_text(&input.drop_fields);
             mappings.push(mapping);
         }
@@ -441,6 +472,7 @@ async fn channels_create(
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
     let models = body.models()?;
     let conn = state.conn();
     let headers = body.headers(&conn, &state, None)?;
@@ -462,6 +494,7 @@ async fn channels_create(
         }
         if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
         channels::set_models(c, id, &models)?;
+        if let Some(p)=&body.protocols {crate::protocol_config::save(c,id.0,p)?;}
         Ok(id)
     })?;
     tracing::info!("新建渠道 {id}：{}", body.name);
@@ -476,9 +509,11 @@ async fn channels_update(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let models = body.models()?;
+    if let Some(p)=&body.protocols {p.validate().map_err(ApiError::bad_request)?;}
+    let mut models = body.models()?;
     let conn = state.conn();
     let id = tokengo_shared::ChannelId(id);
+    if let Some(old)=channels::get(&conn,id)? {for (m,input) in models.iter_mut().zip(&body.models) {if input.enabled.is_none(){if let Some(was)=old.models.iter().find(|v|tokengo_shared::same_model_name(&v.model,&m.model)){m.enabled=was.enabled;}}}}
     let headers = body.headers(&conn, &state, Some(id))?;
     crate::db::in_tx(&conn, |c| {
         channels::update(
@@ -498,6 +533,7 @@ async fn channels_update(
         }
         if let Some(headers) = &headers { channels::set_headers(c, &state.secrets, id, headers)?; }
         channels::set_models(c, id, &models)?;
+        if let Some(p)=&body.protocols {crate::protocol_config::save(c,id.0,p)?;}
         Ok(())
     })?;
     tracing::info!("更新渠道 {id}：{}", body.name);
@@ -533,6 +569,7 @@ struct ProbeQuery {
 /// 探活和「拉上游模型清单」都要这一套。抽出来是因为这两件事的加载逻辑一模一样，
 /// 各写一份迟早会有一边忘了解密密钥（现象是"这条渠道明明有 key，面板却说没有"）。
 struct ReadyChannel {
+    source_identity:String,
     channel: tokengo_shared::Channel,
     secret: Option<String>,
     has_secret: bool,
@@ -541,11 +578,15 @@ struct ReadyChannel {
 
 fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<Option<ReadyChannel>, ApiError> {
     let conn = state.conn();
+    if !crate::protocol_config::background_probe_allowed(&conn,id.0)? {
+        return Err(ApiError::bad_request("OAuth and standalone tools require authenticated, metered verification; use the OAuth account catalog or the normal VKey endpoint"));
+    }
     let Some(row) = channels::get(&conn, id)? else {
         return Ok(None);
     };
     let secret = channels::secret(&conn, &state.secrets, id)?;
     Ok(Some(ReadyChannel {
+        source_identity:crate::reasoning_capabilities::fingerprint(&conn,id.0)?,
         channel: tokengo_shared::Channel {
             id: row.id,
             name: row.name.clone(),
@@ -591,6 +632,7 @@ async fn channels_probe(
         secret,
         has_secret,
         models,
+        ..
     } = ready;
 
     let model = models
@@ -612,6 +654,8 @@ async fn channels_probe(
             "has_secret": has_secret,
         })));
     };
+
+    let endpoint=crate::protocol_config::probe_endpoint(&state.conn(),channel.id.0,endpoint)?;
 
     let timeout = {
         let cfg = state.routing().cfg.clone();
@@ -679,7 +723,7 @@ async fn channels_models(
     let Some(ready) = ready_channel(&state, id)? else {
         return Err(ApiError::not_found(format!("渠道 {id} 不存在")));
     };
-    let ReadyChannel { channel, secret, .. } = ready;
+    let ReadyChannel { channel, secret, source_identity, .. } = ready;
 
     let timeout = {
         let cfg = state.routing().cfg.clone();
@@ -752,18 +796,16 @@ async fn channels_models(
     let mut removed = Vec::new();
     let mut fetched_at = 0i64;
     if ok {
-        let before = {
-            let conn = state.conn();
-            catalog::list(&conn, channel.id)?
-        };
+        let conn = state.conn();
+        if channels::get(&conn,channel.id)?.is_none() || crate::reasoning_capabilities::fingerprint(&conn,channel.id.0)?!=source_identity {
+            return Err(ApiError::bad_request("Source configuration changed; refresh metadata again"));
+        }
+        let before = catalog::list(&conn, channel.id)?;
         let (a, r) = catalog::diff(&before, &catalog);
         added = a;
         removed = r;
         let now = now_ms();
-        {
-            let conn = state.conn();
-            crate::db::in_tx(&conn, |c| catalog::replace(c, channel.id, &catalog, now))?;
-        }
+        crate::db::in_tx(&conn, |c| catalog::replace(c, channel.id, &catalog, now))?;
         fetched_at = now;
         tracing::info!(
             "渠道 {id} 的上游模型清单已记住：{} 个（比上次多 {}、少 {}）",
@@ -896,6 +938,7 @@ async fn channel_catalog(
         "models": entries.iter().map(|e| e.model.clone()).collect::<Vec<_>>(),
         "info": entries.iter().map(|e| serde_json::json!({
             "id": e.model,
+            "reasoning":e.reasoning,
             "kind": e.kind,
             "owned_by": e.owned_by,
             "context_window": e.context_window,
@@ -1205,6 +1248,8 @@ async fn model_routes_list(
             };
             serde_json::json!({
                 "name": r.name,
+                "visible": ({let c=state.conn();model_routes::visible(&c,&r.name).unwrap_or(false)}),
+                "sources": ({let c=state.conn();crate::db::provider_channels::source_json(&c,&r.name).unwrap_or_default()}),
                 "enabled": r.enabled,
                 "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),

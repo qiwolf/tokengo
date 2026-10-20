@@ -1,6 +1,6 @@
 # Logical model routing (fork development branch)
 
-This fork builds on upstream v0.34.0. The first roadmap batch adds bounded error responses, administrator-configured logical mappings and per-model route policy, stable session adapters, and CI. It does not yet add users, vkey scopes/budgets, native Responses/Messages protocols, subscription OAuth, or production migration.
+This fork builds on upstream v0.34.0. Logical routing, bounded errors and stable sessions now share the user/VKey authorization, quota and per-attempt budget executor. See [identity and metering](identity-metering.md), [protocols](protocols.md), [OAuth](openai-oauth.md) and the [strict LiteLLM importer](litellm-import.md) for their separate configuration and limits.
 
 ## Upstream names and logical names
 
@@ -58,7 +58,7 @@ Controlled HTTP tests cover A429 → B400 with structured `insufficient_balance`
 
 Unstructured 400 messages such as `insufficient credits` are not globally reclassified as provider balance errors. Provider-specific error adapters must verify real response shapes before allowing paid fallback. No actual provider quota or subscription availability is inferred from these controlled tests.
 
-Account-wide faults already suspend a channel. Some model-level permission/cooldown state is still scoped by logical name, so aliases of one physical target do not yet share every state. This must be addressed before a future user-scoped authorization layer depends on physical target suspension. This batch does not provide vkey model permissions or paid-fallback authorization.
+Account-wide faults suspend a channel. Some model-level provider permission/cooldown state remains scoped by logical name, so aliases of one physical target do not share every health state. This is distinct from user authorization: the shared executor rechecks user/key/ancestor model and channel permissions before each source attempt. VKey model/channel permissions and paid-fallback authorization are enforced separately by the shared executor; a routing policy cannot expand them.
 
 ## Stable conversation identity
 
@@ -82,4 +82,4 @@ Successful SSE generation retains the existing idle-timeout behavior; this fix d
 
 Run `cargo test --locked --workspace` and `cargo check --locked -p tokengo-web --target wasm32-unknown-unknown`. New real HTTP suites cover bounded errors, mappings, route policy, sessions and disabled automatic probes. GitHub Actions runs native tests and WASM check using Rust 1.98.0. There is no automatic production deployment.
 
-This batch exposes routing controls through the authenticated API. A dedicated policy editor and further UI work remain separate. Before using the existing panel to edit a channel, keep its logical mappings intact; the API rejects ambiguous duplicate logical names rather than silently merging them.
+Routing controls are available through the authenticated API and the model policy editor. Before using the existing panel to edit a channel, keep its logical mappings intact; the API rejects ambiguous duplicate logical names rather than silently merging them.

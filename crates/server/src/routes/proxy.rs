@@ -1,4 +1,4 @@
-//! 对外代理面：四个 OpenAI 兼容端点。这是全项目最核心的一块。
+//! Authenticated proxy routes for native Chat, Responses and Messages plus embeddings/reranking.
 //!
 //! 端点取舍依据（3 天 10 万次请求实测）：
 //!
@@ -32,8 +32,12 @@ use tokengo_shared::ModelKind;
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/chat/completions", post(chat_completions))
+        .route("/responses", post(responses))
+        .route("/messages", post(messages))
         .route("/embeddings", post(embeddings))
         .route("/rerank", post(rerank))
+        .route("/tools/search", post(search))
+        .route("/tools/fetch", post(fetch))
         .route("/models", get(models))
 }
 
@@ -49,35 +53,104 @@ impl FromRequestParts<SharedState> for GatewayKey {
         parts: &mut Parts,
         state: &SharedState,
     ) -> Result<Self, Self::Rejection> {
-        let key = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|raw| {
-                raw.strip_prefix("Bearer ")
-                    .or_else(|| raw.strip_prefix("bearer "))
-                    .map(str::trim)
-            })
-            .filter(|k| !k.is_empty())
-            .ok_or_else(|| {
-                ApiError::unauthorized("缺少 Authorization: Bearer <对外 key>（面板「设置」里配）")
-            })?;
-        let auth = state.authenticate_context(key.to_string()).await;
-        if auth.is_none() {
-            // 记一条：客户端连不上时最常就是这个原因（key 复制少了、还是 FreeLLMAPI 那把）。
-            // 只记来源与掩码，**不记 key 本身** —— 日志会被下载/贴给人看。
-            let hint: String = {
-                let k: String = key.chars().take(4).collect();
-                format!("{k}…（{} 位）", key.chars().count())
-            };
-            tracing::warn!(
-                "有请求拿着不对的对外 key 打进来了：{}，来自 {}",
-                hint,
-                client_ip(&parts.headers).unwrap_or_else(|| "未知来源".into())
-            );
-            return Err(ApiError::unauthorized("对外 key 不对"));
+        let key = gateway_credential(&parts.headers)?;
+        let auth = state.authenticate_context(key.clone()).await;
+        match auth {
+            Some(auth) => Ok(GatewayKey { namespace: tokengo_shared::short_hash(&key), auth }),
+            None => {
+                tracing::warn!("Invalid gateway credential from {}", client_ip(&parts.headers).unwrap_or_else(|| "unknown".into()));
+                Err(ApiError::unauthorized("Invalid or inactive gateway key"))
+            }
         }
-        Ok(GatewayKey { namespace: tokengo_shared::short_hash(key), auth: auth.unwrap() })
+    }
+}
+
+/// Resolve one local credential. Never fall back from an invalid supplied header
+/// to another identity, and never forward either client authentication header.
+fn gateway_credential(headers: &HeaderMap) -> Result<String, ApiError> {
+    fn single<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, ApiError> {
+        let mut values = headers.get_all(name).iter();
+        let value = values.next();
+        if values.next().is_some() { return Err(ApiError::bad_request("Repeated authentication header")); }
+        value.map(|value| value.to_str().map_err(|_|ApiError::unauthorized("Invalid authentication header"))).transpose()
+    }
+    let bearer = single(headers, "authorization")?.map(|raw| {
+        raw.strip_prefix("Bearer ").or_else(||raw.strip_prefix("bearer "))
+            .map(str::trim).filter(|key| !key.is_empty())
+            .ok_or_else(||ApiError::unauthorized("Invalid Authorization header"))
+    }).transpose()?;
+    let api_key = single(headers, "x-api-key")?.map(|raw| {
+        let key = raw.trim();
+        if key.is_empty() { Err(ApiError::unauthorized("Invalid x-api-key header")) } else { Ok(key) }
+    }).transpose()?;
+    match (bearer,api_key) {
+        (Some(a),Some(b)) if a != b => Err(ApiError::bad_request("Conflicting authentication headers")),
+        (Some(key),_)|(_,Some(key)) => Ok(key.to_string()),
+        _ => Err(ApiError::unauthorized("A local gateway key is required")),
+    }
+}
+
+/// Messages uses the same credential/identity verifier, with its native error envelope.
+struct MessagesKey(GatewayKey);
+impl FromRequestParts<SharedState> for MessagesKey {
+    type Rejection = Response;
+    async fn from_request_parts(parts: &mut Parts, state: &SharedState) -> Result<Self, Response> {
+        GatewayKey::from_request_parts(parts,state).await.map(Self).map_err(messages_error)
+    }
+}
+fn messages_error(error: ApiError) -> Response {
+    let kind = match error.status.as_u16() {
+        400|422 => "invalid_request_error", 401 => "authentication_error", 403 => "permission_error",
+        404 => "not_found_error", 413 => "request_too_large", 429 => "rate_limit_error",
+        503|529 => "overloaded_error", _ => "api_error",
+    };
+    (error.status,Json(serde_json::json!({"type":"error","error":{"type":kind,"message":error.message}}))).into_response()
+}
+
+async fn forward_native(
+    key: GatewayKey, state: SharedState, headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    body: axum::body::Bytes, endpoint: EndpointKind,
+) -> Result<Response, ApiError> {
+    let (model,value,stream) = parse_body(&body,endpoint)?;
+    let explicit_session = explicit_session_id(&headers,&value)?;
+    let client_ip = client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string()));
+    gateway::forward(state,ForwardRequest {
+        endpoint,model,body:value,stream,client_ip,session_namespace:key.namespace,
+        auth:Some(key.auth),explicit_session,
+        user_agent:headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
+    }).await
+}
+async fn responses(
+    key: GatewayKey, State(state): State<SharedState>, headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    forward_native(key,state,headers,peer,body,EndpointKind::Responses).await
+}
+async fn forward_tool(key:GatewayKey,state:SharedState,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes,endpoint:EndpointKind)->Result<Response,ApiError> {
+    let mut value:Value=serde_json::from_slice(&body).map_err(|_|ApiError::bad_request("Tool request requires valid JSON"))?;
+    let map=value.as_object_mut().ok_or_else(||ApiError::bad_request("Tool request requires a JSON object"))?;
+    let default=if endpoint==EndpointKind::Search {"deepseek-search"}else{"deepseek-fetch"};
+    let model=match map.get("model") {None=>default.to_string(),Some(Value::String(name)) if !name.trim().is_empty()&&name.len()<=256&&!name.chars().any(char::is_control)=>name.clone(),_=>return Err(ApiError::bad_request("Invalid tool route name"))};
+    if model_routes::is_auto(&model) {return Err(ApiError::bad_request("Search and Fetch require an explicit tool route"));}
+    crate::search_tools::normalize_request(endpoint.tool_kind().unwrap(),&value).map_err(ApiError::bad_request)?;
+    gateway::forward(state,ForwardRequest{endpoint,model,body:value,stream:false,client_ip:client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string())),session_namespace:key.namespace,auth:Some(key.auth),explicit_session:None,user_agent:headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string)}).await
+}
+async fn search(key:GatewayKey,State(state):State<SharedState>,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes)->Result<Response,ApiError>{forward_tool(key,state,headers,peer,body,EndpointKind::Search).await}
+async fn fetch(key:GatewayKey,State(state):State<SharedState>,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes)->Result<Response,ApiError>{forward_tool(key,state,headers,peer,body,EndpointKind::Fetch).await}
+async fn messages(
+    MessagesKey(key): MessagesKey, State(state): State<SharedState>, headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    body: Result<axum::body::Bytes,axum::extract::rejection::BytesRejection>,
+) -> Response {
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return messages_error(ApiError::new(rejection.status(),"invalid_request_error","Unable to read request body")),
+    };
+    match forward_native(key,state,headers,peer,body,EndpointKind::Messages).await {
+        Ok(response) => response,
+        Err(error) => messages_error(error),
     }
 }
 
@@ -228,7 +301,7 @@ async fn models(
         let conn = state.conn();
         let mut servable = model_routes::servable(&conn)?;
         let mut allowed = Vec::new();
-        for model in servable.drain(..) { if gateway::permitted_model(&conn, &_key.auth, &model.name)? {allowed.push(model);} }
+        for model in servable.drain(..) { if model_routes::visible(&conn,&model.name)? && gateway::permitted_model(&conn, &_key.auth, &model.name)? {allowed.push(model);} }
         let servable=allowed;
         let auto_rows = if _key.auth.permits_model(model_routes::AUTO_NAME) && model_routes::auto_available(&conn)? {
             let now = crate::db::now_ms();
@@ -309,7 +382,7 @@ fn explicit_session_id(headers: &HeaderMap, body: &Value) -> Result<Option<Strin
         Ok(())
     }
     let mut chosen = None;
-    for name in ["x-opencode-session", "session_id", "x-session-id", "x-conversation-id"] {
+    for name in ["x-opencode-session", "x-claude-code-session-id", "session_id", "x-session-id", "x-conversation-id"] {
         for value in headers.get_all(name) {
             let id = value.to_str().map_err(|_| ApiError::bad_request("会话 ID 请求头不是有效文本"))?;
             accept(&mut chosen, id)?;
@@ -341,10 +414,33 @@ fn parse_body(body: &[u8], endpoint: EndpointKind) -> Result<(String, Value, boo
         .filter(|m| !m.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("请求体里缺 model 字段"))?
         .to_string();
-    let stream = value
-        .get("stream")
-        .and_then(|s| s.as_bool())
-        .unwrap_or(false);
+    let native = matches!(endpoint,EndpointKind::Responses|EndpointKind::Messages);
+    if native && (model.len()>256 || model.chars().any(char::is_control)) {
+        return Err(ApiError::bad_request("Invalid model name"));
+    }
+    let stream = match value.get("stream") {
+        Some(Value::Bool(stream)) => *stream,
+        Some(_) if native => return Err(ApiError::bad_request("stream must be a boolean")),
+        _ => false,
+    };
+    match endpoint {
+        EndpointKind::Responses => {
+            match value.get("input") {
+                Some(Value::String(_)|Value::Array(_)) => {},
+                None if ["previous_response_id","conversation"].iter().any(|field|value.get(*field).is_some_and(|v|!v.is_null())) => {},
+                _ => return Err(ApiError::bad_request("Responses input must be a string or array")),
+            }
+        }
+        EndpointKind::Messages => {
+            if !value.get("messages").is_some_and(Value::is_array) {
+                return Err(ApiError::bad_request("Messages requires a messages array"));
+            }
+            if value.get("max_tokens").and_then(Value::as_i64).is_none_or(|tokens|tokens<=0) {
+                return Err(ApiError::bad_request("Messages max_tokens must be a positive integer"));
+            }
+        }
+        _ => {},
+    }
     Ok((model, value, stream))
 }
 

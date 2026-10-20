@@ -106,6 +106,9 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
             };
         };
         // 探活要发的名字：这条渠道为这个模型名配的那个（别名优先，见 probe_model）
+        if !crate::protocol_config::background_probe_allowed(&conn,primary.id.0).unwrap_or(false) {
+            return ProbeResult {model:name.into(),channel:primary.id,outcome:ProbeOutcome::Skipped("This source requires explicit authenticated and metered verification".into())};
+        }
         let model = probe_model(&conn, &primary, name);
         let secret = channels::secret(&conn, &state.secrets, primary.id).unwrap_or(None);
         match channels::headers(&conn, &state.secrets, primary.id) {
@@ -115,6 +118,10 @@ pub async fn probe_route(state: &SharedState, name: &str, now: i64) -> ProbeResu
         (primary, model, secret)
     };
     let (channel, model, secret) = loaded;
+    let endpoint=match crate::protocol_config::probe_endpoint(&state.conn(),channel.id.0,endpoint) {
+        Ok(endpoint)=>endpoint,
+        Err(_)=>return ProbeResult{model:name.into(),channel:channel.id,outcome:ProbeOutcome::Skipped("Invalid source protocols".into())},
+    };
 
     let Some(model) = model else {
         return ProbeResult {
@@ -239,6 +246,8 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
             "max_tokens": 1,
             "stream": false,
         }),
+        EndpointKind::Responses => serde_json::json!({"model":model,"input":"ping","max_output_tokens":1,"stream":false,"store":false}),
+        EndpointKind::Messages => serde_json::json!({"model":model,"messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}),
         EndpointKind::Embeddings => serde_json::json!({
             "model": model,
             "input": "x",
@@ -249,6 +258,10 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
             "documents": ["x"],
             "top_n": 1,
         }),
+        // Standalone paid tools are never automatically probed. Their explicit
+        // diagnostic body is kept valid for trusted in-process callers only.
+        EndpointKind::Search => serde_json::json!({"query":"DeepSeek","count":1}),
+        EndpointKind::Fetch => serde_json::json!({"url":"https://example.com"}),
     };
     bytes::Bytes::from(serde_json::to_vec(&v).unwrap_or_default())
 }

@@ -1,33 +1,7 @@
-//! 渠道管理：增删改查 + 自定义请求头 + 按渠道改模型名 + 「测一下」连通性 + 拉上游模型清单。
-//!
-//! 三条纪律都落在界面上：
-//!
-//! - **「测一下」不给假绿点**：真发一个请求，连不上/上游不收都如实报红，并写清原因；
-//!   这条渠道没配模型名就直接说"探不了"，而不是拿虚拟组名 `auto` 去凑一个 400。
-//! - **密钥留空 = 不改**：编辑一条渠道时密钥框留空表示沿用已存的；想清掉要**明确**点
-//!   「清空密钥」。不然每次改个名字都得重输一遍密钥。
-//! - **清单是上游说的，不是我们编的**：拉不到就只说实话（连不上/HTTP 404/格式没认出），
-//!   绝不给一份看着挺像的假清单。上游报的**模型说明**（归属方、上下文长度、价钱、
-//!   它自称能不能收图）一并显示；它没说的字段，界面上一个标签都不标。
-//! - **「能不能看图」只认实测**：模型名里带 vl/vision 不代表能看图（deepseek 的 flash
-//!   就能读图，有些带 vision 的名字反倒是纯文本）。所以每一条上都有「测一下能不能看图」：
-//!   真发一张图问一个只有看图才答得出的问题（左上角什么颜色），答对了才勾上。
-//!   勾了才有资格接带图的请求 —— 没勾的渠道，带图请求一条都不会发给它。
-//!
-//! ## 编辑弹窗（v0.5.0 重做）
-//!
-//! 弹窗顶上一排切换条，分三段：**基本信息**（名称/地址/密钥/启用/响应解包）、
-//! **请求头**、**模型**。为什么分三段：三段各自都能很长，平铺在一屏里手机上一定
-//! 看不到底（用户报过"这些内容看不见"），切换条把"哪一段有活干"摆在最上面。
-//!
-//! 「模型」那一段是主角，一条规则贯穿始终：
-//!
-//! > **一行 = 一条映射，键是"客户端里写的名字"。勾着 = 这条渠道认这个名字。**
-//!
-//! 它把原先的两步走合成一步：勾选状态本身就是保存内容（以前要"先在清单里勾、
-//! 再点一下加进下表"，勾了忘了加就等于白勾）；上游给的名字和说明直接挂在勾选项上；
-//! 客户端名字跟上游名字不一样时（`auto` → `v4.1flash` 这种），用「加一个自己的名字」
-//! 加一条，再在它的「详情」里填上游实际叫什么。
+//! 服务商渠道由 provider_channels 展示；本模块保留按父层限定的连接编辑器。
+//! 连接 ID、地址、密钥、协议与模型映射保持独立，不从名称或域名推断服务商。
+//! 模型取消勾选仅停用并保留配置；重新勾选恢复原映射。
+//! 元数据获取走普通目录或绑定 OAuth 账号的安全目录，不自动发送推理请求。
 
 use leptos::prelude::*;
 
@@ -65,20 +39,23 @@ pub(crate) fn mapping_for<'a>(rows: &'a [ModelPair], client: &str) -> Option<&'a
     rows.iter().find(|m| m.model.trim() == client.trim())
 }
 
-/// 这条渠道认不认这个名字（= 表里有没有这条映射）。面板上的勾就认它。
+/// 此连接的映射存在且启用时勾选；停用映射仍保留配置。
 pub(crate) fn is_in_use(rows: &[ModelPair], client: &str) -> bool {
-    mapping_for(rows, client).is_some()
+    mapping_for(rows, client).is_some_and(|m|m.enabled)
 }
 
 /// 加一条映射：客户端名字 = `name`，上游同名（上游那栏留空 = 同名发出去）。
-/// 已经有了、或者名字是空的就不动，回 `false`。
+/// 已停用则重新启用并保留配置；已经启用或名称为空则不变。
 pub(crate) fn add_mapping(rows: &mut Vec<ModelPair>, name: &str) -> bool {
     let name = name.trim();
     if name.is_empty() || is_in_use(rows, name) {
         return false;
     }
+    if let Some(m)=rows.iter_mut().find(|m|m.model.trim()==name){m.enabled=true;return true;}
     rows.push(ModelPair {
         model: name.to_string(),
+        enabled:true,
+        reasoning:None,
         upstream: None,
         // 刚加进来的名字**不许猜能力**：要标能看图得点这一条的「测一下能不能看图」。
         vision: false,
@@ -99,7 +76,11 @@ pub(crate) fn add_many(rows: &mut Vec<ModelPair>, names: &[String]) -> usize {
     n
 }
 
+/// Disable a mapping without losing its source alias or capability settings.
+pub(crate) fn disable_mapping(rows:&mut [ModelPair],client:&str)->usize {if let Some(m)=rows.iter_mut().find(|m|m.model.trim()==client.trim()&&m.enabled){m.enabled=false;1}else{0}}
+
 /// 删掉「客户端名字 = client」的映射，回删了几条。
+#[cfg(test)]
 pub(crate) fn drop_mapping(rows: &mut Vec<ModelPair>, client: &str) -> usize {
     let before = rows.len();
     rows.retain(|m| m.model.trim() != client.trim());
@@ -158,6 +139,8 @@ pub(crate) fn mappings_to_save(rows: &[ModelPair]) -> (Vec<ModelPair>, usize) {
             .map(str::to_string);
         out.push(ModelPair {
             model: client.to_string(),
+            enabled:m.enabled,
+            reasoning:m.reasoning.clone(),
             upstream,
             vision: m.vision,
             drop_fields: m.drop_fields.clone(),
@@ -178,7 +161,10 @@ enum Form {
 }
 
 #[component]
-pub fn Channels(ctx: Ctx) -> impl IntoView {
+pub fn Channels(ctx:Ctx)->impl IntoView {view!{<super::provider_channels::Providers ctx=ctx/>}}
+
+#[component]
+pub fn Connections(ctx: Ctx, #[prop(optional)] provider_id:Option<i64>, #[prop(optional)] on_changed:Option<Callback<()>>) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Channel>::new());
     let err = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
@@ -207,6 +193,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     // 「加一个自己的名字」输入框里正打着的字
     // 模型那一段的结构变化（勾/取消/加/删/拉到清单）后 +1 —— 只有它会重排那一列。
     // **打字不重排**，否则正在输入的框会丢焦点。
+    let new_alias=RwSignal::new(String::new());
     let mver = RwSignal::new(0u32);
     // 哪一条的「详情」摊开了（键 = 客户端名字）
     let m_open = RwSignal::new(None::<String>);
@@ -225,6 +212,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let f_models = RwSignal::new(Vec::<ModelPair>::new());
     // 这条渠道的非流式响应要不要剥壳（cline.bot 那种 `{"data": {…}, "success": true}`）
     let f_unwrap = RwSignal::new(false);
+    let f_protocols = RwSignal::new(String::from(r#"{"native":["chat"],"allow_conversion":false}"#));
+    let protocol_error = RwSignal::new(String::new());
     // 这条渠道「同时最多几发」：0 = 不限。填了就在网关门口排队/换渠道，
     // 免得一次铺开几十发把上游那把 key 打成 429（上游多数是按凭据限并发的）。
     let f_cap = RwSignal::new(0u32);
@@ -248,7 +237,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             match api::channels().await {
                 Ok(v) => {
-                    rows.set(v);
+                    rows.set(v.into_iter().filter(|c|c.provider_id==provider_id).collect());
                     err.set(None);
                 }
                 Err(e) => {
@@ -270,6 +259,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_headers.set(Vec::new());
         f_models.set(Vec::new());
         f_unwrap.set(false);
+        f_protocols.set(String::from(r#"{"native":["chat"],"allow_conversion":false}"#));
+        protocol_error.set(String::new());
         f_cap.set(0);
         f_cap_text.set("0".to_string());
         reset_pull();
@@ -291,6 +282,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         f_headers.set(l.headers.clone());
         f_models.set(l.models.clone());
         f_unwrap.set(l.unwrap_envelope);
+        f_protocols.set(crate::admin_api::pretty(&l.protocols.unwrap_or_else(||serde_json::json!({"native":["chat"],"allow_conversion":false}))));
+        protocol_error.set(String::new());
         f_cap.set(l.max_concurrent);
         f_cap_text.set(l.max_concurrent.to_string());
         reset_pull();
@@ -348,11 +341,13 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let cap = parse_cap(&f_cap_text.get_untracked());
+        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) { Ok(v) => v, Err(e) => {protocol_error.set(e); tab.set(TAB_BASIC.to_string()); return;} };
+        protocol_error.set(String::new());
         // 编辑时留空 = 不改（传 None）；新建时空 = 这条渠道没密钥（也传 None，后端一样）
         let key_arg = if key.trim().is_empty() { None } else { Some(key) };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::save_channel(id, &name, &url, enabled, unwrap, cap, key_arg.as_deref(), &headers, &models)
+            match api::save_channel(id, &name, &url, enabled, unwrap, cap, key_arg.as_deref(), &headers, &models, &protocols)
                 .await
             {
                 Ok(new_id) => {
@@ -373,14 +368,15 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                             f_key.set(String::new());
                             f_key_note.set("留空 = 沿用已存的密钥；要清掉请点「清空密钥」。");
                             tab.set(TAB_MODELS.to_string());
-                            ctx.say(format!("渠道已新建{tail}{made_note} —— 接着点「获取上游模型」"));
+                            if provider_id.is_some(){if let Err(e)=crate::provider_api::assign(i,provider_id).await {ctx.say(format!("连接已建立但归属保存失败：{}；请在未分组连接中重试",e.message));reload();if let Some(cb)=on_changed{cb.run(());}return;}}
+                            ctx.say(format!("连接已新建{tail}{made_note} —— 接着点「获取上游模型」"));
                         }
                         None => {
                             form.set(Form::Closed);
-                            ctx.say(format!("渠道已保存{tail}{made_note}"));
+                            ctx.say(format!("连接已保存{tail}{made_note}"));
                         }
                     }
-                    reload();
+                    reload();if let Some(cb)=on_changed{cb.run(());}
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -399,15 +395,17 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         let enabled = f_enabled.get_untracked();
         let unwrap = f_unwrap.get_untracked();
         let cap = parse_cap(&f_cap_text.get_untracked());
+        let protocols = match crate::admin_api::protocols(&f_protocols.get_untracked()) { Ok(v) => v, Err(e) => {protocol_error.set(e); tab.set(TAB_BASIC.to_string()); return;} };
+        protocol_error.set(String::new());
         let headers = f_headers.get_untracked();
         let (models, _) = mappings_to_save(&f_models.get_untracked());
         wasm_bindgen_futures::spawn_local(async move {
             // 传空串 = 明确清掉密钥
-            match api::save_channel(Some(id), &name, &url, enabled, unwrap, cap, Some(""), &headers, &models).await {
+            match api::save_channel(Some(id), &name, &url, enabled, unwrap, cap, Some(""), &headers, &models, &protocols).await {
                 Ok(_) => {
                     f_key_note.set("已清空这条渠道的密钥。");
                     ctx.say("密钥已清空");
-                    reload();
+                    reload();if let Some(cb)=on_changed{cb.run(());}
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -422,7 +420,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
     let move_one = move |l: Channel, up: bool| {
         wasm_bindgen_futures::spawn_local(async move {
             match api::move_channel(l.id, up).await {
-                Ok(()) => reload(),
+                Ok(()) => {reload();if let Some(cb)=on_changed{cb.run(());}},
                 Err(e) => {
                     ctx.note_err(&e);
                     ctx.say(format!("挪不动：{}", e.message));
@@ -433,7 +431,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
 
     let remove = move |l: Channel| {
         let ok = web_sys::window()
-            .and_then(|w| w.confirm_with_message(&format!("确定删掉渠道「{}」？这条渠道的历史账会留着。", l.name)).ok())
+            .and_then(|w| w.confirm_with_message(&format!("确定删除连接「{}」？将删除其模型映射与连接配置，历史账本保留。", l.name)).ok())
             .unwrap_or(false);
         if !ok {
             return;
@@ -441,8 +439,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             match api::delete_channel(l.id).await {
                 Ok(()) => {
-                    ctx.say("渠道已删除");
-                    reload();
+                    ctx.say("连接已删除");
+                    reload();if let Some(cb)=on_changed{cb.run(());}
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -464,7 +462,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     } else {
                         format!("渠道「{name}」已停用 —— 不会再往这家上游发请求")
                     });
-                    reload();
+                    reload();if let Some(cb)=on_changed{cb.run(());}
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -590,7 +588,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         pulling.set(true);
         pull_msg.set(Some(("正在问上游要模型清单…".into(), true)));
         wasm_bindgen_futures::spawn_local(async move {
-            match api::pull_channel_models(id).await {
+            match api::refresh_channel_metadata(id).await {
                 Ok(r) => {
                     pulling.set(false);
                     let mut s=if r.ok {format!("已获取 {} 个模型",r.count)}else{"获取失败".into()};
@@ -661,7 +659,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         {
             let mut v = f_models.get_untracked();
             for n in &names {
-                removed += drop_mapping(&mut v, n);
+                removed += disable_mapping(&mut v, n);
             }
             f_models.set(v);
         }
@@ -669,18 +667,18 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
         if removed == 0 {
             ctx.say("现在显示的名字本来就没在用");
         } else {
-            ctx.say(format!("取消了 {removed} 条（这些名字这条渠道不再认）"));
+            ctx.say(format!("取消了 {removed} 条（这些模型在此连接停用，配置保留）"));
         }
     };
 
     view! {
         <div class="page">
             <PageHead
-                title="渠道"
-                desc="各个上游的地址、密钥，和它认哪些模型。"
+                title="连接设置"
+                desc="高级设置：连接 ID、地址、凭据与协议独立保留。名称仅用于识别此连接。"
             >
                 <>
-                    <button class="primary" on:click=open_new>"新建渠道"</button>
+                    <button class="primary" on:click=open_new>"新建连接"</button>
                     <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
                         {move || if busy.get() { "刷新中…" } else { "刷新" }}
                     </button>
@@ -796,7 +794,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         <button
                                             class="ghost"
                                             disabled=first_one
-                                            title="往上挪一位：请求会更早试它"
+                                            title="调整全局连接优先级：请求会更早尝试，可能跨服务商连接"
                                             on:click=move |_| move_one(l_up.clone(), true)
                                         >
                                             "↑"
@@ -804,7 +802,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                         <button
                                             class="ghost"
                                             disabled=last_one
-                                            title="往下挪一位：请求会更晚试它"
+                                            title="调整全局连接优先级：请求会更晚尝试，可能跨服务商连接"
                                             on:click=move |_| move_one(l_down.clone(), false)
                                         >
                                             "↓"
@@ -844,7 +842,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                     <div class="modal-backdrop">
                         <div class="modal channel-editor">
                             <div class="modal-head">
-                                <h2>{if editing { "编辑渠道" } else { "新建渠道" }}</h2>
+                                <h2>{if editing { "编辑连接" } else { "新建连接" }}</h2>
                                 <span class="muted small">
                                     {move || {
                                         let models = f_models.get().len();
@@ -890,8 +888,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                             "这条渠道认哪些模型、怎么去上游拉清单，都在上面「模型」那一栏里。"
                                         </p>
                                         <div class="form-grid">
-                                            <label>"名称"</label>
-                                            <input type="text" prop:value=f_name placeholder="如：硅基流动"
+                                            <label>"连接标识"</label>
+                                            <input type="text" prop:value=f_name placeholder="如：官方 Responses 连接"
                                                 on:input=move |ev| f_name.set(event_target_value(&ev)) />
                                             <label>"接口地址"</label>
                                             <input type="text" prop:value=f_url
@@ -908,6 +906,12 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 <input type="checkbox" prop:checked=f_enabled
                                                     on:change=move |ev| f_enabled.set(event_target_checked(&ev)) />
                                                 <span class="muted small">"停用后不会再往这家上游发请求"</span>
+                                            </div>
+                                            <label for="channel-protocols">"原生协议与转换（JSON）"</label>
+                                            <div>
+                                                <textarea id="channel-protocols" rows="5" prop:value=f_protocols aria-describedby="channel-protocol-help channel-protocol-error" aria-invalid=move||crate::admin_api::protocols(&f_protocols.get()).is_err().to_string() on:input=move |ev|f_protocols.set(event_target_value(&ev))/>
+                                                <p id="channel-protocol-help" class="muted small">"native 填上游真实支持的 chat / responses / messages 数组（至少一个）。allow_conversion 为 true 时，未原生支持的协议会尝试转换为数组首项；仅支持明确限定的文本 / 函数工具子集。native_input_audio 可显式启用原生 Chat 内联 WAV/MP3 输入，必须配置最大输入上下文；不支持跨协议音频转换或音频输出。更改协议会使已有绑定会话失效，客户端需新建会话。默认只声明 chat，禁止转换。"</p>
+                                                <p id="channel-protocol-error" role="alert">{move||protocol_error.get()}</p>
                                             </div>
                                             <label>"响应解包"</label>
                                             <div>
@@ -1028,6 +1032,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                     ().into_any()
                                 } else {
                                     view! {
+                                        <div class="provider-create"><div class="account-field"><label for="connection-new-alias">"添加对外模型名"</label><input id="connection-new-alias" prop:value=new_alias on:input=move|e|new_alias.set(event_target_value(&e)) placeholder="使用标准模型名，推理档位在参数中配置"/></div><button type="button" on:click=move|ev|{let n=new_alias.get_untracked().trim().to_string();if n.is_empty(){ctx.say("请输入模型名");return;}f_models.update(|rows|{add_mapping(rows,&n);});m_open.set(Some(n));new_alias.set(String::new());mver.update(|v|*v+=1);if channel_id.is_some()&&cat_at.get_untracked()==0&&!pulling.get_untracked(){pull(ev);}}>"加入配置"</button></div><p class="muted small">"加入后请保存。能力仅依据真实目录元数据或明确手工设置，不按模型名猜测；获取目录不会发推理请求。"</p>
                                         <div class="pull-bar">
                                             // 这是「模型」段的主操作，用默认的描边按钮（.ghost 是纯文字，
                                             // 用户实测反馈「看着不像能点的」）
@@ -1125,11 +1130,8 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                 // 这份清单只放**上游报回来的名字**（用户 2026-10-18：
                                                 // 上游没有的名字不许混进来 —— 虚拟组名 auto 这类会让人
                                                 // 以为上游真有这个模型）。自己认的名字不在这一列显示。
-                                                let names: Vec<String> =
-                                                    filter_catalog(&catalog, &filter, SHOW_LIMIT)
-                                                        .into_iter()
-                                                        .map(|m| m.id)
-                                                        .collect();
+                                                let mut names: Vec<String> = filter_catalog(&catalog,&filter,SHOW_LIMIT).into_iter().map(|m|m.id).collect();
+                                                for mapping in f_models.get(){if mapping.model.to_lowercase().contains(&filter.trim().to_lowercase())&&!names.contains(&mapping.model){names.push(mapping.model);}}
                                                 if names.is_empty() {
                                                     return view! {
                                                         <p class="muted small">
@@ -1179,6 +1181,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                         let is_open_body = move || {
                                                             m_open.get().as_deref() == Some(n_close_body.as_str())
                                                         };
+                                                        let n_for_reasoning = name.clone();
                                                         let n_on = name.clone();
                                                         view! {
                                                             <div
@@ -1189,7 +1192,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                     <div class="m-line">
                                                                         <label
                                                                             class="m-pick"
-                                                                            title="勾上 = 这条渠道认这个名字"
+                                                                            title="启用此连接的模型；取消仅停用并保留配置"
                                                                         >
                                                                         <input
                                                                             type="checkbox"
@@ -1215,7 +1218,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                                 w
                                                                                                     .confirm_with_message(
                                                                                                         &format!(
-                                                                                                            "「{n_del_ck}」这一条配过「能看图」或「要丢的字段」，取消勾选会一起删掉。继续？",
+                                                                                                            "「{n_del_ck}」这一条将停用；上游模型、能力与字段配置保留。继续？",
                                                                                                         ),
                                                                                                     )
                                                                                                     .ok()
@@ -1224,7 +1227,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                     if go {
                                                                                         f_models
                                                                                             .update(|v| {
-                                                                                                drop_mapping(v, &n_del_ck);
+                                                                                                disable_mapping(v, &n_del_ck);
                                                                                             });
                                                                                         if m_open.get_untracked().as_deref()
                                                                                             == Some(n_del_ck.as_str())
@@ -1364,6 +1367,7 @@ pub fn Channels(ctx: Ctx) -> impl IntoView {
                                                                                     "测一下能不能看图"
                                                                                 </button>
                                                                             </div>
+                                                                            <super::model_reasoning::ReasoningConfig ctx=ctx channel=channel_id model=n_for_reasoning.clone()/>
                                                                             <p class="muted small">
                                                                                 "「能看图」可来自上游图片输入声明、人工设置或视觉实测；点上面按钮可真发图验证，"
                                                                                 "答对后会自动勾上。带图的请求只会发给勾了的渠道 —— 一条都没勾就回 422 说清楚，"
@@ -1433,12 +1437,16 @@ mod tests {
     fn mapping(model: &str, upstream: Option<&str>) -> ModelPair {
         ModelPair {
             model: model.to_string(),
+            enabled:true,
+            reasoning:None,
             upstream: upstream.map(str::to_string),
             vision: false,
             drop_fields: String::new(),
         }
     }
 
+    #[test]
+    fn disable_and_reenable_preserve_mapping_configuration(){let mut rows=vec![mapping("m",Some("upstream"))];rows[0].vision=true;rows[0].drop_fields="field".into();assert_eq!(disable_mapping(&mut rows,"m"),1);assert!(!is_in_use(&rows,"m"));let saved=mappings_to_save(&rows).0;assert_eq!(saved.len(),1);assert!(!saved[0].enabled);assert!(saved[0].vision);assert_eq!(saved[0].upstream.as_deref(),Some("upstream"));assert_eq!(saved[0].drop_fields,"field");assert!(add_mapping(&mut rows,"m"));assert_eq!(rows.len(),1);assert!(rows[0].enabled);assert!(rows[0].vision);}
     #[test]
     fn filter_is_case_insensitive_and_limited() {
         let all = vec![up("deepseek-v4.1-flash"), up("BGE-M3"), up("gpt-oss")];
@@ -1523,6 +1531,8 @@ mod tests {
         let rows = vec![
             ModelPair {
                 model: "  auto  ".into(),
+                enabled:true,
+                reasoning:None,
                 upstream: Some("   ".into()),
                 vision: true,
                 drop_fields: "reasoning_effort".into(),

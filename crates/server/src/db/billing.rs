@@ -15,6 +15,15 @@ pub struct Price {
     pub max_input_tokens: i64,
     pub max_output_tokens: i64,
 }
+/// Immutable per-successful-request pricing, distinct from token pricing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RequestPrice {
+    pub id: i64,
+    pub channel_id: i64,
+    pub model: String,
+    pub micro_per_call: i64,
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct Budget {
     pub scope: String,
@@ -26,6 +35,10 @@ pub struct Budget {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Ledger {
+    pub billing_unit: String,
+    pub request_units: Option<i64>,
+    pub request_price_id: Option<i64>,
+    pub request_price_snapshot: Option<RequestPrice>,
     pub id: i64,
     pub attempt_id: String,
     pub user_id: i64,
@@ -296,7 +309,7 @@ pub fn reserve(
     c.commit()?;
     Ok(id)
 }
-const LEDGER_SELECT:&str="SELECT id,attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,debit_micro,observed_cost_micro,input_tokens,output_tokens,usage_certainty,status,overrun,created_ms,settled_ms,outcome,auth_snapshot,source_snapshot FROM billing_ledger";
+const LEDGER_SELECT:&str="SELECT id,attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,debit_micro,observed_cost_micro,input_tokens,output_tokens,usage_certainty,status,overrun,created_ms,settled_ms,outcome,auth_snapshot,source_snapshot,billing_unit,request_units,request_price_id,request_price_snapshot FROM billing_ledger";
 fn ledger_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Ledger> {
     let raw: Option<String> = r.get(8)?;
     let p = raw
@@ -305,7 +318,18 @@ fn ledger_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Ledger> {
         .map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
         })?;
+    let request_price_snapshot = r
+        .get::<_, Option<String>>(27)?
+        .map(|v| serde_json::from_str(&v))
+        .transpose()
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(27, rusqlite::types::Type::Text, Box::new(e))
+        })?;
     Ok(Ledger {
+        billing_unit: r.get(24)?,
+        request_units: r.get(25)?,
+        request_price_id: r.get(26)?,
+        request_price_snapshot,
         id: r.get(0)?,
         attempt_id: r.get(1)?,
         user_id: r.get(2)?,
@@ -344,10 +368,10 @@ pub fn settle(
     output: Option<i64>,
     status: &str,
 ) -> Result<()> {
-    finish(conn, id, input, output, status, false)
+    finish(conn, id, input, output, status, false, None, false)
 }
 pub fn release(conn: &Connection, id: i64, status: &str) -> Result<()> {
-    finish(conn, id, None, None, status, true)
+    finish(conn, id, None, None, status, true, Some(0), false)
 }
 fn finish(
     conn: &Connection,
@@ -356,8 +380,11 @@ fn finish(
     output: Option<i64>,
     status: &str,
     release: bool,
+    request_units: Option<i64>,
+    is_request: bool,
 ) -> Result<()> {
-    if input.is_some_and(|v| v < 0)
+    if request_units.is_some_and(|n| !(0..=1).contains(&n))
+        || input.is_some_and(|v| v < 0)
         || output.is_some_and(|v| v < 0)
         || status.is_empty()
         || status == "reserved"
@@ -370,13 +397,27 @@ fn finish(
         .query_row(&format!("{LEDGER_SELECT} WHERE id=?1"), [id], ledger_row)
         .optional()?
         .ok_or_else(|| bad("unknown reservation"))?;
+    if !release && (row.billing_unit == "request") != is_request {
+        return Err(bad("settlement billing unit mismatch"));
+    }
     if row.status != "reserved" {
         c.commit()?;
         return Ok(());
     }
-    let observed = match (&row.price_snapshot, input, output) {
-        (Some(p), Some(i), Some(o)) => Some(cost(p, i, o)?),
-        _ => None,
+    let observed = if row.billing_unit == "request" {
+        match (&row.request_price_snapshot, request_units) {
+            (Some(p), Some(n)) => Some(
+                p.micro_per_call
+                    .checked_mul(n)
+                    .ok_or_else(|| bad("request cost overflow"))?,
+            ),
+            _ => None,
+        }
+    } else {
+        match (&row.price_snapshot, input, output) {
+            (Some(p), Some(i), Some(o)) => Some(cost(p, i, o)?),
+            _ => None,
+        }
     };
     let debit = if release {
         0
@@ -386,11 +427,14 @@ fn finish(
             .min(row.reserved_micro)
     };
     // Even partial usage can prove that the reserved upper bound was exceeded.
-    let minimum_observed = row
-        .price_snapshot
-        .as_ref()
-        .map(|p| cost(p, input.unwrap_or(0), output.unwrap_or(0)))
-        .transpose()?;
+    let minimum_observed = if row.billing_unit == "request" {
+        observed
+    } else {
+        row.price_snapshot
+            .as_ref()
+            .map(|p| cost(p, input.unwrap_or(0), output.unwrap_or(0)))
+            .transpose()?
+    };
     let overrun = minimum_observed.is_some_and(|v| v > row.reserved_micro);
     let allocations = {
         let mut s =
@@ -413,7 +457,11 @@ fn finish(
             .ok_or_else(|| bad("billing spend overflow"))?;
         c.execute("UPDATE billing_budgets SET reserved_micro=?3,spent_micro=?4,frozen=MAX(frozen,?5) WHERE scope=?1 AND scope_id=?2",params![scope,scope_id,reserved,spent,overrun])?;
     }
-    let unpriced = row.price_snapshot.is_none() && !release;
+    let unpriced = (if row.billing_unit == "request" {
+        row.request_price_snapshot.is_none()
+    } else {
+        row.price_snapshot.is_none()
+    }) && !release;
     let certainty = if release {
         "not_sent"
     } else if unpriced {
@@ -425,7 +473,7 @@ fn finish(
     };
     let debit = if unpriced { None } else { Some(debit) };
     let terminal = if unpriced { "unpriced" } else { status };
-    c.execute("UPDATE billing_ledger SET debit_micro=?2,observed_cost_micro=?3,input_tokens=?4,output_tokens=?5,usage_certainty=?6,status=?7,overrun=?8,settled_ms=?9,outcome=?10 WHERE id=?1",params![id,debit,observed,input,output,certainty,terminal,overrun,now_ms(),status])?;
+    c.execute("UPDATE billing_ledger SET debit_micro=?2,observed_cost_micro=?3,input_tokens=?4,output_tokens=?5,usage_certainty=?6,status=?7,overrun=?8,settled_ms=?9,outcome=?10,request_units=?11 WHERE id=?1",params![id,debit,observed,input,output,certainty,terminal,overrun,now_ms(),status,if row.billing_unit=="request" {request_units}else{None}])?;
     c.commit()?;
     Ok(())
 }
@@ -441,7 +489,16 @@ pub fn recover(conn: &Connection) -> Result<usize> {
     };
     let n = ids.len();
     for id in ids {
-        settle(conn, id, None, None, "restart_unknown")?;
+        let unit: String = conn.query_row(
+            "SELECT billing_unit FROM billing_ledger WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        if unit == "request" {
+            settle_request(conn, id, None, "restart_unknown")?;
+        } else {
+            settle(conn, id, None, None, "restart_unknown")?;
+        }
     }
     Ok(n)
 }
@@ -541,4 +598,143 @@ pub fn reserve_unpriced(
     }
     c.commit()?;
     Ok(id)
+}
+
+fn request_price_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestPrice> {
+    Ok(RequestPrice {
+        id: r.get(0)?,
+        channel_id: r.get(1)?,
+        model: r.get(2)?,
+        micro_per_call: r.get(3)?,
+    })
+}
+pub fn request_price(
+    conn: &Connection,
+    model: &str,
+    channel_id: i64,
+) -> Result<Option<RequestPrice>> {
+    Ok(conn.query_row("SELECT id,channel_id,model,micro_per_call FROM billing_request_prices WHERE channel_id=?1 AND model=?2 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model)],request_price_row).optional()?)
+}
+pub fn list_request_prices(conn: &Connection) -> Result<Vec<RequestPrice>> {
+    let mut s=conn.prepare("SELECT id,channel_id,model,micro_per_call FROM billing_request_prices ORDER BY id DESC LIMIT 1000")?;
+    let rows = s
+        .query_map([], request_price_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+pub fn create_request_price(
+    conn: &Connection,
+    p: &RequestPrice,
+    actor: &str,
+) -> Result<RequestPrice> {
+    if p.channel_id <= 0 || p.model.trim().is_empty() || p.model.len() > 256 || p.micro_per_call < 0
+    {
+        return Err(bad("invalid request pricing"));
+    }
+    let c = tx(conn)?;
+    let model = tokengo_shared::normalize_model_name(&p.model);
+    c.execute("INSERT INTO billing_request_prices(channel_id,model,micro_per_call,created_ms) VALUES(?1,?2,?3,?4)",params![p.channel_id,model,p.micro_per_call,now_ms()])?;
+    let out = RequestPrice {
+        id: c.last_insert_rowid(),
+        channel_id: p.channel_id,
+        model,
+        micro_per_call: p.micro_per_call,
+    };
+    audit(
+        &c,
+        "request_price_created",
+        actor,
+        &out.id.to_string(),
+        &serde_json::to_string(&out).map_err(|_| bad("request price serialization"))?,
+    )?;
+    c.commit()?;
+    Ok(out)
+}
+/// One request-unit upper bound is held before every source attempt. All user,
+/// key and ancestor allocations are committed atomically, like token holds.
+pub fn reserve_request(
+    conn: &Connection,
+    user_id: i64,
+    key_id: i64,
+    request_id: i64,
+    attempt_id: &str,
+    p: &RequestPrice,
+) -> Result<i64> {
+    if user_id <= 0
+        || key_id <= 0
+        || p.channel_id <= 0
+        || p.micro_per_call < 0
+        || attempt_id.is_empty()
+        || attempt_id.len() > 256
+    {
+        return Err(bad("invalid request reservation"));
+    }
+    let c = tx(conn)?;
+    let existing:Option<(i64,i64,i64,i64,Option<i64>,String)>=c.query_row("SELECT id,user_id,key_id,request_id,request_price_id,billing_unit FROM billing_ledger WHERE attempt_id=?1",[attempt_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+    if let Some((id, u, k, r, price, unit)) = existing {
+        if (u, k, r, price, unit) != (user_id, key_id, request_id, Some(p.id), "request".into()) {
+            return Err(bad(
+                "attempt id conflicts with existing request reservation",
+            ));
+        }
+        c.commit()?;
+        return Ok(id);
+    }
+    let stored = c
+        .query_row(
+            "SELECT id,channel_id,model,micro_per_call FROM billing_request_prices WHERE id=?1",
+            [p.id],
+            request_price_row,
+        )
+        .optional()?
+        .ok_or_else(|| bad("unknown request pricing version"))?;
+    if stored != *p {
+        return Err(bad("request pricing snapshot mismatch"));
+    }
+    let allocations = allocation_scopes(&c, user_id, key_id)?;
+    for (scope, id) in &allocations {
+        c.execute(
+            "INSERT OR IGNORE INTO billing_budgets(scope,scope_id) VALUES(?1,?2)",
+            params![scope, id],
+        )?;
+        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope=?1 AND scope_id=?2",params![scope,id],budget_row)?;
+        if b.frozen {
+            return Err(bad("billing budget frozen"));
+        }
+        let reserved = b
+            .reserved_micro
+            .checked_add(p.micro_per_call)
+            .ok_or_else(|| bad("request budget reservation overflow"))?;
+        let total = b
+            .spent_micro
+            .checked_add(reserved)
+            .ok_or_else(|| bad("request budget total overflow"))?;
+        if b.limit_micro.is_some_and(|n| total > n) {
+            return Err(bad("billing budget exhausted"));
+        }
+        c.execute(
+            "UPDATE billing_budgets SET reserved_micro=?3 WHERE scope=?1 AND scope_id=?2",
+            params![scope, id, reserved],
+        )?;
+    }
+    let snapshot = serde_json::to_string(p).map_err(|_| bad("request price serialization"))?;
+    c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,billing_unit,request_price_id,request_price_snapshot) VALUES(?1,?2,?3,?4,?5,?6,0,0,?7,?8,'request',?9,?10)",params![attempt_id,user_id,key_id,request_id,p.channel_id,p.model,p.micro_per_call,now_ms(),p.id,snapshot])?;
+    let id = c.last_insert_rowid();
+    let auth = super::identity::context(&c, key_id)?.ok_or_else(|| bad("inactive gateway key"))?;
+    c.execute(
+        "UPDATE billing_ledger SET auth_snapshot=?2 WHERE id=?1",
+        params![
+            id,
+            serde_json::to_string(&auth).map_err(|_| bad("identity snapshot serialization"))?
+        ],
+    )?;
+    for (scope, scope_id) in allocations {
+        c.execute("INSERT INTO billing_allocations(reservation_id,scope,scope_id,reserved_micro) VALUES(?1,?2,?3,?4)",params![id,scope,scope_id,p.micro_per_call])?;
+    }
+    c.commit()?;
+    Ok(id)
+}
+/// Known completed response: units0/1; canceled/read failure: None, never fake0.
+pub fn settle_request(conn: &Connection, id: i64, units: Option<i64>, status: &str) -> Result<()> {
+    finish(conn, id, None, None, status, false, units, true)
 }

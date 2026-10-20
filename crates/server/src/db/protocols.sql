@@ -1,0 +1,11 @@
+ALTER TABLE channels ADD COLUMN binding_generation INTEGER NOT NULL DEFAULT 0;
+CREATE TRIGGER native_url AFTER UPDATE OF base_url ON channels WHEN OLD.base_url<>NEW.base_url BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.id; END;
+CREATE TRIGGER native_channel_secrets_insert AFTER INSERT ON channel_secrets BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.channel_id; END;
+CREATE TRIGGER native_channel_secrets_update AFTER UPDATE ON channel_secrets BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.channel_id; END;
+CREATE TRIGGER native_channel_secrets_delete AFTER DELETE ON channel_secrets BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=OLD.channel_id; END;
+CREATE TRIGGER native_channel_headers_insert AFTER INSERT ON channel_headers BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.channel_id; END;
+CREATE TRIGGER native_channel_headers_update AFTER UPDATE ON channel_headers BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.channel_id; END;
+CREATE TRIGGER native_channel_headers_delete AFTER DELETE ON channel_headers BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=OLD.channel_id; END;
+CREATE TRIGGER native_channel_models_insert AFTER INSERT ON channel_models BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.channel_id; END;
+CREATE TRIGGER native_channel_models_update AFTER UPDATE OF model_name,upstream_model,drop_fields ON channel_models WHEN OLD.model_name<>NEW.model_name OR OLD.upstream_model IS NOT NEW.upstream_model OR OLD.drop_fields<>NEW.drop_fields BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=NEW.channel_id; END;
+CREATE TRIGGER native_channel_models_delete AFTER DELETE ON channel_models BEGIN UPDATE channels SET binding_generation=binding_generation+1 WHERE id=OLD.channel_id; END;

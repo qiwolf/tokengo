@@ -31,6 +31,7 @@ impl std::fmt::Display for ChannelFault {
 #[derive(Clone)]
 pub struct Upstream {
     client: reqwest::Client,
+    subscription_client:reqwest::Client,
 }
 
 impl Upstream {
@@ -42,7 +43,12 @@ impl Upstream {
             // 不设全局超时：每次尝试的超时由面板参数决定，逐请求传入
             .pool_idle_timeout(Duration::from_secs(90))
             .build()?;
-        Ok(Self { client })
+        let subscription_client=crate::openai_transport::configure(reqwest::Client::builder()
+            .user_agent(concat!("tokengo/",env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none()).tcp_nodelay(true)
+            .connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(90)))
+            .map_err(anyhow::Error::msg)?.build().map_err(|_|anyhow::anyhow!("OpenAI inference client configuration failed"))?;
+        Ok(Self { client,subscription_client })
     }
 
     /// 往一条渠道上发一次请求。
@@ -66,9 +72,18 @@ impl Upstream {
         now_ms: i64,
         session: Option<&str>,
     ) -> Result<reqwest::Response, ChannelFault> {
+        self.call_via(channel,secret,path,body,stream,timeout,uuid,now_ms,session,false).await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn call_via(&self,channel:&Channel,secret:Option<&str>,path:&str,body:Bytes,stream:bool,timeout:Duration,uuid:&str,now_ms:i64,session:Option<&str>,subscription:bool)->Result<reqwest::Response,ChannelFault> {
+        if subscription {
+            let allowed=channel.base_url.trim_end_matches('/')==crate::oauth::API_BASE&&path=="responses";
+            #[cfg(test)]let allowed=allowed||reqwest::Url::parse(&channel.base_url).is_ok_and(|url|url.host_str()==Some("127.0.0.1"));
+            if !allowed {return Err(ChannelFault{message:"Invalid OpenAI subscription destination".into()});}
+        }
         let url = join_url(&channel.base_url, path);
-        let mut rb = self
-            .client
+        let client=if subscription {&self.subscription_client}else{&self.client};
+        let mut rb = client
             .post(&url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::ACCEPT, "application/json")
@@ -76,7 +91,18 @@ impl Upstream {
         if stream {
             rb = rb.header(reqwest::header::ACCEPT, "text/event-stream");
         }
-        for (name, value) in build_headers(channel, secret, uuid, now_ms, session) {
+        let mut headers=build_headers(channel,secret,uuid,now_ms,session);
+        if path.trim_start_matches('/')=="messages" {
+            let explicit_auth=channel.headers.iter().any(|(n,_)|n.eq_ignore_ascii_case("authorization"));
+            if !explicit_auth {
+                headers.retain(|(n,_)|!n.eq_ignore_ascii_case("authorization"));
+                if !headers.iter().any(|(n,_)|n.eq_ignore_ascii_case("x-api-key")) {
+                    if let Some(secret)=secret.filter(|s|!s.trim().is_empty()){headers.push(("x-api-key".into(),secret.trim().into()));}
+                }
+            }
+            if !headers.iter().any(|(n,_)|n.eq_ignore_ascii_case("anthropic-version")){headers.push(("anthropic-version".into(),"2023-06-01".into()));}
+        }
+        for (name, value) in headers {
             let mut header = reqwest::header::HeaderValue::from_str(&value)
                 .map_err(|_| ChannelFault { message: "invalid configured header".into() })?;
             header.set_sensitive(true);
@@ -203,6 +229,7 @@ const MAX_MODELS_BODY: usize = 2 * 1024 * 1024;
 /// 已经在视觉能力上栽过一次（deepseek 的 flash 能读图，有的 vision 名字反倒不能）。
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct UpstreamModel {
+    pub reasoning: crate::reasoning_capabilities::ReasoningCapabilities,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// 上游认的名字（客户端要发的就是它）。
@@ -479,6 +506,7 @@ fn to_upstream_model(entry: &serde_json::Value) -> Option<UpstreamModel> {
     }
     m.kind = declared_kind(o);
     m.vision = vision_of(o);
+    m.reasoning = crate::reasoning_capabilities::from_metadata(entry);
     Some(m)
 }
 
@@ -603,7 +631,7 @@ pub fn build_headers(
         }
         out.push((name.to_string(), value));
     }
-    if !out.iter().any(|(n, _)| n.eq_ignore_ascii_case("authorization")) {
+    if !out.iter().any(|(n, _)| n.eq_ignore_ascii_case("authorization") || n.eq_ignore_ascii_case("x-api-key")) {
         if let Some(s) = secret.filter(|s| !s.trim().is_empty()) {
             out.push(("authorization".to_string(), format!("Bearer {}", s.trim())));
         }
@@ -616,12 +644,57 @@ pub fn new_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Add LiteLLM/Jina response conveniences without discarding raw provider usage.
+/// Missing/null documents are filled separately by the gateway's existing contract.
+pub(crate) fn normalize_rerank_response(value: &mut serde_json::Value) -> Result<(), String> {
+    use serde_json::{Map, Value};
+    let usage = value.get("usage").filter(|v| !v.is_null()).cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    let usage = usage.as_object().ok_or("invalid upstream rerank usage object")?;
+    // A malformed meter must never become a reported zero-token charge.
+    for field in ["input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens", "search_units"] {
+        if usage.get(field).is_some_and(|v| !v.is_null() && v.as_i64().is_none_or(|n| n < 0)) {
+            return Err(format!("invalid upstream rerank usage.{field}"));
+        }
+    }
+    let object = value.as_object_mut().ok_or("invalid upstream rerank response object")?;
+    if object.get("id").is_none_or(|v| v.is_null() || v.as_str().is_some_and(str::is_empty)) {
+        object.insert("id".into(), Value::String(uuid::Uuid::new_v4().to_string()));
+    }
+    if let Some(results) = object.get_mut("results").and_then(Value::as_array_mut) {
+        for result in results {
+            if let Some(text) = result.get("document").and_then(Value::as_str).map(str::to_owned) {
+                result["document"] = serde_json::json!({"text": text});
+            }
+        }
+    }
+    let meta = object.entry("meta").or_insert_with(|| Value::Object(Map::new()));
+    if meta.is_null() { *meta = Value::Object(Map::new()); }
+    let meta = meta.as_object_mut().ok_or("invalid upstream rerank meta object")?;
+    // These are the installed Jina adapter's TypedDict fields. Preserve existing
+    // provider meta extensions, and keep the original usage object untouched.
+    for (group, fields) in [
+        ("billed_units", ["search_units", "total_tokens"]),
+        ("tokens", ["input_tokens", "output_tokens"]),
+    ] {
+        let target = meta.entry(group).or_insert_with(|| Value::Object(Map::new()));
+        if target.is_null() { *target = Value::Object(Map::new()); }
+        let target = target.as_object_mut().ok_or("invalid upstream rerank meta group")?;
+        for field in fields {
+            if let Some(v) = usage.get(field) { target.insert(field.into(), v.clone()); }
+        }
+    }
+    Ok(())
+}
+
 /// Validate the endpoint structure without rewriting provider-specific fields.
 pub(crate) fn validate_response(v: &serde_json::Value, path: &str) -> Result<(), String> {
     if tokengo_shared::empty_chat_reply(v) {
         return Err("上游回了 200 但一句话都没说（空回复）".into());
     }
     let valid = match path.trim_start_matches('/') {
+        "responses"=>return crate::protocol::validate_response(crate::protocol::Protocol::Responses,v),
+        "messages"=>return crate::protocol::validate_response(crate::protocol::Protocol::Messages,v),
         "chat/completions" => v.get("choices").and_then(|x| x.as_array())
             .is_some_and(|c| !c.is_empty() && !tokengo_shared::empty_chat_reply(v)),
         "embeddings" => v.get("data").and_then(|x| x.as_array())

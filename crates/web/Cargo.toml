@@ -29,6 +29,7 @@ gloo-net = { version = "0.6", default-features = false, features = ["http", "jso
 console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = [
     "Window",
+    "RequestCredentials",
     "Document",
     "Element",
     "HtmlElement",

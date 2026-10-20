@@ -1,6 +1,11 @@
 //! tokengo 服务端库。二进制入口只有 `main.rs`（起监听），实体都在这里，
 //! 方便集成测试直接构建整套 app。
 
+pub mod oauth;
+pub mod reasoning_capabilities;
+pub mod search_tools;
+pub mod source_rates;
+pub mod openai_transport;
 pub mod config;
 pub mod capability_detector;
 pub mod model_registry;
@@ -9,6 +14,10 @@ pub mod db;
 pub mod billing_writer;
 pub mod admission;
 pub mod gateway;
+pub mod protocol;
+pub mod protocol_config;
+pub mod protocol_sessions;
+pub mod litellm_import;
 pub mod gateway_key;
 pub mod janitor;
 pub mod logging;
@@ -39,9 +48,14 @@ pub fn app(state: SharedState) -> Router {
         .nest("/v1", routes::proxy::router())
         // 面板管理面
         .nest("/api", routes::admin::router())
+        .merge(routes::providers::router())
+        .merge(routes::accounts::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
+        .merge(routes::oauth::router())
+        .merge(search_tools::router())
         .merge(routes::billing::router())
+        .merge(litellm_import::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())
         // 面板资源压缩：wasm 841 KB → gzip 后约 330 KB（首次打开少下 500 KB）。

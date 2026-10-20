@@ -41,7 +41,10 @@ bytes.workspace = true
 futures-util.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 hex = "0.4.3"
+base64 = "0.22.1"
 uuid = { version = "1.28.0", features = ["v4"] }
 aes-gcm = "0.10"
 rand = "0.8"
 argon2 = "0.5"
+
+jsonwebtoken = "9.3"

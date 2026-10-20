@@ -1,7 +1,7 @@
 //! 面板登录凭据。
 //!
 //! 口令用 argon2 慢哈希存库（明文绝不落库）；登录成功后发一个随机 token 存
-//! `panel_sessions`，面板请求带这个 token。token 有有效期，过期即失效。
+//! `panel_sessions`中仅存带域前缀的摘要，运维请求仍带原始token。新浏览器会话见accounts。
 
 use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
@@ -36,11 +36,18 @@ pub fn set_panel_password(conn: &Connection, password: &str) -> Result<()> {
     if password.chars().count() < 4 {
         return Err(DbError::Other("口令太短（至少 4 位）".into()));
     }
+    if password.len()>256 { return Err(DbError::Other("口令过长".into())); }
     let h = hash_password(password)?;
-    super::settings::set(conn, super::settings::PANEL_PASSWORD_HASH, &h)?;
-    // 改口令 = 踢掉所有已登录的会话
-    revoke_all(conn)?;
-    Ok(())
+    set_panel_hash(conn, &h)
+}
+/// Shared atomic root credential update, including legacy compatibility.
+pub fn set_panel_hash(conn: &Connection, hash: &str) -> Result<()> {
+    super::accounts::atomic(conn, || {
+        super::settings::set(conn, super::settings::PANEL_PASSWORD_HASH, hash)?;
+        super::accounts::sync_root_hash(conn, hash)?;
+        revoke_all(conn)?;
+        Ok(())
+    })
 }
 
 /// 校验面板口令。没设过口令时返回 false（拒绝登录，不是放行）。
@@ -57,6 +64,7 @@ pub fn has_panel_password(conn: &Connection) -> Result<bool> {
 
 /// 登录成功 → 发一个 token。
 pub fn create_session(conn: &Connection, client_ip: Option<&str>) -> Result<String> {
+    if !super::accounts::legacy_root_valid(conn)? { return Err(DbError::Other("管理员账号不可用".into())); }
     let token = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -66,20 +74,20 @@ pub fn create_session(conn: &Connection, client_ip: Option<&str>) -> Result<Stri
     conn.execute(
         "INSERT INTO panel_sessions (token, created_at_ms, expires_at_ms, client_ip)
          VALUES (?1, ?2, ?3, ?4)",
-        params![token, now, now + SESSION_TTL_MS, client_ip],
+        params![super::accounts::legacy_digest(&token), now, now + SESSION_TTL_MS, client_ip],
     )?;
     Ok(token)
 }
 
 /// 校验 token 有效且未过期。
 pub fn check_session(conn: &Connection, token: &str) -> Result<bool> {
-    if token.trim().is_empty() {
+    if token.len()!=64 || !token.bytes().all(|b|b.is_ascii_hexdigit()) || !super::accounts::legacy_root_valid(conn)? {
         return Ok(false);
     }
     let exp: Option<i64> = conn
         .query_row(
             "SELECT expires_at_ms FROM panel_sessions WHERE token = ?1",
-            [token],
+            [super::accounts::legacy_digest(token)],
             |r| r.get(0),
         )
         .optional()?;
@@ -87,7 +95,7 @@ pub fn check_session(conn: &Connection, token: &str) -> Result<bool> {
 }
 
 pub fn revoke_session(conn: &Connection, token: &str) -> Result<()> {
-    conn.execute("DELETE FROM panel_sessions WHERE token = ?1", [token])?;
+    conn.execute("DELETE FROM panel_sessions WHERE token = ?1", [super::accounts::legacy_digest(token)])?;
     Ok(())
 }
 
@@ -216,7 +224,7 @@ mod tests {
         // 手动把它改成已过期
         conn.execute(
             "UPDATE panel_sessions SET expires_at_ms = ?1 WHERE token = ?2",
-            params![now_ms() - 1, t],
+            params![now_ms() - 1, super::super::accounts::legacy_digest(&t)],
         )
         .unwrap();
         assert!(!check_session(&conn, &t).unwrap());

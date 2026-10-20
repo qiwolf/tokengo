@@ -3,6 +3,8 @@
 //! SQLite（rusqlite，bundled 编译，不依赖系统库），与现网 FreeLLMAPI 同一种库，
 //! 将来搬数据和对拍都方便。
 
+pub mod provider_channels;
+pub mod accounts;
 pub mod identity;
 pub mod billing;
 pub mod faults;
@@ -156,6 +158,12 @@ mod tests {
             "model_cooldowns",
             "model_invocations",
             "panel_sessions",
+            "panel_accounts",
+            "provider_channels",
+            "provider_connections",
+            "channel_reasoning_catalog",
+            "channel_reasoning_settings",
+            "account_sessions",
             "channel_context_overrides",
             "registry_associations",
             "registry_context",
@@ -169,11 +177,18 @@ mod tests {
             "users",
             "audit_events",
             "billing_prices",
+            "billing_request_prices",
             "billing_budgets",
             "billing_ledger",
             "billing_audit",
             "billing_allocations",
             "quota_events",
+            "protocol_sessions",
+            "protocol_artifacts",
+            "oauth_hosts",
+            "oauth_accounts",
+            "oauth_pending",
+            "oauth_channel_bindings",
         ];
         let actual: std::collections::BTreeSet<_> = got.iter().map(String::as_str).collect();
         let expected: std::collections::BTreeSet<_> = expected.into_iter().collect();

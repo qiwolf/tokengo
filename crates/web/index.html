@@ -3,7 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>tokengo 面板</title>
+    <title>Token-Go 控制台</title>
+    <meta name="description" content="Token-Go 私有网关控制台，管理账号、模型来源、密钥与用量。" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link id="console-canonical" rel="canonical" href="/ui/" />
+    <meta id="console-og-url" property="og:url" content="/ui/" />
     <!--
       主题要在 WASM 起来之前先定好，否则每次刷新都会闪一下深色。
       这段读的键和 Rust 侧（lib.rs 的 THEME_KEY）必须是同一个：tokengo.theme。
@@ -11,6 +15,9 @@
     -->
     <script>
       (function () {
+        var u = window.location.origin + "/ui/";
+        document.getElementById("console-canonical").setAttribute("href", u);
+        document.getElementById("console-og-url").setAttribute("content", u);
         var t = null;
         try { t = localStorage.getItem("tokengo.theme"); } catch (e) {}
         if (t !== "light" && t !== "dark") {
