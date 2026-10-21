@@ -4,6 +4,12 @@
 
 ## 当前代码、部署与发布分界
 
+本次分发 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 包含[通用 HTTP 透传](passthrough.md)、schema39、独立路由授权/静态凭据/按次账本及手动诊断，并提供可选MinerU同步客户端。完整实现合同见[开发文档](passthrough-development.md)，确切源码、CI和分发产物见该Release。
+
+本地已有全workspace995通过、0失败、2个既有忽略；随后补充HEAD、无Content-Length上传越界及表单状态码回归，最新TCP文件9/9、Web专项4/4通过，WASM与桌面/390px操作验证通过。一次性本地网关访问真实Face合成图与CLIP文本，两者均与直连200及正文逐字节一致。新版本必须先完成目标237合成真实调用再公开发布，最终执行证据由该Release附注说明；这不代表MT Photos调用方切流、真人识别精度或长期GPU稳定性验收。
+
+以下为上一正式分发的独立历史证据，不作为本次新增功能的验证：
+
 正式分发 **[v0.34.0-qiwolf.5 · 智能体运维令牌](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.5)** 的源码为 `b31cb4173ff6c4f169045ffc4c57630f43981362`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39525728580)通过（970通过、0失败、2忽略）；[Linux AMD64 打包与发布流程](https://github.com/qiwolf/tokengo/actions/runs/39525744869)通过。9个公开附件已重新下载并校验；原生包实际运行、令牌签发/身份/90项能力/撤销后401，以及GHCR按摘要匿名拉取、隔离容器初始化/重启/同卷重建均通过。下载后本机运行使用 Linux AMD64 仿真，不宣称 ARM64 原生发行或性能验收。
 
 本版新增独立[运维令牌](operations-tokens.md)：单档站点运维权限、默认90天、最多20把有效令牌、独立撤销与审计、明确的方法/路径白名单和诊断脱敏。运维令牌不能代替推理Key、读取现有凭据明文、管理root身份或继续签发令牌。迁移新增schema38；root正常修改登录名/密码撤销其浏览器会话，但不撤销独立运维令牌，安全重置才同时撤销管理会话和全部运维令牌。专项回归覆盖撤销竞态、审计失败回滚与上游回显敏感信息。

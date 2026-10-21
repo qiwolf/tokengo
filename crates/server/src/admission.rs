@@ -93,6 +93,21 @@ pub fn acquire(
     input_tokens: u64,
     output_tokens: u64,
 ) -> Result<AdmissionPermit, ApiError> {
+    acquire_inner(state, auth, input_tokens, output_tokens, false)
+}
+
+/// Opaque HTTP has no token accounting. Never let it bypass an active TPM cap.
+pub fn acquire_request_only(state: SharedState, auth: &AuthContext) -> Result<AdmissionPermit, ApiError> {
+    acquire_inner(state, auth, 0, 0, true)
+}
+
+fn acquire_inner(
+    state: SharedState,
+    auth: &AuthContext,
+    input_tokens: u64,
+    output_tokens: u64,
+    request_only: bool,
+) -> Result<AdmissionPermit, ApiError> {
     let tokens = input_tokens
         .checked_add(output_tokens)
         .and_then(|tokens| i64::try_from(tokens).ok())
@@ -158,6 +173,9 @@ pub fn acquire(
             .unwrap_or_else(|p| p.into_inner());
         // Check every scope before mutating either the DB or in-flight counts.
         for (scope, limits) in &scopes {
+            if request_only && limits.tpm.is_some() {
+                return Err(ApiError::new(StatusCode::FORBIDDEN, "opaque_tpm_unsupported", "Pass-through requires a key and owner without token-per-minute limits"));
+            }
             let concurrent = counts.get(scope).copied().unwrap_or(0);
             if limits
                 .max_concurrent

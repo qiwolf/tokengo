@@ -9,6 +9,7 @@
 //! 这一层了（一个模型名 = 渠道里勾了它的那些渠道），面板只剩「模型」一页看它。
 
 pub mod channels;
+pub mod passthrough;
 pub mod custom_probes;
 pub mod provider_channels;
 pub mod provider_keys;

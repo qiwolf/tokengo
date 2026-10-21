@@ -49,6 +49,11 @@ def main():
         shutil.copytree(ROOT / 'deploy', tree / 'deploy', ignore=shutil.ignore_patterns('__pycache__'))
         for document in ['deployment.md', 'operations-tokens.md', 'account-login.md']:
             shutil.copy2(ROOT / 'docs' / document, tree / document)
+        # Ship the complete matching development/user docs and an optional
+        # standard-library client. The Rust gateway has no Python dependency.
+        shutil.copytree(ROOT / 'docs', tree / 'docs')
+        (tree / 'tools').mkdir()
+        shutil.copy2(ROOT / 'scripts' / 'mineru-gateway-client.py', tree / 'tools' / 'mineru-gateway-client.py')
         shutil.copy2(ROOT / 'LICENSE', tree / 'LICENSE')
         shutil.copy2(ROOT / 'NOTICE', tree / 'NOTICE')
         manifest = {'commit': commit, 'target': 'x86_64-unknown-linux-gnu', 'rust': '1.98.0',

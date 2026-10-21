@@ -2,13 +2,15 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-本次分发版本：[**v0.34.0-qiwolf.5 运维令牌**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.5)。部署者可向可信智能体签发独立站点运维令牌，支持到期、撤销、安全重置及独立审计；不必交出 root 密码或浏览器会话。构建提交、CI 状态、下载附件和镜像摘要以 Release 实际内容为准，Cargo 仍为上游 0.34.0。详见[版本说明](docs/releases/v0.34.0-qiwolf.5.md)。
+本次分发版本：[**v0.34.0-qiwolf.6 通用 HTTP 透传与 MinerU 同步接入**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)。以独立 VKey、静态后端凭据和按次账本，将人脸、CLIP与同步文档解析接入统一入口；构建提交、CI、附件及镜像digest以Release实际记录为准。Cargo仍为上游0.34.0。详见[版本说明](docs/releases/v0.34.0-qiwolf.6.md)和[完整开发文档](docs/passthrough-development.md)。
 
 上游 Key 管理使用独立弹窗，“编辑 Key”与“选择模型”分开。已有 API Key 可由管理员显式查看或复制，编辑留空保留原值。点击上游模型输入框即读取当前 Key 的目录，搜索、多选后生成上游名称与本地映射对照，也可手工输入；本地映射留空沿用上游名。既有映射保持原名，详见[操作说明](docs/provider-key-pools.md)。
 
 本 fork 基于上游 v0.34.0，使用 Rust / Axum / SQLite 与 Leptos / WebAssembly 构建个人或小团队网关。已实现多用户、多 VKey、预算与持久账本、有序 fallback、三协议原生入口，以及账号密码登录。统一用户、自助 Key 和点选权限的第一阶段已实现，最终界面、CI和部署验收状态单列。最新分支增加在线单地址与本地多地址渠道、多上游Key池、用户私有虚拟模型与顺序/时段策略，以及非破坏模型开关和原生推理档位元数据管理。
 
 本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](docs/acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准；fork 分发标签使用 `v0.34.0-qiwolf.N`，可下载版本以 GitHub Releases 为准。更新内容见 [CHANGELOG](CHANGELOG.md)。
+
+本版新增[通用 HTTP 透传](docs/passthrough.md)：使用独立 VKey 路由授权，将人脸、CLIP 等原生 HTTP 接口接入同一网关；请求正文不解析，凭据由服务端注入，沿用预算及按次账本。部署和调用方切流按对应版本验收记录核对，不从保存配置推定业务可用。
 Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
 
 ## 中文使用指南

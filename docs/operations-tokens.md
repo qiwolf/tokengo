@@ -30,6 +30,8 @@ root 身份安全、面板会话、令牌管理、OAuth 授权与绑定、历史
 
 ## API 合同
 
+未发布的[通用 HTTP 透传](passthrough.md)管理及诊断接口 `/api/passthrough-routes*` 仅允许 root，未加入运维令牌动作清单；不能用普通渠道或价格接口修改其内部来源。运维令牌也不能作为透传业务 VKey。
+
 下列令牌管理接口仅允许 root 浏览器会话，同源写操作需要 `X-Tokengo-Panel: 1`。旧兼容 Bearer、管理员 VKey 和运维令牌均不能管理运维令牌。
 
 | 方法 | 路径 | 行为 |

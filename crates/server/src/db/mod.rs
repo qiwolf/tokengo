@@ -3,6 +3,7 @@
 //! SQLite（rusqlite，bundled 编译，不依赖系统库），与现网 FreeLLMAPI 同一种库，
 //! 将来搬数据和对拍都方便。
 
+pub mod passthrough;
 pub mod provider_channels;
 pub mod provider_pool;
 pub mod accounts;
@@ -146,6 +147,9 @@ mod tests {
         let conn = open_in_memory().unwrap();
         let got = table_names(&conn);
         let expected = [
+            "passthrough_routes",
+            "passthrough_headers",
+            "passthrough_acl",
             "attempts",
             "gateway_keys",
             "channel_catalog",

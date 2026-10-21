@@ -29,12 +29,19 @@ pub fn install(c: &Connection) -> db::Result<()> {
             let deny = matches!(
                 table.as_str(),
                 "operations_tokens"
+                    | "passthrough_routes"
+                    | "passthrough_headers"
+                    | "passthrough_acl"
                     | "operations_instance"
                     | "schema_migrations"
                     | "panel_sessions"
             );
             let extra = if deny {
                 "SELECT RAISE(ABORT,'operations_action_forbidden');".to_string()
+            } else if table == "channels" {
+                format!(
+                    "SELECT CASE WHEN {row}.transport_kind='passthrough' THEN RAISE(ABORT,'operations_action_forbidden') END;"
+                )
             } else if table == "panel_accounts" {
                 format!(
                     "SELECT CASE WHEN {row}.role='root' THEN RAISE(ABORT,'operations_action_forbidden') END;"

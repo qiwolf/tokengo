@@ -111,6 +111,7 @@ pub fn list_prices(conn: &Connection) -> Result<Vec<Price>> {
     Ok(rows)
 }
 pub fn create_price(conn: &Connection, p: &Price, actor: &str) -> Result<Price> {
+    super::channels::require_llm_transport(conn,tokengo_shared::ChannelId(p.channel_id))?;
     if p.channel_id <= 0
         || p.model.trim().is_empty()
         || p.model.len() > 256
@@ -670,6 +671,7 @@ pub fn create_request_price(
     p: &RequestPrice,
     actor: &str,
 ) -> Result<RequestPrice> {
+    super::channels::require_llm_transport(conn,tokengo_shared::ChannelId(p.channel_id))?;
     if p.channel_id <= 0 || p.model.trim().is_empty() || p.model.len() > 256 || p.micro_per_call < 0
     {
         return Err(bad("invalid request pricing"));

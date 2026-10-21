@@ -44,6 +44,8 @@ jobs:
           key: cargo-${{ runner.os }}-native-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
       - name: Run workspace tests
         run: cargo +"$RUST_TOOLCHAIN" test --locked --workspace
+      - name: Verify optional MinerU client contracts
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
   wasm-check:
     name: Web WASM check (Rust 1.98.0)

@@ -2,6 +2,7 @@
 //! 方便集成测试直接构建整套 app。
 
 pub mod oauth;
+pub mod passthrough;
 pub mod reasoning_capabilities;
 pub mod search_tools;
 pub mod source_rates;
@@ -51,6 +52,8 @@ pub fn app(state: SharedState) -> Router {
         // 面板管理面
         .nest("/api", routes::admin::router())
         .merge(routes::providers::router())
+        .merge(routes::passthrough_admin::router())
+        .merge(routes::passthrough_probe::router())
         .merge(custom_probes::router())
         .merge(routes::accounts::router())
         .merge(routes::operations_tokens::router())
@@ -77,5 +80,6 @@ pub fn app(state: SharedState) -> Router {
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(routes::operations::transport_gate))
+        .layer(axum::middleware::from_fn_with_state(state.clone(),passthrough::dispatch))
         .with_state(state)
 }

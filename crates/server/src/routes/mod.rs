@@ -3,6 +3,8 @@
 //! **对外只做四个端点。** 3 天 10 万次请求里：向量 86%、对话 14%，
 //! 其余 41 个端点一次都没被调用过，一律不做。
 
+pub mod passthrough_admin;
+pub mod passthrough_probe;
 pub mod operations;
 pub mod operations_tokens;
 pub mod providers;

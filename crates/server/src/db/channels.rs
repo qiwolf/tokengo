@@ -142,7 +142,7 @@ fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
 ///
 /// 面板「渠道」页与路由都用这一份顺序：页面上从上到下就是「先试哪条」。
 pub fn list(conn: &Connection) -> Result<Vec<ChannelRow>> {
-    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} ORDER BY l.priority, l.id"))?;
+    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} WHERE l.transport_kind='llm' ORDER BY l.priority, l.id"))?;
     let mut rows: Vec<ChannelRow> = stmt.query_map([], row_to_channel)?.collect::<rusqlite::Result<_>>()?;
     for l in &mut rows {
         load_children(conn, l)?;
@@ -151,7 +151,7 @@ pub fn list(conn: &Connection) -> Result<Vec<ChannelRow>> {
 }
 
 pub fn get(conn: &Connection, id: ChannelId) -> Result<Option<ChannelRow>> {
-    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} WHERE l.id = ?1"))?;
+    let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} WHERE l.id = ?1 AND l.transport_kind='llm'"))?;
     let mut channel: Option<ChannelRow> = stmt.query_row([id.0], row_to_channel).optional()?;
     if let Some(l) = &mut channel {
         load_children(conn, l)?;
@@ -199,7 +199,7 @@ pub fn update(
     let n = conn.execute(
         "UPDATE channels SET name = ?2, base_url = ?3, enabled = ?4, unwrap_envelope = ?5,
                 max_concurrent = ?6, updated_at = datetime('now')
-          WHERE id = ?1",
+          WHERE id = ?1 AND transport_kind='llm'",
         params![
             id.0,
             name.trim(),
@@ -217,7 +217,7 @@ pub fn update(
 
 pub fn delete(conn: &Connection, id: ChannelId) -> Result<()> {
     // 子行（请求头/模型/密钥/模型组引用）靠外键 ON DELETE CASCADE 一起清掉
-    let n = conn.execute("DELETE FROM channels WHERE id = ?1", [id.0])?;
+    let n = conn.execute("DELETE FROM channels WHERE id = ?1 AND transport_kind='llm'", [id.0])?;
     if n == 0 {
         return Err(DbError::Other(format!("渠道 {id} 不存在")));
     }
@@ -227,7 +227,7 @@ pub fn delete(conn: &Connection, id: ChannelId) -> Result<()> {
 /// 一键启用/停用这条渠道（面板状态开关点的就是它）。只改一列，不碰密钥/请求头/模型名。
 pub fn set_enabled(conn: &Connection, id: ChannelId, enabled: bool) -> Result<()> {
     let n = conn.execute(
-        "UPDATE channels SET enabled = ?2, updated_at = datetime('now') WHERE id = ?1",
+        "UPDATE channels SET enabled = ?2, updated_at = datetime('now') WHERE id = ?1 AND transport_kind='llm'",
         params![id.0, enabled as i64],
     )?;
     if n == 0 {
@@ -245,7 +245,7 @@ pub fn set_enabled(conn: &Connection, id: ChannelId, enabled: bool) -> Result<()
 /// 到顶/到底就原样返回（不报错）：按钮点多了不该红一片。
 pub fn reorder(conn: &Connection, id: ChannelId, up: bool) -> Result<()> {
     let ids: Vec<i64> = {
-        let mut stmt = conn.prepare("SELECT id FROM channels ORDER BY priority, id")?;
+        let mut stmt = conn.prepare("SELECT id FROM channels WHERE transport_kind='llm' ORDER BY priority, id")?;
         let v = stmt
             .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<i64>>>()?;
@@ -270,7 +270,7 @@ pub fn reorder(conn: &Connection, id: ChannelId, up: bool) -> Result<()> {
     super::in_tx(conn, |c| {
         for (ord, cid) in ids.iter().enumerate() {
             c.execute(
-                "UPDATE channels SET priority = ?2 WHERE id = ?1",
+                "UPDATE channels SET priority = ?2 WHERE id = ?1 AND transport_kind='llm'",
                 params![cid, ord as i64],
             )?;
         }
@@ -278,8 +278,16 @@ pub fn reorder(conn: &Connection, id: ChannelId, up: bool) -> Result<()> {
     })
 }
 
+/// Prevent unrelated LLM configuration APIs from changing a passthrough backing source.
+pub fn require_llm_transport(conn: &Connection, id: ChannelId) -> Result<()> {
+    let transport: Option<String> = conn.query_row("SELECT transport_kind FROM channels WHERE id=?1",[id.0],|r|r.get(0)).optional()?;
+    if transport.as_deref()==Some("passthrough") { return Err(DbError::Other("Passthrough sources must be managed through passthrough routes".into())); }
+    Ok(())
+}
+
 /// 存密钥（加密）。明文只在内存里过一下，绝不落库、绝不回显。
 pub fn set_secret(conn: &Connection, sb: &SecretBox, id: ChannelId, plaintext: &str) -> Result<()> {
+    require_llm_transport(conn, id)?;
     if secret(conn,sb,id)?.as_deref()==Some(plaintext){return Ok(());}
     let (nonce, cipher) = sb
         .seal(plaintext)
@@ -311,6 +319,7 @@ pub fn secret(conn: &Connection, sb: &SecretBox, id: ChannelId) -> Result<Option
 }
 
 pub fn clear_secret(conn: &Connection, id: ChannelId) -> Result<()> {
+    require_llm_transport(conn, id)?;
     conn.execute("DELETE FROM channel_secrets WHERE channel_id = ?1", [id.0])?;
     Ok(())
 }
@@ -354,6 +363,7 @@ pub fn headers(conn: &Connection, sb: &SecretBox, id: ChannelId) -> Result<Vec<(
 
 /// 整体替换一条渠道的请求头（面板保存时用）。
 pub fn set_headers(conn: &Connection, sb: &SecretBox, id: ChannelId, headers: &[(String, String)]) -> Result<()> {
+    require_llm_transport(conn, id)?;
     if self::headers(conn,sb,id)? == headers { return Ok(()); }
     conn.execute("DELETE FROM channel_headers WHERE channel_id = ?1", [id.0])?;
     for (ord, (name, value)) in headers.iter().enumerate() {
@@ -368,6 +378,7 @@ pub fn set_headers(conn: &Connection, sb: &SecretBox, id: ChannelId, headers: &[
 
 /// 整体替换一条渠道的模型名映射。
 pub fn set_models(conn: &Connection, id: ChannelId, models: &[ModelMapping]) -> Result<()> {
+    require_llm_transport(conn, id)?;
     if let Some(old)=get(conn,id)? {
         let mut existing=old.models;
         let mut desired=models.to_vec();
@@ -420,6 +431,7 @@ pub fn set_model_vision(
     model_name: &str,
     vision: bool,
 ) -> Result<usize> {
+    require_llm_transport(conn, id)?;
     let n = conn.execute(
         "UPDATE channel_models SET vision = ?3 WHERE channel_id = ?1 AND model_name = ?2",
         params![id.0, model_name.trim(), vision as i64],
