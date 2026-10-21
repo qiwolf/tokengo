@@ -1,16 +1,29 @@
 # 功能与验收状态
 
-更新日期：2026-10-21。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
+更新日期：2026-10-22。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
 
-正式分发 **[v0.34.0-qiwolf.6 · 通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)** 包含[通用 HTTP 透传](passthrough.md)、schema39、独立路由授权/静态凭据/按次账本及手动诊断，并提供可选MinerU同步客户端。完整实现合同见[开发文档](passthrough-development.md)。
 
-已公开发布，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39557401353)通过：Rust 998通过、0失败、2忽略，另有13项Python客户端测试及WASM检查通过；[Linux AMD64 打包与发布](https://github.com/qiwolf/tokengo/actions/runs/39557540103)通过。9个公开附件重新下载校验通过，原生包匿名下载与GHCR匿名拉取通过，版本、提交与latest标签对应同一摘要：`ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。
+当前发行 **[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)**，源码`684fa862c64bab5b16c438b7fb8db03295c5b8f4`。本次仅修复发布Compose中的固定GHCR SHA镜像引用、移除构建字段以及离线镜像匹配标签，不更改Rust业务逻辑或schema39。[精确提交CI](https://github.com/qiwolf/tokengo/actions/runs/39646529697)与[发布流程](https://github.com/qiwolf/tokengo/actions/runs/39646795983)均通过；本版9个公开资产匿名下载与SHA校验、native manifest提交匹配、离线双标签同config、GHCR匿名version/sha/latest同摘要检查均通过。本版配套Compose无build、无需.env、使用固定GHCR SHA引用；下载后真实启动、非root（UID10001）、只读根、ready和WASM通过。镜像完整smoke含重启/同卷重建，以及原生CLI/server/WASM、root透传CRUD/密钥掩码/内部渠道隐藏、ops90项清单与签发/身份/禁止新透传管理403/撤销401均通过。运行环境为Linux x86_64隔离构建测试机，本次无macOS或跨架构仿真，不从qiwolf.6借用运行结论。固定镜像摘要为 `ghcr.io/qiwolf/tokengo@sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`。详见[本版说明](releases/v0.34.0-qiwolf.7.md)。
+
+### 2026-10-22正式路由与调用方切换
+
+现场实例仍运行qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39；本轮未升级qiwolf.7二进制。Face、CLIP/OCR和MinerU三条正式路由启用并保留，各自独立VKey只授权本路由与计费接入，禁止LLM模型调用。网关单价0且按次记账，实际GPU成本未知。Face、CLIP文本/图像、OCR标记合成请求均HTTP200，直连/代理正文对等且新账完成。最终数据库integrity检查正常、外键错误0、全实例未结算与预占均0；正式路由与专用Key保持有效。
+
+MT Photos人脸与共享智能识别两项配置已切至网关；其他模型、线程及阈值保留，仅应用配置重载，PostgreSQL/Redis未重启。AI容器原有GPU访问丢失，本轮只重启该容器一次恢复CUDA，随后OCR直连/代理验收通过。没有触发图库重扫，也没有自然后台任务完成的证据；不能把合成调用解释为全部后台流程或长期GPU稳定性验收。
+
+本机doc-extract默认入口已改专用网关与安全凭据文件，健康和上传均鉴权，上传等待1050秒。10项回归、Mac合成PNG真实CLI返回mineru-gpu与标记、两笔完成账通过。该项为本机外部客户端的运维改动，不代表其他机器/MCP/所有外部消费者迁移；MinerU原生异步资源链仍不支持。
+
+### qiwolf.6发布与2026-10-21临时验收（历史证据）
+
+历史正式分发 **[v0.34.0-qiwolf.6 · 通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)** 包含[通用 HTTP 透传](passthrough.md)、schema39、独立路由授权/静态凭据/按次账本及手动诊断，并提供可选MinerU同步客户端。完整实现合同见[开发文档](passthrough-development.md)。
+
+已公开发布，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39557401353)通过：Rust 998通过、0失败、2忽略，另有13项Python客户端测试及WASM检查通过；[Linux AMD64 打包与发布](https://github.com/qiwolf/tokengo/actions/runs/39557540103)通过。9个公开附件重新下载校验通过，原生包匿名下载与GHCR匿名拉取通过，当日版本、提交与latest标签对应同一摘要（latest随后可变）：`ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。
 
 下载后原生CLI/服务端/WASM实际运行，以及透传管理、凭据脱敏、内部渠道隔离与运维令牌权限回归通过；发布容器的非root、只读根、就绪、主密钥权限、重启及同卷重建检查通过。本机运行复核采用macOS Docker Linux AMD64仿真，不证明ARM64原生支持或裸机性能。
 
-部署实例已完成schema38→39迁移与业务验证：Face合成图、CLIP合成文本通过网关均返回200，与直连响应正文逐字节一致；MinerU合成PDF同步解析完成，返回验收标记。6条按次业务账单各50 microUSD，3次root手动诊断记系统诊断账，不扣用户预算，结束时预占为0。临时测试配置与凭据均已清理，没有保留永久透传路由，现有调用方未切流。以上是合成业务验证，不代表真人识别精度、真实文档质量、长期GPU稳定性或全部客户端验收；MinerU原生异步接口仍未支持。
+部署实例已完成schema38→39迁移与业务验证：Face合成图、CLIP合成文本通过网关均返回200，与直连响应正文逐字节一致；MinerU合成PDF同步解析完成，返回验收标记。6条按次业务账单各50 microUSD，3次root手动诊断记系统诊断账，不扣用户预算，结束时预占为0。该日临时测试配置与凭据已清理，当时未保留永久路由或切换调用方；不适用于上述22日正式接入的新状态。以上是合成业务验证，不代表真人识别精度、真实文档质量、长期GPU稳定性或全部客户端验收；MinerU原生异步接口仍未支持。
 
 以下为上一正式分发的独立历史证据，不作为本次新增功能的验证：
 

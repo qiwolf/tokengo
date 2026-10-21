@@ -6,7 +6,7 @@
 
 - 修复发布 Compose 默认引用不存在的 `tokengo:local`：生成明确的 GHCR SHA `image:` 行，移除发布配置中的源码 `build`。
 - 离线镜像保留与 Compose 一致的 GHCR SHA 别名及原本地 SHA 标签；导入后无需额外改标签。源码构建模板保持原行为。
-- `build-test` 已通过发布配置回归与既有正式产品镜像的 Compose / save-load / 生命周期验证；本版公开产物的精确提交与验证结果见[版本说明](docs/releases/v0.34.0-qiwolf.7.md)和实际 Release。本次无 Rust 业务或数据库 schema 改动。
+- `build-test` 已通过发布配置回归、真实产品双标签 save/load，以及 qiwolf.7 公开新产物匿名获取、Compose 启动、Linux 原生运行和容器生命周期验收；精确提交与验证范围见[版本说明](docs/releases/v0.34.0-qiwolf.7.md)和实际 Release。本次无 Rust 业务或数据库 schema 改动。
 
 ## v0.34.0-qiwolf.6 — 2026-10-21
 

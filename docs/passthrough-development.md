@@ -2,9 +2,11 @@
 
 本文是实现合同和交付检查表。面板操作见[通用 HTTP 透传](passthrough.md)，设计与执行记录见[设计](superpowers/specs/2026-10-21-passthrough-design.md)和[计划](superpowers/plans/2026-10-21-passthrough.md)。
 
-交付状态（2026-10-21）：[v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 已公开，源码提交 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。237 已完成 schema 38→39 部署迁移；Face/CLIP 合成业务响应均 HTTP 200，且与直连正文逐字节一致；MinerU 合成 PDF 同步解析返回 completed，内联 Markdown 包含预置标记。现有调用方未切流，验收临时路由、VKey、用户及网关会话已清理，未留下永久业务路由。MinerU 原生异步链仍不支持。
+交付状态（2026-10-22）：当前公开发行[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，源码`684fa862c64bab5b16c438b7fb8db03295c5b8f4`，修复容器分发镜像引用和离线标签。该提交[CI](https://github.com/qiwolf/tokengo/actions/runs/39646529697)及[发布流程](https://github.com/qiwolf/tokengo/actions/runs/39646795983)通过；qiwolf.7的9资产匿名下载/SHA及native manifest提交匹配、GHCR匿名固定摘要拉取均通过；原生CLI/server/WASM和实际下载Compose/容器的非root、只读、ready、重启/同卷重建均在Linux x86_64隔离环境通过，本次无macOS或跨架构仿真，不借用qiwolf.6运行结果。现场237仍运行qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39，未升级本次二进制。
 
-该提交 GitHub CI 为 998 项 Rust 通过、0 失败、2 忽略，13 项 Python 通过，WASM 检查通过。公开9项资产校验、原生包匿名下载和GHCR匿名拉取已通过；发布产物的原生包和镜像隔离运行亦通过，范围为macOS Docker中的Linux AMD64仿真环境，未访问生产服务。原生CLI/服务端/WASM、root透传CRUD与密钥掩码/内部渠道隐藏、ops禁止新透传管理及既有90项能力清单、令牌签发/身份/撤销回归已核验；镜像非root/只读文件系统、ready、重启和同卷重建持久化已核验。本文件区分真实解析、字节传输、构建及分发证据，不以健康 200 替代业务验收。
+qiwolf.6于2026-10-21完成schema38→39和三服务临时验收，临时资源当日清理。2026-10-22是独立的正式配置与调用方切换阶段：Face、CLIP/OCR、MinerU正式路由保留启用，各有独立VKey，仅允许自己的内部计费接入和精确业务路径，`allowed_models=[]`。正式路由单价0且仍按次计量，实际GPU成本未知。MT Photos人脸与共享AI配置、本机doc-extract默认入口已切换；没有声称其他消费者已迁移。
+
+正式Face、CLIP文本/图像和OCR合成标记请求HTTP200，与直连响应正文对等且新账完成。本机doc-extract的10项回归通过，Mac真实合成PNG调用返回mineru-gpu及预置标记，健康与上传两笔账完成。尚未取得MT Photos自然后台任务证据，未重扫图库。此前qiwolf.6的998项Rust通过、0失败、2忽略，13项Python及WASM检查，以及macOS Docker AMD64仿真下载运行结果保留为该版本的历史证据。MinerU原生异步链仍不支持。
 
 用户已授权按“必要验证 → 237 部署与真实调用 → 验收通过 → GitHub 推送及原生包/容器发布”的顺序交付；无须重复批准设计。任一验收失败须修复或报告阻断，不得跳过 237 真实调用先发布。本文不记录现场私有 IP、SSH 入口、账号密码、真实 VKey、静态 Header 或历史文档内容；现场证据单独保存在不随仓库发布的运维记录中。
 
@@ -22,7 +24,7 @@ MinerU 第一阶段仅接同步兼容 HTTP 服务（默认端口 5024）的 `/fi
 | 客户端 | `POST /mineru/file_parse` 上传 multipart 字段 `files`；`GET /mineru/health` 同样使用专用 VKey |
 | 返回 | 同步 JSON 中的内联 Markdown，或上游返回的 ZIP 字节；不改业务字段 |
 | 凭据 | 客户端只带 Tokengo VKey；如上游今后要求固定 Bearer，通过加密的服务端 Header 注入 |
-| 现有客户端 | 不自动修改 `doc-extract` 默认路由；另行接入时健康 GET 和上传 POST 必须同时加 VKey |
+| 现有客户端 | 本机doc-extract已切专用网关默认入口和安全凭据文件；健康GET、上传POST均加VKey；不自动迁移其他机器或调用方 |
 
 不实现原生异步 tasks/uploads/files/jobs 全链、动态 ID 路径 ACL、正文或 Location URL 重写、跨服务账户资源授权、后台任务取消及按文档聚合收费。原生 API 的绝对上传 URL、根相对任务链接和动态 ID 路径需要独立设计；`allowed_paths=null` 不能当成这套设计的替代。透传不会让兼容服务未支持的高级选项变为可用。
 
@@ -149,7 +151,7 @@ python3 scripts/mineru-gateway-client.py \
 
 新客户端负责生成匹配正文的multipart boundary。显式非completed状态被拒绝；为兼容同步旧接口，缺省status但包含有效内联Markdown的响应可接受。实际237验收另外检查上游completed和预置识别标记。
 
-本轮已为本机 `doc-extract` 的健康GET和上传POST补充可选的 `MINERU_API_KEY` / `MINERU_API_KEY_FILE`（二选一）。不设置这些专属变量时，仍按原默认URL匿名直连并保留原有本地回退；不会继承其他LLM用途的 `TOKENGO_API_KEY`。实际接入时须同时配置 `MINERU_URL` 与专属凭据，并确认返回method为mineru-gpu，而非只看CLI退出成功。两处请求禁跳转与环境代理，错误不输出上游正文或密钥。独立示例客户端的文件/响应限额不代表原doc-extract已改为流式或增加相同大小限额。其他MCP/命令行入口没有因此迁移。
+本机doc-extract于2026-10-22单独完成运维接入：默认解析入口改为专用网关，凭据来自私有Key文件，上传等待1050秒；健康GET和上传POST均鉴权、禁跳转及环境代理，错误不输出上游正文或密钥。它使用专属 `MINERU_API_KEY` / `MINERU_API_KEY_FILE`（二选一），不继承其他LLM用途的 `TOKENGO_API_KEY`。10项回归和Mac合成PNG真实CLI调用通过，实际返回method为 `mineru-gpu` 且识别出预置标记，两笔网关请求完成计量。该改动不由本仓库分发；其他机器、MCP入口和命令行程序仍须独立核查，不能据此推断全部文档流量迁移。独立示例客户端的文件/响应限额也不代表外部doc-extract已改为相同流式或大小合同。
 
 ## 7. 测试矩阵与证据状态
 
@@ -162,10 +164,11 @@ python3 scripts/mineru-gateway-client.py \
 | gzip 不解压、重定向不跟随、204/304/HEAD一次结算 | `passthrough_transport.rs` 已有真实 loopback HTTP 测试 |
 | chunked超限413、读取超时、客户端断开、下游停读期限 | 已有传输回归；核对unknown用量及并发/预占释放 |
 | 面板CRUD/密钥不回显/ACL诊断/手机布局 | 已有合成浏览器证据；变动控件需比例复验 |
-| Face/CLIP真实端点 | 237本轮合成业务HTTP 200，与直连body逐字节一致；未迁移调用方，未据此宣称历史间歇性错误已根治 |
+| Face/CLIP/OCR正式接入 | 2026-10-22正式路由合成Face、CLIP文本/图像和OCR标记HTTP200、直连/代理正文对等及新账完成；MT Photos两项相关配置已切，未据此宣称自然后台任务或长期GPU稳定性已验收 |
 | MinerU协议 | 只读协议评估后，237本轮合成PDF真实上传completed且内联Markdown包含预置标记；不覆盖异步或所有高级参数 |
-| 237健康+multipart真实解析与账本 | 已通过：6笔数据面完成账各50 microUSD，3笔root probe系统诊断不扣用户预算，最终无遗留预占；临时资源已清理 |
-| 原生包和容器同提交、持久化 | 同commit构建/发布CI、9资产校验和匿名获取通过；发布产物在macOS Docker AMD64仿真下的原生运行、容器非root/只读/重启/同卷重建通过，不等于独立物理AMD64机器复测 |
+| 237历史临时验收 | 2026-10-21的6笔数据面完成账各50microUSD、3笔root probe不扣用户预算及无预占通过；临时资源清理只指当日fixture，不指22日正式路由 |
+| 22日正式路由和doc-extract | 三路由/三专用VKey保留，单价0按次计量；本机默认接入、10项回归及Mac真实PNG/标记/两笔完成账通过；实际GPU成本未知 |
+| 原生包和容器同提交、持久化 | qiwolf.6保留历史仿真证据；qiwolf.7精确提交CI/发布、9资产匿名下载校验及Linux x86_64原生运行/容器真实启动/重启/同卷重建通过，本次无仿真 |
 
 既有证据对应当时源代码，不能直接套用到修改后的构建；公开文档不固定宣称动态测试总数。必要命令由交付者运行并将原命令、退出码、测试摘要和源码提交/工作树摘要保存到私有验收记录：
 
@@ -178,7 +181,7 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 
 ## 8. 237 部署验收与回滚
 
-“237”仅是部署者既有目标环境的标识，公开文档不含地址和登录方式。本轮部署迁移、三服务真实合成调用、账务及清理结果已通过；以下是后续再次部署可复用的检查步骤，并非全部仍待执行。本轮未触发回滚，也未对已建立的临时路由另做237重启持久化复测；现有Rust回归与发布容器流程的持久化检查须按各自证据范围解释。
+“237”仅是部署者既有目标环境标识，公开文档不含地址和登录方式。21日部署迁移与临时验收已通过；22日是在同一d566/schema39运行程序上建立正式路由并切换两个指定调用方，没有升级qiwolf.7二进制。MT Photos仅重载应用配置，保留模型、线程、阈值等其余配置，PostgreSQL/Redis未重启；丢失GPU访问的AI容器只重启一次恢复CUDA并重验OCR。正式路由保留，不能按临时fixture流程清掉。以下为后续软件再次部署时可复用的检查步骤；本轮未执行软件回滚，历史证据不冒充本轮持久化或回滚实测。
 
 1. 实时核对目标身份、当前进程/容器、安装路径、版本、数据库/schema、主密钥位置、磁盘和已有路由；记录现状，避免把旧记忆作为现场事实。
 2. 停写后按既有部署流程冷备数据库/WAL一致性快照、主密钥、billing outbox/dead-letter、运行配置、旧二进制与匹配 web 目录。记录备份校验和及恢复步骤；备份不能只含 SQLite 主文件。
@@ -194,7 +197,9 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 
 ## 9. 原生包与容器双分发
 
-本轮主交付者在237验收通过后公开发布 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。原生包、WASM和容器均来自该commit；9项公开资产校验及匿名获取已通过。发布产物隔离运行检查亦已通过：原生CLI/server/WASM、透传权限与旧ops兼容、容器非root/只读/ready/重启/同卷重建均在macOS Docker AMD64仿真环境核验；未以此访问生产上游，也不将仿真环境表述为独立物理AMD64机器复测。后续版本继续沿用 `v0.34.0-qiwolf.N` 约定。
+2026-10-21主交付者在237验收通过后公开发布 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。原生包、WASM和容器均来自该commit；9项公开资产校验及匿名获取已通过。发布产物隔离运行检查亦已通过：原生CLI/server/WASM、透传权限与旧ops兼容、容器非root/只读/ready/重启/同卷重建均在macOS Docker AMD64仿真环境核验；未以此访问生产上游，也不将仿真环境表述为独立物理AMD64机器复测。后续版本继续沿用 `v0.34.0-qiwolf.N` 约定。
+
+2026-10-22已公开[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)（`684fa862c64bab5b16c438b7fb8db03295c5b8f4`），交付Compose明确固定GHCR SHA镜像且离线包带匹配标签；Rust/schema39/透传合同保持。精确CI与发布通过，新产物9资产匿名下载校验、native manifest及GHCR匿名拉取通过。实际配套Compose无build/无需.env并以固定SHA镜像启动，容器完整smoke和原生包运行回归均在Linux x86_64隔离环境通过，本次无仿真。版本/sha/latest标签当时同摘要 `sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`，离线双标签同config。它是当前公开分发身份，与现场仍运行的d566和22日正式配置变更分别记录。
 
 同一 Git commit 生成 Linux x86_64 原生包（服务端/CLI/WASM/manifest）、容器linux/amd64、离线镜像及校验清单；服务器、web和镜像不得分别取不同目录重建。依现有 `deploy/build-release.sh`、`deploy/manage.py`、`Dockerfile` 和 `.github/workflows/release-check.yml`：
 

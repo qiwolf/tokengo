@@ -4,7 +4,9 @@
 
 本功能的配置由服务端 SQLite 管理，通过面板和管理 API 修改，不新增 YAML 配置源。路由配置中的上游 Header 值加密保存，读取接口只返回名称及是否存在值，面板不会回显明文。
 
-本功能已随 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 公开发布。2026-10-21，237完成schema39升级及Face、CLIP、MinerU三服务真实合成调用验收：Face/CLIP响应与直连正文逐字节一致，MinerU单页PDF同步解析完成且Markdown包含预置标记。公开原生包及容器的下载校验与隔离运行也已通过（macOS Docker Linux AMD64仿真，包含容器重启及同卷重建）。临时验收资源已清理；没有永久路由保留，现有MT Photos、doc-extract等调用方默认入口没有切换。配置步骤和当前边界见下文，开发与部署证据范围见[开发文档](passthrough-development.md)。
+本功能自qiwolf.6公开；当前发行版为[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，修复容器交付的固定镜像引用和离线导入标签，不改变透传业务合同。部署实例仍运行qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39；本轮未升级该实例二进制，不能把qiwolf.7公开等同于现场软件升级。
+
+2026-10-21的qiwolf.6发布验收使用临时路由，结束后已清理。2026-10-22另行完成正式接入：Face、CLIP/OCR和MinerU三条正式路由启用并保留，各有独立VKey，仅授权自己的路由及计费接入，设置 `allowed_models=[]`。当前每次网关价格为0，仍按次计量；实际GPU成本未知，不能称上游计算免费。MT Photos人脸与共享智能识别配置、本机doc-extract默认入口已切换；不代表其他外部消费者全部迁移。详情和证据边界见[开发文档](passthrough-development.md)。
 
 ## 在面板配置
 
@@ -14,7 +16,7 @@
 
 「允许调用的 VKey ID」填写密钥的数字 ID，以逗号或空格分隔；这不是密钥明文。白名单覆盖该Key本身及其有效后代，父Key撤销会阻止后代调用，且用户与全部父链的实时策略继续生效。留空表示全部拒绝。客户端使用获授权的 Tokengo VKey 鉴权（`Authorization: Bearer <VKey>`、`x-api-key`，或透传路由专用的 `api-key`；同一请求不能混用冲突凭据），不能用管理会话或运维令牌代替业务密钥。
 
-已有 VKey 的渠道授权 `allowed_channels` 和付费开关 `allow_paid` 仍参与校验。给路由填写 VKey ID 不会自动扩大原权限：受限渠道的密钥还需允许路由对应的只读「计费接入 ID」，收费路由需要 `allow_paid=true`。建议为 mt-photos 创建独立 VKey，设置 `allowed_models=[]` 阻止 LLM 调用、`allowed_channels=null`，只通过透传路由的显式密钥白名单授予对应业务接口，并配置预算、RPM、并发限制，不设置 TPM。
+已有 VKey 的渠道授权 `allowed_channels` 和付费开关 `allow_paid` 仍参与校验。给路由填写 VKey ID 不会自动扩大原权限：受限渠道的密钥还需允许路由对应的只读「计费接入 ID」，收费路由需要 `allow_paid=true`。建议分别为人脸、CLIP/OCR和文档解析创建独立VKey，设置 `allowed_models=[]` 阻止LLM调用，`allowed_channels`仅包含对应路由的计费接入ID，并用该路由的显式密钥白名单授予业务接口，并配置预算、RPM、并发限制，不设置 TPM。
 
 「允许的上游路径」每行一个精确路径，填写剥离前缀后的最终上游路径，不含查询字符串。例如 `/represent`、`/clip/img`。留空表示全部拒绝；勾选「允许前缀下全部上游路径」则不限制子路径。建议明确列出业务接口，避免同时开放 `/restart` 等维护接口。路径授权不按 HTTP 方法区分。
 
@@ -38,12 +40,23 @@
 | --- | --- | --- |
 | `/face/` | `/represent` | `/face/represent` |
 | `/clip/` | `/clip/img` | `/clip/clip/img` |
+| `/clip/` | `/ocr` | `/clip/ocr` |
 
 要避免第二个例子的重复路径，可以配置不同的网关前缀，或根据上游完整路径选择保留前缀；应先核对调用方实际发出的路径，不能只根据模型名称推测接口。
 
 2026-10-21 首次现场检查中，CLIP 业务请求出现 CUDA 500，旧 LiteLLM 入口的两条常规路径返回 404。随后使用临时本地 Rust 网关、隔离身份和合成材料复测，Face 与 CLIP 的直连/透传响应均为 200，正文逐字节一致，两条手动诊断也通过。期间没有修复或重启生产服务，CLIP 先前的异常只能记录为间歇性现象，不能认定根因消除；旧 LiteLLM 路由仍不能作为已可用的迁移基线。
 
-本地及有限真实端点验证不代表 MT Photos 调用方迁移完成。切流前须核对客户端实际拼接的地址、入站密钥和路径；存在可用旧入口时对比旧入口与 Tokengo，否则使用直连上游作为明确基线。涉及推理随机性时，应区分确定性的字节透传测试与真实业务结果检查。切换调用方、观察运行、停用 LiteLLM 和 GPU 面板数据源联动都属于后续部署工作，不能由保存路由配置代替。
+上述2026-10-21记录是历史阶段。2026-10-22已在正式配置上完成Face、CLIP文本/图像及OCR标记合成请求，直连与网关HTTP200且正文对等，新账完成；随后切换MT Photos相关配置。此前AI容器丢失GPU访问，本轮仅重启该AI容器一次恢复CUDA后重验OCR；这次恢复不能解释所有历史间歇性问题。尚无自然后台任务的验收证据，未触发图库重扫、清空向量或更改识别模型。其他消费者切换、长期观察、停用LiteLLM及GPU面板数据源联动仍须单独核对。
+
+## MT Photos 调用方切换
+
+分别为人脸服务、CLIP/智能识别服务和文档解析服务创建专用 VKey，每把仅授权自己的路由与计费接入 ID，设置 `allowed_models=[]`。上游静态凭据留在 Tokengo；调用方的地址和 `api_key` 要一起替换，不能继续拿后端凭据访问网关。
+
+部分 MT Photos 版本使用 `FACE_REG_API_CONFIG` 保存人脸地址，使用 `OCR_API_CONFIG` 的同一组 `uri/api_key` 调用 CLIP 和 OCR。后者应保留 `/check`、`/clip/txt`、`/clip/img`、`/ocr` 的精确白名单；`b_uri/b_api_key` 是文本搜索备用接口，不能替代 CLIP 图片向量主入口。以实际版本的请求为准，不开放维护或重启路径。
+
+例如网关基础地址是 `https://gateway.example` 时，人脸配置填写 `https://gateway.example/face`，共享智能识别配置填写 `https://gateway.example/clip`；客户端会继续拼接原生业务路径。保持原识别模型、向量维度、阈值、线程数及其他 LLM 来源配置。调用方已有多个工作线程时，用户/VKey 的并发上限须容纳它们，路由并发可用于排队保护上游。
+
+先备份相关配置，逐条完成直连与网关合成业务验收，再使用应用原生保存接口切换；直接更新配置存储时，还须按该应用版本的机制重载运行配置。共享上游任一启用能力失败时，先处理该能力或暂停对应调用方切换，独立服务可继续。切换后核对应用实际请求及专用 Key 账本；无需重扫图库、清空向量或修改识别模型。
 
 ## 管理 API
 
@@ -71,4 +84,4 @@
 
 可选标准库客户端为仓库 `scripts/mineru-gateway-client.py`，原生包位于 `tools/`；凭据仅通过 `TOKENGO_API_KEY` 或私有 `TOKENGO_API_KEY_FILE` 输入，健康和上传均鉴权、禁跳转，支持Markdown/ZIP输出。它不是Rust网关运行依赖。完整参数、接口边界和部署验收见[开发文档](passthrough-development.md)。
 
-接入doc-extract等外部客户端时，须同时为健康检查和上传增加专用网关认证，并核对实际返回来自远端MinerU。此类客户端的实现和升级不由本仓库分发；仓库提供的是上述可选标准库客户端。本轮没有修改现有调用方的默认流量。
+本机doc-extract已于2026-10-22改为专用网关默认入口、私有凭据文件及1050秒上传等待，健康GET和上传POST同时鉴权。10项客户端回归通过；Mac上真实合成PNG CLI调用返回 `mineru-gpu` 且包含预置标记，两笔网关请求均完成计量。此项是本机外部客户端的运维改动，不由本仓库分发，也未推广到其他机器或MCP入口；仓库提供的可选标准库客户端仍可独立使用。

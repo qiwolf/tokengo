@@ -6,11 +6,11 @@
 
 部署后的智能体管理入口见[运维令牌](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/account-login.md#脚本化运维)。
 
-当前正式版本为 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，对应源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39。新增通用 HTTP 透传和 MinerU 同步接入；配置及限制见[透传文档](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough.md)。不自动切换既有调用方，也不提供 MinerU 原生异步资源 API。
+当前正式版本为 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，对应源码 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39。本版修复发布 Compose 与离线镜像标签一致性，沿用 qiwolf.6 的通用 HTTP 透传和 MinerU 同步能力；配置及限制见[透传文档](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough.md)。不自动切换既有调用方，也不提供 MinerU 原生异步资源 API。
 
 ## 从镜像仓库安装
 
-从同一 Release 下载 `compose.yaml`、`container.env.example`。后续新生成的发布配置会直接写入固定提交的 `image: ghcr.io/qiwolf/tokengo:sha-<完整SHA>`，不包含源码 `build`；在 1Panel 等面板中只导入该 Compose 即可确定镜像，不依赖隐藏的 `.env`。源码仓库根目录的 Compose 仍用于源码构建，不能与发布配置混淆。
+从同一 Release 下载 `compose.yaml`、`container.env.example`。qiwolf.7 起的发布配置直接写入固定提交的 `image: ghcr.io/qiwolf/tokengo:sha-<完整SHA>`，不包含源码 `build`；在 1Panel 等面板中只导入该 Compose 即可确定镜像，不依赖隐藏的 `.env`。源码仓库根目录的 Compose 仍用于源码构建，不能与发布配置混淆。
 
 已发布的 qiwolf.6 及更早附件使用源码模板 `image: ${TOKENGO_IMAGE:-tokengo:local}`，没有配套 `.env` 时会退回本地构建标签；这不表示 GHCR 镜像没有版本标签。在面板中使用这些旧附件时，将 `image:` 行直接改为下列明确版本，并移除 `build:` 配置；命令行也可复制 `container.env.example` 为 `.env` 并修改其中 `TOKENGO_IMAGE`：
 
@@ -31,7 +31,7 @@ docker compose ps
 curl --fail http://127.0.0.1:3160/readyz
 ```
 
-Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，修改发布 Compose 的 `image:` 行（旧变量模板则修改 `.env` 中的 `TOKENGO_IMAGE`），使用其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。本版已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
+Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，修改发布 Compose 的 `image:` 行（旧变量模板则修改 `.env` 中的 `TOKENGO_IMAGE`），使用其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。本版已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
 
 ## 从源码构建并首次启动
 
@@ -80,7 +80,7 @@ sha256sum --check image-SHA256SUMS
 docker load -i tokengo-<完整SHA>-linux-amd64.tar.gz
 ```
 
-后续新包的离线镜像同时保留 `tokengo:sha-<完整SHA>` 与发布 Compose 使用的 `ghcr.io/qiwolf/tokengo:sha-<完整SHA>` 两个标签；`docker load` 后可直接使用配套 Compose，无需拉取或源码构建。qiwolf.6 及更早离线包只带前者，需将 `image:` 直接设为 `tokengo:sha-<完整SHA>` 并移除 `build:`，或复制示例为 `.env` 并设置同一 `TOKENGO_IMAGE`。然后：
+qiwolf.7 起的离线镜像同时保留 `tokengo:sha-<完整SHA>` 与发布 Compose 使用的 `ghcr.io/qiwolf/tokengo:sha-<完整SHA>` 两个标签；`docker load` 后可直接使用配套 Compose，无需拉取或源码构建。qiwolf.6 及更早离线包只带前者，需将 `image:` 直接设为 `tokengo:sha-<完整SHA>` 并移除 `build:`，或复制示例为 `.env` 并设置同一 `TOKENGO_IMAGE`。然后：
 
 ```sh
 docker compose up -d --no-build

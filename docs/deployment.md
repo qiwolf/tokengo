@@ -6,7 +6,7 @@ GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中�
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
 
-当前正式版本为 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码提交 `d5660992a6a1ef0b320ff143a19404ac3abad23e`，数据库 schema39。新增[通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough-development.md)；Face/CLIP 真实响应字节对等及 MinerU 合成 PDF 解析已通过目标实例验证。既有客户端并未自动切流，MinerU 原生异步资源 API 不在本版范围。完整发布与运行验证边界见[验收状态](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/acceptance-status.md)。
+当前正式版本为 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，源码提交 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`，数据库 schema39。本版修复容器发行配置，沿用 qiwolf.6 的[通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough-development.md)；Face/CLIP 响应字节对等及 MinerU 合成文件解析已在运行 qiwolf.6 业务代码的目标实例验证，当前选定的 MT Photos 和本机 doc-extract 已另行完成正式配置切换；安装发行包本身不会替用户创建路由或切换客户端。MinerU 原生异步资源 API 不在本版范围。完整发布与运行验证边界见[验收状态](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/acceptance-status.md)。
 
 ## 使用已发布的直接部署包
 

@@ -1,6 +1,6 @@
 # 需求覆盖与未完成项
 
-更新：2026-10-21。本页区分代码实现、定向检查、浏览器验收、部署和发布；提交合并不自动完成其余验收。当前正式版本为 **[v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)**，提交 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。新增通用 HTTP 透传、MinerU 同步接入与schema39；精确提交CI为998项Rust测试通过、0失败、2忽略，另有13项Python测试与WASM检查通过。9个公开附件校验、匿名下载/镜像拉取及原生包/容器隔离运行已通过；目标实例的Face/CLIP真实响应字节对等与MinerU合成PDF解析已验收，不代表现有客户端已切流。完整结果与边界见[验收状态](acceptance-status.md)。
+更新：2026-10-22。本页区分代码、定向检查、浏览器、现场配置、调用方切换与发行。当前正式版为[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，源码`684fa862c64bab5b16c438b7fb8db03295c5b8f4`，修复容器交付配置；精确CI和发布流程通过，9资产匿名校验、精确原生包与容器运行、重启及同卷重建均在Linux x86_64隔离环境通过，本次无macOS仿真。现场仍运行qiwolf.6的d566/schema39，本轮没有升级二进制。22日三条正式透传路由与独立VKey保留启用，MT Photos相关配置、本机doc-extract默认入口已切换并完成合成业务验证；尚无自然后台任务证据，未推广到全部外部消费者。完整结果见[验收状态](acceptance-status.md)。
 
 v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整理、可见模型授权选择及自定义探针。统一用户、多Key池、私有路由，以及既有960次自有模型与有限真实OAuth、Search、Fetch结果属于各自历史版本和账号状态；保留在验收状态的历史段落，不扩展为本版逐项重测。
 
@@ -14,7 +14,7 @@ v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整�
 | 统一用户 | 一个用户入口原子创建登录凭证、授权及可选金额上限；历史用户补登录；保留旧ID、Key和账本 | root独立安全身份；内部凭证分表继续保留，旧users/accounts API仅兼容，不在主UI暴露手工关联 |
 | 账号密码安全 | 同源HttpOnly Cookie、CSRF；root确认当前密码改登录名/密码并撤浏览器会话；安全重置同时撤管理会话和全部运维令牌 | 正常改名/改密码不撤独立运维令牌；面板密码不用于模型API；普通用户不会成为root |
 | 智能体运维令牌 | root浏览器签发；单档站点运维权限，默认90天、1–365天、最多20把有效令牌；90项明确方法/路径、实例身份、独立撤销/审计和诊断脱敏；schema38 | 不用于推理、不读取现有密钥明文、不管理root或继续授权；不是宿主shell、发布接口或多档权限；[完整合同](operations-tokens.md) |
-| 通用 HTTP 透传与 MinerU 同步接入 | 原始HTTP字节流、路径/Key白名单、静态Header加密、逐次计费及root配置/手动诊断；schema39；MinerU `/file_parse` 和 `/health` 及可选标准库客户端 | 不注册LLM模型、不测Token、不接定时HTTP探针；不提供MinerU原生异步资源ACL/URL重写/后台取消；运维令牌不得管理透传路由；[完整合同](passthrough-development.md) |
+| 通用 HTTP 透传与 MinerU 同步接入 | 原始HTTP字节流、路径/Key白名单、静态Header加密、逐次计费及root配置/手动诊断；schema39；三条正式路由/三专用Key、MT Photos和本机doc-extract指定接入已验收；当前网关价0、实际GPU成本未知 | 不注册LLM模型、不测Token、不接定时HTTP探针；不提供MinerU原生异步资源ACL/URL重写/后台取消；运维令牌不得管理透传路由；[完整合同](passthrough-development.md) |
 | 浏览器自助Key | 本人Cookie创建、收紧、暂停、恢复本人暂停的未到期Key及撤销；secret仅创建返回一次；活动Key创建上限32 | 固定上限，不是可配置用户字段；不能提高用户/父链权限与金额上限，不能复活撤销Key |
 | 策略点选 | 用户/Key共用控件：模型/连接、付费、RPM/TPM/并发；null与空集合区分，保留旧值，未知字段拒绝有损保存 | 未实现policy版本号/409乐观并发冲突；每次请求实时权限检查不等于跨页面并发编辑保护 |
 | 金额预算与Token计价 | 整数microUSD累计预算，输入/输出Token价格版本、逐尝试预占结算、父链约束、持久outbox | 按Token计算金额不等于原始Token额度；费用未知不显示免费，供应商发票另对账 |

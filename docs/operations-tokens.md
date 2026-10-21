@@ -1,6 +1,6 @@
 # 部署者智能体的运维令牌
 
-自 `v0.34.0-qiwolf.5` 提供，令牌功能引入于数据库 schema38；当前公开版本 `v0.34.0-qiwolf.6` 使用 schema39，保留既有90项动作合同。部署时以 `/api/ops/capabilities` 的实际返回确认可用动作。
+自 `v0.34.0-qiwolf.5` 提供，令牌功能引入于数据库 schema38；当前公开版本 `v0.34.0-qiwolf.7` 使用 schema39，保留既有90项动作合同。部署时以 `/api/ops/capabilities` 的实际返回确认可用动作。
 
 运维令牌用于部署者信任的智能体通过 HTTP 管理本站。无需把 root 密码、浏览器 Cookie 或兼容登录会话交给智能体。所有令牌只有一档固定权限：`site_operations`（站点运维），没有 scope、多档角色或永久有效选项。
 

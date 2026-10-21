@@ -2,7 +2,7 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-当前公开版本：[**v0.34.0-qiwolf.6 通用 HTTP 透传与 MinerU 同步接入**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。以独立 VKey、静态后端凭据和按次账本，将人脸、CLIP与同步文档解析接入统一入口。精确提交CI为Rust 998通过、0失败、2忽略，另有13项Python测试和WASM检查通过；9个公开附件、匿名下载/拉取及原生包/容器隔离运行已验证。部署实例schema39及三项合成业务验收通过，现有调用方未切流。Cargo仍为上游0.34.0。详见[版本说明](docs/releases/v0.34.0-qiwolf.6.md)、[验收状态](docs/acceptance-status.md)和[完整开发文档](docs/passthrough-development.md)。
+当前公开版本：[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，修复 Compose / 1Panel 导入的镜像引用及离线标签，提供 Linux x86_64 原生包与 linux/amd64 容器。发行源码为 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`，Cargo 版本仍为上游 0.34.0。下载、CI 和运行验证见[版本说明](docs/releases/v0.34.0-qiwolf.7.md)与[验收状态](docs/acceptance-status.md)；通用 HTTP 透传与 MinerU 同步接入见[开发文档](docs/passthrough-development.md)。
 
 上游 Key 管理使用独立弹窗，“编辑 Key”与“选择模型”分开。已有 API Key 可由管理员显式查看或复制，编辑留空保留原值。点击上游模型输入框即读取当前 Key 的目录，搜索、多选后生成上游名称与本地映射对照，也可手工输入；本地映射留空沿用上游名。既有映射保持原名，详见[操作说明](docs/provider-key-pools.md)。
 
@@ -10,7 +10,7 @@
 
 本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](docs/acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准；fork 分发标签使用 `v0.34.0-qiwolf.N`，可下载版本以 GitHub Releases 为准。更新内容见 [CHANGELOG](CHANGELOG.md)。
 
-本版新增[通用 HTTP 透传](docs/passthrough.md)：使用独立 VKey 路由授权，将人脸、CLIP 等原生 HTTP 接口接入同一网关；请求正文不解析，凭据由服务端注入，沿用预算及按次账本。部署和调用方切流按对应版本验收记录核对，不从保存配置推定业务可用。
+自qiwolf.6提供[通用 HTTP 透传](docs/passthrough.md)：使用独立 VKey 路由授权，将人脸、CLIP 等原生 HTTP 接口接入同一网关；请求正文不解析，凭据由服务端注入，沿用预算及按次账本。部署和调用方切流按对应版本验收记录核对，不从保存配置推定业务可用。
 Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
 
 ## 中文使用指南
@@ -92,7 +92,7 @@ TOKENGO_LOG_DIR=./logs \
 ./target/release/tokengo-server
 ```
 
-服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.6` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径。qiwolf.4 起的标签发布流程推送 GHCR，并保留离线镜像包，具体以 Release 实际产物为准。
+服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.7` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径。qiwolf.4 起的标签发布流程推送 GHCR，并保留离线镜像包，具体以 Release 实际产物为准。
 
 ### 容器部署与分发
 
