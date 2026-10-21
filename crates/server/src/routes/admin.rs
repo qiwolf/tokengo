@@ -51,6 +51,9 @@ async fn rewrite_deserialize_error(resp: Response) -> Response {
     if !text.contains("Failed to deserialize") {
         return Response::from_parts(parts, axum::body::Body::from(bytes));
     }
+    if super::operations::actor_id().is_some() {
+        return ApiError::bad_request("请求字段或格式无效").into_response();
+    }
     tracing::debug!("面板接口收到格式不对的请求体：{text}");
     ApiError::bad_request(format!(
         "请求体格式不对：{}。这一般是面板与后端版本不一致（刷新页面）或字段名写错了。",
@@ -115,6 +118,7 @@ fn router_inner() -> Router<SharedState> {
 // ───────────────────────── 鉴权 ─────────────────────────
 
 /// 会话门。放在 handler 参数里即生效。
+use super::operations::ManagementAuth;
 pub struct PanelAuth;
 
 impl FromRequestParts<SharedState> for PanelAuth {
@@ -365,7 +369,7 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
 }
 
 async fn channels_list(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
@@ -513,7 +517,7 @@ impl ChannelBody {
 }
 
 async fn channels_create(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -557,7 +561,7 @@ async fn channels_create(
 }
 
 async fn channels_update(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
@@ -636,7 +640,7 @@ async fn channels_update(
 }
 
 async fn channels_delete(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -721,7 +725,7 @@ fn diagnostic_model(models:&[channels::ModelMapping],requested:Option<&str>)->Re
 /// - 探活**不动路由状态**（面板上的一次手动检查凭据，不该改变谁在用）；
 /// - 模型名是这条渠道自己配的那个，拿不到就明说"探不了"，不猜（拿 `auto` 去探必然 400）。
 async fn channels_probe(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Query(q): Query<ProbeQuery>,
@@ -823,7 +827,7 @@ async fn channels_probe(
 /// - 上游回了非 2xx → 把状态码报出来（404 很常见：这个上游压根没做 /v1/models）；
 /// - 2xx 但格式不像模型清单 → 说"没认出"，并附上正文开头让人自己看。
 async fn channels_models(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -882,6 +886,11 @@ async fn channels_models(
         Err(fault) => (false, None, Vec::new(), 0usize, fault.message),
     };
 
+    // Reject reflected credentials before persisting catalog IDs or metadata. This also
+    // protects future reads of a catalog fetched through the root compatibility path.
+    let reflected = serde_json::to_value(&catalog).map_err(|_| ApiError::internal("Cannot validate model catalog"))?;
+    let forbidden = secret.iter().cloned().chain(channel.headers.iter().map(|(_,v)|v.clone())).collect::<Vec<_>>();
+    super::operations::reject_credential_echo(&reflected, &forbidden)?;
     let note = if ok {
         if seen > catalog.len() {
             // 如实说：上游报的比这里列出来的多（列表有上限）
@@ -982,11 +991,11 @@ struct ContextOverrideWrite {
     upstream: String,
     tokens: Option<i64>,
 }
-async fn context_override_get(_auth:PanelAuth,State(state):State<SharedState>,Path(id):Path<i64>,Query(query):Query<RegistryQuery>)->Result<Json<serde_json::Value>,ApiError>{
+async fn context_override_get(_auth:ManagementAuth,State(state):State<SharedState>,Path(id):Path<i64>,Query(query):Query<RegistryQuery>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();let mapping=registry_mapping(&c,id,&query.model,&query.upstream)?;
  Ok(Json(serde_json::json!({"override_tokens":crate::model_registry::context_override(&c,tokengo_shared::ChannelId(id),&mapping)?})))
 }
-async fn context_override_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<ContextOverrideWrite>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn context_override_set(_auth: ManagementAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<ContextOverrideWrite>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn=state.conn();
     let mapping=registry_mapping(&conn,id,&body.model,&body.upstream)?;
     if let Some(tokens)=body.tokens {
@@ -1000,7 +1009,7 @@ async fn context_override_set(_auth: PanelAuth, State(state): State<SharedState>
 }
 
 async fn registry_get(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Query(query): Query<RegistryQuery>,
@@ -1025,7 +1034,7 @@ async fn registry_get(
     ))
 }
 
-async fn registry_set(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<RegistryWrite>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn registry_set(_auth: ManagementAuth, State(state): State<SharedState>, Path(id): Path<i64>, Json(body): Json<RegistryWrite>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
     let mapping = registry_mapping(&conn, id, &body.model, &body.upstream)?;
     if let Some(identity) = &body.identity {
@@ -1048,7 +1057,7 @@ async fn registry_set(_auth: PanelAuth, State(state): State<SharedState>, Path(i
 /// `ok` = 库里到底有没有东西（没有就是 `ok: false` + `fetched_at: 0`，界面据此说
 /// 「还没问过上游」而不是假装有一份空清单）。
 async fn channel_catalog(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1125,7 +1134,7 @@ struct VisionTestBody {
 /// - **不动路由状态**（一次人工检查不该改变谁在用）；
 /// - 用**这条渠道自己的** URL / key / 自定义头。
 async fn channels_vision_test(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<VisionTestBody>,
@@ -1319,26 +1328,26 @@ struct ModelEnabledBody {
     model: String,
     enabled: bool,
 }
-async fn model_enabled_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<ModelEnabledBody>)->Result<Json<serde_json::Value>,ApiError>{
+async fn model_enabled_save(_auth:ManagementAuth,State(state):State<SharedState>,Json(body):Json<ModelEnabledBody>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();if model_routes::routes_for(&c,&body.model)?.is_none(){return Err(ApiError::not_found("模型未勾选"));}
  model_routes::set_enabled(&c,&body.model,body.enabled)?;
  Ok(Json(serde_json::json!({"ok":true,"enabled":body.enabled})))
 }
 
-async fn auto_policy_get(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();Ok(Json(serde_json::json!({"policy":crate::db::policy::get(&c)?,"order":crate::db::policy::ordered(&c)?})))}
-async fn auto_policy_save(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
+async fn auto_policy_get(_auth:ManagementAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();Ok(Json(serde_json::json!({"policy":crate::db::policy::get(&c)?,"order":crate::db::policy::ordered(&c)?})))}
+async fn auto_policy_save(_auth:ManagementAuth,State(state):State<SharedState>,Json(body):Json<crate::db::policy::Policy>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::save(&c,&body).map_err(|e|ApiError::bad_request(e.to_string()))?;Ok(Json(serde_json::json!({"ok":true})))}
 #[derive(Deserialize)]
 struct OrderMove {
     model: String,
     up: bool,
 }
-async fn model_order_move(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<OrderMove>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::move_model(&c,&body.model,body.up)?;Ok(Json(serde_json::json!({"ok":true})))}
+async fn model_order_move(_auth:ManagementAuth,State(state):State<SharedState>,Json(body):Json<OrderMove>)->Result<Json<serde_json::Value>,ApiError>{let c=state.conn();crate::db::policy::move_model(&c,&body.model,body.up)?;Ok(Json(serde_json::json!({"ok":true})))}
 #[derive(Deserialize)]
 struct CoolReset {
     model: Option<String>,
     channel_id: Option<i64>,
 }
-async fn model_cooldowns(_auth:PanelAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{
+async fn model_cooldowns(_auth:ManagementAuth,State(state):State<SharedState>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();
  // 表里存的是归一化后的名字（连字符/下划线都成了空格），面板上要看的是**真名**：
  // 拿勾选过的模型名对一遍，对得上就换成真名（对不上就原样给，不能凭空造名字）。
@@ -1354,7 +1363,7 @@ struct FaultRetry {
     model: String,
 }
 async fn channel_fault_retry(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Json(body): Json<FaultRetry>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1364,7 +1373,7 @@ async fn channel_fault_retry(
     })?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
-async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{
+async fn model_cooldown_reset(_auth:ManagementAuth,State(state):State<SharedState>,Json(body):Json<CoolReset>)->Result<Json<serde_json::Value>,ApiError>{
  let c=state.conn();if let Some(name)=body.model {crate::db::policy::reset(&c,&name,body.channel_id).map_err(crate::db::DbError::from)?;} else {
  if body.channel_id.is_some(){return Err(ApiError::bad_request("全部解除不能指定渠道"));}
  c.execute("UPDATE model_cooldowns SET failures=0,until_ms=0,lease_until=0,reason='',generation=generation+1",[]).map_err(crate::db::DbError::from)?;
@@ -1372,7 +1381,7 @@ async fn model_cooldown_reset(_auth:PanelAuth,State(state):State<SharedState>,Js
 }
 
 async fn model_routes_list(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let routes = {
@@ -1479,7 +1488,7 @@ async fn model_routes_list(
 
 /// 全部「名字 → 用途」。面板一次拿走，省得一个名字一个请求。
 async fn model_kinds_list(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
@@ -1497,7 +1506,7 @@ async fn model_kinds_list(
 /// 给人手动定一个**模型名**的用途（对话 / 嵌入 / 重排 / 图像 / 视频 / 音频），
 /// 或交还给实测（`kind: "auto"`）。名字没建模型组也能定 —— 这正是它单独立表的原因。
 async fn models_set_kind(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     axum::extract::Path(name): axum::extract::Path<String>,
     Json(body): Json<ModelKindBody>,
@@ -1541,7 +1550,7 @@ fn parse_kind(raw: &str) -> Result<tokengo_shared::ModelKind, ApiError> {
 /// 顺序全站只有一份（`channels.priority`）：模型组拿掉之后，「这个模型名下先试哪条」
 /// 也由它决定 —— 用户只需要在一个地方维护优先级，不用为每个模型名各排一遍。
 async fn channels_move(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<MoveBody>,
@@ -1564,7 +1573,7 @@ struct MoveBody {
 
 /// 一键启用/停用一条渠道（面板状态开关）。**只改这一列**，密钥/请求头/模型名一个都不碰。
 async fn channels_set_enabled(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<EnabledBody>,
@@ -1600,7 +1609,7 @@ struct EnabledBody {
 // ───────────────────────── 路由状态 ─────────────────────────
 
 async fn routing_state(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let routes = {
@@ -1633,7 +1642,7 @@ async fn routing_state(
 }
 
 async fn routing_set_config(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Json(cfg): Json<tokengo_shared::routing::RoutingConfig>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1660,25 +1669,22 @@ async fn routing_set_config(
 
 /// 立刻把某个模型名的回切检查点归零 —— 不想等 10 分钟时用（面板上的「立刻试首选」）。
 async fn routing_reprobe(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(model): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let next = state.routing().state(&model).cloned().map(|mut st| {st.next_probe_at_ms=Some(now_ms());st});
     {
         let conn = state.conn();
         if model_routes::routes_for(&conn, &model)?.is_none() {
             return Err(ApiError::not_found(format!("模型名 {model} 这里没有")));
         }
-    }
-    {
-        let mut r = state.routing();
-        if let Some(st) = r.state(&model) {
-            let mut st = st.clone();
-            st.next_probe_at_ms = Some(now_ms());
-            r.restore(&model, st);
+        if let Some(next) = &next {
+            // Commit under the revocation/audit gate, then release DB before taking routing.
+            crate::db::routing::save_state(&conn, &model, next)?;
         }
     }
-    state.persist_state(&model)?;
+    if let Some(next) = next {state.routing().restore(&model, next);}
     Ok(Json(serde_json::json!({ "ok": true, "note": "下次请求会先试首选渠道" })))
 }
 
@@ -1691,7 +1697,7 @@ struct StatsQuery {
 }
 
 async fn stats(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Query(q): Query<StatsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1736,7 +1742,7 @@ struct LogsQuery {
 }
 
 async fn logs(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Query(q): Query<LogsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1747,7 +1753,7 @@ async fn logs(
 }
 
 async fn request_detail(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<requests::RequestDetail>, ApiError> {
@@ -1760,7 +1766,7 @@ async fn request_detail(
 
 /// 面板「日志」页：最近的运行日志。`level`=error/warn/info 是门槛，`q` 是关键词（也当请求号用）。
 async fn logs_live(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Query(q): Query<LogsLiveQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -1779,7 +1785,7 @@ async fn logs_live(
 
 /// 当前日志级别（面板上显示 + 限时 debug 的倒计时）。
 async fn logs_level_get(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ctl = state.log_control();
@@ -1792,10 +1798,18 @@ async fn logs_level_get(
 /// 改日志级别。`minutes > 0` = 只开这么久，到点自动收回（防着开完 debug 忘了关、
 /// 日志把磁盘刷满 —— 这台机器上吃过不设上限的亏）。
 async fn logs_level_set(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Json(body): Json<LogLevelBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // Serialize revocation with the actual in-memory mutation, not just request admission.
+    let _mutation_guard = state.conn();
+    if let Some(id) = super::operations::actor_id() {
+        if !crate::db::operations_tokens::active(&_mutation_guard, id)? {
+            return Err(ApiError::new(axum::http::StatusCode::UNAUTHORIZED, "invalid_operations_token", "Operations credential is inactive"));
+        }
+        crate::db::operations_tokens::audit(&_mutation_guard, "operations_token", id, "operations.logs.level", "runtime", None, None, true)?;
+    }
     let ctl = state.log_control();
     ctl.set_level(&body.level)
         .map_err(ApiError::bad_request)?;
@@ -1848,7 +1862,7 @@ struct LogLevelBody {
 // ───────────────────────── 设置 ─────────────────────────
 
 async fn settings_get(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
@@ -1922,7 +1936,7 @@ async fn generate_gateway_key(
 // ───────────────────────── 账目维护 ─────────────────────────
 
 async fn maintenance_get(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
@@ -1944,7 +1958,7 @@ struct MaintenanceBody {
 }
 
 async fn maintenance_set(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Json(body): Json<MaintenanceBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -2048,12 +2062,12 @@ struct GatewayKeyBody {
     name: String,
 }
 
-async fn gateway_keys_list(_auth: PanelAuth, State(state): State<SharedState>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn gateway_keys_list(_auth: ManagementAuth, State(state): State<SharedState>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(serde_json::json!({"keys": gateway_keys::list(&state.conn())?})))
 }
 
 async fn gateway_keys_create(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Json(body): Json<GatewayKeyBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -2061,9 +2075,9 @@ async fn gateway_keys_create(
     let conn = state.conn();
     let key = gateway_keys::generate();
     let row = gateway_keys::create(&conn, &state.secrets, &body.name, &key, false)?;
-    Ok(Json(serde_json::to_value(row).map_err(|_| {
-        ApiError::internal("Cannot serialize gateway key")
-    })?))
+    let mut value = serde_json::to_value(row).map_err(|_| ApiError::internal("Cannot serialize gateway key"))?;
+    if super::operations::actor_id().is_some() { value["secret"] = serde_json::json!(key); }
+    Ok(Json(value))
 }
 
 async fn gateway_keys_reveal(
@@ -2077,7 +2091,7 @@ async fn gateway_keys_reveal(
     Ok(Json(serde_json::json!({"gateway_key":key})))
 }
 
-async fn gateway_keys_delete(_auth: PanelAuth, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn gateway_keys_delete(_auth: ManagementAuth, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
     if !gateway_keys::delete(&conn,id)? { return Err(ApiError::not_found("Key not found")); }
     state.forget_gateway_key();

@@ -2,7 +2,7 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-已发布：[**v0.34.0-qiwolf.4 原生部署与容器双版本**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.4)。发布源码 `15c11c00fa31d3a498a5f86e16d23e20f2bb6503`；GitHub Rust/WASM CI通过（944通过、0失败、2忽略），同提交 Linux AMD64 原生包、离线镜像及 GHCR 镜像已校验，匿名拉取、首次初始化、重启和同卷重建通过。镜像：`ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.4`；附件和校验摘要见 Release。业务基线 `febb2c9` 已完成测试部署的有限真实调用与界面验收，发布封装不扩大其供应商兼容范围。
+本次分发版本：[**v0.34.0-qiwolf.5 运维令牌**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.5)。部署者可向可信智能体签发独立站点运维令牌，支持到期、撤销、安全重置及独立审计；不必交出 root 密码或浏览器会话。构建提交、CI 状态、下载附件和镜像摘要以 Release 实际内容为准，Cargo 仍为上游 0.34.0。详见[版本说明](docs/releases/v0.34.0-qiwolf.5.md)。
 
 上游 Key 管理使用独立弹窗，“编辑 Key”与“选择模型”分开。已有 API Key 可由管理员显式查看或复制，编辑留空保留原值。点击上游模型输入框即读取当前 Key 的目录，搜索、多选后生成上游名称与本地映射对照，也可手工输入；本地映射留空沿用上游名。既有映射保持原名，详见[操作说明](docs/provider-key-pools.md)。
 
@@ -38,6 +38,8 @@ Cargo 版本号保留上游 **v0.34.0**；本分支的实际功能以提交及�
 ```json
 {"model":"gpt-6-luna","stream":true,"store":false,"reasoning":{"effort":"low"},"input":[{"role":"user","content":"Hello"}]}
 ```
+
+部署者的可信智能体可使用[独立运维令牌](docs/operations-tokens.md)进行脚本化管理（自 v0.34.0-qiwolf.5 提供）；旧 root 会话用法见[兼容说明](docs/account-login.md#脚本化运维)。
 
 ### 用户私有虚拟模型
 
@@ -88,7 +90,7 @@ TOKENGO_LOG_DIR=./logs \
 ./target/release/tokengo-server
 ```
 
-服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.4` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径。qiwolf.4 起的标签发布流程推送 GHCR，并保留离线镜像包，具体以 Release 实际产物为准。
+服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.5` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径。qiwolf.4 起的标签发布流程推送 GHCR，并保留离线镜像包，具体以 Release 实际产物为准。
 
 ### 容器部署与分发
 

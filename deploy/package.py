@@ -47,7 +47,8 @@ def main():
             raise ValueError('Trunk release output missing index, WASM, or JS')
         shutil.copytree(web, tree / 'web')
         shutil.copytree(ROOT / 'deploy', tree / 'deploy', ignore=shutil.ignore_patterns('__pycache__'))
-        shutil.copy2(ROOT / 'docs/deployment.md', tree / 'deployment.md')
+        for document in ['deployment.md', 'operations-tokens.md', 'account-login.md']:
+            shutil.copy2(ROOT / 'docs' / document, tree / document)
         shutil.copy2(ROOT / 'LICENSE', tree / 'LICENSE')
         shutil.copy2(ROOT / 'NOTICE', tree / 'NOTICE')
         manifest = {'commit': commit, 'target': 'x86_64-unknown-linux-gnu', 'rust': '1.98.0',

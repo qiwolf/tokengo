@@ -1,5 +1,5 @@
 //! Administrator-only logical routing policy API, independent of panel layout.
-use super::{admin::PanelAuth, ApiError};
+use super::{operations::ManagementAuth, ApiError};
 use crate::{
     db::{
         self, channels, model_routes,
@@ -41,7 +41,7 @@ fn model_name(raw: &str) -> Result<String, ApiError> {
 }
 
 async fn read(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Query(query): Query<ModelQuery>,
 ) -> Result<Json<Value>, ApiError> {
@@ -53,7 +53,7 @@ async fn read(
 }
 
 async fn write(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Query(query): Query<ModelQuery>,
     body: Result<Json<RoutePolicy>, axum::extract::rejection::JsonRejection>,
@@ -116,7 +116,7 @@ async fn write(
 }
 
 async fn remove(
-    _auth: PanelAuth,
+    _auth: ManagementAuth,
     State(state): State<SharedState>,
     Query(query): Query<ModelQuery>,
 ) -> Result<Json<Value>, ApiError> {

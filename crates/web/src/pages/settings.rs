@@ -344,6 +344,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
             <GatewayKeys ctx=ctx />
+            <super::operations_tokens::OperationsTokens ctx=ctx />
             <RequestTimeouts ctx=ctx />
 
             <section class="card">

@@ -197,7 +197,7 @@ jobs:
           printf '\n发布源码提交：`%s`。\n\n容器镜像：`%s`。\n' "$GITHUB_SHA" "$PUBLISHED_IMAGE" >> release-notes.md
           gh release create "$RELEASE_TAG" release/native/* release/image/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
-            --title "$RELEASE_TAG · 控制台、探针与 OAuth 工具诊断" --notes-file release-notes.md
+            --title "$RELEASE_TAG" --notes-file release-notes.md
       - name: Log out from registry
         if: always()
         run: docker logout ghcr.io

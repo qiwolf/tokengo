@@ -26,6 +26,7 @@ pub mod custom_probes;
 pub mod type_detector;
 pub mod vision_detector;
 pub mod routes;
+mod operations_guard;
 pub mod state;
 pub mod upstream;
 
@@ -52,6 +53,8 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::providers::router())
         .merge(custom_probes::router())
         .merge(routes::accounts::router())
+        .merge(routes::operations_tokens::router())
+        .merge(routes::operations::router())
         .merge(routes::managed_users::router())
         .merge(routes::virtual_models::router())
         .merge(routes::model_routing::router())
@@ -70,7 +73,9 @@ pub fn app(state: SharedState) -> Router {
         // 但它的压缩器每次要占约 6 MB 内存且不还给系统 —— 连发 5 次面板，
         // 进程常驻从 7.5 MB 涨到 **39.6 MB**（gzip 只到 9.6 MB，原样发到 8.8 MB）。
         // 512 MB 的容器里，30 MB 换 21 KB 不划算。
+        .layer(axum::middleware::from_fn_with_state(state.clone(),routes::operations::middleware))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(routes::operations::transport_gate))
         .with_state(state)
 }

@@ -324,7 +324,7 @@ pub fn router() -> axum::Router<crate::SharedState> {
     )
 }
 async fn read_tools(
-    _auth: crate::routes::admin::PanelAuth,
+    _auth: crate::routes::operations::ManagementAuth,
     axum::extract::State(state): axum::extract::State<crate::SharedState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> Result<axum::Json<Value>, crate::routes::ApiError> {
@@ -335,14 +335,18 @@ async fn read_tools(
     Ok(axum::Json(json!({"tools":load(&c,id)?})))
 }
 async fn write_tools(
-    _auth: crate::routes::admin::PanelAuth,
+    _auth: crate::routes::operations::ManagementAuth,
     axum::extract::State(state): axum::extract::State<crate::SharedState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
     axum::Json(body): axum::Json<ToolCapabilities>,
 ) -> Result<axum::Json<Value>, crate::routes::ApiError> {
     body.validate()
         .map_err(crate::routes::ApiError::bad_request)?;
-    save(&state.conn(), id, &body)?;
+    let c = state.conn();
+    if crate::db::channels::get(&c, tokengo_shared::ChannelId(id))?.is_none() {
+        return Err(crate::routes::ApiError::not_found("channel does not exist"));
+    }
+    save(&c, id, &body)?;
     Ok(axum::Json(json!({"tools":body})))
 }
 #[cfg(test)]

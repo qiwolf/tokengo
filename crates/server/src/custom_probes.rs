@@ -1,6 +1,6 @@
 //! Administrator-owned bounded diagnostics. Configuration and short leases live in settings;
 //! probes record system diagnostic costs without charging users or change routing/fallback health.
-use crate::{db, gateway::EndpointKind, routes::{ApiError, admin::PanelAuth}, SharedState};
+use crate::{db, gateway::EndpointKind, routes::{ApiError, operations::ManagementAuth}, SharedState};
 use axum::{extract::{Path, State}, routing::{get, post, put}, Json, Router};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -136,7 +136,7 @@ pub fn router()->Router<SharedState> {
         .route("/api/custom-probes/{id}",put(update).delete(remove))
         .route("/api/custom-probes/{id}/run",post(run))
 }
-async fn index(_root:PanelAuth,State(state):State<SharedState>)->Result<Json<Value>,ApiError> {
+async fn index(_root:ManagementAuth,State(state):State<SharedState>)->Result<Json<Value>,ApiError> {
     let c=state.conn();let mut targets=Vec::new();let mut eligible=Vec::new();
     for row in db::channels::list(&c)? {
         let Some(cred)=db::provider_pool::source_credential(&c,row.id.0)? else {continue};
@@ -153,7 +153,7 @@ async fn index(_root:PanelAuth,State(state):State<SharedState>)->Result<Json<Val
     }
     Ok(Json(json!({"probes":list(&c)?,"eligible_source_ids":eligible,"targets":targets})))
 }
-async fn create(_root:PanelAuth,State(state):State<SharedState>,Json(mut body):Json<Write>)->Result<Json<Value>,ApiError> {
+async fn create(_root:ManagementAuth,State(state):State<SharedState>,Json(mut body):Json<Write>)->Result<Json<Value>,ApiError> {
     body.config.validate().map_err(ApiError::bad_request)?;
     let c=state.conn();
     if list(&c)?.len()>=MAX_PROBES {return Err(ApiError::bad_request("最多配置64个自定义探针"));}
@@ -163,7 +163,7 @@ async fn create(_root:PanelAuth,State(state):State<SharedState>,Json(mut body):J
     let probe=Probe{next_run_at_ms:db::now_ms()+probe.config.interval_secs as i64*1000,..probe};
     store(&c,&probe)?;Ok(Json(json!({"probe":probe})))
 }
-async fn update(_root:PanelAuth,State(state):State<SharedState>,Path(id):Path<String>,Json(mut body):Json<Write>)->Result<Json<Value>,ApiError> {
+async fn update(_root:ManagementAuth,State(state):State<SharedState>,Path(id):Path<String>,Json(mut body):Json<Write>)->Result<Json<Value>,ApiError> {
     valid_id(&id)?;body.config.validate().map_err(ApiError::bad_request)?;
     let c=state.conn();let old=get_one(&c,&id)?.ok_or_else(||ApiError::not_found("探针不存在"))?;
     if body.version!=Some(old.version) {return Err(conflict("探针已被修改，请刷新后再保存"));}
@@ -173,13 +173,13 @@ async fn update(_root:PanelAuth,State(state):State<SharedState>,Path(id):Path<St
     let probe=Probe{id,version,next_run_at_ms:db::now_ms()+body.config.interval_secs as i64*1000,config:body.config,last_result:None};
     store(&c,&probe)?;Ok(Json(json!({"probe":probe})))
 }
-async fn remove(_root:PanelAuth,State(state):State<SharedState>,Path(id):Path<String>,body:Option<Json<Delete>>)->Result<Json<Value>,ApiError> {
+async fn remove(_root:ManagementAuth,State(state):State<SharedState>,Path(id):Path<String>,body:Option<Json<Delete>>)->Result<Json<Value>,ApiError> {
     valid_id(&id)?;let c=state.conn();let old=get_one(&c,&id)?.ok_or_else(||ApiError::not_found("探针不存在"))?;
     if body.and_then(|v|v.version).is_some_and(|v|v!=old.version) {return Err(conflict("探针已被修改，请刷新后再删除"));}
     db::in_tx(&c,|c|{db::settings::delete(c,&key(&id))?;db::settings::delete(c,&lease_key(&id))})?;
     Ok(Json(json!({"deleted":true})))
 }
-async fn run(root:crate::routes::accounts::RootGrant,State(state):State<SharedState>,Path(id):Path<String>)->Result<Json<Value>,ApiError> { valid_id(&id)?;Ok(Json(json!({"result":execute_actor(&state,&id,false,db::now_ms(),Some(root.actor_account_id())).await?}))) }
+async fn run(root:crate::routes::operations::ManagementGrant,State(state):State<SharedState>,Path(id):Path<String>)->Result<Json<Value>,ApiError> { valid_id(&id)?;Ok(Json(json!({"result":execute_actor(&state,&id,false,db::now_ms(),Some(root.actor_account_id())).await?}))) }
 fn tool_body(cfg:&Config)->Result<Value,String> {
     let kind=endpoint(&cfg.kind).and_then(EndpointKind::tool_kind).ok_or("不是工具探针")?;
     let mut value=if cfg.kind=="search" {json!({"query":cfg.input,"count":cfg.search_count,"need_content":cfg.need_content,"localization":cfg.localization.as_deref().unwrap_or("")})}else{json!({"url":cfg.input})};
@@ -272,7 +272,7 @@ async fn execute_actor(state:&SharedState,id:&str,background:bool,now:i64,actor:
         if !current(state,&probe,&token,background).map_err(|_|"无法确认探针状态")?{return Err("探针已删除、停用或修改，未发出新请求");}
         let initial={let c=state.conn();ready(&c,state,&probe.config,true).map_err(|_|"绑定的上游接入已删除、停用或凭据不可用，未发送请求")?};
         // Persist before OAuth refresh or waiting for a paid dispatch. No customer identity is used.
-        let auth=json!({"kind":"admin_diagnostic","probe_id":id,"probe_name":probe.config.name,"run_id":token,"actor_account_id":actor,"trigger":if background{"scheduled"}else{"manual"},"subscription":initial.oauth});
+        let auth=json!({"kind":"admin_diagnostic","probe_id":id,"probe_name":probe.config.name,"run_id":token,"actor_account_id":if crate::routes::operations::actor_id().is_some(){None}else{actor},"actor_type":if crate::routes::operations::actor_id().is_some(){"operations_token"}else{"root_account"},"actor_id":crate::routes::operations::actor_id().or(actor),"trigger":if background{"scheduled"}else{"manual"},"subscription":initial.oauth});
         let snapshot=json!({"source_id":probe.config.source_id,"provider_id":initial.credential.provider_id,"credential_id":initial.credential.id,"credential_revision":initial.credential.revision,"provider_version":initial.credential.provider_version,"source_name":initial.channel.name,"origin":reqwest::Url::parse(&initial.channel.base_url).ok().map(|u|u.origin().ascii_serialization()),"model":probe.config.model,"kind":probe.config.kind});
         let ledger={let c=state.conn();db::billing::reserve_diagnostic(&c,&format!("diagnostic:{token}"),probe.config.source_id,&probe.config.model,guard.request_based,initial.oauth,&auth,&snapshot).map_err(|_|"系统诊断记账不可用，未发送请求")?};guard.ledger=Some(ledger);
         let oauth=if initial.oauth{Some(crate::oauth::credentials(state,probe.config.source_id).await.map_err(|_|"OAuth 授权刷新失败或绑定已变化，请检查账号状态")?.ok_or("OAuth 绑定已删除")?)}else{None};

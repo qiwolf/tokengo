@@ -213,6 +213,8 @@ impl AppState {
 
     pub fn init(cfg: Config) -> anyhow::Result<Arc<Self>> {
         let conn = db::open(&cfg.db_path)?;
+        db::operations_tokens::instance_id(&conn)?;
+        crate::operations_guard::install(&conn)?;
         crate::billing_writer::replay(&conn, &cfg.db_path)?;
         db::billing::recover(&conn)?;
         let interrupted = db::requests::recover_interrupted(&conn)?;
@@ -397,8 +399,8 @@ impl AppState {
 
     /// 拿数据库锁。锁中毒（有 handler panic 过）时直接恢复继续用 ——
     /// 死锁比 panic 更糟，宁可带着可能不一致的内存状态继续跑。
-    pub fn conn(&self) -> MutexGuard<'_, Connection> {
-        self.db.lock().unwrap_or_else(|e| e.into_inner())
+    pub fn conn(&self) -> crate::operations_guard::Guard<'_> {
+        crate::operations_guard::Guard::new(self.db.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// 拿路由锁。**圈住的代码里不许有 await / 网络调用。**

@@ -63,6 +63,10 @@ pub struct AdminAuth(pub Option<AuthContext>);
 impl FromRequestParts<SharedState> for AdminAuth {
     type Rejection = ApiError;
     async fn from_request_parts(parts: &mut Parts, state: &SharedState) -> Result<Self, ApiError> {
+        if let Some(ctx) = parts.extensions.get::<super::operations::OperationsContext>() {
+            if crate::db::operations_tokens::active(&state.conn(), ctx.token_id)? { return Ok(AdminAuth(None)); }
+            return Err(ApiError::unauthorized("Operations credential is inactive"));
+        }
         match PanelAuth::from_request_parts(parts, state).await {
             Ok(_) => return Ok(AdminAuth(None)),
             Err(e) if parts.headers.contains_key(axum::http::header::COOKIE) => return Err(e),
@@ -81,6 +85,7 @@ impl FromRequestParts<SharedState> for AdminAuth {
 }
 impl AdminAuth {
     pub fn actor_label(&self) -> String {
+        if let Some(id)=super::operations::actor_id() {return format!("operations_token:{id}");}
         self.0
             .as_ref()
             .map(|auth| format!("user:{}/key:{}", auth.user_id, auth.key_id))

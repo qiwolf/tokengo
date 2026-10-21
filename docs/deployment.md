@@ -4,6 +4,8 @@
 
 GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台与安装/升级/回滚工具；容器部署见[容器指南](container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
 
+部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
+
 ## 使用已发布的直接部署包
 
 从 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 下载同一版本的 `tokengo-<提交前12位>-linux-x86_64.tar.gz` 及其 `.sha256` 文件，在独立 Linux x86_64 主机执行（以实际文件名替换占位符）：

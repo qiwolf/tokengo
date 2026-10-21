@@ -1,5 +1,5 @@
 //! Root-only explicit provider/source grouping; no credential or connection identity changes.
-use super::{admin::PanelAuth, ApiError};
+use super::{admin::PanelAuth, operations::ManagementAuth, ApiError};
 use crate::{
     db::{self, channels, model_routes, provider_channels as providers, provider_pool as pool},
     SharedState,
@@ -133,11 +133,11 @@ fn reset(c: &rusqlite::Connection, names: &[String]) -> db::Result<()> {
     }
     Ok(())
 }
-async fn list(_root: PanelAuth, State(s): State<SharedState>) -> Result<Json<Value>, ApiError> {
+async fn list(_root: ManagementAuth, State(s): State<SharedState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(providers::list(&s.conn())?))
 }
 async fn create(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     body: Result<Json<ProviderBody>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
@@ -180,7 +180,7 @@ async fn create(
     Ok(Json(json!({"provider":providers::one(&c,id)?})))
 }
 async fn update(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
     body: Result<Json<ProviderBody>, axum::extract::rejection::JsonRejection>,
@@ -243,7 +243,7 @@ async fn update(
     Ok(Json(json!({"provider":row})))
 }
 async fn delete(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
@@ -256,7 +256,7 @@ async fn delete(
     Ok(Json(json!({"deleted":true,"history_preserved":true})))
 }
 async fn assign(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
     body: Result<Json<Assignment>, axum::extract::rejection::JsonRejection>,
@@ -287,7 +287,7 @@ async fn assign(
     Ok(Json(json!({"ok":true})))
 }
 async fn group_model(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
     body: Result<Json<GroupSwitch>, axum::extract::rejection::JsonRejection>,
@@ -327,7 +327,7 @@ async fn group_model(
     ))
 }
 async fn connection_model(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
     body: Result<Json<ModelSwitch>, axum::extract::rejection::JsonRejection>,
@@ -348,7 +348,7 @@ async fn connection_model(
     Ok(Json(json!({"ok":true})))
 }
 async fn visibility(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Query(q): Query<ModelQuery>,
     body: Result<Json<Visibility>, axum::extract::rejection::JsonRejection>,
@@ -376,7 +376,7 @@ struct ReasoningBody {
     default_effort: Option<String>,
 }
 async fn reasoning(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
     body: Result<Json<ReasoningBody>, axum::extract::rejection::JsonRejection>,
@@ -400,7 +400,7 @@ async fn reasoning(
 }
 
 async fn credentials_list(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
@@ -438,7 +438,7 @@ struct NewCredential {
     max_output_tokens: Option<i64>,
 }
 async fn credentials_create(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<NewCredential>,
@@ -623,7 +623,7 @@ struct CredentialPatch {
     models: Option<Vec<CredentialModel>>,
 }
 async fn credentials_update(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path((provider, id)): Path<(i64, i64)>,
     Json(body): Json<CredentialPatch>,
@@ -747,7 +747,7 @@ async fn credentials_update(
     Ok(Json(json!({"credential":row})))
 }
 async fn credentials_disable(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path((provider, id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>, ApiError> {
@@ -781,7 +781,7 @@ struct DiscoverModels {
     base_url: Option<String>,
 }
 async fn credential_catalog(
-    _root: PanelAuth,
+    _root: ManagementAuth,
     State(s): State<SharedState>,
     Path(provider): Path<i64>,
     body: Result<Json<DiscoverModels>, axum::extract::rejection::JsonRejection>,

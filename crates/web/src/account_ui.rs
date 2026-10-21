@@ -128,7 +128,7 @@ pub fn PasswordForm(ctx: Ctx) -> impl IntoView {
 }
 #[component]
 pub fn Profile(ctx: Ctx) -> impl IntoView {
-    view! {<div class="page"><crate::pages::PageHead title="账号安全" desc="管理当前控制台账号的密码与登录会话。"/><Show when=move||ctx.is_root()><RenameForm ctx=ctx/></Show><PasswordForm ctx=ctx/></div>}
+    view! {<div class="page"><crate::pages::PageHead title="账号安全" desc="管理当前控制台账号的密码与登录会话。"/><Show when=move||ctx.is_root()><RenameForm ctx=ctx/><SecurityResetForm ctx=ctx/></Show><PasswordForm ctx=ctx/></div>}
 }
 #[component]
 pub fn RenameForm(ctx: Ctx) -> impl IntoView {
@@ -171,4 +171,58 @@ pub fn RenameForm(ctx: Ctx) -> impl IntoView {
     <PasswordField id="profile-password" label="当前密码" value=password autocomplete="current-password" error=error describedby="profile-help profile-error"/>
     <p id="profile-help" class="account-help">"账号会保存为小写。修改后旧账号名立即失效，所有管理会话退出；现有模型授权、额度与 API Key 不变。"</p><div id="profile-error" class="account-error" role="alert">{move||error.get()}</div><button type="submit" class="primary" disabled=move||busy.get()>{move||if busy.get(){"正在更新…"}else{"更新账号并退出"}}</button>
     </form></div></section>}
+}
+
+
+/// Root emergency recovery is distinct from routine password rotation.
+#[component]
+fn SecurityResetForm(ctx: Ctx) -> impl IntoView {
+    let open = RwSignal::new(false);
+    let busy = RwSignal::new(false);
+    let password = RwSignal::new(String::new());
+    let error = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        if !open.get() { password.set(String::new()); error.set(String::new()); }
+    });
+    let submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy.get_untracked() || password.get_untracked().is_empty() { return; }
+        let body = serde_json::json!({"password": password.get_untracked()});
+        password.set(String::new());
+        error.set(String::new());
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            match crate::api::call("POST", "/api/account/security-reset", Some(body)).await {
+                Ok(_) => {
+                    open.set(false);
+                    ctx.account.set(None);
+                    crate::api::clear_token();
+                    ctx.nav_open.set(false);
+                    ctx.phase.set(Phase::Login);
+                    ctx.say("安全重置完成，全部 root 会话和运维令牌已撤销，请重新登录。");
+                }
+                Err(e) => { ctx.note_err(&e); error.set(e.message); }
+            }
+            busy.set(false);
+        });
+    };
+    view! {
+        <section class="card account-password-card">
+            <header class="card-head"><h2>"安全重置"</h2></header>
+            <div class="card-body">
+                <p class="muted">"疑似管理凭据泄露时，立即撤销全部 root 登录会话、兼容运维会话和运维令牌。普通修改密码不会撤销独立运维令牌。"</p>
+                <button type="button" class="ghost danger" on:click=move |_| open.set(true)>"重置管理会话与运维令牌"</button>
+            </div>
+            <crate::pages::ModuleDialog open=open busy=busy title="确认安全重置".to_string()>
+                <p id="security-reset-help">"此操作不可恢复：全部 root 浏览器会话、兼容运维会话和独立运维令牌将立即失效，当前会话也将退出。保留业务 VKey、Gateway Key 及业务数据。登录账号和密码不变；若怀疑密码泄露，请同时更改密码。"</p>
+                <form class="account-form" on:submit=submit aria-busy=move || busy.get().to_string()>
+                    <div class="account-field"><label for="security-reset-password">"当前 root 密码"</label>
+                    <input id="security-reset-password" type="password" autocomplete="current-password" required maxlength="256" disabled=move || busy.get() aria-describedby="security-reset-help security-reset-error" prop:value=password on:input=move |ev| { password.set(event_target_value(&ev)); error.set(String::new()); }/></div>
+                    <div id="security-reset-error" class="account-error" role="alert">{move || error.get()}</div>
+                    <button type="button" class="ghost" disabled=move || busy.get() on:click=move |_| open.set(false)>"取消"</button>
+                    <button type="submit" class="ghost danger" disabled=move || busy.get()>{move || if busy.get() { "正在重置…" } else { "确认重置并退出" }}</button>
+                </form>
+            </crate::pages::ModuleDialog>
+        </section>
+    }
 }

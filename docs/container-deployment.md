@@ -4,12 +4,14 @@
 
 本仓库同时提供直接部署的 Linux 原生包与容器两种交付方式。已发布版本可在 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 下载原生包、离线镜像及校验和。从 `v0.34.0-qiwolf.4` 起，fork 版本标签经 CI 验证后还推送至 `ghcr.io/qiwolf/tokengo`；普通 PR 和手动构建只生成审阅制品，不发布。Actions 制品保留14天，长期分发以 Releases 附件和 GHCR 为准。当前发布架构为 **Linux AMD64**；ARM64 尚未验收。
 
+部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
+
 ## 从镜像仓库安装
 
 从同一 Release 下载 `compose.yaml`、`container.env.example`，复制后者为 `.env`，设置明确版本：
 
 ```sh
-TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.4
+TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.5
 ```
 
 然后在包含这两个配置文件的目录执行：

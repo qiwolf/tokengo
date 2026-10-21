@@ -16,6 +16,7 @@ Account投影为 `{id,username,display_name,role,user_id,enabled,created_at_ms}`
 | GET /api/account/me | 无 | `{account}` |
 | POST /api/account/logout | `{}` | `{ok:true}`，撤当前会话/清Cookie |
 | PUT /api/account/password | `{old_password,new_password}` | `{ok:true,reauthenticate:true}`，撤本人全部会话/清Cookie |
+| POST /api/account/security-reset | `{password}`，仅本人root | 撤销全部root新旧会话及有效运维令牌，清Cookie；登录名/密码和业务Key不变 |
 | PUT /api/account/profile | `{username,old_password}`，仅本人root | `{ok:true,reauthenticate:true}`，撤全部新旧root会话/清Cookie |
 | POST /api/account/setup | `{password,display_name?,gateway_key?}`，仅首次 | `{account,gateway_key,gateway_key_generated}`，设置Cookie；gateway_key仅首次回显，无session token |
 | GET /api/accounts（旧版兼容） | 仅root | `{accounts:[Account]}` |
@@ -24,7 +25,7 @@ Account投影为 `{id,username,display_name,role,user_id,enabled,created_at_ms}`
 
 首次状态沿用GET /api/auth/status.needs_setup。新密码12..256字节；迁移旧短密码仍可登录，不能因密码策略锁死现有root。用户名3..64 ASCII字母数字/._-，规范化为小写；改名必须确认当前密码，旧名失效。root保持唯一，不能禁用/修改role或关联user_id，不可从普通账号升级；用户新增要求允许root本人改username，不固定保留admin这个名称。旧 `/api/auth/login` 也必须提供当前root username+password，拒绝password-only避免绕过改名。旧已存Bearer在改名/reset时全部撤销。
 
-root改密码/安全重置与旧global hash在同一事务同步，撤全部new root+legacy sessions；旧set_panel_password也同步root记录，绝不造第二个admin。Argon验证在有界blocking槽中执行，返回后事务复核hash/version；并发setup仅一方成功，login/password/reset/rename之间CAS不接受旧快照。普通账号及其关联user每次鉴权实时检查启用状态；users禁用触发器撤关联会话并增加generation，重新启用不能复活旧Cookie。
+root改密码与旧global hash在同一事务同步，撤全部new root+legacy sessions；独立安全重置不改登录名或密码，会撤销全部root会话及有效运维令牌，业务Key不变；旧set_panel_password也同步root记录，绝不造第二个admin。Argon验证在有界blocking槽中执行，返回后事务复核hash/version；并发setup仅一方成功，login/password/reset/rename之间CAS不接受旧快照。普通账号及其关联user每次鉴权实时检查启用状态；users禁用触发器撤关联会话并增加generation，重新启用不能复活旧Cookie。
 
 普通门户 `GET /api/account/portal?before_id=i64&limit=1..100`：
 
@@ -33,6 +34,104 @@ root改密码/安全重置与旧global hash在同一事务同步，撤全部new 
 ```
 
 只允许role=user、绑定当前user_id；不接受user_id query覆盖。summary全本人历史，token/known_debit字段是已知项之和，unknown/unpriced计数必须一同显示，不能称缺失为已知0。记录显式白名单，不含source/auth/price snapshots、channel配置/headers、IP、原request/error或任何key明文/hash。用户通过下述浏览器自助Key接口管理本人密钥；portal仍是用量与安全元数据投影，不返回历史密钥明文。root门户403，应进入管理控制台。
+
+## 脚本化运维
+
+自 v0.34.0-qiwolf.5 起提供独立运维令牌，推荐部署者在控制台“设置 → 运维令牌”创建后交给可信智能体，详见[运维令牌接口与脚本](operations-tokens.md)。目前只有固定的一档“站点运维”权限，不支持可选 scope；需要渠道级最小权限的 CI 不能据此视为已满足。部署时须核对所用版本与实际能力清单，旧版兼容会话不会自动变为运维令牌。
+
+下面保留旧 root 运维会话的兼容用法，不构成长期稳定性、弃用时间或未来替代方案的承诺。新令牌与旧会话独立管理：普通 root 改名/改密不撤销独立令牌；安全重置或手动撤销会阻止它继续接入。
+
+### 选择凭据
+
+| 凭据 | 当前用途 | 权限边界 |
+| --- | --- | --- |
+| Gateway Key / 普通 VKey | 获准的推理与自助接口 | 不授予渠道或全局设置管理权限 |
+| 管理员 VKey | 用户角色为 admin，且用户、Key 和祖先策略均允许 `admin_access` 时，访问相应管理接口 | 仅覆盖采用 `AdminAuth` 的接口；不是 root。具体接口见[身份与计量](identity-metering.md#api) |
+| root 浏览器会话 | 控制台及采用 `PanelAuth` 的管理接口 | HttpOnly Cookie，12小时绝对有效期；写请求需要 CSRF 头 |
+| 独立运维令牌 | 部署者的可信智能体访问明确登记的业务管理接口 | 固定站点运维权限；默认90天，最多365天；不能修改root安全或再签发运维令牌 |
+| root 运维会话（兼容） | 非浏览器脚本访问采用 `PanelAuth` 的管理接口 | root 权限，不能指定渠道/路由 scope；当前默认30天绝对有效期，不随请求续期 |
+
+`/api/channels`、渠道路由和全局设置等敏感管理接口仍要求 root。不要把 `admin_access` 或推理来源白名单理解为管理面渠道授权。运维会话可能访问敏感配置，应按 root 凭据保管，不向仅需推理或有限管理权限的应用分发。
+
+### 登录、调用与撤销
+
+实例须已完成首次初始化。非浏览器脚本使用 `POST /api/auth/login`，JSON 为 `{"username":"当前root登录名","password":"当前密码"}`，成功返回 `{"ok":true,"token":"..."}`。初始登录名为 `admin`，改名后必须使用新名称；不接受仅密码登录。无需模拟浏览器，也不要用 `/api/account/login` 提取 body token，该接口只设置账号 Cookie。
+
+管理请求使用 `Authorization: Bearer <原始token>`。无 Cookie 的运维 Bearer 路径不要求 `X-Tokengo-Panel`；Cookie 与 Authorization 同时出现会被拒绝。浏览器请求仍须遵守前文 CSRF 规则。数据库中存储的是摘要，不能把摘要当作 Bearer 使用。
+
+任务结束后调用 `POST /api/auth/logout`，以 JSON `{"token":"原始token"}` 撤销该运维会话。**只带 Authorization 而提交空对象不会撤销会话**；返回 `ok:true` 也不能替代失效验证。root 改名、改密或安全重置会撤销相关新旧会话；token 过期或撤销后，管理请求返回401，需重新登录。不要通过直接编辑数据库修复凭据状态。
+
+下面的 Python 3 示例只读取渠道数量，不打印密码、token 或渠道配置；仅创建并撤销本次运维会话。保存为 `panel-session-example.py` 后运行 `python3 panel-session-example.py`。使用本机 loopback HTTP 或可信 HTTPS 地址；脚本不跟随重定向、不使用系统代理、不保存 Cookie，TLS 证书校验保持开启。
+
+```python
+import getpass
+import json
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import (
+    HTTPRedirectHandler, ProxyHandler, Request, build_opener,
+)
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+base = input("实例地址 [http://127.0.0.1:3160]: ").strip().rstrip("/")
+base = base or "http://127.0.0.1:3160"
+url = urlsplit(base)
+if (url.scheme not in ("http", "https") or not url.hostname
+        or url.username is not None or url.password is not None
+        or url.query or url.fragment or url.path not in ("", "/")
+        or (url.scheme == "http"
+            and url.hostname not in ("127.0.0.1", "localhost", "::1"))):
+    raise SystemExit("请使用实例根地址；远程访问必须使用可信 HTTPS")
+opener = build_opener(ProxyHandler({}), NoRedirect())
+
+
+def request(method, path, body=None, token=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    data = None if body is None else json.dumps(body).encode()
+    req = Request(base + path, data=data, headers=headers, method=method)
+    try:
+        with opener.open(req, timeout=15) as response:
+            return response.status, json.load(response)
+    except HTTPError as error:
+        status = error.code
+        error.close()
+        return status, {}
+
+
+username = input("当前 root 登录名: ").strip()
+password = getpass.getpass("root 密码: ")
+status, login = request("POST", "/api/auth/login",
+                        {"username": username, "password": password})
+del password
+token = login.pop("token", None)
+if status != 200 or not isinstance(token, str) or not token:
+    raise SystemExit(f"登录失败，HTTP {status}")
+try:
+    status, channels = request("GET", "/api/channels", token=token)
+    if status != 200 or not isinstance(channels.get("channels"), list):
+        raise RuntimeError(f"读取渠道失败，HTTP {status}")
+    print("读取成功，渠道数:", len(channels["channels"]))
+finally:
+    status, logout = request("POST", "/api/auth/logout", {"token": token})
+    if status != 200 or logout.get("ok") is not True:
+        raise RuntimeError("撤销未确认；请按 root 凭据仍有效处理")
+status, _ = request("GET", "/api/channels", token=token)
+del token
+if status != 401:
+    raise RuntimeError(f"预期撤销后401，实际HTTP {status}；请核查会话状态")
+print("会话已撤销，再次访问返回401")
+```
+
+401应检查登录名、密码、token 到期/撤销及 Cookie 混用；403可能来自 CSRF 或权限边界；429表示登录节流或认证资源繁忙，应延迟重试，不能循环尝试密码。网络超时不代表登出已完成；未确认撤销时保留为待处理状态，必要时通过 root 安全操作撤销全部相关会话。进程强制退出也可能跳过清理，不要把 `finally` 视为崩溃后的撤销保证。
+
+本文说明的是当前源码行为。示例的本地隔离空库验收不能替代指定发布镜像或目标部署环境的验证。
 
 ## 统一用户与浏览器自助 Key
 

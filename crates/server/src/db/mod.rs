@@ -6,6 +6,7 @@
 pub mod provider_channels;
 pub mod provider_pool;
 pub mod accounts;
+pub mod operations_tokens;
 pub mod identity;
 pub mod lifecycle;
 pub mod billing;
@@ -193,6 +194,8 @@ mod tests {
             "quota_events",
             "protocol_sessions",
             "protocol_artifacts",
+            "operations_tokens",
+            "operations_instance",
             "oauth_hosts",
             "oauth_accounts",
             "oauth_pending",

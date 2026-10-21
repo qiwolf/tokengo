@@ -85,6 +85,7 @@ pub fn router() -> Router<SharedState> {
         .route("/api/account/me", get(me))
         .route("/api/account/logout", post(logout))
         .route("/api/account/password", put(password))
+        .route("/api/account/security-reset", post(security_reset))
         .route("/api/account/profile", put(profile))
         .route("/api/account/portal", get(portal))
         .route("/api/accounts", get(list).post(create))
@@ -270,6 +271,16 @@ pub struct Browser {
     raw: String,
 }
 impl Browser {
+    /// Recheck the session and exact credential snapshot after an async password check.
+    pub(crate) fn valid(&self, c: &rusqlite::Connection) -> db::Result<bool> {
+        Ok(accounts::authenticate(c, &self.raw)?.is_some_and(|current| {
+            current.account.id == self.credential.account.id
+                && current.account.role == self.credential.account.role
+                && current.account.username == self.credential.account.username
+                && current.version == self.credential.version
+                && current.hash == self.credential.hash
+        }))
+    }
     pub(crate) fn owner(&self, c: &rusqlite::Connection) -> Result<Option<i64>, ApiError> {
         let current = accounts::authenticate(c, &self.raw)?.ok_or_else(denied)?;
         if current.account.role == "root" { return Ok(None); }
@@ -719,4 +730,52 @@ async fn portal(
     Ok(Json(
         json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"entries":entries,"next_before_id":next}}),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecurityReset { password: String }
+async fn security_reset(
+    browser: Browser,
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(body): Json<SecurityReset>,
+) -> Result<Response, ApiError> {
+    if browser.credential.account.role != "root" { return Err(forbidden()); }
+    state.panel_login_gate.check(&browser.credential.account.username)?;
+    if !verify(&state, body.password, browser.credential.hash.clone()).await? { return Err(ApiError::new(axum::http::StatusCode::FORBIDDEN,"step_up_failed","当前密码错误，请重试")); }
+    let c=state.conn();
+    db::in_tx(&c, |c| {
+        if !browser.valid(c)? {return Err(db::DbError::Other("root会话或凭据已变化".into()));}
+        db::operations_tokens::revoke_all(c,browser.credential.account.id)?;
+        c.execute("DELETE FROM account_sessions WHERE account_id IN (SELECT id FROM panel_accounts WHERE role='root')",[])?;
+        db::sessions::revoke_all(c)?;
+        accounts::audit(c,browser.credential.account.id,"panel.security_reset",browser.credential.account.id)?;
+        Ok(())
+    }).map_err(|e| match &e {
+        db::DbError::Other(s) if s == "root会话或凭据已变化" => denied(),
+        _ => e.into(),
+    })?;
+    state.panel_login_gate.success(&browser.credential.account.username);
+    Ok(response(json!({"ok":true,"reauthenticate":true}), &headers, None))
+}
+
+#[cfg(test)]
+mod operations_stepup_tests {
+    use super::*;
+    #[test]
+    fn browser_snapshot_rejects_password_rotation_and_revoked_sessions() {
+        let c=db::open_in_memory().unwrap();accounts::sync_root_hash(&c,"first").unwrap();
+        let credential=accounts::root(&c).unwrap().unwrap();
+        let raw=accounts::create_session(&c,&credential).unwrap();
+        let browser=Browser{credential,raw};assert!(browser.valid(&c).unwrap());
+        c.execute("UPDATE panel_accounts SET password_hash='changed'",[]).unwrap();
+        assert!(!browser.valid(&c).unwrap());
+        c.execute("UPDATE panel_accounts SET password_hash='first'",[]).unwrap();
+        assert!(!browser.valid(&c).unwrap(), "restoring the old hash cannot revive a revoked session");
+        let credential=accounts::root(&c).unwrap().unwrap();
+        let raw=accounts::create_session(&c,&credential).unwrap();
+        let browser=Browser{credential,raw};assert!(browser.valid(&c).unwrap());
+        accounts::revoke(&c,&browser.raw).unwrap();assert!(!browser.valid(&c).unwrap());
+    }
 }

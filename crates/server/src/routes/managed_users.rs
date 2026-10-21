@@ -2,7 +2,8 @@
 //! Existing identity, key ancestry, pricing and financial ledger IDs stay intact.
 use super::{
     ApiError,
-    accounts::{self, Browser, RootGrant},
+    accounts::{self, Browser},
+    operations::ManagementGrant,
 };
 use crate::{
     SharedState,
@@ -51,7 +52,7 @@ pub fn router() -> Router<SharedState> {
         .layer(DefaultBodyLimit::max(65536))
         .layer(axum::middleware::map_response(accounts::json_errors))
 }
-fn require_root(root: &RootGrant, c: &Connection) -> Result<(), ApiError> {
+fn require_root(root: &ManagementGrant, c: &Connection) -> Result<(), ApiError> {
     if root.valid(c)? {
         Ok(())
     } else {
@@ -121,7 +122,7 @@ fn full(c: &Connection) -> db::Result<()> {
     c.pragma_update(None, "synchronous", "FULL")?;
     Ok(())
 }
-async fn list(root: RootGrant, State(state): State<SharedState>) -> Result<Json<Value>, ApiError> {
+async fn list(root: ManagementGrant, State(state): State<SharedState>) -> Result<Json<Value>, ApiError> {
     let c = state.conn();
     require_root(&root, &c)?;
     let users = identity::users(&c)?
@@ -144,7 +145,7 @@ struct NewUser {
     limit_micro: Option<i64>,
 }
 async fn create(
-    root: RootGrant,
+    root: ManagementGrant,
     State(state): State<SharedState>,
     Json(body): Json<NewUser>,
 ) -> Result<Json<Value>, ApiError> {
@@ -180,7 +181,7 @@ async fn create(
     .map_err(invalid)?;
     Ok(Json(json!({"user":value})))
 }
-async fn delete(root: RootGrant, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<Value>,ApiError> {
+async fn delete(root: ManagementGrant, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<Value>,ApiError> {
     let c=state.conn();
     require_root(&root,&c)?;
     identity::user(&c,id)?.ok_or_else(||ApiError::not_found("用户不存在"))?;
@@ -202,7 +203,7 @@ struct UserPatch {
     limit_micro: Option<Option<i64>>,
 }
 async fn update(
-    root: RootGrant,
+    root: ManagementGrant,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<UserPatch>,
@@ -268,7 +269,7 @@ struct LoginCredential {
     display_name: Option<String>,
 }
 async fn add_login(
-    root: RootGrant,
+    root: ManagementGrant,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
     Json(body): Json<LoginCredential>,

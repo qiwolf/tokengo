@@ -25,6 +25,7 @@ pub mod route_policy;
 pub mod logs;
 pub mod overview;
 pub mod settings;
+pub mod operations_tokens;
 
 use leptos::prelude::*;
 
