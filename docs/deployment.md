@@ -2,7 +2,7 @@
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 
-GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台与安装/升级/回滚工具；容器部署见[容器指南](container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
+GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台与安装/升级/回滚工具；容器部署见[容器指南](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.5/docs/container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
 

@@ -76,7 +76,7 @@ trunk build --release
 cd ../..
 ```
 
-The server executable is `target/release/tokengo-server`; panel assets are in `crates/web/dist/`. Keep the executable and panel from the same source revision. See [GitHub Releases](https://github.com/qiwolf/tokengo/releases) for the actual published native and offline-container assets. The Linux packaging CI also retains a same-commit offline image artifact for 14 days. No public container registry is published automatically. See the [container deployment guide](docs/container-deployment.md) for the multi-stage Dockerfile, non-root Compose setup, persistent data, backup and offline distribution. No production accounts or credentials are included.
+The server executable is `target/release/tokengo-server`; panel assets are in `crates/web/dist/`. Keep the executable and panel from the same source revision. See [GitHub Releases](https://github.com/qiwolf/tokengo/releases) for the actual published native and offline-container assets. The Linux packaging CI also retains a same-commit offline image artifact for 14 days. Since `v0.34.0-qiwolf.4`, verified fork release tags also publish version, full-commit and `latest` image tags to `ghcr.io/qiwolf/tokengo`; ordinary PR and manual builds retain review artifacts only. See the [container deployment guide](docs/container-deployment.md) for the multi-stage Dockerfile, non-root Compose setup, persistent data, backup and offline distribution. No production accounts or credentials are included.
 
 ## Run Locally
 

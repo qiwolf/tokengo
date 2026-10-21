@@ -4,7 +4,7 @@ This fork builds on upstream v0.34.0. Logical routing, bounded errors and stable
 
 ## Upstream names and logical names
 
-An authenticated administrator can POST or PUT `/api/channels` with mappings:
+A root session or an operations token authorized for the registered action can create a channel with POST `/api/channels`, or update an existing channel with PUT `/api/channels/{id}`, including its mappings:
 
 ```json
 {
@@ -25,7 +25,7 @@ Use separate diagnostic names such as `diag/provider-a/...`. A suffix like `(pro
 
 ## Per-model policy API
 
-Use the existing panel session token, not a gateway inference key:
+For scripts, use an independent [operations token](operations-tokens.md); the existing root panel session token remains supported for compatibility. A gateway inference key does not authorize this interface. Set `ADMIN_TOKEN` to the chosen management credential:
 
 ```sh
 curl -X PUT "$BASE/api/model-routing?model=deepseek-v4.1-flash" \

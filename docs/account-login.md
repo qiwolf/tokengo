@@ -8,7 +8,7 @@
 
 所有浏览器unsafe请求（含登录/首次设置，以及旧管理API经任一Cookie认证）必须带 `X-Tokengo-Panel: 1`。Origin若存在必须scheme有效且authority与Host一致，Sec-Fetch-Site为cross-site则拒绝；不开放CORS。Cookie与Authorization同时出现明确401，不尝试fallback为更高权限；无Cookie的旧运维Bearer独立兼容。新账号接口禁止Bearer替代登录Cookie（accounts管理允许root legacy Bearer）。
 
-Account投影为 `{id,username,display_name,role,user_id,enabled,created_at_ms}`，role仅root/user。统一失败 `{error:{message,type}}`：认证无效/错密码/未知账号/禁用统一401；分权/CSRF403；格式/字段400；有界登录节流429。输入/secret/hash不进入错误或审计。
+Account投影为 `{id,username,display_name,role,user_id,enabled,created_at_ms}`，role仅root/user。统一失败 `{error:{message,type}}`：登录凭据无效/错密码/未知账号/禁用统一401；已登录root的安全重置二次验证失败返回403 `step_up_failed`，可在当前会话重试；分权/CSRF403；格式/字段400；有界登录节流429。输入/secret/hash不进入错误或审计。
 
 | API | 输入 | 成功输出 |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ root改密码与旧global hash在同一事务同步，撤全部new root+legacy s
 | 独立运维令牌 | 部署者的可信智能体访问明确登记的业务管理接口 | 固定站点运维权限；默认90天，最多365天；不能修改root安全或再签发运维令牌 |
 | root 运维会话（兼容） | 非浏览器脚本访问采用 `PanelAuth` 的管理接口 | root 权限，不能指定渠道/路由 scope；当前默认30天绝对有效期，不随请求续期 |
 
-`/api/channels`、渠道路由和全局设置等敏感管理接口仍要求 root。不要把 `admin_access` 或推理来源白名单理解为管理面渠道授权。运维会话可能访问敏感配置，应按 root 凭据保管，不向仅需推理或有限管理权限的应用分发。
+渠道、路由及统一用户等业务管理接口支持 root 会话和明确登记的独立运维令牌，具体方法与路径以 `/api/ops/capabilities` 为准；管理员 VKey 不因此获得渠道管理权限。root 安全、运维令牌签发/撤销及未登记动作不向独立运维令牌开放；`GET /api/settings` 仅返回安全投影，完整设置写入仍要求 root。不要把 `admin_access` 或推理来源白名单理解为管理面渠道授权。旧 root 运维会话可能访问敏感配置，应按 root 凭据保管，不向仅需推理或有限管理权限的应用分发。
 
 ### 登录、调用与撤销
 
@@ -137,16 +137,16 @@ print("会话已撤销，再次访问返回401")
 
 | API | 请求/行为 | 成功输出 |
 | --- | --- | --- |
-| GET /api/managed-users | root管理；统一用户、关联凭证安全元数据、现有金额预算；root单独投影 | `{users,root_accounts}` |
+| GET /api/managed-users | root或独立运维令牌管理；统一用户、关联凭证安全元数据、现有金额预算；root账号仅向root投影 | root返回`{users,root_accounts}`，运维令牌仅返回`{users}` |
 | POST /api/managed-users | `{username,password,display_name,policy?,limit_micro?}`；同一事务创建普通user/凭证/可选金额预算/审计；不接受user_id或root身份 | `{user}` |
 | PATCH /api/managed-users/{id} | `{display_name?,enabled?,policy?,password?,limit_micro?}`；保留原ID；更新金额上限不清零spent/reserved；用户停用同步其登录状态 | `{user}` |
 | POST /api/managed-users/{id}/login-credential | `{username,password,display_name?}`；仅为尚无凭证的历史用户补登录，不重挂既有账号 | `{user}` |
 | GET /api/account/keys | 从普通Cookie会话推导owner，返回本人Key/预算/安全策略/获准可见模型/32把上限 | `{keys,policy,budget,models,max_active_keys}` |
 | POST /api/account/keys | `{name,policy?,expires_at?,limit_micro?}`；顶级Key归属当前user，不要求先有VKey；事务内检查活动Key数 | `{key,secret}`，secret仅本次返回 |
-| PATCH /api/account/keys/{id} | `{name?,policy?,enabled?,expires_at?,limit_micro?,revoke?}`；只能收紧本人Key，停用或撤销，不能自助重新启用 | `{key}` |
+| PATCH /api/account/keys/{id} | `{name?,policy?,enabled?,expires_at?,limit_micro?,revoke?}`；只能收紧本人Key策略；允许暂停、撤销及恢复自己暂停的未到期Key，恢复须通过祖先有效性和活动Key数量检查；不能恢复管理员停用或已撤销的Key | `{key}` |
 | DELETE /api/account/keys/{id} | 撤销本人Key；非本人404；已撤销不能复活 | `{key}` |
 
-统一管理入口使用root授权，保留现有root运维Bearer兼容；普通自助Key接口只接受浏览器会话，Cookie写操作沿用CSRF门，Cookie/Bearer混合拒绝。所有新响应加no-store。模型选项不泄露未授权来源配置或凭据；数据库新Key只存安全摘要，列表永不返回secret。
+统一管理入口支持root会话和明确登记的独立运维令牌，保留现有root运维Bearer兼容；独立令牌不返回root账号投影，也不因此获得root安全或令牌签发权限。普通自助Key接口只接受浏览器会话，Cookie写操作沿用CSRF门，Cookie/Bearer混合拒绝。所有新响应加no-store。模型选项不泄露未授权来源配置或凭据；数据库新Key只存安全摘要，列表永不返回secret。
 
 自助策略必须不宽于实时用户策略，管理能力强制关闭；编辑既有Key还须不宽于其旧策略和父链。金额上限不能高于用户、既有Key或父链上限，不能清空有限上限来逃限；多个Key仍共享用户总额。Key到期可缩短，不能超出既有或父链期限。密码修改/重置撤登录会话，保留API Key与财务身份；用户整体停用阻断登录和新API请求。
 

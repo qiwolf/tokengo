@@ -6,7 +6,7 @@
 
 迁移33新增provider_channels、provider_connections；每连接最多一个父层。未分组连接仍可见且照旧路由。channel_models.enabled默认true；停用不删除upstream/vision/drop_fields，重新启用恢复原配置。来源有效条件为父层启用（无父层则true）、连接启用、mapping启用、逻辑模型全局启用及原权限/能力/路由限制全部满足。
 
-所有新管理接口限root PanelAuth，Cookie写入继承X-Tokengo-Panel:1及同源校验。旧无Cookie运维Bearer兼容，API admin VKey不能管理这些接口。错误沿用error.message/type；无凭据值出现在新增DTO。
+本页业务管理接口支持root会话及明确登记的独立运维令牌，具体方法与路径以 `/api/ops/capabilities` 为准，接入方式见[运维令牌](operations-tokens.md)。Cookie写入继承X-Tokengo-Panel:1及同源校验；旧无Cookie root运维Bearer保留兼容，API admin VKey不能管理这些接口。历史上游Key明文查看仍限root；独立运维令牌不能读取历史密钥或绑定OAuth账号，响应另执行机器脱敏投影。错误沿用error.message/type；无凭据值出现在新增DTO。
 
 | 接口 | 请求 | 返回 |
 | --- | --- | --- |

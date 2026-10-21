@@ -4,13 +4,23 @@
 
 ## 当前代码、部署与发布分界
 
-正式分发 **[v0.34.0-qiwolf.4](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.4)** 的源码为 `15c11c00fa31d3a498a5f86e16d23e20f2bb6503`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39469007908)通过（944通过、0失败、2忽略）；[Linux AMD64 双分发流程](https://github.com/qiwolf/tokengo/actions/runs/39469063851)通过，原生与离线镜像下载校验、GHCR按摘要匿名拉取和隔离容器初始化/重启/同卷重建均通过。本机再次运行采用 Docker Desktop 的 Linux AMD64 仿真，不宣称 ARM64 原生发行或性能验收。功能代码 `febb2c91ff51516716a4a40c502d7b41316796f9` 已部署至测试实例，前后端同提交，schema37、53表及历史保护核对通过；本轮发布没有更换该测试实例的程序。
+正式分发 **[v0.34.0-qiwolf.5 · 智能体运维令牌](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.5)** 的源码为 `b31cb4173ff6c4f169045ffc4c57630f43981362`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39525728580)通过（970通过、0失败、2忽略）；[Linux AMD64 打包与发布流程](https://github.com/qiwolf/tokengo/actions/runs/39525744869)通过。9个公开附件已重新下载并校验；原生包实际运行、令牌签发/身份/90项能力/撤销后401，以及GHCR按摘要匿名拉取、隔离容器初始化/重启/同卷重建均通过。下载后本机运行使用 Linux AMD64 仿真，不宣称 ARM64 原生发行或性能验收。
+
+本版新增独立[运维令牌](operations-tokens.md)：单档站点运维权限、默认90天、最多20把有效令牌、独立撤销与审计、明确的方法/路径白名单和诊断脱敏。运维令牌不能代替推理Key、读取现有凭据明文、管理root身份或继续签发令牌。迁移新增schema38；root正常修改登录名/密码撤销其浏览器会话，但不撤销独立运维令牌，安全重置才同时撤销管理会话和全部运维令牌。专项回归覆盖撤销竞态、审计失败回滚与上游回显敏感信息。
+
+测试实例已在公开发布前部署同一业务/Cargo/前端源码并验收schema38；公开发布另外更新了文档和离线文档打包内容，没有再部署该实例。源码匹配不代表运行二进制与公开附件具有相同摘要。上述发布验收使用隔离数据和受控来源，不新增真实供应商付费调用的验收结论。
+
+## 历史版本与阶段验收
+
+以下保留各阶段的精确提交、测试数量和范围，不能作为当前版本的新验收结果。
+
+历史正式分发 **[v0.34.0-qiwolf.4](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.4)** 的源码为 `15c11c00fa31d3a498a5f86e16d23e20f2bb6503`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39469007908)通过（944通过、0失败、2忽略）；[Linux AMD64 双分发流程](https://github.com/qiwolf/tokengo/actions/runs/39469063851)通过，原生与离线镜像下载校验、GHCR按摘要匿名拉取和隔离容器初始化/重启/同卷重建均通过。本机再次运行采用 Docker Desktop 的 Linux AMD64 仿真，不宣称 ARM64 原生发行或性能验收。功能代码 `febb2c91ff51516716a4a40c502d7b41316796f9` 已部署至测试实例，前后端同提交，schema37、53表及历史保护核对通过；本轮发布没有更换该测试实例的程序。
 
 本轮前端105项、服务端库及两类集成共305项通过后，追加来源归属迁移、OAuth MIME/gzip/SSE与工具类型的必要定向回归通过。真实 OAuth Responses 最终输入15/输出5 Token，订阅USD成本未知；独立 Search/Fetch 各1次且各记录750 microUSD。三类均系统诊断、不扣用户额度。首次 OAuth 响应解析失败保留账本，修复后独立重验成功，不覆盖失败证据；本轮未重跑960次外部压力。
 
 浏览器检查覆盖可见授权候选、既有兼容授权保留/撤销取消、管理员与普通用户保存、探针字段保存/取消/启停、桌面与390px布局。三类临时探针通过API逐项删除读回；本轮未逐类型重复GUI删除确认。原供应方、模型、价格、普通用户额度与历史保持；临时用户正常归档，测试Key撤销。探针完整合同见[自定义探针](custom-probes.md)。
 
-上一正式分发为 [v0.34.0-qiwolf.3](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.3)，运行代码/原生包/容器均来自 `f2943d9707e16b231af7e291d4688f3e307ccc4f`。GitHub Rust/WASM CI通过（869通过/0失败/2忽略），同提交AMD64原生包与容器CI、本机镜像导入和隔离生命周期检查通过。目标已冷备升级，schema37及全部53表、SQL对象、序列、环境与主密钥保持。现网既有本地供应方已独立整理为一个渠道、5地址、5凭据、6模型映射，原ID、权限、价格和历史保留；安装包不会按IP自动合并其他部署。上线后已使用原有个人Key真实调用自有Chat、Embeddings、Rerank，均200、原来源结算，运行中/未结/预占均0。Rerank未返回usage，账本保持未知；unpriced不等于免费。线上已有Key可见、留空保留密钥、指定Key目录探测和模型输入顺序已检查，390px布局已验证。
+此前正式分发为 [v0.34.0-qiwolf.3](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.3)，运行代码/原生包/容器均来自 `f2943d9707e16b231af7e291d4688f3e307ccc4f`。GitHub Rust/WASM CI通过（869通过/0失败/2忽略），同提交AMD64原生包与容器CI、本机镜像导入和隔离生命周期检查通过。目标已冷备升级，schema37及全部53表、SQL对象、序列、环境与主密钥保持。现网既有本地供应方已独立整理为一个渠道、5地址、5凭据、6模型映射，原ID、权限、价格和历史保留；安装包不会按IP自动合并其他部署。上线后已使用原有个人Key真实调用自有Chat、Embeddings、Rerank，均200、原来源结算，运行中/未结/预占均0。Rerank未返回usage，账本保持未知；unpriced不等于免费。线上已有Key可见、留空保留密钥、指定Key目录探测和模型输入顺序已检查，390px布局已验证。
 
 前一正式分发 [v0.34.0-qiwolf.2](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.2) 来自 `3d5c448c408664a14ac0c4400c3dd70f63f2694b`（859通过/0失败/2忽略），完成schema36→37及用户/渠道七项界面修复，其历史证据不代替本版新目录接口验收。
 
@@ -52,6 +62,6 @@
 
 ## 运行与安全边界
 
-主流程使用统一用户、账号密码和同源HttpOnly会话；内部凭证与权益分表保留，VKey不等于root管理员。管理员变更登录名或密码须验证当前密码并撤销会话。现有内网部署不能替代公网 HTTPS 验收；新部署应遵循 [部署指南](deployment.md) 先初始化、固定审阅提交、保留数据库与主密钥的一致备份，再开放访问。
+主流程使用统一用户、账号密码和同源HttpOnly会话；内部凭证与权益分表保留，VKey不等于root管理员。管理员变更登录名或密码须验证当前密码并撤销其浏览器会话；独立运维令牌继续有效，须单独撤销或执行安全重置。现有内网部署不能替代公网 HTTPS 验收；新部署应遵循 [部署指南](deployment.md) 先初始化、固定审阅提交、保留数据库与主密钥的一致备份，再开放访问。
 
 现有 LiteLLM 未被替换或切流。固定 DNS、离机灾备、所有移动端和浏览器的全面验收，以及更多供应商专用订阅适配仍有后续工作。

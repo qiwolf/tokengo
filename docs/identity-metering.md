@@ -1,6 +1,6 @@
 # 路线 B：多用户、VKey、额度与计量 API
 
-本批沿用 Rust/Axum/SQLite，为后续协议/供应商适配提供身份和金融事实。没有部署或迁移现网。
+本文记录路线 B 初始开发阶段的身份与计量合同，沿用 Rust/Axum/SQLite；当时没有部署或迁移现网。当前分发与部署证据见[验收状态](acceptance-status.md)，不能将本页阶段性说明理解为当前仍未发布。
 
 ## 身份与授权
 
@@ -26,7 +26,7 @@ AuthContext 包含 user/key/role、模型/来源/费用及限流策略、父链�
 
 普通用户通过自己的 vkey 访问自助 API，无需共享面板密码。自助列表/撤销限定当前 key 及其后代，分发给应用的窄 key 无法枚举或撤销父 key、兄弟 key；全局管理由管理员入口完成。自助创建的 key 是父 key 的子 key，不能扩大策略、延长超出父链的有效期；父预算、滚动用量和并发也共同限制所有子 key，避免建新 key 绕限。`/v1/usage` 限定当前 key，不能通过 query 读取别人账单；用户可从自己的各 key 查看其用量，管理员可按 user/key 汇总。
 
-原有 PanelAuth 是 root 管理入口。新路线 B 管理 API 同时支持管理员 vkey，但须用户角色 admin，且用户策略及 key/祖先策略显式开启 `admin_access`。默认 false，历史 gateway key 不会自动获得管理能力。普通 user 即使策略字段为 true 也不能调用管理接口；敏感渠道/全局设置旧接口仍要求 PanelAuth。
+原有 PanelAuth 是 root 管理入口。新路线 B 管理 API 同时支持管理员 vkey，但须用户角色 admin，且用户策略及 key/祖先策略显式开启 `admin_access`。默认 false，历史 gateway key 不会自动获得管理能力。普通 user 即使策略字段为 true 也不能调用管理接口；管理员 VKey 不因此取得渠道或完整全局设置管理权限。独立[运维令牌](operations-tokens.md)是另一类授权，可访问 `/api/ops/capabilities` 明确登记的业务管理动作；完整设置写入、root安全和历史密钥明文查看仍限root。
 
 ## API
 
