@@ -2,6 +2,12 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
+## v0.34.0-qiwolf.7 — 2026-10-22
+
+- 修复发布 Compose 默认引用不存在的 `tokengo:local`：生成明确的 GHCR SHA `image:` 行，移除发布配置中的源码 `build`。
+- 离线镜像保留与 Compose 一致的 GHCR SHA 别名及原本地 SHA 标签；导入后无需额外改标签。源码构建模板保持原行为。
+- `build-test` 已通过发布配置回归与既有正式产品镜像的 Compose / save-load / 生命周期验证；本版公开产物的精确提交与验证结果见[版本说明](docs/releases/v0.34.0-qiwolf.7.md)和实际 Release。本次无 Rust 业务或数据库 schema 改动。
+
 ## v0.34.0-qiwolf.6 — 2026-10-21
 
 已[公开发布](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。精确提交的[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39557401353)为998通过、0失败、2忽略，另有13项Python测试及WASM检查通过；[Linux AMD64 打包与发布](https://github.com/qiwolf/tokengo/actions/runs/39557540103)、9个公开资产校验、匿名原生包下载/GHCR拉取和原生包/容器隔离运行均通过。隔离运行使用Linux AMD64仿真，不代表ARM64发行或性能验收。完整部署与账务边界见[验收状态](docs/acceptance-status.md)。

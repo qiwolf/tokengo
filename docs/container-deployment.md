@@ -10,11 +10,17 @@
 
 ## 从镜像仓库安装
 
-从同一 Release 下载 `compose.yaml`、`container.env.example`，复制后者为 `.env`，设置明确版本：
+从同一 Release 下载 `compose.yaml`、`container.env.example`。后续新生成的发布配置会直接写入固定提交的 `image: ghcr.io/qiwolf/tokengo:sha-<完整SHA>`，不包含源码 `build`；在 1Panel 等面板中只导入该 Compose 即可确定镜像，不依赖隐藏的 `.env`。源码仓库根目录的 Compose 仍用于源码构建，不能与发布配置混淆。
 
-```sh
-TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.6
+已发布的 qiwolf.6 及更早附件使用源码模板 `image: ${TOKENGO_IMAGE:-tokengo:local}`，没有配套 `.env` 时会退回本地构建标签；这不表示 GHCR 镜像没有版本标签。在面板中使用这些旧附件时，将 `image:` 行直接改为下列明确版本，并移除 `build:` 配置；命令行也可复制 `container.env.example` 为 `.env` 并修改其中 `TOKENGO_IMAGE`：
+
+```yaml
+services:
+  tokengo:
+    image: ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.6
 ```
+
+保留原配置中其余端口、数据卷及安全设置；使用旧变量模板的命令行部署则在 `.env` 中设置 `TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.6`。
 
 然后在包含这两个配置文件的目录执行：
 
@@ -25,7 +31,7 @@ docker compose ps
 curl --fail http://127.0.0.1:3160/readyz
 ```
 
-Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，将 `TOKENGO_IMAGE` 改为其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。本版已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
+Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，修改发布 Compose 的 `image:` 行（旧变量模板则修改 `.env` 中的 `TOKENGO_IMAGE`），使用其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。本版已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
 
 ## 从源码构建并首次启动
 
@@ -74,7 +80,7 @@ sha256sum --check image-SHA256SUMS
 docker load -i tokengo-<完整SHA>-linux-amd64.tar.gz
 ```
 
-将 `compose.yaml` 与 `container.env.example` 一并交给使用者。复制示例为 `.env`，设置 `TOKENGO_IMAGE=tokengo:sha-<完整SHA>`，然后：
+后续新包的离线镜像同时保留 `tokengo:sha-<完整SHA>` 与发布 Compose 使用的 `ghcr.io/qiwolf/tokengo:sha-<完整SHA>` 两个标签；`docker load` 后可直接使用配套 Compose，无需拉取或源码构建。qiwolf.6 及更早离线包只带前者，需将 `image:` 直接设为 `tokengo:sha-<完整SHA>` 并移除 `build:`，或复制示例为 `.env` 并设置同一 `TOKENGO_IMAGE`。然后：
 
 ```sh
 docker compose up -d --no-build
@@ -99,7 +105,7 @@ sha256sum tokengo-image.tar.gz > tokengo-image.tar.gz.sha256
 
 ## 升级、停止与回滚
 
-先备份完整数据卷与主密钥，再导入新镜像，将 `.env` 指向明确 SHA tag，执行 `docker compose up -d --no-build`。核对 `/readyz`、控制台登录、来源/模型目录及一笔受控真实调用，必要时核对财务账本；容器健康不等于所有上游模型均可用。
+先备份完整数据卷与主密钥，再导入新镜像，将发布 Compose 的 `image:` 行指向明确 SHA tag（旧变量模板修改 `.env` 中的 `TOKENGO_IMAGE`），执行 `docker compose up -d --no-build`。核对 `/readyz`、控制台登录、来源/模型目录及一笔受控真实调用，必要时核对财务账本；容器健康不等于所有上游模型均可用。
 
 服务端收到 SIGTERM/SIGINT 后停止接受新请求，默认最多等120秒请求结束，再给账务队列最多10秒排空；Compose 为整个停止过程预留150秒。`TOKENGO_SHUTDOWN_TIMEOUT_SECS` 可调整请求排空时间，同时须增加 `stop_grace_period` 以容纳账务与运行时退出。正常操作先排空流量再停止，避免长流式任务跨越截止时间；超时后 Docker 会强制结束进程。账务恢复依靠原有 FULL / outbox 合同，不能保证任意强制杀进程后全部非持久运行日志仍在。
 
