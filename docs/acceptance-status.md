@@ -4,9 +4,13 @@
 
 ## 当前代码、部署与发布分界
 
-本次分发 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 包含[通用 HTTP 透传](passthrough.md)、schema39、独立路由授权/静态凭据/按次账本及手动诊断，并提供可选MinerU同步客户端。完整实现合同见[开发文档](passthrough-development.md)，确切源码、CI和分发产物见该Release。
+正式分发 **[v0.34.0-qiwolf.6 · 通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)** 包含[通用 HTTP 透传](passthrough.md)、schema39、独立路由授权/静态凭据/按次账本及手动诊断，并提供可选MinerU同步客户端。完整实现合同见[开发文档](passthrough-development.md)。
 
-本地已有全workspace995通过、0失败、2个既有忽略；随后补充HEAD、无Content-Length上传越界及表单状态码回归，最新TCP文件9/9、Web专项4/4通过，WASM与桌面/390px操作验证通过。一次性本地网关访问真实Face合成图与CLIP文本，两者均与直连200及正文逐字节一致。新版本必须先完成目标237合成真实调用再公开发布，最终执行证据由该Release附注说明；这不代表MT Photos调用方切流、真人识别精度或长期GPU稳定性验收。
+已公开发布，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39557401353)通过：Rust 998通过、0失败、2忽略，另有13项Python客户端测试及WASM检查通过；[Linux AMD64 打包与发布](https://github.com/qiwolf/tokengo/actions/runs/39557540103)通过。9个公开附件重新下载校验通过，原生包匿名下载与GHCR匿名拉取通过，版本、提交与latest标签对应同一摘要：`ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。
+
+下载后原生CLI/服务端/WASM实际运行，以及透传管理、凭据脱敏、内部渠道隔离与运维令牌权限回归通过；发布容器的非root、只读根、就绪、主密钥权限、重启及同卷重建检查通过。本机运行复核采用macOS Docker Linux AMD64仿真，不证明ARM64原生支持或裸机性能。
+
+部署实例已完成schema38→39迁移与业务验证：Face合成图、CLIP合成文本通过网关均返回200，与直连响应正文逐字节一致；MinerU合成PDF同步解析完成，返回验收标记。6条按次业务账单各50 microUSD，3次root手动诊断记系统诊断账，不扣用户预算，结束时预占为0。临时测试配置与凭据均已清理，没有保留永久透传路由，现有调用方未切流。以上是合成业务验证，不代表真人识别精度、真实文档质量、长期GPU稳定性或全部客户端验收；MinerU原生异步接口仍未支持。
 
 以下为上一正式分发的独立历史证据，不作为本次新增功能的验证：
 

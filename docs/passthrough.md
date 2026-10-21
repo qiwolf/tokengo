@@ -4,13 +4,15 @@
 
 本功能的配置由服务端 SQLite 管理，通过面板和管理 API 修改，不新增 YAML 配置源。路由配置中的上游 Header 值加密保存，读取接口只返回名称及是否存在值，面板不会回显明文。
 
+本功能已随 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 公开发布。2026-10-21，237完成schema39升级及Face、CLIP、MinerU三服务真实合成调用验收：Face/CLIP响应与直连正文逐字节一致，MinerU单页PDF同步解析完成且Markdown包含预置标记。公开原生包及容器的下载校验与隔离运行也已通过（macOS Docker Linux AMD64仿真，包含容器重启及同卷重建）。临时验收资源已清理；没有永久路由保留，现有MT Photos、doc-extract等调用方默认入口没有切换。配置步骤和当前边界见下文，开发与部署证据范围见[开发文档](passthrough-development.md)。
+
 ## 在面板配置
 
 进入「渠道」页底部的「透传路由」，点击「新建透传路由」。填写名称、路径前缀、完整上游地址及是否剥离前缀。例如前缀 `/face/`、上游 `http://inference.example:8066`，启用剥离前缀后，客户端 `/face/represent` 对应上游 `/represent`。
 
 新建表单默认停用，且未授权任何 VKey、任何上游路径。配置完成并确认授权后再启用。
 
-「允许调用的 VKey ID」填写密钥的数字 ID，以逗号或空格分隔；这不是密钥明文。留空表示全部拒绝。客户端使用获授权的 Tokengo VKey 鉴权（`Authorization: Bearer <VKey>`、`x-api-key`，或透传路由专用的 `api-key`；同一请求不能混用冲突凭据），不能用管理会话或运维令牌代替业务密钥。
+「允许调用的 VKey ID」填写密钥的数字 ID，以逗号或空格分隔；这不是密钥明文。白名单覆盖该Key本身及其有效后代，父Key撤销会阻止后代调用，且用户与全部父链的实时策略继续生效。留空表示全部拒绝。客户端使用获授权的 Tokengo VKey 鉴权（`Authorization: Bearer <VKey>`、`x-api-key`，或透传路由专用的 `api-key`；同一请求不能混用冲突凭据），不能用管理会话或运维令牌代替业务密钥。
 
 已有 VKey 的渠道授权 `allowed_channels` 和付费开关 `allow_paid` 仍参与校验。给路由填写 VKey ID 不会自动扩大原权限：受限渠道的密钥还需允许路由对应的只读「计费接入 ID」，收费路由需要 `allow_paid=true`。建议为 mt-photos 创建独立 VKey，设置 `allowed_models=[]` 阻止 LLM 调用、`allowed_channels=null`，只通过透传路由的显式密钥白名单授予对应业务接口，并配置预算、RPM、并发限制，不设置 TPM。
 
@@ -61,6 +63,12 @@
 
 ## MinerU 同步接入
 
-仅代理兼容HTTP服务的 `/file_parse` 和 `/health`，网关前缀可设 `/mineru/`，剥离前缀，专用VKey及精确路径白名单。上传字段为 `files`，结果为内联Markdown或原ZIP。低并发起步，并为上传、排队和长解析配置足够超时；不开放整套异步资源API。
+第一阶段仅代理兼容HTTP服务（默认端口5024）的 `/file_parse` 和 `/health`。上游示例为 `http://mineru-upstream.example:5024`，网关前缀可设 `/mineru/`，开启剥离前缀，使用专用VKey及精确路径白名单 `["/file_parse","/health"]`。上传字段为 `files`，结果为内联Markdown或原ZIP。
+
+建议并发1–2，默认body上限20MiB（含multipart开销），可配置但不超过100MiB。覆盖兼容层900秒等待时，网关可设1000秒并同步调整调用方和反向代理，为上传、排队及返回留出余量。网关断开或超时不等于MinerU后台作业取消，不自动重试长任务。
+
+健康GET和上传POST都必须携带网关VKey。数据面 `/mineru/health` 与解析在同一路由时按同一单价计次；root面板的手动probe记系统诊断、不扣用户预算，二者不能混为免费健康检查。同步接入不支持原生tasks/uploads/files/jobs异步链、动态ID路径ACL或返回URL改写；不要用允许全部路径替代专门设计。
 
 可选标准库客户端为仓库 `scripts/mineru-gateway-client.py`，原生包位于 `tools/`；凭据仅通过 `TOKENGO_API_KEY` 或私有 `TOKENGO_API_KEY_FILE` 输入，健康和上传均鉴权、禁跳转，支持Markdown/ZIP输出。它不是Rust网关运行依赖。完整参数、接口边界和部署验收见[开发文档](passthrough-development.md)。
+
+接入doc-extract等外部客户端时，须同时为健康检查和上传增加专用网关认证，并核对实际返回来自远端MinerU。此类客户端的实现和升级不由本仓库分发；仓库提供的是上述可选标准库客户端。本轮没有修改现有调用方的默认流量。

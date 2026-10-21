@@ -1,6 +1,6 @@
 # 通用 HTTP 透传与 MinerU 同步接入设计
 
-状态：2026-10-21，通用Rust透传本地实现已有隔离证据；本轮已获授权继续完成 MinerU 同步接入、237真实调用验收及通过后的双分发发布，无需重复设计批准。完整开发合同和验收步骤见[开发文档](../../passthrough-development.md)，面板操作见[使用说明](../../passthrough.md)。
+状态：2026-10-21，已按源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e` 实施并在237完成schema39迁移、Face/CLIP字节一致性与MinerU合成PDF真实解析验收；[v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 已公开。现有调用方未切流、临时路由未保留。公开资产校验和匿名下载/拉取通过；原生包与镜像隔离运行、重启及同卷重建等检查亦通过，环境为macOS Docker Linux AMD64仿真，不访问生产上游。完整开发合同和验收步骤见[开发文档](../../passthrough-development.md)，面板操作见[使用说明](../../passthrough.md)。
 
 ## 交付范围与已实现合同
 
@@ -22,6 +22,6 @@ SQLite为唯一配置源，schema39新增独立路由、加密Header、Key授权
 
 ## 验收与发布门槛
 
-已有本地mock/native/WASM/面板和有限Face/CLIP真实端点证据，不等于MinerU已完成真实解析或调用方已迁移。最终代码执行必要回归后，部署237，用隔离身份与合成单页PDF，验证健康、真实解析命中/内容、授权拒绝、按次账/unknown token、root probe与普通数据面区别、重启持久化和回滚点。
+本轮CI为998项Rust通过、0失败、2忽略，13项Python及WASM检查通过。237三服务真实合成调用已通过：Face/CLIP HTTP200且body与直连逐字节一致；MinerU completed且内联Markdown包含预置标记。6笔完成数据面账各50microUSD，3笔root probe不扣用户预算，最终无遗留预占；fixture已清理。未切换调用方，未实际执行回滚，不能把这一小样本验收当作持续可用性或全部参数验收。
 
-本地提交用于固定部署源码身份；237验收通过后才向GitHub推送和创建公开Release；同commit生成匹配的Linux原生包与容器及WASM，校验manifest、OCI revision、digest和匿名获取。任一失败停止发布，按开发文档保全账务与冷备回滚，不将待验收写成成功。真实私有IP、SSH、root密码、VKey及测试材料只保留在非公开运维记录。
+本地提交固定部署源码身份，237验收通过后才推送GitHub并公开Release；本轮已完成。公开9资产校验、原生包匿名下载、GHCR匿名拉取成功；发布产物隔离运行亦通过：原生CLI/server/WASM、root透传管理及ops边界、容器非root/只读/ready/重启/同卷重建，范围为macOS Docker AMD64仿真。同commit生成匹配Linux原生包、容器及WASM；后续部署仍须校验manifest、OCI revision、digest，遇到失败按开发文档保全账务并执行经审阅的回滚，不将待验收写成成功。真实私有IP、SSH、root密码、VKey及测试材料只保留在非公开运维记录。

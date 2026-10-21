@@ -2,9 +2,11 @@
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 
-GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台与安装/升级/回滚工具；容器部署见[容器指南](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.5/docs/container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
+GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台、安装/升级/回滚工具、匹配源码的完整 `docs/` 和可选的 `tools/mineru-gateway-client.py`；Rust 服务运行不依赖该 Python 客户端。容器部署见[容器指南](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
+
+当前正式版本为 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码提交 `d5660992a6a1ef0b320ff143a19404ac3abad23e`，数据库 schema39。新增[通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough-development.md)；Face/CLIP 真实响应字节对等及 MinerU 合成 PDF 解析已通过目标实例验证。既有客户端并未自动切流，MinerU 原生异步资源 API 不在本版范围。完整发布与运行验证边界见[验收状态](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/acceptance-status.md)。
 
 ## 使用已发布的直接部署包
 

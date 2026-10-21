@@ -1,6 +1,6 @@
 # 部署者智能体的运维令牌
 
-自 `v0.34.0-qiwolf.5` 提供，数据库 schema 38。部署时以 `/api/ops/capabilities` 的实际返回确认可用动作。
+自 `v0.34.0-qiwolf.5` 提供，令牌功能引入于数据库 schema38；当前公开版本 `v0.34.0-qiwolf.6` 使用 schema39，保留既有90项动作合同。部署时以 `/api/ops/capabilities` 的实际返回确认可用动作。
 
 运维令牌用于部署者信任的智能体通过 HTTP 管理本站。无需把 root 密码、浏览器 Cookie 或兼容登录会话交给智能体。所有令牌只有一档固定权限：`site_operations`（站点运维），没有 scope、多档角色或永久有效选项。
 
@@ -30,7 +30,7 @@ root 身份安全、面板会话、令牌管理、OAuth 授权与绑定、历史
 
 ## API 合同
 
-未发布的[通用 HTTP 透传](passthrough.md)管理及诊断接口 `/api/passthrough-routes*` 仅允许 root，未加入运维令牌动作清单；不能用普通渠道或价格接口修改其内部来源。运维令牌也不能作为透传业务 VKey。
+自 `v0.34.0-qiwolf.6` 已发布的[通用 HTTP 透传](passthrough.md)管理及诊断接口 `/api/passthrough-routes*` 仅允许 root，未加入运维令牌动作清单；不能用普通渠道或价格接口修改其内部来源。运维令牌也不能作为透传业务 VKey。
 
 下列令牌管理接口仅允许 root 浏览器会话，同源写操作需要 `X-Tokengo-Panel: 1`。旧兼容 Bearer、管理员 VKey 和运维令牌均不能管理运维令牌。
 

@@ -2,7 +2,9 @@
 
 本文是实现合同和交付检查表。面板操作见[通用 HTTP 透传](passthrough.md)，设计与执行记录见[设计](superpowers/specs/2026-10-21-passthrough-design.md)和[计划](superpowers/plans/2026-10-21-passthrough.md)。
 
-状态日期：2026-10-21。Rust 通用透传、SQLite 管理、面板和手动诊断已有本地实现及隔离测试证据；Face/CLIP 曾通过临时本地网关调用真实端点，不能据此认定生产切流完成。MinerU 同步接入已完成现场协议评估，**237部署及合成文件真实调用是公开发布的前置门槛，执行结果见对应Release**。本文件不将健康检查、可编译或已保存路由视为文件解析验收。
+交付状态（2026-10-21）：[v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6) 已公开，源码提交 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。237 已完成 schema 38→39 部署迁移；Face/CLIP 合成业务响应均 HTTP 200，且与直连正文逐字节一致；MinerU 合成 PDF 同步解析返回 completed，内联 Markdown 包含预置标记。现有调用方未切流，验收临时路由、VKey、用户及网关会话已清理，未留下永久业务路由。MinerU 原生异步链仍不支持。
+
+该提交 GitHub CI 为 998 项 Rust 通过、0 失败、2 忽略，13 项 Python 通过，WASM 检查通过。公开9项资产校验、原生包匿名下载和GHCR匿名拉取已通过；发布产物的原生包和镜像隔离运行亦通过，范围为macOS Docker中的Linux AMD64仿真环境，未访问生产服务。原生CLI/服务端/WASM、root透传CRUD与密钥掩码/内部渠道隐藏、ops禁止新透传管理及既有90项能力清单、令牌签发/身份/撤销回归已核验；镜像非root/只读文件系统、ready、重启和同卷重建持久化已核验。本文件区分真实解析、字节传输、构建及分发证据，不以健康 200 替代业务验收。
 
 用户已授权按“必要验证 → 237 部署与真实调用 → 验收通过 → GitHub 推送及原生包/容器发布”的顺序交付；无须重复批准设计。任一验收失败须修复或报告阻断，不得跳过 237 真实调用先发布。本文不记录现场私有 IP、SSH 入口、账号密码、真实 VKey、静态 Header 或历史文档内容；现场证据单独保存在不随仓库发布的运维记录中。
 
@@ -156,14 +158,14 @@ python3 scripts/mineru-gateway-client.py \
 | 数据库迁移、Header 加密/保留/删除、revision、内部渠道隐藏 | 已有 Rust 单元/管理测试；变更后针对性重跑 |
 | 匿名/普通账号/管理员VKey/ops不能管理 | `passthrough_admin.rs` 已有隔离回归 |
 | 二进制/multipart/query、只转服务端凭据 | `passthrough.rs` 已有集成回归 |
-| 最长拒绝不回落、路径ACL、预算/TPM/RPM/body限额 | 已有回归；本轮精确凭据授权语义必须对齐最终代码补验 |
+| 最长拒绝不回落、路径ACL、预算/TPM/RPM/body限额 | 已有回归；本轮保留Key与有效后代继承授权、路径精确匹配语义，随该提交CI通过 |
 | gzip 不解压、重定向不跟随、204/304/HEAD一次结算 | `passthrough_transport.rs` 已有真实 loopback HTTP 测试 |
 | chunked超限413、读取超时、客户端断开、下游停读期限 | 已有传输回归；核对unknown用量及并发/预占释放 |
 | 面板CRUD/密钥不回显/ACL诊断/手机布局 | 已有合成浏览器证据；变动控件需比例复验 |
-| Face/CLIP真实端点 | 历史隔离合成调用通过；间歇性CUDA错误未被证明根治，未迁移调用方 |
-| MinerU协议 | 已做只读健康/OpenAPI/兼容源码核查，尚不等于上传解析成功 |
-| 237健康+multipart真实解析与账本 | **发布门槛，执行结果见Release** |
-| 原生包和容器同提交、持久化 | **同版本产物验收，执行结果见Release** |
+| Face/CLIP真实端点 | 237本轮合成业务HTTP 200，与直连body逐字节一致；未迁移调用方，未据此宣称历史间歇性错误已根治 |
+| MinerU协议 | 只读协议评估后，237本轮合成PDF真实上传completed且内联Markdown包含预置标记；不覆盖异步或所有高级参数 |
+| 237健康+multipart真实解析与账本 | 已通过：6笔数据面完成账各50 microUSD，3笔root probe系统诊断不扣用户预算，最终无遗留预占；临时资源已清理 |
+| 原生包和容器同提交、持久化 | 同commit构建/发布CI、9资产校验和匿名获取通过；发布产物在macOS Docker AMD64仿真下的原生运行、容器非root/只读/重启/同卷重建通过，不等于独立物理AMD64机器复测 |
 
 既有证据对应当时源代码，不能直接套用到修改后的构建；公开文档不固定宣称动态测试总数。必要命令由交付者运行并将原命令、退出码、测试摘要和源码提交/工作树摘要保存到私有验收记录：
 
@@ -176,7 +178,7 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 
 ## 8. 237 部署验收与回滚
 
-下列“237”仅是部署者既有目标环境的标识，公开文档不含地址和登录方式。
+“237”仅是部署者既有目标环境的标识，公开文档不含地址和登录方式。本轮部署迁移、三服务真实合成调用、账务及清理结果已通过；以下是后续再次部署可复用的检查步骤，并非全部仍待执行。本轮未触发回滚，也未对已建立的临时路由另做237重启持久化复测；现有Rust回归与发布容器流程的持久化检查须按各自证据范围解释。
 
 1. 实时核对目标身份、当前进程/容器、安装路径、版本、数据库/schema、主密钥位置、磁盘和已有路由；记录现状，避免把旧记忆作为现场事实。
 2. 停写后按既有部署流程冷备数据库/WAL一致性快照、主密钥、billing outbox/dead-letter、运行配置、旧二进制与匹配 web 目录。记录备份校验和及恢复步骤；备份不能只含 SQLite 主文件。
@@ -192,7 +194,7 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 
 ## 9. 原生包与容器双分发
 
-发布由主交付者在237验收通过后执行，不由保存本文触发。版本名沿用现有 `v0.34.0-qiwolf.N` 约定，实际 N 在发布时确定，不预先宣称某个 tag 已存在或已验证。
+本轮主交付者在237验收通过后公开发布 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。原生包、WASM和容器均来自该commit；9项公开资产校验及匿名获取已通过。发布产物隔离运行检查亦已通过：原生CLI/server/WASM、透传权限与旧ops兼容、容器非root/只读/ready/重启/同卷重建均在macOS Docker AMD64仿真环境核验；未以此访问生产上游，也不将仿真环境表述为独立物理AMD64机器复测。后续版本继续沿用 `v0.34.0-qiwolf.N` 约定。
 
 同一 Git commit 生成 Linux x86_64 原生包（服务端/CLI/WASM/manifest）、容器linux/amd64、离线镜像及校验清单；服务器、web和镜像不得分别取不同目录重建。依现有 `deploy/build-release.sh`、`deploy/manage.py`、`Dockerfile` 和 `.github/workflows/release-check.yml`：
 
@@ -200,4 +202,4 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 - 容器复用已校验的原生bundle，核对OCI revision与bundle manifest相同；验收非root运行、可写数据卷、退出重启、数据库及主密钥持久化。
 - 公共tag的发布工作流要求该commit的main CI成功，然后推送版本/commit/latest镜像并生成Release。推送前把上述验收门槛落实到实际交付记录；工作流通过本身不代表237业务验收通过。
 - 发布后用匿名身份读取Release资产及拉取固定镜像digest，核对与同commit产物一致，再作隔离启动检查。`latest`可变，部署和回滚记录以版本、commit、digest为准。
-- Release说明、README、CHANGELOG、验收状态及部署记录由主交付者按实际结果更新，不能把本文件待验收步骤改写为已成功。公开记录不附内网拓扑、SSH信息、凭据、完整现场日志或真实用户材料。
+- Release说明、README、CHANGELOG、验收状态及部署记录由主交付者按实际结果同步；后续docs-only提交不改变q6二进制与容器对应的已验证源码身份。公开记录不附内网拓扑、SSH信息、凭据、完整现场日志或真实用户材料。

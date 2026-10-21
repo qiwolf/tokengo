@@ -4,11 +4,13 @@
 
 ## v0.34.0-qiwolf.6 — 2026-10-21
 
+已[公开发布](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。精确提交的[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39557401353)为998通过、0失败、2忽略，另有13项Python测试及WASM检查通过；[Linux AMD64 打包与发布](https://github.com/qiwolf/tokengo/actions/runs/39557540103)、9个公开资产校验、匿名原生包下载/GHCR拉取和原生包/容器隔离运行均通过。隔离运行使用Linux AMD64仿真，不代表ARM64发行或性能验收。完整部署与账务边界见[验收状态](docs/acceptance-status.md)。
+
 - Rust 原生 HTTP 路径前缀透传，最长匹配、可选前缀剥离、业务路径白名单、独立 VKey 授权；支持原始二进制、multipart 与流式响应。
 - 上游静态 Header 加密保存、配置不回显；本地 api-key VKey 兼容、凭据冲突拒绝、禁止自动跳转/解压/重试，过滤 hop-by-hop 头。
 - 复用 RPM、并发、预算、不可变按次价格及持久账本；未知结果保守扣预留金额，token 保持未知。手动 HTTP 诊断走系统账本，不扣用户额度。
 - 渠道页新增透传管理与手动检查，迁移 schema39；内部渠道不进入 LLM 模型目录与普通渠道管理。透传管理仅 root，未加入站点运维令牌的动作清单。
-- 新增可选MinerU标准库客户端与安全合同测试，健康/上传均支持私有文件或环境凭据；原生包携带完整开发/用户文档与工具。发布前以目标环境的合成真实调用为门槛，实际记录见对应Release；不自动迁移既有调用方或停用其他网关。详见[开发合同](docs/passthrough-development.md)、[使用与边界](docs/passthrough.md)、[参考实现](docs/references/litellm-passthrough.md)。
+- 新增可选MinerU标准库客户端与安全合同测试，健康/上传均支持私有文件或环境凭据；原生包携带完整开发/用户文档与工具。已完成部署实例schema39迁移与Face/CLIP合成业务逐字节对比、MinerU合成PDF同步解析验收；临时测试配置已清理，既有调用方未切流。MinerU原生异步接口未支持，不自动停用其他网关。详见[开发合同](docs/passthrough-development.md)、[使用与边界](docs/passthrough.md)、[参考实现](docs/references/litellm-passthrough.md)。
 
 ## v0.34.0-qiwolf.5 — 2026-10-21
 

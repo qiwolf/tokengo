@@ -4,14 +4,16 @@
 
 本仓库同时提供直接部署的 Linux 原生包与容器两种交付方式。已发布版本可在 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 下载原生包、离线镜像及校验和。从 `v0.34.0-qiwolf.4` 起，fork 版本标签经 CI 验证后还推送至 `ghcr.io/qiwolf/tokengo`；普通 PR 和手动构建只生成审阅制品，不发布。Actions 制品保留14天，长期分发以 Releases 附件和 GHCR 为准。当前发布架构为 **Linux AMD64**；ARM64 尚未验收。
 
-部署后的智能体管理入口见[运维令牌](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.5/docs/operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.5/docs/account-login.md#脚本化运维)。
+部署后的智能体管理入口见[运维令牌](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/account-login.md#脚本化运维)。
+
+当前正式版本为 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，对应源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39。新增通用 HTTP 透传和 MinerU 同步接入；配置及限制见[透传文档](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough.md)。不自动切换既有调用方，也不提供 MinerU 原生异步资源 API。
 
 ## 从镜像仓库安装
 
 从同一 Release 下载 `compose.yaml`、`container.env.example`，复制后者为 `.env`，设置明确版本：
 
 ```sh
-TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.5
+TOKENGO_IMAGE=ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.6
 ```
 
 然后在包含这两个配置文件的目录执行：
@@ -23,7 +25,7 @@ docker compose ps
 curl --fail http://127.0.0.1:3160/readyz
 ```
 
-Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，将 `TOKENGO_IMAGE` 改为其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
+Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，将 `TOKENGO_IMAGE` 改为其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。本版已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:13b327a4d0c308fbdb7734d4e0550f58589aac1bafed57775cb06cd74f64034f`。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
 
 ## 从源码构建并首次启动
 

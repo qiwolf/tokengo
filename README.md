@@ -2,7 +2,7 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-本次分发版本：[**v0.34.0-qiwolf.6 通用 HTTP 透传与 MinerU 同步接入**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)。以独立 VKey、静态后端凭据和按次账本，将人脸、CLIP与同步文档解析接入统一入口；构建提交、CI、附件及镜像digest以Release实际记录为准。Cargo仍为上游0.34.0。详见[版本说明](docs/releases/v0.34.0-qiwolf.6.md)和[完整开发文档](docs/passthrough-development.md)。
+当前公开版本：[**v0.34.0-qiwolf.6 通用 HTTP 透传与 MinerU 同步接入**](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。以独立 VKey、静态后端凭据和按次账本，将人脸、CLIP与同步文档解析接入统一入口。精确提交CI为Rust 998通过、0失败、2忽略，另有13项Python测试和WASM检查通过；9个公开附件、匿名下载/拉取及原生包/容器隔离运行已验证。部署实例schema39及三项合成业务验收通过，现有调用方未切流。Cargo仍为上游0.34.0。详见[版本说明](docs/releases/v0.34.0-qiwolf.6.md)、[验收状态](docs/acceptance-status.md)和[完整开发文档](docs/passthrough-development.md)。
 
 上游 Key 管理使用独立弹窗，“编辑 Key”与“选择模型”分开。已有 API Key 可由管理员显式查看或复制，编辑留空保留原值。点击上游模型输入框即读取当前 Key 的目录，搜索、多选后生成上游名称与本地映射对照，也可手工输入；本地映射留空沿用上游名。既有映射保持原名，详见[操作说明](docs/provider-key-pools.md)。
 
@@ -92,7 +92,7 @@ TOKENGO_LOG_DIR=./logs \
 ./target/release/tokengo-server
 ```
 
-服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.5` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径。qiwolf.4 起的标签发布流程推送 GHCR，并保留离线镜像包，具体以 Release 实际产物为准。
+服务端产物为 `target/release/tokengo-server`，面板为 `crates/web/dist/` 的完整内容。两者使用同一次源码构建，不要混用版本。本 fork 以 `v0.34.0-qiwolf.6` 等独立标签区分分发版本，可下载资产以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 实际附件为准；提供直接部署与容器部署两种路径。qiwolf.4 起的标签发布流程推送 GHCR，并保留离线镜像包，具体以 Release 实际产物为准。
 
 ### 容器部署与分发
 
