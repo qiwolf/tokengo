@@ -2,11 +2,11 @@
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 
-GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台、安装/升级/回滚工具、匹配源码的完整 `docs/` 和可选的 `tools/mineru-gateway-client.py`；Rust 服务运行不依赖该 Python 客户端。容器部署见[容器指南](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
+GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台、安装/升级/回滚工具、匹配源码的完整 `docs/` 和可选的 `tools/mineru-gateway-client.py`；Rust 服务运行不依赖该 Python 客户端。容器部署见[容器指南](container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
 
-当前正式版本为 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，源码提交 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`，数据库 schema39。本版修复容器发行配置，沿用 qiwolf.6 的[通用 HTTP 透传与 MinerU 同步接入](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/passthrough-development.md)；Face/CLIP 响应字节对等及 MinerU 合成文件解析已在运行 qiwolf.6 业务代码的目标实例验证，当前选定的 MT Photos 和本机 doc-extract 已另行完成正式配置切换；安装发行包本身不会替用户创建路由或切换客户端。MinerU 原生异步资源 API 不在本版范围。完整发布与运行验证边界见[验收状态](https://github.com/qiwolf/tokengo/blob/v0.34.0-qiwolf.6/docs/acceptance-status.md)。
+本轮准备分发 **v0.34.0-qiwolf.8**，功能schema40，新增共享向量/重排回退、逐来源续验、回收站与服务授权；原生包、配套WASM、容器及精确发布提交正在验收，不预先宣称GitHub/GHCR发布成功。见[本版说明](releases/v0.34.0-qiwolf.8.md)和[验收状态](acceptance-status.md)。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复容器交付配置。安装包不会自动创建私有路由或切换调用方；[通用透传与MinerU](passthrough-development.md)仍限已实现的同步链路。由schema39升级前须一致备份数据库、主密钥和旧程序，不能用旧程序直接打开schema40数据库。
 
 ## 使用已发布的直接部署包
 
@@ -25,7 +25,7 @@ sudo python3 /opt/tokengo/current/deploy/manage.py health
 
 ## 构建同一提交的服务端与前端
 
-构建机使用 Ubuntu 24.04 x86_64（glibc 2.39 基线）、Rust 1.98.0、WASM target 和 Trunk 0.21.14。通用 CI 产物以此为兼容基线；实际目标 Debian 13 x86_64 LXC 已有独立部署路径；本轮直接包使用同提交 Ubuntu CI 产物并在目标机验证。其他系统须验证 glibc 和架构兼容，不能直接假定可运行。SQLite 使用项目 bundled 模式，构建机仍需 C 编译器。
+构建机使用 Ubuntu 24.04 x86_64（glibc 2.39 基线）、Rust 1.98.0、WASM target 和 Trunk 0.21.14。通用 CI 产物以此为兼容基线；实际目标 Debian 13 x86_64 LXC 已有独立部署路径；公开原生包按精确发布提交的 Ubuntu CI 产物核验；此前已有目标机运行证据不代替本轮新产物验收。其他系统须验证 glibc 和架构兼容，不能直接假定可运行。SQLite 使用项目 bundled 模式，构建机仍需 C 编译器。
 
 ```bash
 sudo apt-get update
