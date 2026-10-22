@@ -941,3 +941,91 @@ async fn managed_non_auth_headers_reject_cross_provider_credential_ownership() {
     let before=protected_connection_snapshot(&f.state.conn());
     for id in [a,b] {let body=managed_header_body(&f,id,json!([{"name":"X-Trace-Label","value":"must-not-write"}]));let(status,v)=f.req("PUT",&format!("/api/channels/{id}"),body).await;assert_eq!(status,409,"{v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);}
 }
+
+/// Capture every persisted column other than the explicitly mutable display label.
+fn presentation_identity(c: &rusqlite::Connection, table: &str, id: i64) -> Vec<String> {
+    let mut st=c.prepare(&format!("SELECT * FROM {table} WHERE id=?1")).unwrap();
+    let columns=st.column_names().iter().map(|s|s.to_string()).collect::<Vec<_>>();
+    st.query_row([id],|r|Ok(columns.iter().enumerate().filter(|(_,n)|n.as_str()!="name").map(|(i,n)|format!("{n}:{:?}",r.get_ref(i).unwrap())).collect())).unwrap()
+}
+#[tokio::test]
+async fn presentation_rename_preserves_all_runtime_identity_and_api_names() {
+    let f=Fixture::new().await;
+    let channel=f.channel("http://127.0.0.1:1").await;
+    let provider=f.provider("cloud").await;
+    f.assign(channel,Some(provider)).await;
+    let (before_channel,before_provider,before_models,before_sources)={
+        let c=f.state.conn();
+        (presentation_identity(&c,"channels",channel),presentation_identity(&c,"provider_channels",provider),db::model_routes::list(&c).unwrap(),db::provider_channels::source_json(&c,"m").unwrap())
+    };
+    let mut before_public=f.models().await;
+    for row in before_public["data"].as_array_mut().unwrap() { row.as_object_mut().unwrap().remove("created"); }
+    for (path,label) in [(format!("/api/channels/{channel}/presentation"),"云端 · 对话 · M"),(format!("/api/providers/{provider}/presentation"),"供应商 · 云端")] {
+        let (s,v)=f.req("PUT",&path,json!({"display_name":label})).await;
+        assert_eq!(s,200,"{v}");
+    }
+    let (status,body)=f.req("PUT","/api/model-presentation?model=m",json!({"display_name":"  对话 · M  "})).await;
+    assert_eq!(status,200,"{body}");assert_eq!(body["model"],"m");assert_eq!(body["display_name"],"对话 · M");
+    {
+        let c=f.state.conn();
+        assert_eq!(presentation_identity(&c,"channels",channel),before_channel);
+        assert_eq!(presentation_identity(&c,"provider_channels",provider),before_provider);
+        assert_eq!(db::model_routes::list(&c).unwrap(),before_models);
+        let mut before=before_sources.clone();let mut after=db::provider_channels::source_json(&c,"m").unwrap();
+        for row in before.iter_mut().chain(after.iter_mut()) { row.as_object_mut().unwrap().remove("connection_name");row.as_object_mut().unwrap().remove("provider_name"); }
+        assert_eq!(before,after);
+        assert_eq!(db::model_access::display_name(&c,"m").unwrap(),"对话 · M");
+        assert!(!db::model_access::internal_only(&c,"m").unwrap());
+    }
+    let mut after_public=f.models().await;
+    for row in after_public["data"].as_array_mut().unwrap() { row.as_object_mut().unwrap().remove("created"); }
+    assert_eq!(after_public,before_public);
+    let (_,routes)=f.req("GET","/api/model-routes",Value::Null).await;
+    let row=routes["models"].as_array().unwrap().iter().find(|m|m["name"]=="m").unwrap();
+    assert_eq!(row["display_name"],"对话 · M");
+    let (_,providers)=f.req("GET","/api/providers",Value::Null).await;
+    let row=providers["providers"].as_array().unwrap().iter().find(|p|p["id"]==provider).unwrap();
+    let m=row["models"].as_array().unwrap().iter().find(|m|m["name"]=="m").unwrap();
+    assert_eq!(m["display_name"],"对话 · M");assert!(m["kind_label"].is_string());
+    assert_eq!(f.req("PUT","/api/model-presentation?model=m",json!({"display_name":" "})).await.0,200);
+    assert_eq!(db::model_access::display_name(&f.state.conn(),"m").unwrap(),"");
+}
+#[tokio::test]
+async fn presentation_endpoints_reject_invalid_missing_unprivileged_and_csrf_requests() {
+    let f=Fixture::new().await;
+    let channel=f.channel("http://127.0.0.1:1").await;let p=f.provider("one").await;let q=f.provider("two").await;
+    assert_eq!(f.req("PUT",&format!("/api/providers/{p}/presentation"),json!({"display_name":" TWO "})).await.0,400);
+    for path in ["/api/model-presentation?model=m".into(),format!("/api/channels/{channel}/presentation"),format!("/api/providers/{q}/presentation")] {
+        for label in ["bad\nname".into(),"x".repeat(129)] {
+            assert_eq!(f.req("PUT",&path,json!({"display_name":label})).await.0,400);
+        }
+        let r=reqwest::Client::new().put(format!("{}{path}",f.base)).bearer_auth("provider-test-key").json(&json!({"display_name":"denied"})).send().await.unwrap();
+        assert_eq!(r.status(),401);
+        let r=reqwest::Client::new().put(format!("{}{path}",f.base)).header("cookie",format!("tokengo_session={}",f.token)).json(&json!({"display_name":"csrf denied"})).send().await.unwrap();
+        assert_eq!(r.status(),403);
+    }
+    for path in ["/api/model-presentation?model=missing","/api/channels/999999/presentation","/api/providers/999999/presentation"] {
+        assert_eq!(f.req("PUT",path,json!({"display_name":"missing"})).await.0,404);
+    }
+    // Maintenance tokens do not acquire newly introduced panel capabilities implicitly.
+    let secret={let c=f.state.conn();let root=db::accounts::root(&c).unwrap().unwrap();db::operations_tokens::create(&c,"presentation-denied",1,root.account.id).unwrap().secret};
+    for path in ["/api/model-presentation?model=m".into(),format!("/api/channels/{channel}/presentation"),format!("/api/providers/{q}/presentation")] {
+        let response=reqwest::Client::new().put(format!("{}{path}",f.base)).bearer_auth(&secret).json(&json!({"display_name":"denied"})).send().await.unwrap();
+        assert_eq!(response.status(),403);
+    }
+}
+
+#[tokio::test]
+async fn presentation_changes_roll_back_if_audit_storage_fails() {
+    let f=Fixture::new().await;
+    let channel=f.channel("http://127.0.0.1:1").await;
+    let provider=f.provider("original-provider").await;
+    f.state.conn().execute_batch("CREATE TRIGGER reject_presentation_audit BEFORE INSERT ON audit_events WHEN NEW.action IN ('presentation.update','model_presentation.update') BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();
+    for path in ["/api/model-presentation?model=m".into(),format!("/api/channels/{channel}/presentation"),format!("/api/providers/{provider}/presentation")] {
+        assert_eq!(f.req("PUT",&path,json!({"display_name":"must rollback"})).await.0,500);
+    }
+    let c=f.state.conn();
+    assert_eq!(db::model_access::display_name(&c,"m").unwrap(),"");
+    assert_eq!(c.query_row("SELECT name FROM channels WHERE id=?1",[channel],|r|r.get::<_,String>(0)).unwrap(),"connection");
+    assert_eq!(c.query_row("SELECT name FROM provider_channels WHERE id=?1",[provider],|r|r.get::<_,String>(0)).unwrap(),"original-provider");
+}

@@ -1,0 +1,19 @@
+{
+  "host": "build-test",
+  "source_manifest_sha256": "8b19d3f9515965a6743f45a03366113eac64d8432a4ba09531eeff8b1fd928f6",
+  "suites": {
+    "server-test": {
+      "groups": 56,
+      "passed": 932,
+      "failed": 0,
+      "ignored": 3
+    },
+    "web-test-fixed": {
+      "groups": 1,
+      "passed": 122,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "initial_web_compile": "E0382 option label moved; fixed on Mac, latest source synchronized and web tests/build succeeded"
+}

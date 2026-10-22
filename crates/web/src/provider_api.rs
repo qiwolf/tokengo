@@ -7,6 +7,8 @@ fn yes() -> bool {
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct ProviderModel {
+    #[serde(default)] pub display_name:String,
+    #[serde(default)] pub kind_label:String,
     #[serde(default = "yes")]
     pub visible: bool,
     pub name: String,
