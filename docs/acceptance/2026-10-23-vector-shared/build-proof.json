@@ -1,0 +1,29 @@
+{
+  "execution_host": "build-test",
+  "source_files": 268,
+  "base_head": "035387b80af0ffe4539471729ba0ff1f5b5e518c",
+  "source_manifest_sha256": "716e9efac11fdda0300c081af9564e724ca01fa65bb8c1a581de2f120e3e1f87",
+  "server_sha256": "79b94c9a35e1ef5b61fdc253cf447c19f81539ce45200c20fdaa65004dfd7b38",
+  "server_build_command": "cargo build --offline --locked --release -p tokengo-server",
+  "server_exit_code": 0,
+  "web_build_command": "trunk build --release --locked",
+  "web_exit_code": 0,
+  "toolchain": "Rust/Cargo1.98.0, Trunk0.21.14, wasm-bindgen0.2.129, wasm-opt123",
+  "test_summary": {
+    "execution_host": "build-test",
+    "composite": true,
+    "server": 58,
+    "web": 117,
+    "total": 175,
+    "failed": 0,
+    "ignored": 0,
+    "groups": [
+      "renewal_availability 6",
+      "shared_virtual_routes 14",
+      "vector_fallback 17",
+      "vector_renewal 17",
+      "virtual_model_trash 4",
+      "tokengo-web lib 117"
+    ]
+  }
+}

@@ -24,6 +24,8 @@ pub mod janitor;
 pub mod logging;
 pub mod prober;
 pub mod custom_probes;
+pub mod vector_compat;
+pub mod vector_renewal;
 pub mod type_detector;
 pub mod vision_detector;
 pub mod routes;
@@ -60,6 +62,7 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::operations::router())
         .merge(routes::managed_users::router())
         .merge(routes::virtual_models::router())
+        .merge(routes::shared_virtual_models::router())
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
         .merge(routes::oauth::router())

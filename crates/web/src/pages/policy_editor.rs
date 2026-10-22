@@ -77,7 +77,8 @@ fn toggle(p: RwSignal<Value>, k: &str, value: Value, on: bool) {
 /// Only the server's visible catalog can introduce grants. Historical names are
 /// returned separately and never become unselected options for new grants.
 pub fn visible_model_names(routes: &crate::model::ModelRoutesResp) -> Vec<String> {
-    let mut names = routes.models.iter().filter(|m|m.visible).map(|m|m.name.clone()).collect::<Vec<_>>();
+    let mut names = routes.models.iter().filter(|m|m.visible&&!m.internal_only).map(|m|m.name.clone()).collect::<Vec<_>>();
+    names.extend(routes.shared_virtual_models.iter().filter(|m|m.enabled).map(|m|m.name.clone()));
     names.sort(); names.dedup(); names
 }
 fn authorization_options(policy: &Value, visible: &[String]) -> (Vec<String>, Vec<String>) {
@@ -160,10 +161,10 @@ pub fn PolicyEditor(
             view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_models",json!(n),event_target_checked(&e))/>{label}</label>}
         }).collect_view()
     }}</div>
-    <p class="account-help">"这里只列出可见模型。未勾选任何模型且没有保留授权时，禁止调用。"</p>
+    <p class="account-help">"这里只列出可公开调用的模型及已启用的管理员共享模型；仅内部调用模型不能直接授权。未勾选任何模型且没有保留授权时，禁止调用。"</p>
     <Show when=move||!authorization_options(&policy.get(),&models.get()).1.is_empty()>
     <details class="policy-retained-grants"><summary>{move||format!("已有兼容授权 {} 项",authorization_options(&policy.get(),&models.get()).1.len())}</summary>
-        <p class="account-help">"这些模型已隐藏或不在当前目录中。保存其他设置会保留原授权；撤销后不再可选，取消编辑可放弃本次撤销。"</p>
+        <p class="account-help">"这些模型已隐藏、设为仅内部调用或不在当前目录中。保留旧授权不会解除仅内部调用限制；撤销后不再可选。"</p>
         <div class="policy-options">{move||authorization_options(&policy.get(),&models.get()).1.into_iter().map(|n|{let label=n.clone();view!{<div class="account-check"><span>{label}</span><button type="button" class="ghost danger" aria-label=format!("撤销 {n} 的已有兼容授权") on:click=move |_|policy.update(|p|revoke_model(p,&n))>"撤销授权"</button></div>}}).collect_view()}</div>
     </details></Show></Show>
     <label class="account-check"><input type="checkbox" prop:checked=move||policy.get()["allow_paid"].as_bool().unwrap_or(true) on:change=move|e|policy.update(|p|p["allow_paid"]=json!(event_target_checked(&e)))/>"允许使用付费来源（仍受用户和 Key 余额共同约束）"</label>
@@ -235,6 +236,22 @@ mod tests {
         let (choices,retained)=authorization_options(&p,&visible);
         assert_eq!(choices,vec!["visible-high"]);
         assert!(retained.is_empty(),"ungranted hidden names must never appear as choices");
+    }
+    #[test]
+    fn authorization_catalog_includes_enabled_shared_names_but_excludes_internal_targets() {
+        let routes=crate::model::ModelRoutesResp {
+            models:vec![
+                crate::model::NameRoute{name:"public".into(),visible:true,..Default::default()},
+                crate::model::NameRoute{name:"gpu-target".into(),visible:true,internal_only:true,..Default::default()},
+                crate::model::NameRoute{name:"cloud-target".into(),visible:false,..Default::default()},
+            ],
+            shared_virtual_models:vec![
+                crate::model::SharedVirtualModel{name:"shared-fallback".into(),enabled:true},
+                crate::model::SharedVirtualModel{name:"paused-shared".into(),enabled:false},
+                crate::model::SharedVirtualModel{name:"public".into(),enabled:true},
+            ],..Default::default()
+        };
+        assert_eq!(visible_model_names(&routes),vec!["public","shared-fallback"]);
     }
     #[test]
     fn historical_hidden_and_unknown_grants_are_separate_and_lossless() {

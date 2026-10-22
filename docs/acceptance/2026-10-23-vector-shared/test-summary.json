@@ -1,0 +1,17 @@
+{
+  "execution_host": "build-test",
+  "composite": true,
+  "server": 58,
+  "web": 117,
+  "total": 175,
+  "failed": 0,
+  "ignored": 0,
+  "groups": [
+    "renewal_availability 6",
+    "shared_virtual_routes 14",
+    "vector_fallback 17",
+    "vector_renewal 17",
+    "virtual_model_trash 4",
+    "tokengo-web lib 117"
+  ]
+}

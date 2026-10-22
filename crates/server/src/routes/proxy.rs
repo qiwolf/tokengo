@@ -435,6 +435,16 @@ async fn models(
             data.push(serde_json::json!({"id":name,"object":"model","created":created,"owned_by":"user-private","virtual":true,"kind":kind.as_str()}));
         }
     }
+    {
+        let c = state.conn();
+        let names = crate::db::shared_virtual_routes::alias_names(&c, &_key.auth, crate::db::now_ms())
+            .map_err(|e| ApiError::new(axum::http::StatusCode::FORBIDDEN, e.code, e.message))?;
+        for shared in crate::db::shared_virtual_routes::list(&c)? {
+            if names.iter().any(|n| tokengo_shared::same_model_name(n, &shared.config.name)) {
+                data.push(serde_json::json!({"id":shared.config.name,"object":"model","created":created,"owned_by":"administrator-shared","virtual":true,"scope":"shared","kind":shared.kind.as_str()}));
+            }
+        }
+    }
     // Preserve the minimal legacy shape when metadata is unknown.
     for model in &mut data {
         if model["context_window"].is_null() {

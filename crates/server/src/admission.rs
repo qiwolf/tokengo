@@ -93,12 +93,20 @@ pub fn acquire(
     input_tokens: u64,
     output_tokens: u64,
 ) -> Result<AdmissionPermit, ApiError> {
-    acquire_inner(state, auth, input_tokens, output_tokens, false)
+    acquire_inner(state, auth, input_tokens, output_tokens, false, false)
 }
 
 /// Opaque HTTP has no token accounting. Never let it bypass an active TPM cap.
 pub fn acquire_request_only(state: SharedState, auth: &AuthContext) -> Result<AdmissionPermit, ApiError> {
-    acquire_inner(state, auth, 0, 0, true)
+    acquire_inner(state, auth, 0, 0, true, false)
+}
+
+/// Session-authenticated compatibility diagnostics consume the owner's real user scopes.
+/// No gateway key is selected or impersonated; concurrency and durable rolling quotas
+/// are shared with that user's ordinary VKey traffic.
+pub fn acquire_user(state: SharedState, user_id: i64, input_tokens: u64, output_tokens: u64) -> Result<AdmissionPermit, ApiError> {
+    let auth={let c=state.conn();db::user_virtual_routes::owner_auth(&c,user_id).map_err(|_|ApiError::unauthorized("User is no longer available"))?};
+    acquire_inner(state,&auth,input_tokens,output_tokens,false,true)
 }
 
 fn acquire_inner(
@@ -107,6 +115,7 @@ fn acquire_inner(
     input_tokens: u64,
     output_tokens: u64,
     request_only: bool,
+    user_only: bool,
 ) -> Result<AdmissionPermit, ApiError> {
     let tokens = input_tokens
         .checked_add(output_tokens)
@@ -125,26 +134,16 @@ fn acquire_inner(
         let transaction = conn.unchecked_transaction().map_err(storage)?;
         // Authentication may have waited behind other requests. Re-read this key,
         // its owner, and the parent chain in the same snapshot as reservations.
-        let current = db::identity::context(&transaction, auth.key_id)?
-            .filter(|current| current.user_id == auth.user_id)
-            .ok_or_else(|| ApiError::unauthorized("Key or user is no longer available"))?;
+        let current = if user_only {
+            db::user_virtual_routes::owner_auth(&transaction,auth.user_id).map_err(|_|ApiError::unauthorized("User is no longer available"))?
+        } else {
+            db::identity::context(&transaction, auth.key_id)?
+                .filter(|current| current.user_id == auth.user_id)
+                .ok_or_else(|| ApiError::unauthorized("Key or user is no longer available"))?
+        };
         let auth = &current;
-        let mut scopes = vec![
-            (
-                Scope {
-                    kind: "user",
-                    id: auth.user_id,
-                },
-                Limits::from(&auth.user_policy),
-            ),
-            (
-                Scope {
-                    kind: "key",
-                    id: auth.key_id,
-                },
-                Limits::from(&auth.key_policy),
-            ),
-        ];
+        let mut scopes = vec![(Scope {kind:"user",id:auth.user_id},Limits::from(&auth.user_policy))];
+        if !user_only {scopes.push((Scope {kind:"key",id:auth.key_id},Limits::from(&auth.key_policy)));}
         let mut seen = HashSet::from([auth.key_id]);
         if auth.ancestor_key_ids.len() > 32 {
             return Err(ApiError::unauthorized("Invalid parent-key chain"));
@@ -246,4 +245,29 @@ fn window(conn: &Connection, scope: Scope, cutoff: i64) -> Result<(u64, u64), Ap
             .ok_or_else(|| rate_error(scope, "TPM"))?;
     }
     Ok((requests, tokens))
+}
+
+#[cfg(test)]
+mod user_diagnostic_tests {
+    use super::*;
+    fn fixture(policy:Policy)->(SharedState,i64,std::path::PathBuf){
+        let dir=std::env::temp_dir().join(format!("compat-admission-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&dir).unwrap();
+        let state=crate::AppState::init(crate::Config{db_path:dir.join("test.db"),master_key_path:dir.join("master.key").to_string_lossy().into_owned(),..Default::default()}).unwrap();
+        let user={let c=state.conn();db::identity::create_user(&c,"diagnostic-user","user",&policy).unwrap().id};(state,user,dir)
+    }
+    #[test] fn user_diagnostic_shares_rpm_with_vkeys_without_impersonating_key(){
+        let (state,user,dir)=fixture(Policy{rpm:Some(2),..Default::default()});
+        let auth={let c=state.conn();let(key,_)=db::identity::create_key(&c,user,"actual-key",&Policy::default(),None,None).unwrap();db::identity::context(&c,key.id).unwrap().unwrap()};
+        drop(acquire_user(state.clone(),user,1,0).unwrap());drop(acquire(state.clone(),&auth,1,0).unwrap());
+        assert!(acquire_user(state.clone(),user,1,0).is_err());
+        {let c=state.conn();let users:i64=c.query_row("SELECT COUNT(*) FROM quota_events WHERE scope='user' AND scope_id=?1",[user],|r|r.get(0)).unwrap();let keys:i64=c.query_row("SELECT COUNT(*) FROM quota_events WHERE scope='key'",[],|r|r.get(0)).unwrap();assert_eq!(users,2);assert_eq!(keys,1);}
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test] fn user_diagnostic_cancel_releases_concurrency_but_keeps_tpm_and_live_disable(){
+        let (state,user,dir)=fixture(Policy{tpm:Some(10),max_concurrent:Some(1),..Default::default()});
+        let permit=acquire_user(state.clone(),user,4,0).unwrap();assert!(acquire_user(state.clone(),user,1,0).is_err());drop(permit);
+        drop(acquire_user(state.clone(),user,6,0).unwrap());assert!(acquire_user(state.clone(),user,1,0).is_err());
+        {let c=state.conn();let mut row=db::identity::user(&c,user).unwrap().unwrap();row.enabled=false;db::identity::update_user(&c,&row).unwrap();}
+        assert!(acquire_user(state.clone(),user,0,0).is_err());drop(state);let _=std::fs::remove_dir_all(dir);
+    }
 }

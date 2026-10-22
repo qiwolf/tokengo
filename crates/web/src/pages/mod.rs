@@ -36,6 +36,7 @@ pub enum Page {
     Overview,
     Channels,
     Models,
+    SharedModels,
     Probes,
     Users,
     Billing,
@@ -51,6 +52,7 @@ impl Page {
         Page::Overview,
         Page::Channels,
         Page::Models,
+        Page::SharedModels,
         Page::Probes,
         Page::Users,
         Page::Billing,
@@ -69,6 +71,7 @@ impl Page {
             Page::Overview => "overview",
             Page::Channels => "channels",
             Page::Models => "models",
+            Page::SharedModels => "shared-models",
             Page::Probes => "probes",
             Page::Users => "users",
             Page::Billing => "billing",
@@ -83,6 +86,7 @@ impl Page {
             Page::Overview => "总览",
             Page::Channels => "渠道",
             Page::Models => "模型",
+            Page::SharedModels => "共享虚拟模型",
             Page::Probes => "探针",
             Page::Users => "用户",
             Page::Billing => "账务",
@@ -97,6 +101,7 @@ impl Page {
             Page::Overview => "最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。",
             Page::Channels => "各个上游的地址和密钥：加一条、改一条、测通不通。",
             Page::Models => "你客户端里填的模型名，按什么顺序走哪条渠道。",
+            Page::SharedModels => "管理员维护共享调用入口，再向普通用户分配访问权限。",
             Page::Probes => "配置渠道与模型的定时检查，查看结果和响应速度。",
             Page::Users => "管理用户资料、模型授权、限额与 API Key。",
             Page::Billing => "预算、价格版本和持久化的逐次尝试账本。",
@@ -205,7 +210,7 @@ mod tests {
         assert!(Page::ALL.iter().all(|p| !p.title().is_empty()));
         assert!(Page::ALL.iter().all(|p| !p.blurb().is_empty()));
         // 总览 · 渠道 · 模型 · 用户 · 账务 · 设置
-        assert_eq!(Page::ALL.len(), 7);
+        assert_eq!(Page::ALL.len(), 8);
         assert!(!Page::ALL.contains(&Page::Accounts));
         assert_eq!(Page::Users.title(), "用户");
     }

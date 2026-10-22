@@ -1,0 +1,28 @@
+{
+  "source_manifest_sha256": "716e9efac11fdda0300c081af9564e724ca01fa65bb8c1a581de2f120e3e1f87",
+  "root_cause": "generic .console-content button[aria-pressed=true] overrode password-toggle transparent styling",
+  "fix": "exclude .password-toggle from generic selected-button selector",
+  "isolated_dark_and_light": {
+    "background_unchanged_and_transparent": true,
+    "foreground_unchanged": true,
+    "shadow_none": true,
+    "border_none": true,
+    "eye_svg_changes": true,
+    "aria_pressed_changes": true
+  },
+  "keyboard_focus": {
+    "focused": true,
+    "focus_visible": true,
+    "outline_style": "solid",
+    "background_transparent": true
+  },
+  "production237": {
+    "background_unchanged_and_transparent": true,
+    "foreground_unchanged": true,
+    "shadow_none": true,
+    "border_none": true,
+    "eye_svg_changes": true,
+    "no_user_created": true,
+    "root_logged_out": true
+  }
+}

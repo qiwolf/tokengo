@@ -60,3 +60,8 @@
 .user-workspace .user-key-editor > h3 { font-size:16px; }
 .user-workspace .user-key-editor .account-form { max-width:none; }
 @media(max-width:640px) { .user-workspace .user-key-editor { padding:16px; } .user-workspace .user-key-editor-head { flex-wrap:wrap; } }
+
+.user-credential-delivery {margin:20px 24px;padding:20px;border:1px solid var(--line);border-radius:12px;}
+.user-credential-delivery h3 {margin-top:0;}
+.user-credential-delivery textarea {font-family:var(--font-mono,monospace);white-space:pre;user-select:text;}
+.user-password-actions {margin:8px 0;}

@@ -362,6 +362,39 @@ fn ledger_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Ledger> {
     })
 }
 /// Immutable terminal settlement. Unknown usage conservatively consumes the hold.
+/// Session-owned compatibility probes charge only the real user's budget. They
+/// never impersonate a VKey, create ordinary request rows, or use admin diagnostics.
+/// Unknown usage retains the priced hold through the normal settlement/recovery path.
+#[allow(clippy::too_many_arguments)]
+pub fn reserve_user_diagnostic(conn:&Connection,user_id:i64,attempt:&str,source:i64,model:&str,input:i64,source_snapshot:&serde_json::Value)->Result<i64> {
+    if user_id<=0||source<=0||attempt.is_empty()||attempt.len()>256||model.trim().is_empty()||input<0||source_snapshot["source_id"]!=serde_json::json!(source) {return Err(bad("invalid user diagnostic identity"));}
+    let c=tx(conn)?;
+    let auth=super::user_virtual_routes::owner_auth(&c,user_id).map_err(|_|bad("inactive diagnostic user"))?;
+    let model=tokengo_shared::normalize_model_name(model);
+    let p=price(&c,&model,source)?;
+    if !auth.permits_model(&model)||!auth.permits_channel(source,p.as_ref().is_none_or(|p|p.input_micro_per_million>0||p.output_micro_per_million>0)) {return Err(bad("diagnostic source not authorized"));}
+    if p.as_ref().is_some_and(|p|input>p.max_input_tokens) {return Err(bad("diagnostic input exceeds configured pricing bound"));}
+    let amount=p.as_ref().map(|p|cost(p,input,0)).transpose()?.unwrap_or(0);
+    let existing=c.query_row(&format!("{LEDGER_SELECT} WHERE attempt_id=?1"),[attempt],ledger_row).optional()?;
+    if let Some(row)=existing {
+        if row.user_id!=user_id||row.key_id!=0||row.request_id!=0||row.channel_id!=source||row.model!=model||row.input_bound!=input||row.output_bound!=0||row.price_id!=p.as_ref().map(|p|p.id)||row.source_snapshot!=*source_snapshot||row.auth_snapshot["kind"]!="user_compatibility" {return Err(bad("user diagnostic attempt identity conflict"));}
+        c.commit()?;return Ok(row.id);
+    }
+    c.execute("INSERT OR IGNORE INTO billing_budgets(scope,scope_id) VALUES('user',?1)",[user_id])?;
+    let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope='user' AND scope_id=?1",[user_id],budget_row)?;
+    if b.frozen {return Err(bad("billing budget frozen"));}
+    if p.is_none()&&b.limit_micro.is_some() {return Err(bad("config_required: budgeted diagnostics require explicit pricing"));}
+    let reserved=b.reserved_micro.checked_add(amount).ok_or_else(||bad("diagnostic budget overflow"))?;
+    let total=b.spent_micro.checked_add(reserved).ok_or_else(||bad("diagnostic budget overflow"))?;
+    if b.limit_micro.is_some_and(|limit|total>limit) {return Err(bad("billing budget exhausted"));}
+    c.execute("UPDATE billing_budgets SET reserved_micro=?2 WHERE scope='user' AND scope_id=?1",params![user_id,reserved])?;
+    let auth=serde_json::json!({"kind":"user_compatibility","user_id":user_id,"user_policy":auth.user_policy});
+    c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,created_ms,auth_snapshot,source_snapshot) VALUES(?1,?2,0,0,?3,?4,?5,?6,?7,0,?8,?9,?10,?11)",params![attempt,user_id,source,model,p.as_ref().map(|p|p.id),p.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("diagnostic pricing serialization"))?,input,amount,now_ms(),auth.to_string(),source_snapshot.to_string()])?;
+    let id=c.last_insert_rowid();
+    c.execute("INSERT INTO billing_allocations(reservation_id,scope,scope_id,reserved_micro) VALUES(?1,'user',?2,?3)",params![id,user_id,amount])?;
+    c.commit()?;Ok(id)
+}
+
 pub fn settle(
     conn: &Connection,
     id: i64,
@@ -782,4 +815,24 @@ pub fn reserve_request(
 /// Known completed response: units0/1; canceled/read failure: None, never fake0.
 pub fn settle_request(conn: &Connection, id: i64, units: Option<i64>, status: &str) -> Result<()> {
     finish(conn, id, None, None, status, false, units, true)
+}
+
+#[cfg(test)]
+mod user_diagnostic_tests {
+    use super::*;
+    fn fixture()->(Connection,i64){let c=crate::db::open_in_memory().unwrap();let user=crate::db::identity::create_user(&c,"diagnostic-budget-user","user",&Default::default()).unwrap().id;create_price(&c,&Price{id:0,channel_id:1,model:"synthetic-vector".into(),input_micro_per_million:1_000_000,output_micro_per_million:0,max_input_tokens:1000,max_output_tokens:0},"test").unwrap();(c,user)}
+    fn reserve(c:&Connection,user:i64,attempt:&str,input:i64)->Result<i64>{reserve_user_diagnostic(c,user,attempt,1,"synthetic-vector",input,&serde_json::json!({"source_id":1,"compatibility_fingerprint":"test"}))}
+    fn budget(c:&Connection,user:i64)->Budget {budgets(c,Some("user"),Some(user)).unwrap().remove(0)}
+    #[test] fn user_diagnostic_budget_is_atomic_user_only_and_freeze_blocks_send(){
+        let(c,user)=fixture();set_budget(&c,"user",user,Some(50),"test").unwrap();let id=reserve(&c,user,"one",40).unwrap();assert!(reserve(&c,user,"two",11).is_err());assert_eq!(budget(&c,user).reserved_micro,40);
+        let keys:i64=c.query_row("SELECT COUNT(*) FROM billing_allocations WHERE scope='key'",[],|r|r.get(0)).unwrap();assert_eq!(keys,0);
+        settle(&c,id,Some(7),Some(0),"compatibility_response").unwrap();assert_eq!(budget(&c,user).spent_micro,7);assert_eq!(budget(&c,user).reserved_micro,0);
+        c.execute("UPDATE billing_budgets SET frozen=1 WHERE scope='user' AND scope_id=?1",[user]).unwrap();assert!(reserve(&c,user,"frozen",1).is_err());
+        let requests:i64=c.query_row("SELECT COUNT(*) FROM requests",[],|r|r.get(0)).unwrap();assert_eq!(requests,0);
+    }
+    #[test] fn user_diagnostic_unknown_usage_retains_hold_and_restart_recovers(){
+        let(c,user)=fixture();set_budget(&c,"user",user,Some(100),"test").unwrap();let id=reserve(&c,user,"unknown",30).unwrap();recover(&c).unwrap();assert_eq!(budget(&c,user).spent_micro,30);assert_eq!(budget(&c,user).reserved_micro,0);
+        let(row_user,row_key,certainty,kind):(i64,i64,String,String)=c.query_row("SELECT user_id,key_id,usage_certainty,json_extract(auth_snapshot,'$.kind') FROM billing_ledger WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();assert_eq!((row_user,row_key),(user,0));assert_eq!(certainty,"estimated");assert_eq!(kind,"user_compatibility");
+    }
+    #[test] fn user_diagnostic_unpriced_cannot_bypass_capped_budget(){let(c,user)=fixture();set_budget(&c,"user",user,Some(100),"test").unwrap();assert!(reserve_user_diagnostic(&c,user,"unpriced",1,"unpriced-vector",10,&serde_json::json!({"source_id":1})).is_err());assert_eq!(budget(&c,user).spent_micro,0);assert_eq!(budget(&c,user).reserved_micro,0);}
 }

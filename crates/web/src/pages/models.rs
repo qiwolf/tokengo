@@ -11,7 +11,7 @@ use crate::model::{AutoRoutes, Channel, NameRoute};
 use crate::pages::PageHead;
 use crate::Ctx;
 
-pub(crate) fn model_visible_in(r:&NameRoute,filter:&str)->bool {match filter {"all"=>true,"disabled"=>r.visible&&(!r.enabled||!r.routed),"hidden"=>!r.visible,_=>r.visible&&r.enabled&&r.routed}}
+pub(crate) fn model_visible_in(r:&NameRoute,filter:&str)->bool {match filter {"all"=>true,"disabled"=>r.visible&&(!r.enabled||!r.routed),"hidden"=>!r.visible,"internal"=>r.internal_only,_=>r.visible&&r.enabled&&r.routed}}
 pub(crate) fn source_labels(r:&NameRoute)->Vec<String>{let mut names=Vec::new();for s in &r.sources {let name=s.provider_name.clone().unwrap_or_else(||"未分组".into());if !names.contains(&name){names.push(name);}}names}
 
 /// Native modal dialogs keep expanded statistics out of the card grid and
@@ -229,6 +229,29 @@ fn model_details_open() -> bool {
     web_sys::window().and_then(|w|w.document()).and_then(|d|d.query_selector(".compact-model-dialog[open]").ok().flatten()).is_some()
 }
 
+/// Independent access control: compatibility hiding does not revoke direct-call rights.
+#[component]
+fn ModelAccess(ctx:Ctx,name:String,internal_only:bool)->impl IntoView {
+    let internal=RwSignal::new(internal_only);
+    let busy=RwSignal::new(false);
+    let error=RwSignal::new(String::new());
+    let notice=RwSignal::new(String::new());
+    let save=move |_| {
+        if busy.get_untracked(){return;}
+        let next=!internal.get_untracked();let name=name.clone();
+        busy.set(true);error.set(String::new());notice.set(String::new());
+        leptos::task::spawn_local(async move {
+            let path=format!("/api/model-access?model={}",js_sys::encode_uri_component(&name));
+            match api::call("PUT",&path,Some(serde_json::json!({"internal_only":next}))).await {
+                Ok(_)=>{internal.set(next);notice.set(if next{"已设为仅内部调用。用户无法直接调用此名称，请通过已授权共享模型访问。"}else{"已恢复普通模型访问，仍受用户和 Key 的授权限制。"}.into());},
+                Err(e)=>{ctx.note_err(&e);error.set(e.message);}
+            }
+            busy.set(false);
+        });
+    };
+    view!{<section><h3>"访问权限"</h3><p class="muted small">"开启后，用户不能直接调用或通过私有策略使用此模型；管理员共享模型仍可将它作为内部目标。兼容隐藏仅控制模型发现，两项独立。"</p><button type="button" class="ghost" role="switch" aria-checked=move||internal.get().to_string() disabled=move||busy.get() on:click=save>{move||if busy.get(){"正在保存访问权限…"}else if internal.get(){"仅内部调用：已开启"}else{"仅内部调用：已关闭"}}</button><p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p></section>}
+}
+
 #[component]
 pub fn Models(ctx:Ctx)->impl IntoView {
     let auto_policy_open=RwSignal::new(false);
@@ -296,7 +319,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
             </section>
             </super::ModuleDialog><Show when=move ||ordering.get()><div class="toolbar"><p>"使用卡片中的上移、下移调整顺序。"</p><button type="button" class="primary" on:click=move |_|ordering.set(false)>"完成排序"</button></div></Show><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
             <nav class="kind-tabs">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) on:click=move |_|tab.set(key.into())>{k.title}<span class="tab-n">{move ||tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())).collect::<Vec<_>>()))[i]}</span></button>}}).collect_view()}</nav>
-            <div class="model-controls"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="all">"全部"</option></select><input type="search" placeholder="搜索模型名称" aria-label="搜索模型名称" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
+            <div class="model-controls"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="internal">"仅内部调用"</option><option value="all">"全部"</option></select><input type="search" placeholder="搜索模型名称" aria-label="搜索模型名称" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
             <div class="score-model-list">{move ||{
                 let needle=search.get().to_lowercase();let selected=tab.get();
                 let mut list:Vec<_>=routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&tab_of(&r.kind)==selected && r.name.to_lowercase().contains(&needle)).collect();
@@ -317,12 +340,12 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     let source=kind_source_label(&r.kind_source);
                     let (context,context_title)=context_badge(&r);
 
-                    view!{<article class=if ordering.get(){"score-model score-model-ordering"}else{"score-model"}><header><div><h2 title=r.name.clone()>{r.name.clone()}</h2><div class="model-badges" title="完整能力信息可在详情中查看"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span><span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
+                    view!{<article class=if ordering.get(){"score-model score-model-ordering"}else{"score-model"}><header><div><h2 title=r.name.clone()>{r.name.clone()}</h2><div class="model-badges" title="完整能力信息可在详情中查看"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span>{r.internal_only.then(||view!{<span class="tag">"仅内部调用"</span>})}<span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
                         <div class="model-status-row"><div class="model-cooling"><div class="model-supplier-summary" title=supplier_summary.clone()>{supplier_summary.clone()}</div><span class="muted small">{format!("{} 个可用连接",r.channels.len())}</span></div><button type="button" class="ghost" aria-haspopup="dialog" aria-controls=dialog_id.clone() on:click=move |_|show_model_details(&trigger_dialog,ctx)>"详情与统计"</button></div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         <dialog class="compact-model-dialog" id=dialog_id aria-label=detail_title><div class="compact-model-dialog-head"><h2>{r.name.clone()}</h2><form method="dialog"><button type="submit" class="ghost" autofocus>"关闭"</button></form></div><div class="model-detail-grid">
                             <section class="compact-model-statistics"><h3>"运行统计"</h3><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></section>
-                            <section><h3>"展示与连接"</h3><p class="muted small">"隐藏仅从模型清单和 auto 排除，旧别名显式调用仍可用；全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();let close_id=visibility_dialog.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>{if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&close_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}ctx.say("模型展示设置已保存");reload();},Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
+                            <ModelAccess ctx=ctx name=r.name.clone() internal_only=r.internal_only/><section><h3>"展示与连接"</h3><p class="muted small">"兼容隐藏仅从模型清单和 auto 排除，有权用户仍可显式调用；仅内部调用会拒绝用户直调，全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();let close_id=visibility_dialog.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>{if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&close_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}ctx.say("模型展示设置已保存");reload();},Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
                             <section><h3>"能力信息"</h3><dl><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
@@ -353,6 +376,13 @@ mod tests {
 
     #[test]
     fn enabled_summary_excludes_hidden_and_unroutable_but_filters_restore_them(){let mut r=route("ordinary-name","chat",&[1],&[1]);r.enabled=true;r.visible=true;assert!(model_visible_in(&r,"enabled"));r.visible=false;assert!(!model_visible_in(&r,"enabled"));assert!(model_visible_in(&r,"hidden"));assert!(model_visible_in(&r,"all"));r.visible=true;r.routed=false;assert!(model_visible_in(&r,"disabled"));assert!(!model_visible_in(&r,"enabled"));}
+    #[test]
+    fn internal_access_filter_is_independent_from_compatibility_hiding() {
+        let mut r=route("internal-target","embeddings",&[1],&[1]);r.internal_only=true;r.visible=true;
+        assert!(model_visible_in(&r,"internal"));assert!(!model_visible_in(&r,"hidden"));
+        r.visible=false;assert!(model_visible_in(&r,"internal"));assert!(model_visible_in(&r,"hidden"));
+        r.internal_only=false;assert!(!model_visible_in(&r,"internal"));assert!(model_visible_in(&r,"hidden"));
+    }
     #[test]
     fn provider_sources_are_explicit_and_deduplicated(){let mut r=route("model","chat",&[1,2],&[1,2]);r.sources=vec![crate::model::ModelSource{provider_name:Some("官方".into()),..Default::default()},crate::model::ModelSource{provider_name:Some("官方".into()),..Default::default()},crate::model::ModelSource::default()];assert_eq!(source_labels(&r),vec!["官方","未分组"]);}
     #[test]

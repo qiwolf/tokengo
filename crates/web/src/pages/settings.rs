@@ -22,7 +22,10 @@ pub(crate) async fn copy_text(text: &str) -> bool {
     area.set_value(text);
     let _ = area.set_attribute("style", "position:fixed;left:0;top:0;opacity:0");
     let _ = area.set_attribute("readonly", "");
-    if body.append_child(&area).is_err() { return false; }
+    // Keep the selection inside an open modal's focus trap when copying from account forms.
+    let host = document.query_selector("dialog[open], [role='dialog'][aria-modal='true']").ok().flatten();
+    let appended = if let Some(host)=host {host.append_child(&area)}else{body.append_child(&area)};
+    if appended.is_err() { return false; }
     let previous = document.active_element();
     let _ = area.focus();
     area.select();

@@ -35,6 +35,7 @@ pub struct Config {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualModel {
+    pub deleted_at_ms: Option<i64>,
     pub id: i64,
     pub user_id: i64,
     pub version: i64,
@@ -51,11 +52,13 @@ pub struct ResolvedTarget {
 }
 #[derive(Clone, Debug)]
 pub struct ResolvedVirtualPlan {
+    pub shared: bool,
     pub id: i64,
     pub user_id: i64,
     pub name: String,
     pub version: i64,
     pub targets: Vec<ResolvedTarget>,
+    pub compatibility: Option<crate::vector_compat::Contract>,
 }
 #[derive(Debug)]
 pub struct VirtualError {
@@ -191,6 +194,10 @@ pub fn time_positions(v: &Config, now_ms: i64) -> Result<Vec<usize>, VirtualErro
     }
 }
 pub fn owner_auth(c: &Connection, user_id: i64) -> Result<identity::AuthContext, VirtualError> {
+    // Scope zero is server-owned compatibility evidence, never an inference identity.
+    if user_id == 0 {
+        return Ok(identity::AuthContext { user_id: 0, key_id: 0, role: "system_compatibility".into(), user_policy: identity::Policy::default(), key_policy: identity::Policy::default(), ancestor_key_ids: vec![], expires_at: None, policy_version: String::new() });
+    }
     let u = identity::user(c, user_id)?
         .filter(|u| u.enabled)
         .ok_or_else(|| error("virtual_route_forbidden", "用户已停用"))?;
@@ -210,9 +217,13 @@ pub fn allowed_sources(
     auth: &identity::AuthContext,
     t: &Target,
 ) -> Result<Vec<i64>, VirtualError> {
-    if !auth.permits_model(&t.logical_model) {
+    if !auth.permits_model(&t.logical_model) || super::model_access::internal_only(c, &t.logical_model)? {
         return Ok(vec![]);
     }
+    allowed_sources_shared(c, auth, t)
+}
+/// Internal delegation skips only the target-name grant, preserving source and cost policy.
+pub fn allowed_sources_shared(c: &Connection, auth: &identity::AuthContext, t: &Target) -> Result<Vec<i64>, VirtualError> {
     let mut ids = Vec::new();
     for ch in model_routes::channels_for(c, &t.logical_model)? {
         if !ch.routable()
@@ -241,8 +252,18 @@ pub fn allowed_sources(
     Ok(ids)
 }
 fn validate(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError> {
+    preflight(c, user_id, v)?;
+    compatibility(c, user_id, &v.targets)?;
+    Ok(())
+}
+
+/// Reject invalid or unauthorized edits before billable compatibility probes.
+pub fn preflight(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError> {
     validate_shape(v)?;
     let auth = owner_auth(c, user_id)?;
+    if super::shared_virtual_routes::list(c)?.iter().any(|r| same_model_name(&r.config.name, &v.name)) {
+        return Err(invalid("虚拟模型名已被管理员共享入口使用"));
+    }
     if model_routes::list(c)?
         .iter()
         .any(|m| same_model_name(&m.name, &v.name))
@@ -265,11 +286,6 @@ fn validate(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError
                 return Err(invalid("同一虚拟链的模型用途必须一致"));
             }
         }
-        if matches!(route.kind, ModelKind::Embeddings) && v.targets.len() > 1 {
-            return Err(invalid(
-                "向量虚拟回退需要已核实的维度兼容合同，首版暂不允许配置",
-            ));
-        }
         if route.kind == ModelKind::Unknown
             && first.is_some_and(|n: &str| !same_model_name(n, &t.logical_model))
         {
@@ -282,7 +298,52 @@ fn validate(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError
     }
     Ok(())
 }
+
+
+/// Admin-owned chains may delegate real targets but never recurse into aliases.
+pub fn preflight_shared(c: &Connection, v: &Config) -> Result<ModelKind, VirtualError> {
+    validate_shape(v)?;
+    if model_routes::list(c)?.iter().any(|m| same_model_name(&m.name, &v.name)) {
+        return Err(invalid("共享虚拟模型名不能与标准模型重名"));
+    }
+    let collision: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM user_virtual_models WHERE normalized_name=?1)", [normalize_model_name(&v.name)], |r| r.get(0))?;
+    if collision { return Err(invalid("共享虚拟模型名不能与用户私有模型重名")); }
+    let auth = owner_auth(c, 0)?;
+    let mut kind = None;
+    let mut first: Option<&str> = None;
+    for t in &v.targets {
+        if allowed_sources_shared(c, &auth, t)?.is_empty() { return Err(error("virtual_target_forbidden", "共享目标已停用、不存在或没有可用来源")); }
+        let route = model_routes::routes_for(c, &t.logical_model)?.ok_or_else(|| invalid("共享目标必须是真实逻辑模型"))?;
+        if kind.is_some_and(|k| k != route.kind) { return Err(invalid("共享调用链的模型用途必须一致")); }
+        if route.kind == ModelKind::Unknown && first.is_some_and(|n| !same_model_name(n, &t.logical_model)) { return Err(invalid("未知用途的不同模型不能证明兼容，请先确认用途")); }
+        kind = Some(route.kind); first = Some(&t.logical_model);
+    }
+    Ok(kind.unwrap_or_default())
+}
+
+fn compatibility(
+    c: &Connection,
+    user_id: i64,
+    targets: &[Target],
+) -> Result<Option<crate::vector_compat::Contract>, VirtualError> {
+    if targets.len() < 2 {
+        return Ok(None);
+    }
+    let kind = model_routes::routes_for(c, &targets[0].logical_model)?
+        .map(|r| r.kind).unwrap_or_default();
+    if matches!(kind, ModelKind::Embeddings | ModelKind::Rerank) {
+        return crate::vector_compat::require(c, user_id, targets, kind).map(Some);
+    }
+    Ok(None)
+}
+pub fn deleted_at(c: &Connection, user_id: i64, id: i64) -> super::Result<Option<i64>> {
+    super::settings::get(c, &trash_key(user_id,id))?.map(|raw|raw.parse::<i64>().map_err(|_|DbError::Other("Invalid virtual model trash marker".into()))).transpose()
+}
+fn trash_key(user_id:i64,id:i64)->String {format!("internal_virtual_model_trash_v1:{user_id}:{id}")}
 pub fn list(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
+    Ok(list_all(c,user_id)?.into_iter().filter(|r|r.deleted_at_ms.is_none()).collect())
+}
+pub fn list_all(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
     let mut st=c.prepare("SELECT id,name,enabled,mode,timezone,version,default_positions_json FROM user_virtual_models WHERE user_id=?1 ORDER BY id")?;
     let rows = st
         .query_map([user_id], |r| {
@@ -344,6 +405,7 @@ pub fn list(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
         validate_stored_shape(&config, true)
             .map_err(|_| DbError::Other("Invalid persisted virtual route".into()))?;
         out.push(VirtualModel {
+            deleted_at_ms: deleted_at(c,user_id,id)?,
             id,
             user_id,
             version,
@@ -458,6 +520,7 @@ pub fn disable(
 ) -> Result<VirtualModel, VirtualError> {
     let tx = c.unchecked_transaction()?;
     owner_auth(&tx, user_id)?;
+    if !list(&tx,user_id)?.iter().any(|r|r.id==id) {return Err(error("virtual_route_not_found","虚拟模型不存在"));}
     let n=tx.execute("UPDATE user_virtual_models SET enabled=0,version=version+1,updated_ms=?4 WHERE id=?1 AND user_id=?2 AND version=?3",params![id,user_id,version,super::now_ms()])?;
     if n != 1 {
         return Err(if list(&tx, user_id)?.iter().any(|r| r.id == id) {
@@ -474,6 +537,30 @@ pub fn disable(
     tx.commit()?;
     Ok(saved)
 }
+/// Soft deletion keeps route children and financial/audit history, freeing only its alias.
+pub fn trash(c:&Connection,user_id:i64,id:i64,version:i64)->Result<VirtualModel,VirtualError>{
+    let tx=c.unchecked_transaction()?;owner_auth(&tx,user_id)?;
+    let old=list(&tx,user_id)?.into_iter().find(|r|r.id==id).ok_or_else(||error("virtual_route_not_found","虚拟模型不存在"))?;
+    if old.version!=version{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
+    let now=super::now_ms();let tombstone=format!("\u{1}tokengo-trash:{user_id}:{id}");
+    let n=tx.execute("UPDATE user_virtual_models SET enabled=0,normalized_name=?4,version=version+1,updated_ms=?5 WHERE id=?1 AND user_id=?2 AND version=?3",params![id,user_id,version,tombstone,now])?;
+    if n!=1{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
+    super::settings::set(&tx,&trash_key(user_id,id),&now.to_string())?;
+    audit(&tx,user_id,id,"virtual_model.trash",version+1)?;
+    let saved=list_all(&tx,user_id)?.into_iter().find(|r|r.id==id).unwrap();tx.commit()?;Ok(saved)
+}
+pub fn restore(c:&Connection,user_id:i64,id:i64,version:i64)->Result<VirtualModel,VirtualError>{
+    let tx=c.unchecked_transaction()?;owner_auth(&tx,user_id)?;
+    let old=list_all(&tx,user_id)?.into_iter().find(|r|r.id==id&&r.deleted_at_ms.is_some()).ok_or_else(||error("virtual_route_not_found","回收站中不存在此虚拟模型"))?;
+    if old.version!=version{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
+    let name=&old.config.name;
+    if model_routes::list(&tx)?.iter().any(|r|same_model_name(&r.name,name)) || super::shared_virtual_routes::list(&tx)?.iter().any(|r|same_model_name(&r.config.name,name)) || list(&tx,user_id)?.iter().any(|r|same_model_name(&r.config.name,name)) {return Err(error("virtual_route_conflict","原模型名称已被占用，请先处理同名模型后恢复"));}
+    let n=tx.execute("UPDATE user_virtual_models SET enabled=0,normalized_name=?4,version=version+1,updated_ms=?5 WHERE id=?1 AND user_id=?2 AND version=?3",params![id,user_id,version,normalize_model_name(name),super::now_ms()])?;
+    if n!=1{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
+    super::settings::delete(&tx,&trash_key(user_id,id))?;audit(&tx,user_id,id,"virtual_model.restore",version+1)?;
+    let saved=list(&tx,user_id)?.into_iter().find(|r|r.id==id).unwrap();tx.commit()?;Ok(saved)
+}
+
 pub fn resolve(
     c: &Connection,
     user_id: i64,
@@ -500,6 +587,7 @@ pub fn resolve(
         ));
     }
     let indices = time_positions(&r.config, now_ms)?;
+    let compatibility = compatibility(c, user_id, &r.config.targets)?;
     let targets = indices
         .into_iter()
         .map(|position| {
@@ -514,11 +602,13 @@ pub fn resolve(
         })
         .collect();
     Ok(Some(ResolvedVirtualPlan {
+        shared: false,
         id: r.id,
         user_id,
         name: r.config.name,
         version: r.version,
         targets,
+        compatibility,
     }))
 }
 pub fn validate_current(
@@ -528,7 +618,7 @@ pub fn validate_current(
     version: i64,
     position: usize,
     now_ms: i64,
-) -> Result<(), VirtualError> {
+) -> Result<Option<crate::vector_compat::Contract>, VirtualError> {
     let auth = owner_auth(c, user_id)?;
     let r = list(c, user_id)?
         .into_iter()
@@ -549,6 +639,7 @@ pub fn validate_current(
     if !time_positions(&r.config, now_ms)?.contains(&position) {
         return Err(error("route_time_unavailable", "该目标当前时段不再可用"));
     }
+    let compatibility = compatibility(c, user_id, &r.config.targets)?;
     let t = r
         .config
         .targets
@@ -561,7 +652,7 @@ pub fn validate_current(
     if allowed_sources(c, &auth, t)?.is_empty() {
         return Err(error("virtual_target_forbidden", "目标已撤权或停用"));
     }
-    Ok(())
+    Ok(compatibility)
 }
 pub fn alias_names(
     c: &Connection,

@@ -5,9 +5,9 @@ use crate::{
     SharedState,
 };
 use axum::{
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
-    routing::{get, patch},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -19,6 +19,8 @@ pub fn router() -> Router<SharedState> {
             "/api/account/virtual-models/{id}",
             patch(update).delete(disable),
         )
+        .route("/api/account/virtual-models/{id}/trash",post(trash))
+        .route("/api/account/virtual-models/{id}/restore",post(restore))
         .layer(DefaultBodyLimit::max(65536))
         .layer(axum::middleware::map_response(super::accounts::json_errors))
 }
@@ -28,6 +30,8 @@ fn api(e: vr::VirtualError) -> ApiError {
         "virtual_route_not_found" => StatusCode::NOT_FOUND,
         "virtual_route_forbidden" | "virtual_target_forbidden" => StatusCode::FORBIDDEN,
         "virtual_route_storage_error" => StatusCode::INTERNAL_SERVER_ERROR,
+        "vector_compatibility_renewal_failed" | "vector_compatibility_renewing" => StatusCode::SERVICE_UNAVAILABLE,
+        "vector_fallback_rate_limited" => StatusCode::TOO_MANY_REQUESTS,
         _ => StatusCode::BAD_REQUEST,
     };
     ApiError::new(status, e.code, e.message)
@@ -41,7 +45,9 @@ fn owner(b: &Browser, c: &rusqlite::Connection) -> Result<i64, ApiError> {
         )
     })
 }
-async fn list(b: Browser, State(s): State<SharedState>) -> Result<Json<Value>, ApiError> {
+#[derive(Default,Deserialize)]
+struct ListQuery {#[serde(default)] trash:bool}
+async fn list(b: Browser, State(s): State<SharedState>, Query(query):Query<ListQuery>) -> Result<Json<Value>, ApiError> {
     let c = s.conn();
     let user = owner(&b, &c)?;
     let auth = vr::owner_auth(&c, user).map_err(api)?;
@@ -72,7 +78,7 @@ async fn list(b: Browser, State(s): State<SharedState>) -> Result<Json<Value>, A
         }
     }
     Ok(Json(
-        json!({"virtual_models":vr::list(&c,user)?,"options":options}),
+        json!({"virtual_models":vr::list_all(&c,user)?.into_iter().filter(|r|r.deleted_at_ms.is_some()==query.trash).map(|r|{let status=crate::vector_renewal::status(&c,user,&r.config);let mut v=serde_json::to_value(r).unwrap_or_default();v["compatibility"]=status;v}).collect::<Vec<_>>(),"options":options}),
     ))
 }
 async fn create(
@@ -80,8 +86,14 @@ async fn create(
     State(s): State<SharedState>,
     Json(body): Json<vr::Config>,
 ) -> Result<Json<Value>, ApiError> {
+    let user = owner(&b, &s.conn())?;
+    crate::vector_compat::verify(&s, user, &body)
+        .await
+        .map_err(api)?;
     let c = s.conn();
-    let user = owner(&b, &c)?;
+    if !b.valid(&c)? || owner(&b, &c)? != user {
+        return Err(ApiError::unauthorized("登录状态已变化，请重新登录后保存"));
+    }
     Ok(Json(
         json!({"virtual_model":vr::create(&c,user,&body).map_err(api)?}),
     ))
@@ -98,8 +110,32 @@ async fn update(
     Path(id): Path<i64>,
     Json(body): Json<Edit>,
 ) -> Result<Json<Value>, ApiError> {
+    let user = owner(&b, &s.conn())?;
+    // Check ownership and CAS before issuing any billable diagnostic calls.
+    let old = vr::list(&s.conn(), user)?
+        .into_iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "virtual_route_not_found",
+                "虚拟模型不存在",
+            )
+        })?;
+    if old.version != body.version {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "virtual_route_changed",
+            "路由已修改，请刷新后重试",
+        ));
+    }
+    crate::vector_compat::verify(&s, user, &body.config)
+        .await
+        .map_err(api)?;
     let c = s.conn();
-    let user = owner(&b, &c)?;
+    if !b.valid(&c)? || owner(&b, &c)? != user {
+        return Err(ApiError::unauthorized("登录状态已变化，请重新登录后保存"));
+    }
     Ok(Json(
         json!({"virtual_model":vr::replace(&c,user,id,body.version,&body.config).map_err(api)?}),
     ))
@@ -120,4 +156,11 @@ async fn disable(
     Ok(Json(
         json!({"virtual_model":vr::disable(&c,user,id,body.version).map_err(api)?}),
     ))
+}
+
+async fn trash(b:Browser,State(s):State<SharedState>,Path(id):Path<i64>,Json(body):Json<Version>)->Result<Json<Value>,ApiError>{
+    let c=s.conn();let user=owner(&b,&c)?;Ok(Json(json!({"virtual_model":vr::trash(&c,user,id,body.version).map_err(api)?})))
+}
+async fn restore(b:Browser,State(s):State<SharedState>,Path(id):Path<i64>,Json(body):Json<Version>)->Result<Json<Value>,ApiError>{
+    let c=s.conn();let user=owner(&b,&c)?;Ok(Json(json!({"virtual_model":vr::restore(&c,user,id,body.version).map_err(api)?})))
 }

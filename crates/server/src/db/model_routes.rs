@@ -295,7 +295,7 @@ pub fn auto_candidates(
     let stats=super::scores::all(conn,now_ms)?;
     let mut scored:Vec<(String,f64,i64)>=Vec::new();
     for r in list(conn)? {
-        if !visible(conn,&r.name)? {continue;}
+        if !visible(conn,&r.name)? || super::model_access::internal_only(conn, &r.name)? {continue;}
         if super::route_policy::load(conn, &r.name)?.include_in_auto == Some(false) { continue; }
         if !r.routed() || !kind_serves(r.kind,want) || (want_vision && !r.can_see()) {continue;}
         let v=stats.get(&normalize_model_name(&r.name)).cloned().unwrap_or_default();

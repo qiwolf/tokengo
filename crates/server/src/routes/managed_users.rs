@@ -364,6 +364,9 @@ async fn own_keys(
             models.insert(0, model_routes::AUTO_NAME.to_owned());
         }
     }
+    // The child VKey picker receives the same shared entry grants as /v1/models.
+    models.extend(crate::db::shared_virtual_routes::alias_names(&c, &auth, db::now_ms()).map_err(|e| ApiError::new(axum::http::StatusCode::FORBIDDEN, e.code, e.message))?);
+    models.sort(); models.dedup();
     let keys = identity::keys(&c, u.id)?
         .iter()
         .map(|k| key_view(&c, k))

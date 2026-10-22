@@ -155,6 +155,12 @@ struct Plan {
 }
 
 impl Plan {
+    fn vector_contract(&self) -> Option<&crate::vector_compat::Contract> {
+        self.virtual_route.as_ref().and_then(|route| route.compatibility.as_ref())
+    }
+    fn automatic_target_failover(&self) -> bool {
+        self.vector_contract().is_some() || self.virtual_route.as_ref().is_some_and(|r| r.shared)
+    }
     fn ids(&self) -> Vec<ChannelId> {
         self.entries.iter().map(|e| e.channel.id).collect()
     }
@@ -193,6 +199,8 @@ fn pool_group(
 }
 fn virtual_route_error(error: crate::db::user_virtual_routes::VirtualError) -> ApiError {
     let status = match error.code {
+        "vector_compatibility_renewal_failed" | "vector_compatibility_renewing" => StatusCode::SERVICE_UNAVAILABLE,
+        "vector_fallback_unverified" | "vector_fallback_incompatible" | "vector_request_unverified" => StatusCode::BAD_REQUEST,
         "route_time_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
         "virtual_route_changed" => StatusCode::CONFLICT,
         _ => StatusCode::FORBIDDEN,
@@ -396,7 +404,7 @@ fn advance_explicit_route(
                 .iter()
                 .skip(index + 1)
                 .filter_map(|next| next.target.as_ref())
-                .find(|next| next.position > target.position)
+                .find(|next| next.position != target.position)
             {
                 *active_target = Some(next.position);
                 return Ok(true);
@@ -470,6 +478,26 @@ fn permitted_candidate_for(
     channel: i64,
     endpoint: EndpointKind,
 ) -> Result<bool, ApiError> {
+    permitted_candidate_access(c, auth, name, channel, endpoint, false)
+}
+fn permitted_plan_candidate(
+    c: &rusqlite::Connection,
+    auth: &crate::db::identity::AuthContext,
+    route: Option<&crate::db::user_virtual_routes::ResolvedVirtualPlan>,
+    name: &str, channel: i64, endpoint: EndpointKind,
+) -> Result<bool, ApiError> {
+    if let Some(route)=route {if let Some(contract)=&route.compatibility {if !crate::vector_renewal::source_allowed(c,if route.shared{0}else{route.user_id},contract,channel,name).map_err(virtual_route_error)?{return Ok(false);}}}
+    if let Some(route) = route.filter(|r| r.shared) {
+        if !auth.permits_model(&route.name) { return Ok(false); }
+        permitted_candidate_access(c, auth, name, channel, endpoint, true)
+    } else { permitted_candidate_for(c, auth, name, channel, endpoint) }
+}
+fn permitted_candidate_access(
+    c: &rusqlite::Connection,
+    auth: &crate::db::identity::AuthContext,
+    name: &str, channel: i64, endpoint: EndpointKind, delegated: bool,
+) -> Result<bool, ApiError> {
+    if !delegated && crate::db::model_access::internal_only(c, name)? { return Ok(false); }
     let credential = crate::db::provider_pool::source_credential(c, channel)?;
     if credential
         .as_ref()
@@ -484,7 +512,7 @@ fn permitted_candidate_for(
     {
         return Ok(false);
     }
-    if !auth.permits_model(name) {
+    if !delegated && !auth.permits_model(name) {
         return Ok(false);
     }
     let paid = if endpoint.tool_kind().is_some() {
@@ -531,9 +559,28 @@ fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
 }
 fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError> {
     if endpoint.tool_kind().is_some() {return Ok((0,0));}
-    let input=i64::try_from(serde_json::to_vec(body).map_err(|e|ApiError::bad_request(e.to_string()))?.len())
+    let bytes = serde_json::to_vec(body).map_err(|e|ApiError::bad_request(e.to_string()))?.len();
+    // Cross encoders process the query once per document. Counting it once can
+    // under-reserve both TPM and money even inside a bounded fallback domain.
+    let extra = if endpoint == EndpointKind::Rerank {
+        body["query"].as_str().map_or(0, str::len)
+            .checked_mul(body["documents"].as_array().map_or(0, |docs| docs.len().saturating_sub(1)))
+    } else { Some(0) }.ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
+    let input=i64::try_from(bytes.checked_add(extra).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?)
         .ok().and_then(|n|n.checked_add(256)).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
     Ok((input,output_bound(body,endpoint)?))
+}
+
+#[cfg(test)]
+mod rerank_admission_tests {
+    use super::*;
+    #[test]
+    fn rerank_admission_counts_query_for_every_document() {
+        let body = serde_json::json!({"query":"q".repeat(512),"documents":vec!["d";128]});
+        let (input, output) = admission_bound(&body, EndpointKind::Rerank).unwrap();
+        assert_eq!(input, body.to_string().len() as i64 + 512 * 127 + 256);
+        assert_eq!(output, 0);
+    }
 }
 fn has_input_audio(v: &Value) -> bool {
     match v {
@@ -724,12 +771,16 @@ fn load_plan(
         return load_auto_plan(state, &conn, model, endpoint, wants_vision, auth);
     }
     if let Some(auth) = auth {
-        if let Some(resolved) =
-            crate::db::user_virtual_routes::resolve(&conn, auth.user_id, model, now_ms())
-                .map_err(virtual_route_error)?
-        {
-            if endpoint == EndpointKind::Embeddings && resolved.targets.len() > 1 {
-                return Err(ApiError::new(StatusCode::BAD_REQUEST,"embedding_fallback_unverified","Embedding virtual routes require one selected target until vector dimensions and output compatibility are configured"));
+        let shared = crate::db::shared_virtual_routes::resolve(&conn, auth, model, now_ms())
+            .map_err(virtual_route_error)?;
+        let resolved = match shared {
+            Some(route) => Some(route),
+            None => crate::db::user_virtual_routes::resolve(&conn, auth.user_id, model, now_ms()).map_err(virtual_route_error)?,
+        };
+        if let Some(resolved) = resolved {
+            if matches!(endpoint, EndpointKind::Embeddings | EndpointKind::Rerank)
+                && resolved.targets.len() > 1 && resolved.compatibility.is_none() {
+                return Err(ApiError::new(StatusCode::BAD_REQUEST,"vector_fallback_unverified","向量或重排多目标回退尚未核实，请先确认模型用途并重新保存调用策略"));
             }
             let mut plan = Plan {
                 route: resolved.name.clone(),
@@ -749,7 +800,7 @@ fn load_plan(
                     continue;
                 }
                 let kind_ok = route.kind == endpoint.as_model_kind()
-                    || route.kind == tokengo_shared::ModelKind::Unknown;
+                    || (route.kind == tokengo_shared::ModelKind::Unknown && (!resolved.shared || endpoint.is_generation()));
                 if !kind_ok {
                     continue;
                 }
@@ -763,7 +814,7 @@ fn load_plan(
                     {
                         continue;
                     }
-                    if !permitted_candidate_for(&conn, auth, &route.name, channel.id.0, endpoint)? {
+                    if !permitted_plan_candidate(&conn, auth, Some(&resolved), &route.name, channel.id.0, endpoint)? {
                         continue;
                     }
                     let before = plan.entries.len();
@@ -782,6 +833,9 @@ fn load_plan(
             }
             return Ok(plan);
         }
+    }
+    if crate::db::model_access::internal_only(&conn, model)? {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "model_internal_only", "此模型仅允许管理员共享虚拟入口内部调用"));
     }
     let Some(route) = model_routes::routes_for(&conn, model)? else {
         // 报错别教训人，说清「去哪儿勾上」就够了。
@@ -1004,8 +1058,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             return Err(e);
         }
     };
+    if let Some(contract) = plan_all.vector_contract() {
+        crate::vector_compat::validate_request(contract, req.endpoint.as_model_kind(), &req.body)
+            .map_err(virtual_route_error)?;
+    }
     if let Some(auth) = &req.auth {
-        if plan_all.virtual_route.is_none() && !auth.permits_model(&req.model) {
+        if (plan_all.virtual_route.is_none() || plan_all.virtual_route.as_ref().is_some_and(|r| r.shared)) && !auth.permits_model(&req.model) {
             record_routing_refusal(&state, &req, started_ms, 403, "Model not permitted");
             return Err(ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -1016,7 +1074,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         let conn = state.conn();
         let mut authorized = Vec::new();
         for entry in plan_all.entries.drain(..) {
-            if permitted_candidate_for(&conn, auth, &entry.name, entry.channel.id.0, req.endpoint)?
+            if permitted_plan_candidate(&conn, auth, plan_all.virtual_route.as_ref(), &entry.name, entry.channel.id.0, req.endpoint)?
             {
                 authorized.push(entry);
             }
@@ -1423,7 +1481,10 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             else {
                 continue;
             };
-            if target
+            // Verified vector chains may walk the remaining ordered candidates
+            // on transport, source-health and malformed-output faults. Complete
+            // 400/429 responses still stop below when their switches are off.
+            if !plan.automatic_target_failover() && target
                 .as_ref()
                 .is_some_and(|target| Some(target.position) != active_target)
             {
@@ -1848,10 +1909,14 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     let kind = model_routes::routes_for(&c, name)?
                         .map(|route| route.kind)
                         .unwrap_or_default();
-                    let kind_ok = !plan.auto
+                    let kind_ok = if plan.virtual_route.as_ref().is_some_and(|r| r.shared) {
+                        kind == req.endpoint.as_model_kind() || (kind == tokengo_shared::ModelKind::Unknown && req.endpoint.is_generation())
+                    } else if plan.vector_contract().is_some() {
+                        kind == req.endpoint.as_model_kind()
+                    } else { !plan.auto
                         || kind == req.endpoint.as_model_kind()
                         || (kind == tokengo_shared::ModelKind::Unknown
-                            && req.endpoint.is_generation());
+                            && req.endpoint.is_generation()) };
                     let auto_ok = !plan.auto
                         || (crate::db::model_routes::visible(&c, name)?
                             && crate::db::route_policy::load(&c, name)?.include_in_auto
@@ -1865,20 +1930,21 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         continue 'channels;
                     }
                 }
+                if let Some(route)=&plan.virtual_route {if let Some(contract)=&route.compatibility {let allowed={let c=state.conn();crate::vector_renewal::source_allowed(&c,if route.shared{0}else{route.user_id},contract,channel.id.0,name).map_err(virtual_route_error)?};if !allowed{last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"vector_source_isolated","此来源已被续验隔离，将选择其余健康来源"));continue 'channels;}}}
                 let live_route_check = (|| -> Result<(), ApiError> {
                     let c = state.conn();
                     if let (Some(route), Some(target), Some(auth)) =
                         (&plan.virtual_route, target, &req.auth)
                     {
-                        crate::db::user_virtual_routes::validate_current(
-                            &c,
-                            auth.user_id,
-                            route.id,
-                            route.version,
-                            target.position,
-                            now_ms(),
-                        )
-                        .map_err(virtual_route_error)?;
+                        let current_contract = if route.shared {
+                            crate::db::shared_virtual_routes::validate_current(&c, auth, route.id, route.version, target.position, now_ms())
+                        } else {
+                            crate::db::user_virtual_routes::validate_current(&c, auth.user_id, route.id, route.version, target.position, now_ms())
+                        }.map_err(virtual_route_error)?;
+                        if !crate::vector_compat::execution_equivalent(current_contract.as_ref(), route.compatibility.as_ref()) {
+                            return Err(ApiError::new(StatusCode::CONFLICT,
+                                "virtual_route_changed", "兼容检查结果或模型用途已变化，请重试"));
+                        }
                     }
                     if pooled {
                         if let Some(snapshot) = credential {
@@ -1909,8 +1975,8 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                         guard.reject(&error);
                         return Err(error);
                     };
-                    if (plan.virtual_route.is_none() && !current.permits_model(&req.model))
-                        || !permitted_candidate_for(&c, &current, name, channel.id.0, req.endpoint)?
+                    if ((plan.virtual_route.is_none() || plan.virtual_route.as_ref().is_some_and(|r| r.shared)) && !current.permits_model(&req.model))
+                        || !permitted_plan_candidate(&c, &current, plan.virtual_route.as_ref(), name, channel.id.0, req.endpoint)?
                     {
                         drop(c);
                         let error = ApiError::new(
@@ -2097,7 +2163,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                     let source = serde_json::json!({"channel_id":channel.id.0,"channel_name":channel.name,
                     "origin":reqwest::Url::parse(&channel.base_url).ok().map(|u|u.origin().ascii_serialization()),
                     "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol(),
-                    "virtual_model_id":plan.virtual_route.as_ref().map(|route|route.id),"virtual_model_version":plan.virtual_route.as_ref().map(|route|route.version),
+                    "virtual_model_scope":plan.virtual_route.as_ref().map(|r|if r.shared {"shared"} else {"private"}),"virtual_model_id":plan.virtual_route.as_ref().map(|route|route.id),"virtual_model_version":plan.virtual_route.as_ref().map(|route|route.version),
                     "target_position":target.as_ref().map(|target|target.position),"provider_id":credential.as_ref().map(|credential|credential.provider_id),"credential_id":credential.as_ref().map(|credential|credential.id),"credential_revision":credential.as_ref().map(|credential|credential.revision),
                     "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision)});
                     if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2,input_bound=?3,output_bound=?4 WHERE id=?1",rusqlite::params![id,source.to_string(),input,output]) {
@@ -2188,6 +2254,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
 
                 let resp = match outcome {
                     Err(fault) => {
+                        if plan.automatic_target_failover() { last_http = None; }
                         let dur = now_ms() - t0;
                         slow_previous = dur >= attempt_ms as i64 * 3 / 4;
                         guard.settle_billing("channel_fault");
@@ -2442,7 +2509,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             )
                             .await
                         } else if req.endpoint == EndpointKind::Rerank {
-                            buffer_rerank_passthrough(resp, http, &req.body).await
+                            buffer_rerank_passthrough(resp, http, &req.body, plan.vector_contract()).await
                         } else {
                             buffer_passthrough(
                                 resp,
@@ -2454,6 +2521,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                     .as_deref()
                                     .zip(candidate_pin.as_ref())
                                     .map(|(owner, pin)| (&state, owner, pin)),
+                                plan.vector_contract().map(|contract| (contract, &req.body)),
                             )
                             .await
                         };
@@ -2520,6 +2588,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                             continue 'channels;
                         }
                         if let Some(note) = empty {
+                            if plan.automatic_target_failover() { last_http = None; }
                             guard.settle_billing("empty_reply");
                             guard.active_attempt = None;
                             record_attempt(
@@ -2687,6 +2756,19 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                 last_fault = Some(format!("HTTP {status}: explicit route switch"));
                                 last_http = Some(err);
                                 continue 'channels;
+                            }
+                            if plan.automatic_target_failover() {
+                                guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                    .map(|value| Usage::read(&value)).unwrap_or_default();
+                                guard.settle_billing("explicit_route_stop");
+                                guard.active_attempt = None;
+                                record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                    "client_fault", Some(status), now_ms()-t0,
+                                    Some("Target switch disabled or no authorized next target"));
+                                guard.finish(&state, Status::ClientError, Some(status), Some(channel.id.0),
+                                    started_ms, Some(now_ms()-t0), 0, 0, false,
+                                    Some("Target switch disabled or no authorized next target"));
+                                return Ok(err.into_response());
                             }
                         }
                         if req.endpoint.tool_kind().is_some() {
@@ -3022,6 +3104,19 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                 last_fault = Some(format!("HTTP {status}: explicit route switch"));
                                 last_http = Some(err);
                                 continue 'channels;
+                            }
+                            if plan.automatic_target_failover() {
+                                guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                    .map(|value| Usage::read(&value)).unwrap_or_default();
+                                guard.settle_billing("explicit_route_stop");
+                                guard.active_attempt = None;
+                                record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                    "client_fault", Some(status), now_ms()-t0,
+                                    Some("Target switch disabled or no authorized next target"));
+                                guard.finish(&state, Status::ClientError, Some(status), Some(channel.id.0),
+                                    started_ms, Some(now_ms()-t0), 0, 0, false,
+                                    Some("Target switch disabled or no authorized next target"));
+                                return Ok(err.into_response());
                             }
                         }
                         guard.usage = serde_json::from_slice::<Value>(&err.body)
@@ -3423,6 +3518,18 @@ pub fn usage_from_value(v: &Value) -> (i64,i64) { let u=Usage::read(v); (u.input
 /// 第四个返回值给出说明 —— 调用方拿它当**这条渠道的毛病**去重试/换渠道，而不是把空泡泡
 /// 原样丢给用户。
 #[allow(clippy::type_complexity)]
+async fn read_vector_body(mut response: reqwest::Response) -> Result<Bytes, String> {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| "兼容链响应读取失败或超时".to_owned())? {
+        if chunk.len() > LIMIT.saturating_sub(bytes.len()) {
+            return Err("兼容链响应超过4 MiB上限".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(bytes))
+}
+
 async fn buffer_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
@@ -3430,11 +3537,13 @@ async fn buffer_passthrough(
     _check_empty: bool,
     protocols: Option<(crate::protocol::Protocol,crate::protocol::Protocol)>,
     provenance:Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
+    vector: Option<(&crate::vector_compat::Contract, &Value)>,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
-    let bytes = match resp.bytes().await {
+    let bytes = match if vector.is_some() { read_vector_body(resp).await }
+        else { resp.bytes().await.map_err(|e| if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }) } {
         Ok(bytes) => bytes,
-        Err(e) => return invalid_buffer(if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }),
+        Err(note) => return invalid_buffer(note),
     };
     let mut out = bytes.clone();
     let empty: Option<String> = None;
@@ -3451,6 +3560,11 @@ async fn buffer_passthrough(
             let mut validated = v.clone();
             // A configured raw envelope remains byte-for-byte compatible, but its payload must be valid.
             tokengo_shared::unwrap_envelope(&mut validated);
+            if let Some((contract, body)) = vector {
+                if let Err(note) = crate::vector_compat::validate_output(contract, tokengo_shared::ModelKind::Embeddings, body, &validated) {
+                    let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
+                }
+            }
             let validity=match protocols {Some((source,_))=>crate::protocol::validate_response(source,&validated),None=>crate::upstream::validate_response(&validated,"embeddings")};
             if let Err(note) = validity {
                 let mut invalid=invalid_buffer(format!("上游回了 200 但一句话都没说或响应不完整：{note}")); invalid.4=usage; return invalid;
@@ -3558,11 +3672,13 @@ async fn buffer_rerank_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
     req_body: &Value,
+    contract: Option<&crate::vector_compat::Contract>,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
-    let bytes = match resp.bytes().await {
+    let bytes = match if contract.is_some() { read_vector_body(resp).await }
+        else { resp.bytes().await.map_err(|e| if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }) } {
         Ok(bytes) => bytes,
-        Err(e) => return invalid_buffer(if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }),
+        Err(note) => return invalid_buffer(note),
     };
     let docs = req_body
         .get("documents")
@@ -3574,6 +3690,11 @@ async fn buffer_rerank_passthrough(
         Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
     };
     let mut usage=Usage::read(&parsed);
+    if let Some(contract) = contract {
+        if let Err(note) = crate::vector_compat::validate_output(contract, tokengo_shared::ModelKind::Rerank, req_body, &parsed) {
+            let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
+        }
+    }
     if let Err(note) = crate::upstream::validate_response(&parsed, "rerank") {
         let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
     }

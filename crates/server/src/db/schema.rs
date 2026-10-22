@@ -442,4 +442,5 @@ END;
     (37, include_str!("local_endpoints.sql")),
     (38, include_str!("operations_tokens.sql")),
     (39, include_str!("passthrough.sql")),
+    (40, include_str!("shared_virtual_routes.sql")),
 ];

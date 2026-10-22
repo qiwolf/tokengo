@@ -13,9 +13,12 @@ pub fn PasswordField(
     #[prop(default = true)] required: bool,
 ) -> impl IntoView {
     let shown = RwSignal::new(false);
+    Effect::new(move |_| { if value.get().is_empty() { shown.set(false); } });
     view! {<div class="account-field"><label for=id>{label}</label><div class="password-control">
     <input id=id name=id type=move||if shown.get(){"text"}else{"password"} autocomplete=autocomplete required=required maxlength="256" prop:value=value aria-invalid=move||(!error.get().is_empty()).to_string() aria-describedby=describedby on:input=move|ev|{value.set(event_target_value(&ev));error.set(String::new());}/>
-    <button type="button" class="password-toggle" aria-controls=id aria-pressed=move||shown.get().to_string() aria-label=move||format!("{}{}",if shown.get(){"隐藏"}else{"显示"},label) on:click=move|_|shown.update(|v|*v=!*v)>{move||if shown.get(){"隐藏"}else{"显示"}}</button>
+    <button type="button" class="password-toggle" aria-controls=id aria-pressed=move||shown.get().to_string() aria-label=move||format!("{}{}",if shown.get(){"隐藏"}else{"显示"},label) on:click=move|_|shown.update(|v|*v=!*v)>
+    {move||if shown.get(){view!{<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>}.into_any()}else{view!{<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3 3 18 18M10.6 5.1A12 12 0 0 1 12 5c6.4 0 10 7 10 7a19 19 0 0 1-3.1 3.9M6.4 6.4A20 20 0 0 0 2 12s3.6 7 10 7a12 12 0 0 0 5.6-1.4M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>}.into_any()}}
+    </button>
     </div></div>}
 }
 #[component]

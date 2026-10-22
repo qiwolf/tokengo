@@ -1449,6 +1449,7 @@ async fn model_routes_list(
             serde_json::json!({
                 "name": r.name,
                 "visible": ({let c=state.conn();model_routes::visible(&c,&r.name).unwrap_or(false)}),
+                "internal_only": ({let c=state.conn();crate::db::model_access::internal_only(&c,&r.name).unwrap_or(true)}),
                 "sources": ({let c=state.conn();crate::db::provider_channels::source_json(&c,&r.name).unwrap_or_default()}),
                 "enabled": r.enabled,
                 "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
@@ -1481,6 +1482,7 @@ async fn model_routes_list(
         .collect::<Vec<_>>();
     Ok(Json(serde_json::json!({
         "models": rows,
+        "shared_virtual_models": crate::db::shared_virtual_routes::list(&state.conn())?,
         "auto": auto,
         "now_ms": now_ms(),
     })))

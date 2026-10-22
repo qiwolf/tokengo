@@ -90,6 +90,7 @@ pub struct ModelSource {pub connection_id:i64,pub connection_name:String,pub pro
 /// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
+    #[serde(default)] pub internal_only:bool,
     #[serde(default="model_enabled_default")] pub visible:bool,
     #[serde(default)] pub sources:Vec<ModelSource>,
     #[serde(default="model_enabled_default")]pub enabled:bool,
@@ -172,7 +173,15 @@ pub struct AutoRoutes {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct SharedVirtualModel {
+    pub name:String,
+    #[serde(default="model_enabled_default")] pub enabled:bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ModelRoutesResp {
+    #[serde(default)]
+    pub shared_virtual_models: Vec<SharedVirtualModel>,
     #[serde(default)]
     pub models: Vec<NameRoute>,
     #[serde(default)]
@@ -582,6 +591,11 @@ pub fn endpoint_label(e: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shared_catalog_and_internal_access_have_safe_legacy_defaults() {
+        let old:ModelRoutesResp=serde_json::from_value(serde_json::json!({"models":[{"name":"legacy"}]})).unwrap();assert!(old.shared_virtual_models.is_empty());assert!(!old.models[0].internal_only);
+        let catalog:ModelRoutesResp=serde_json::from_value(serde_json::json!({"models":[{"name":"gpu","internal_only":true}],"shared_virtual_models":[{"name":"shared","enabled":true}]})).unwrap();assert!(catalog.models[0].internal_only);assert_eq!(catalog.shared_virtual_models[0].name,"shared");
+    }
     use super::*;
 
     #[test]

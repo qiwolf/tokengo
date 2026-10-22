@@ -172,6 +172,7 @@ mod tests {
             "source_credentials",
             "credential_affinity",
             "user_virtual_models",
+            "shared_virtual_models",
             "user_virtual_targets",
             "user_virtual_windows",
             "channel_reasoning_catalog",
@@ -399,3 +400,6 @@ mod tests {
 }
 
 pub mod user_virtual_routes;
+
+pub mod shared_virtual_routes;
+pub mod model_access;

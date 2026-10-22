@@ -114,3 +114,5 @@ pub fn unbuilt(stage: u8, route: &str) -> Response {
 }
 
 pub mod virtual_models;
+
+pub mod shared_virtual_models;
