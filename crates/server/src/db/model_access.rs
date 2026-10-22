@@ -35,9 +35,52 @@ pub fn set_display_name(c: &Connection, name: &str, value: &str) -> Result<()> {
     let key = display_key(name)?;
     if value.is_empty() { super::settings::delete(c, &key) } else { super::settings::set(c, &key, &value) }
 }
+/// Catalog grouping is deliberately independent of executable model kind.
+fn purpose_key(name: &str) -> Result<String> {
+    let canonical=normalize_model_name(name);
+    if canonical.is_empty() { return Err(DbError::Other("Model name cannot be empty".into())); }
+    Ok(format!("model_catalog_purpose_v1:{canonical}"))
+}
+pub fn presentation_purpose(raw:&str)->std::result::Result<&str,&'static str> {
+    match raw {
+        ""|"chat"|"embeddings"|"rerank"|"image"|"video"|"audio"|"tools"=>Ok(raw),
+        _=>Err("展示用途必须为chat、embeddings、rerank、image、video、audio、tools或空字符串"),
+    }
+}
+pub fn catalog_purpose(c:&Connection,name:&str)->Result<String> {
+    Ok(super::settings::get(c,&purpose_key(name)?)?.unwrap_or_default())
+}
+pub fn catalog_purpose_label(purpose:&str)->&'static str {
+    match purpose {
+        ""=>"",
+        "tools"=>"工具",
+        _=>tokengo_shared::ModelKind::parse(purpose).label(),
+    }
+}
+pub fn set_catalog_purpose(c:&Connection,name:&str,value:&str)->Result<()> {
+    let value=presentation_purpose(value).map_err(|e|DbError::Other(e.into()))?;
+    let key=purpose_key(name)?;
+    if value.is_empty() {super::settings::delete(c,&key)}else{super::settings::set(c,&key,value)}
+}
 #[cfg(test)]
 mod presentation_tests {
     use super::*;
+    #[test]
+    fn purpose_normalizes_model_key_without_touching_executable_kind() {
+        let c=super::super::open_in_memory().unwrap();
+        super::super::kinds::set(&c,"BGE-M3",tokengo_shared::ModelKind::Embeddings).unwrap();
+        let before=super::super::kinds::all(&c).unwrap();
+        for purpose in ["chat","embeddings","rerank","image","video","audio","tools"] {
+            set_catalog_purpose(&c," BGE-M3 ",purpose).unwrap();
+            assert_eq!(catalog_purpose(&c,"bge-m3").unwrap(),purpose);
+            assert!(!catalog_purpose_label(purpose).is_empty());
+        }
+        assert!(set_catalog_purpose(&c,"bge-m3","invalid").is_err());
+        assert_eq!(catalog_purpose(&c,"bge-m3").unwrap(),"tools");
+        set_catalog_purpose(&c,"BGE-M3","").unwrap();
+        assert_eq!(catalog_purpose(&c,"bge-m3").unwrap(),"");
+        assert_eq!(super::super::kinds::all(&c).unwrap(),before);
+    }
     #[test]
     fn display_name_uses_canonical_identity_and_clear_does_not_touch_access() {
         let c=super::super::open_in_memory().unwrap();

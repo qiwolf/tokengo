@@ -1449,6 +1449,8 @@ async fn model_routes_list(
             serde_json::json!({
                 "name": r.name,
                 "display_name": ({let c=state.conn();crate::db::model_access::display_name(&c,&r.name).unwrap_or_default()}),
+                "catalog_purpose": ({let c=state.conn();crate::db::model_access::catalog_purpose(&c,&r.name).unwrap_or_default()}),
+                "catalog_purpose_label": ({let c=state.conn();crate::db::model_access::catalog_purpose_label(&crate::db::model_access::catalog_purpose(&c,&r.name).unwrap_or_default())}),
                 "visible": ({let c=state.conn();model_routes::visible(&c,&r.name).unwrap_or(false)}),
                 "internal_only": ({let c=state.conn();crate::db::model_access::internal_only(&c,&r.name).unwrap_or(true)}),
                 "sources": ({let c=state.conn();crate::db::provider_channels::source_json(&c,&r.name).unwrap_or_default()}),

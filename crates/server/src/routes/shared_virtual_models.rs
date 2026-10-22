@@ -194,16 +194,22 @@ async fn restore(root:RootGrant,State(s):State<SharedState>,Path(id):Path<i64>,J
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Presentation { display_name: String }
-async fn model_presentation(root: RootGrant, State(s): State<SharedState>, Query(q): Query<ModelQuery>, Json(v): Json<Presentation>) -> Result<Json<Value>, ApiError> {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelPresentation { display_name: String, purpose: Option<String> }
+async fn model_presentation(root: RootGrant, State(s): State<SharedState>, Query(q): Query<ModelQuery>, Json(v): Json<ModelPresentation>) -> Result<Json<Value>, ApiError> {
     let name=db::model_access::presentation_name(&v.display_name).map_err(ApiError::bad_request)?;
+    if let Some(purpose)=&v.purpose {db::model_access::presentation_purpose(purpose).map_err(ApiError::bad_request)?;}
     let c=s.conn();
     let actor=valid(&root,&c)?;
     let route=db::model_routes::routes_for(&c,&q.model)?.ok_or_else(||ApiError::not_found("标准模型不存在"))?;
     let tx=c.unchecked_transaction().map_err(db::DbError::from)?;
     db::model_access::set_display_name(&tx,&route.name,&name)?;
-    tx.execute("INSERT INTO audit_events(ts_ms,action,target_type,metadata_json) VALUES(?1,'model_presentation.update','model',?2)",rusqlite::params![db::now_ms(),json!({"actor_account_id":actor,"model":route.name,"display_name":name}).to_string()]).map_err(db::DbError::from)?;
+    if let Some(purpose)=&v.purpose {db::model_access::set_catalog_purpose(&tx,&route.name,purpose)?;}
+    let purpose=db::model_access::catalog_purpose(&tx,&route.name)?;
+    tx.execute("INSERT INTO audit_events(ts_ms,action,target_type,metadata_json) VALUES(?1,'model_presentation.update','model',?2)",rusqlite::params![db::now_ms(),json!({"actor_account_id":actor,"model":route.name,"display_name":name,"catalog_purpose":purpose,"catalog_purpose_label":db::model_access::catalog_purpose_label(&purpose)}).to_string()]).map_err(db::DbError::from)?;
     tx.commit().map_err(db::DbError::from)?;
-    Ok(Json(json!({"model":route.name,"display_name":name})))
+    Ok(Json(json!({"model":route.name,"display_name":name,"catalog_purpose":purpose,"catalog_purpose_label":db::model_access::catalog_purpose_label(&purpose)})))
 }
 async fn channel_presentation(root: RootGrant, State(s): State<SharedState>, Path(id): Path<i64>, Json(v): Json<Presentation>) -> Result<Json<Value>, ApiError> {
     rename_presentation(&s,&root,id,&v.display_name,false)

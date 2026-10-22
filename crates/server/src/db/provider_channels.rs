@@ -108,7 +108,7 @@ pub fn one(c: &Connection, id: i64) -> Result<Value> {
         }
         let visible = super::model_routes::visible(c, &r.name)?;
         models.push(json!({
-            "name":r.name,"display_name":super::model_access::display_name(c,&r.name)?,"kind":r.kind.as_str(),"kind_label":r.kind.label(),"global_enabled":r.enabled,"visible":visible,
+            "name":r.name,"display_name":super::model_access::display_name(c,&r.name)?,"catalog_purpose":super::model_access::catalog_purpose(c,&r.name)?,"catalog_purpose_label":super::model_access::catalog_purpose_label(&super::model_access::catalog_purpose(c,&r.name)?),"kind":r.kind.as_str(),"kind_label":r.kind.label(),"global_enabled":r.enabled,"visible":visible,
             "declared_connection_ids":declared,"enabled_connection_ids":active,"routable_connection_ids":routable
         }));
     }

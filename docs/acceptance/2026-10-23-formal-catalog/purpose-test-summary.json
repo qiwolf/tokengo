@@ -1,0 +1,22 @@
+{
+  "host": "build-test",
+  "scope": "追加独立展示用途分类；首轮完整回归见test-summary.json",
+  "source_manifest_sha256": "3796e2c5e7634a8ac7ac4ea94b342733f12025024f860de9bdd5b30018e39556",
+  "suites": {
+    "server-lib": {
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    "server-api": {
+      "passed": 24,
+      "failed": 0,
+      "ignored": 0
+    },
+    "web-test": {
+      "passed": 123,
+      "failed": 0,
+      "ignored": 0
+    }
+  }
+}

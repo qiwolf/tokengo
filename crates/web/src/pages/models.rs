@@ -16,6 +16,8 @@ pub(crate) fn source_labels(r:&NameRoute)->Vec<String>{
     let mut names=r.sources.iter().map(|s|s.provider_name.as_deref().filter(|n|!n.trim().is_empty()).unwrap_or("未分组").to_string()).collect::<Vec<_>>();
     if names.is_empty(){names.push("未分组".into());}names.sort();names.dedup();names
 }
+pub(crate) fn purpose_label(r:&NameRoute)->&str {if r.catalog_purpose_label.trim().is_empty(){&r.kind_label}else{&r.catalog_purpose_label}}
+pub(crate) fn purpose_kind(r:&NameRoute)->&str {if r.catalog_purpose.is_empty(){&r.kind}else{&r.catalog_purpose}}
 pub(crate) fn model_title(r:&NameRoute)->&str {if r.display_name.trim().is_empty(){&r.name}else{&r.display_name}}
 pub(crate) fn model_matches(r:&NameRoute,provider:&str,search:&str)->bool {
     let labels=source_labels(r);let needle=search.trim().to_lowercase();
@@ -54,8 +56,8 @@ pub(crate) struct KindTab {
     pub css: &'static str,
 }
 
-/// 六档，顺序固定（用户口径；参照 freellmapi 把用途当标签用）。
-pub(crate) const KIND_TABS: [KindTab; 6] = [
+/// 七档，顺序固定（用户口径；参照 freellmapi 把用途当标签用）。
+pub(crate) const KIND_TABS: [KindTab; 7] = [
     KindTab {
         key: "chat",
         title: "对话模型",
@@ -87,6 +89,12 @@ pub(crate) const KIND_TABS: [KindTab; 6] = [
         kinds: &["audio"],
         css: "kind-audio",
     },
+    KindTab {
+        key: "tools",
+        title: "工具服务",
+        kinds: &["tools"],
+        css: "kind-tools",
+    },
     // 还没定：网关只转发对话 / 嵌入两种请求，没被打过的名字学不出来，也不许按名字猜。
     // 真被打过一次就会自动落到前面几档里 —— 所以这一档会自己空掉，不是垃圾桶。
     KindTab {
@@ -100,6 +108,7 @@ pub(crate) const KIND_TABS: [KindTab; 6] = [
 /// 表格里的一行：一个模型名 + 它现在的全部事实（服务端算好的）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ModelRow {
+    pub catalog_purpose:String,
     pub name: String,
     /// 用途：`""` / `chat` / `embeddings` / `rerank` / `image` / `video` / `audio`。
     pub kind: String,
@@ -124,6 +133,7 @@ impl ModelRow {
     /// 都是服务端算的，面板照抄，免得两处口径打架。
     pub(crate) fn from_route(r: &NameRoute) -> Self {
         ModelRow {
+            catalog_purpose:r.catalog_purpose.clone(),
             name: r.name.clone(),
             kind: r.kind.clone(),
             kind_source: r.kind_source.clone(),
@@ -171,14 +181,14 @@ pub(crate) fn tab_of(kind: &str) -> &'static str {
 /// 这一档里的行（保持 `rows` 的顺序）。
 #[cfg(test)]
 pub(crate) fn rows_in_tab(rows: &[ModelRow], key: &str) -> Vec<ModelRow> {
-    rows.iter().filter(|r| tab_of(&r.kind) == key).cloned().collect()
+    rows.iter().filter(|r| tab_of(if r.catalog_purpose.is_empty(){&r.kind}else{&r.catalog_purpose}) == key).cloned().collect()
 }
 
 /// 每一档有几行（与 [`KIND_TABS`] 一一对应）—— 分档按钮上的数字用它。
 pub(crate) fn tab_counts(rows: &[ModelRow]) -> Vec<usize> {
     KIND_TABS
         .iter()
-        .map(|t| rows.iter().filter(|r| tab_of(&r.kind) == t.key).count())
+        .map(|t| rows.iter().filter(|r| tab_of(if r.catalog_purpose.is_empty(){&r.kind}else{&r.catalog_purpose}) == t.key).count())
         .collect()
 }
 
@@ -350,10 +360,10 @@ pub fn Models(ctx:Ctx)->impl IntoView {
             </section>
             </super::ModuleDialog><Show when=move ||ordering.get()><div class="toolbar"><p>"使用卡片中的上移、下移调整顺序。"</p><button type="button" class="primary" on:click=move |_|ordering.set(false)>"完成排序"</button></div></Show><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
             <nav class="kind-tabs">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) on:click=move |_|tab.set(key.into())>{k.title}<span class="tab-n">{move ||tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&model_matches(r,&provider_filter.get(),&search.get())).collect::<Vec<_>>()))[i]}</span></button>}}).collect_view()}</nav>
-            <div class="model-controls"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="internal">"仅内部调用"</option><option value="all">"全部"</option></select><label for="model-provider">"供应商"</label><select id="model-provider" prop:value=provider_filter on:change=move|e|provider_filter.set(event_target_value(&e))><option value="">"全部供应商"</option>{move||provider_options(&routes.get()).into_iter().map(|p|view!{<option value=p.clone()>{p.clone()}</option>}).collect_view()}</select><input type="search" placeholder="搜索展示名称、调用名或供应商" aria-label="搜索模型名称或供应商" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
+            <div class="model-controls"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="internal">"仅内部调用"</option><option value="all">"全部"</option></select><label for="model-provider">"供应商"</label><select id="model-provider" prop:value=provider_filter on:change=move|e|provider_filter.set(event_target_value(&e))><option value="">"全部供应商"</option>{move||provider_options(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())).collect::<Vec<_>>()).into_iter().map(|p|view!{<option value=p.clone()>{p.clone()}</option>}).collect_view()}</select><input type="search" placeholder="搜索展示名称、调用名或供应商" aria-label="搜索模型名称或供应商" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><button class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)>"按评分"</button><button class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)>"按名称"</button></div>
             <div class="score-model-list">{move ||{
                 let needle=search.get().to_lowercase();let selected=tab.get();
-                let mut list:Vec<_>=routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&tab_of(&r.kind)==selected && model_matches(r,&provider_filter.get(),&needle)).collect();
+                let mut list:Vec<_>=routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&tab_of(purpose_kind(r))==selected && model_matches(r,&provider_filter.get(),&needle)).collect();
                 if ordering.get(){let names=order.get();list.sort_by_key(|r|names.iter().position(|n|n==&r.name).unwrap_or(usize::MAX));}else if sort_score.get(){list.sort_by(|a,b|b.runtime.score.unwrap_or(-1.0).total_cmp(&a.runtime.score.unwrap_or(-1.0)).then(a.name.cmp(&b.name)));}else{list.sort_by(|a,b|a.name.cmp(&b.name));}
                 if list.is_empty(){return view!{<div class="model-empty">"当前分类暂无匹配模型"</div>}.into_any();}
                 list.into_iter().map(|r|{
@@ -368,17 +378,18 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
                     let status=if !channel_available{"已停用（无可用渠道）"}else if !r.enabled{"已停用"}else{"已配置"};
-                    let source=kind_source_label(&r.kind_source);
+                    let source=if r.catalog_purpose.is_empty(){kind_source_label(&r.kind_source)}else{"目录分类"};
+                    let catalog_label=purpose_label(&r).to_string();
                     let (context,context_title)=context_badge(&r);
 
-                    view!{<article class=if ordering.get(){"score-model score-model-ordering"}else{"score-model"}><header><div><h2 title=r.name.clone()>{title.clone()}</h2><p class="muted small">"API 调用名："<code>{r.name.clone()}</code></p><div class="model-badges" title="完整能力信息可在详情中查看"><span class="tag">{r.kind_label.clone()}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span>{r.internal_only.then(||view!{<span class="tag">"仅内部调用"</span>})}<span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
+                    view!{<article class=if ordering.get(){"score-model score-model-ordering"}else{"score-model"}><header><div><h2 title=r.name.clone()>{title.clone()}</h2><p class="muted small">"API 调用名："<code>{r.name.clone()}</code></p><div class="model-badges" title="完整能力信息可在详情中查看"><span class="tag">{catalog_label}</span><span class="tag" title="用途来源；仅说明已识别的用途，不代表图片或音频输入已经实测">{source}</span><span class="tag">{status}</span>{r.internal_only.then(||view!{<span class="tag">"仅内部调用"</span>})}<span class="tag" title=context_title>{context.clone()}</span>{r.can_see.then(||view!{<span class="tag vision" title="带图路由已启用；可能来自上游声明、人工设置或视觉实测，单凭此标记不能认定已实测">"可接图片"</span>})}{r.kind_conflict.then(||view!{<span class="tag warn">"类型冲突"</span>})}</div></div><div class="model-card-actions"><button class="model-toggle" disabled=r.declared_by.is_empty() role="switch" aria-checked=if model_enabled{"true"}else{"false"} on:click=move |_|toggle_model(toggle_name.clone(),!model_enabled)>{if model_enabled{"全局已启用"}else{"全局已停用"}}</button></div></header>
                         <div class="model-status-row"><div class="model-cooling"><div class="model-supplier-summary" title=supplier_summary.clone()>{supplier_summary.clone()}</div><span class="muted small">{format!("{} 个可用连接",r.channels.len())}</span></div><button type="button" class="ghost" aria-haspopup="dialog" aria-controls=dialog_id.clone() on:click=move |_|show_model_details(&trigger_dialog,ctx)>"详情与统计"</button></div>
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         <dialog class="compact-model-dialog" id=dialog_id.clone() aria-label=detail_title><div class="compact-model-dialog-head"><h2>{title}</h2><form method="dialog"><button type="submit" class="ghost" autofocus>"关闭"</button></form></div><div class="model-detail-grid">
                             <section class="compact-model-statistics"><h3>"运行统计"</h3><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></section>
                             <ModelPresentation ctx=ctx name=r.name.clone() display_name=r.display_name.clone() dialog_id=dialog_id.clone() on_saved=Callback::new(move|_:()|reload())/><ModelAccess ctx=ctx name=r.name.clone() internal_only=r.internal_only/><section><h3>"展示与连接"</h3><p class="muted small">"兼容隐藏仅从模型清单和 auto 排除，有权用户仍可显式调用；仅内部调用会拒绝用户直调，全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();let close_id=visibility_dialog.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>{if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&close_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}ctx.say("模型展示设置已保存");reload();},Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
-                            <section><h3>"能力信息"</h3><dl><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
+                            <section><h3>"能力信息"</h3><dl><div><dt>"实际路由类型"</dt><dd>{r.kind_label.clone()}</dd></div><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
                         </div></dialog>
                     </article>}
@@ -504,7 +515,7 @@ mod tests {
         assert!(!build_rows(&[r3]).remove(0).on_backup(), "走首选不算切过");
     }
 
-    /// 分档：按用途落到六档里，认不出来的是「还没定」，重排跟着嵌入那一档。
+    /// 分档：按用途落到七档里，认不出来的是「还没定」，重排跟着嵌入那一档。
     #[test]
     fn kinds_land_in_the_right_tab() {
         assert_eq!(tab_of("rerank"), "embeddings", "重排跟嵌入同一档");
@@ -515,7 +526,17 @@ mod tests {
         assert_eq!(kind_tab("image"), 2, "图像是第三档");
         assert_eq!(kind_tab("video"), 3);
         assert_eq!(kind_tab("audio"), 4);
-        assert_eq!(kind_tab("banana"), 5, "认不出来的落最后一档（还没定）");
+        assert_eq!(kind_tab("tools"), 5);
+        assert_eq!(kind_tab("banana"), 6, "认不出来的落最后一档（还没定）");
+    }
+
+    #[test]
+    fn catalog_purpose_changes_directory_without_changing_route_type_or_chain() {
+        let mut asr=route("asr-api","chat",&[1,2],&[2,1]);asr.catalog_purpose="audio".into();asr.catalog_purpose_label="语音识别".into();asr.kind_label="对话".into();
+        let mut tools=route("search-api","chat",&[3],&[3]);tools.catalog_purpose="tools".into();tools.catalog_purpose_label="搜索工具".into();
+        let rows=build_rows(&[asr.clone(),tools]);
+        assert_eq!(rows_in_tab(&rows,"audio").len(),1);assert_eq!(rows_in_tab(&rows,"tools").len(),1);assert!(rows_in_tab(&rows,"chat").is_empty());
+        assert_eq!(purpose_label(&asr),"语音识别");assert_eq!(purpose_kind(&asr),"audio");assert_eq!(rows[0].kind,"chat");assert_eq!(asr.kind,"chat");assert_eq!(asr.channels,vec![2,1]);assert_eq!(asr.name,"asr-api");
     }
 
     /// 每一档的数字与行数对得上（分档按钮上的数字就是这么来的）。
@@ -531,8 +552,8 @@ mod tests {
         let counts = tab_counts(&rows);
         assert_eq!(
             counts,
-            vec![1, 1, 1, 1, 0, 1],
-            "对话/向量与重排/图像/视频/音频/还没定"
+            vec![1, 1, 1, 1, 0, 0, 1],
+            "对话/向量与重排/图像/视频/音频/工具/还没定"
         );
         assert_eq!(rows_in_tab(&rows, "embeddings").len(), 1);
         assert_eq!(
@@ -542,13 +563,13 @@ mod tests {
         assert_eq!(rows_in_tab(&rows, "audio").len(), 0, "音频这档现在是空的");
     }
 
-    /// 六档的标题与配色都不重样（重了就看不出区别），顺序固定。
+    /// 七档的标题与配色都不重样（重了就看不出区别），顺序固定。
     #[test]
     fn every_tab_has_its_own_title_and_colour() {
         let titles: Vec<&str> = KIND_TABS.iter().map(|t| t.title).collect();
         assert_eq!(
             titles,
-            vec!["对话模型", "向量与重排", "图像", "视频模型", "音频", "待识别"]
+            vec!["对话模型", "向量与重排", "图像", "视频模型", "音频", "工具服务", "待识别"]
         );
         for i in 0..KIND_TABS.len() {
             for j in (i + 1)..KIND_TABS.len() {

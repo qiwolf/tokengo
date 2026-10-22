@@ -15,3 +15,9 @@
 DeepSeek 对话、搜索/网页提取、Responses 和 Messages 等协议入口保持各自身份；并未按域名合并。重复接入保留来源编号以区分，不因为名称相似删除或改变授权。
 
 本次237命名清单见 `acceptance/2026-10-23-formal-catalog/presentation-plan.json`。其中模型标识是现有配置身份，展示文案不能替代能力探测或承诺上游能力。
+
+## 展示用途与实际路由类型
+
+`PUT /api/model-presentation` 可附带 `purpose`：`chat`、`embeddings`、`rerank`、`image`、`video`、`audio`、`tools`。省略保持原分类，空串清除并回落实际路由类型。这一字段只写 `model_catalog_purpose_v1:` 展示设置，不修改 `model_kinds`。仅保存展示名称时不会覆盖用途。
+
+例如现有 Qwen3 ASR 接入的执行类型仍为 chat，但目录可归入“音频”；DeepSeek 搜索、网页提取归入“工具服务”。详情同时显示实际路由类型，避免把业务用途当作协议能力。目录用途不改变端点支持、请求格式、auto 候选类型或授权。

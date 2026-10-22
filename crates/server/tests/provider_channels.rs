@@ -1022,10 +1022,50 @@ async fn presentation_changes_roll_back_if_audit_storage_fails() {
     let provider=f.provider("original-provider").await;
     f.state.conn().execute_batch("CREATE TRIGGER reject_presentation_audit BEFORE INSERT ON audit_events WHEN NEW.action IN ('presentation.update','model_presentation.update') BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();
     for path in ["/api/model-presentation?model=m".into(),format!("/api/channels/{channel}/presentation"),format!("/api/providers/{provider}/presentation")] {
-        assert_eq!(f.req("PUT",&path,json!({"display_name":"must rollback"})).await.0,500);
+        let body=if path.starts_with("/api/model-presentation") {json!({"display_name":"must rollback","purpose":"audio"})}else{json!({"display_name":"must rollback"})};
+        assert_eq!(f.req("PUT",&path,body).await.0,500);
     }
     let c=f.state.conn();
     assert_eq!(db::model_access::display_name(&c,"m").unwrap(),"");
+    assert_eq!(db::model_access::catalog_purpose(&c,"m").unwrap(),"");
     assert_eq!(c.query_row("SELECT name FROM channels WHERE id=?1",[channel],|r|r.get::<_,String>(0)).unwrap(),"connection");
     assert_eq!(c.query_row("SELECT name FROM provider_channels WHERE id=?1",[provider],|r|r.get::<_,String>(0)).unwrap(),"original-provider");
+}
+
+#[tokio::test]
+async fn catalog_purpose_is_display_only_and_optional_updates_preserve_or_clear_it() {
+    let f=Fixture::new().await;
+    let channel=f.channel("http://127.0.0.1:1").await;
+    let provider=f.provider("purpose-provider").await;f.assign(channel,Some(provider)).await;
+    db::kinds::set(&f.state.conn(),"m",tokengo_shared::ModelKind::Chat).unwrap();
+    db::model_access::set_internal_only(&f.state.conn(),"m",true).unwrap();
+    let before_routes=db::model_routes::list(&f.state.conn()).unwrap();
+    let before_kinds=db::kinds::all(&f.state.conn()).unwrap();
+    let settings=|| db::settings::all(&f.state.conn()).unwrap().into_iter().filter(|(k,_)|!k.starts_with("model_catalog_purpose_v1:")&&!k.starts_with("model_display_name_v1:")).collect::<Vec<_>>();
+    let before_settings=settings();
+    for (purpose,label) in [("audio","音频"),("tools","工具")] {
+        let (s,body)=f.req("PUT","/api/model-presentation?model=m",json!({"display_name":"展示名","purpose":purpose})).await;
+        assert_eq!(s,200,"{body}");assert_eq!(body["catalog_purpose"],purpose);assert_eq!(body["catalog_purpose_label"],label);
+        assert_eq!(db::model_routes::list(&f.state.conn()).unwrap(),before_routes);
+        assert_eq!(db::kinds::all(&f.state.conn()).unwrap(),before_kinds);
+        assert_eq!(settings(),before_settings);
+        let (_,routes)=f.req("GET","/api/model-routes",Value::Null).await;
+        let m=routes["models"].as_array().unwrap().iter().find(|m|m["name"]=="m").unwrap();
+        assert_eq!(m["kind"],"chat");assert_eq!(m["catalog_purpose"],purpose);assert_eq!(m["catalog_purpose_label"],label);
+        let (_,providers)=f.req("GET","/api/providers",Value::Null).await;
+        let p=providers["providers"].as_array().unwrap().iter().find(|p|p["id"]==provider).unwrap();
+        let m=p["models"].as_array().unwrap().iter().find(|m|m["name"]=="m").unwrap();
+        assert_eq!(m["kind"],"chat");assert_eq!(m["catalog_purpose"],purpose);
+    }
+    assert_eq!(f.req("PUT","/api/model-presentation?model=m",json!({"display_name":"改名保留用途"})).await.0,200);
+    assert_eq!(db::model_access::catalog_purpose(&f.state.conn(),"m").unwrap(),"tools");
+    for invalid in ["speech","TOOLS"," audio ","unknown"] {
+        assert_eq!(f.req("PUT","/api/model-presentation?model=m",json!({"display_name":"不应保存","purpose":invalid})).await.0,400);
+        assert_eq!(db::model_access::display_name(&f.state.conn(),"m").unwrap(),"改名保留用途");
+        assert_eq!(db::model_access::catalog_purpose(&f.state.conn(),"m").unwrap(),"tools");
+    }
+    let (s,body)=f.req("PUT","/api/model-presentation?model=m",json!({"display_name":"展示名","purpose":""})).await;
+    assert_eq!(s,200);assert_eq!(body["catalog_purpose"],"");assert_eq!(body["catalog_purpose_label"],"");
+    assert_eq!(db::model_routes::list(&f.state.conn()).unwrap(),before_routes);
+    assert_eq!(db::kinds::all(&f.state.conn()).unwrap(),before_kinds);assert_eq!(settings(),before_settings);
 }

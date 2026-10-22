@@ -90,6 +90,8 @@ pub struct ModelSource {pub connection_id:i64,pub connection_name:String,pub pro
 /// 按渠道顺序先试先后。名字不落库：勾上就出现、取消就消失。
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct NameRoute {
+    #[serde(default)] pub catalog_purpose:String,
+    #[serde(default)] pub catalog_purpose_label:String,
     #[serde(default)] pub display_name:String,
     #[serde(default)] pub internal_only:bool,
     #[serde(default="model_enabled_default")] pub visible:bool,
