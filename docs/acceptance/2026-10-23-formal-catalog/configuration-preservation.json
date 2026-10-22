@@ -1,0 +1,470 @@
+{
+  "success": true,
+  "backup": "/var/backups/tokengo/formal-catalog-20261022T182039Z",
+  "updated_counts": {
+    "providers": 9,
+    "channels": 30,
+    "models": 33
+  },
+  "invariant_hashes": {
+    "channels": "bad11d3b15e477dfb14091f1c4ee6142ac21f271d71ac4b10323444321db3b05",
+    "provider_channels": "6b2bcea49b8cf3723cdef780114562a7d8507d9ef41f5c75b2267e755faa9ee9",
+    "channel_models": "4785cf76c942a8a533168403b624c595ae354d5a7c8d9fa3046f865998a385ad",
+    "provider_connections": "5224cf4fc65dce57043c282bd163dbe5d99798ee7c6e3e22b5dc739bcd806035",
+    "channel_headers": "cb509f63af55ebe2d49254692c9cbb98a922dd0a7d230fbbb55f41be7caf4d1d",
+    "channel_secrets": "04967006bdc896c8ca0f15e931e1800eb35e635f29a01c5e9de90d25ad1f1113",
+    "provider_credentials": "07425d11e6d0004f2dc4ef65bdb7f5faf16c7f1268ed80118120ba37aaeedda4",
+    "source_credentials": "6579f843a71b4a67317c0e6c4c15d6cd6afc477a1ed10d2ef443ec239a63c855",
+    "oauth_channel_bindings": "0af19a0e8f61098fb780dea427cb66c1d44aae37bbce8ac18894c92dada3ddfd",
+    "passthrough_routes": "52e366b5d2566dd4fd93a66cad60842a1d0f774e9b8d178c743f81bf8d7c63a3",
+    "passthrough_headers": "d062f123e7e4e73383a0e14d3b4e291f70b53fbfd6af015d7e59ce8a003b7f6e",
+    "passthrough_acl": "d8cc73f3c8d518ea789de9df65a91e4b7545c59d2151ad4c7b26f181d025ba1d",
+    "model_kinds": "2259743f2e96a39922a137547c03206aa57d0e47184573c99d67af98eef6c3e6",
+    "user_virtual_targets": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "shared_virtual_models": "b0cfcc03a4c243a75166177ae9d30537d7eb88c7c5a8e0da1d4f04599142cf54",
+    "users": "3a99efbdaf4954a2f00f333a2946b37b8e6ead1afb53b7cef5d6977968885e8f",
+    "gateway_keys": "4add81b01803ab1aa8f5a360ab38f7b4265c367f137d8b785f939a9a612e42ba",
+    "access_and_routing_settings": "2f1da397a6519ca641dd03f84eb25ff6fa798e1b711e6290bd2a28eb9d5ce78b"
+  },
+  "all_operational_fields_and_grants_preserved": true,
+  "api_model_names_preserved": true,
+  "compatibility_identity_preserved": true,
+  "catalog": [
+    {
+      "name": "BAAI/bge-m3",
+      "display_name": "BGE-M3 · SiliconFlow 向量",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "向量",
+      "visible": true,
+      "enabled": true,
+      "internal_only": true,
+      "channels": [
+        10
+      ]
+    },
+    {
+      "name": "BAAI/bge-reranker-v2-m3",
+      "display_name": "BGE Reranker V2 M3 · SiliconFlow 重排",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "重排",
+      "visible": true,
+      "enabled": true,
+      "internal_only": true,
+      "channels": [
+        11
+      ]
+    },
+    {
+      "name": "bge-m3",
+      "display_name": "BGE-M3 · 向量底层入口",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "向量",
+      "visible": true,
+      "enabled": true,
+      "internal_only": true,
+      "channels": [
+        2,
+        9
+      ]
+    },
+    {
+      "name": "bge-m3-gpu03",
+      "display_name": "BGE-M3 · 自有 GPU 向量",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "向量",
+      "visible": true,
+      "enabled": true,
+      "internal_only": true,
+      "channels": [
+        9
+      ]
+    },
+    {
+      "name": "bge-reranker-v2-m3",
+      "display_name": "BGE Reranker V2 M3 · 重排底层入口",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "重排",
+      "visible": true,
+      "enabled": true,
+      "internal_only": true,
+      "channels": [
+        3,
+        11
+      ]
+    },
+    {
+      "name": "deepseek-fetch",
+      "display_name": "DeepSeek · 网页提取",
+      "catalog_purpose": "tools",
+      "catalog_purpose_label": "工具",
+      "kind_label": "还没定",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        24
+      ]
+    },
+    {
+      "name": "deepseek-search",
+      "display_name": "DeepSeek · 网页搜索",
+      "catalog_purpose": "tools",
+      "catalog_purpose_label": "工具",
+      "kind_label": "还没定",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        23
+      ]
+    },
+    {
+      "name": "deepseek-v4-flash",
+      "display_name": "DeepSeek V4 Flash · 对话多来源",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        6,
+        8
+      ]
+    },
+    {
+      "name": "deepseek-v4-flash-official",
+      "display_name": "DeepSeek V4 Flash · 官方对话",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        8
+      ]
+    },
+    {
+      "name": "deepseek-v4-flash-vision-exp",
+      "display_name": "DeepSeek V4 Flash · OpenCode 视觉实验",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        7
+      ]
+    },
+    {
+      "name": "deepseek-v4.1-flash",
+      "display_name": "DeepSeek V4.1 Flash · 对话多来源",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        15,
+        12,
+        16,
+        13
+      ]
+    },
+    {
+      "name": "deepseek-v4.1-flash-commandcode",
+      "display_name": "DeepSeek V4.1 Flash · CommandCode 对话",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        12,
+        16
+      ]
+    },
+    {
+      "name": "deepseek-v4.1-flash-messages",
+      "display_name": "DeepSeek V4.1 Flash · 原生 Messages",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        26
+      ]
+    },
+    {
+      "name": "deepseek-v4.1-flash-official",
+      "display_name": "DeepSeek V4.1 Flash · 官方对话",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        13
+      ]
+    },
+    {
+      "name": "deepseek-v4.1-flash-opencode",
+      "display_name": "DeepSeek V4.1 Flash · OpenCode 对话",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        14
+      ]
+    },
+    {
+      "name": "deepseek-v4.1-flash-responses",
+      "display_name": "DeepSeek V4.1 Flash · 原生 Responses",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        25
+      ]
+    },
+    {
+      "name": "deepseek/deepseek-v4.1-flash",
+      "display_name": "DeepSeek V4.1 Flash · CommandCode 兼容名",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        16
+      ]
+    },
+    {
+      "name": "gpt-5.6-luna",
+      "display_name": "GPT 5.6 Luna · 对话与推理",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        34
+      ]
+    },
+    {
+      "name": "gpt-5.6-luna-high",
+      "display_name": "GPT 5.6 Luna · 兼容名（high）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        35
+      ]
+    },
+    {
+      "name": "gpt-5.6-luna-low",
+      "display_name": "GPT 5.6 Luna · 兼容名（low）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        33
+      ]
+    },
+    {
+      "name": "gpt-5.6-luna-medium",
+      "display_name": "GPT 5.6 Luna · 兼容名（medium）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        34
+      ]
+    },
+    {
+      "name": "gpt-6-luna",
+      "display_name": "GPT 6 Luna · 对话与推理",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        31
+      ]
+    },
+    {
+      "name": "gpt-6-luna-high",
+      "display_name": "GPT 6 Luna · 兼容名（high）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        32
+      ]
+    },
+    {
+      "name": "gpt-6-luna-low",
+      "display_name": "GPT 6 Luna · 兼容名（low）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        30
+      ]
+    },
+    {
+      "name": "gpt-6-luna-low-fast",
+      "display_name": "GPT 6 Luna · 兼容名（low-fast）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        36
+      ]
+    },
+    {
+      "name": "gpt-6-luna-medium",
+      "display_name": "GPT 6 Luna · 兼容名（medium）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        31
+      ]
+    },
+    {
+      "name": "gpt-6.1-sol",
+      "display_name": "GPT 6.1 Sol · 对话与推理",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        28
+      ]
+    },
+    {
+      "name": "gpt-6.1-sol-high",
+      "display_name": "GPT 6.1 Sol · 兼容名（high）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        29
+      ]
+    },
+    {
+      "name": "gpt-6.1-sol-low",
+      "display_name": "GPT 6.1 Sol · 兼容名（low）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        27
+      ]
+    },
+    {
+      "name": "gpt-6.1-sol-medium",
+      "display_name": "GPT 6.1 Sol · 兼容名（medium）",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": false,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        28
+      ]
+    },
+    {
+      "name": "minicpm5-1b-f16",
+      "display_name": "MiniCPM5 1B · 自有 GPU 对话",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        4
+      ]
+    },
+    {
+      "name": "qwen3-asr-1.7b-q8",
+      "display_name": "Qwen3 ASR 1.7B · 自有 GPU 语音识别",
+      "catalog_purpose": "audio",
+      "catalog_purpose_label": "音频",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        5
+      ]
+    },
+    {
+      "name": "qwen3.8-27b-gsq-iq3s",
+      "display_name": "Qwen3.8 27B · 自有 GPU 对话",
+      "catalog_purpose": "",
+      "catalog_purpose_label": "",
+      "kind_label": "对话",
+      "visible": true,
+      "enabled": true,
+      "internal_only": false,
+      "channels": [
+        1
+      ]
+    }
+  ]
+}

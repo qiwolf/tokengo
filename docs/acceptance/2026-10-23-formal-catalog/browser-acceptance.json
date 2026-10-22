@@ -1,0 +1,42 @@
+{
+  "host": "237",
+  "checks": [
+    {
+      "check": "provider_catalog",
+      "enabled_provider_groups": 9,
+      "ungrouped_sources": 0,
+      "disabled_acceptance_groups_hidden_by_default": true
+    },
+    {
+      "check": "purpose_catalog",
+      "chat": 15,
+      "vectors_and_rerank": 5,
+      "audio": 1,
+      "tools": 2,
+      "unknown": 0,
+      "actual_execution_kinds_unchanged": true
+    },
+    {
+      "check": "model_labels",
+      "display_name_and_api_identifier_both_shown": true,
+      "search_supports_both_and_provider": true,
+      "provider_cross_filter_verified": true
+    },
+    {
+      "check": "edit_dialog_survives_periodic_refresh",
+      "draft_retained": true,
+      "cancel_without_save_verified": true,
+      "guard_code_unchanged_in_final_purpose_patch": true
+    },
+    {
+      "check": "provider_models",
+      "display_name_api_identifier_purpose_and_protocol_shown": true
+    }
+  ],
+  "screenshots": [
+    "237-tools.png",
+    "237-audio.png",
+    "237-gpu-models.png"
+  ],
+  "root_browser_session_logged_out": true
+}

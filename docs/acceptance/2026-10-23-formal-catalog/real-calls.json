@@ -1,0 +1,32 @@
+{
+  "success": true,
+  "checks": [
+    {
+      "check": "ordinary_model_directory",
+      "models": [
+        "bge-m3-fallback",
+        "bge-reranker-v2-m3-fallback"
+      ],
+      "status": 200
+    },
+    {
+      "check": "real_shared_embeddings",
+      "status": 200
+    },
+    {
+      "check": "internal_embeddings_denied",
+      "status": 403
+    },
+    {
+      "check": "real_shared_rerank",
+      "status": 200
+    },
+    {
+      "check": "internal_rerank_denied",
+      "status": 403
+    }
+  ],
+  "temporary_user_id": 43,
+  "temporary_key_id": 80,
+  "cleanup_errors": []
+}

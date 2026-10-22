@@ -1,0 +1,38 @@
+{
+  "observed_at": 1792693314.8707132,
+  "host": "tokengo-geren-wangguan",
+  "current": "/opt/tokengo/releases/formal-catalog-3796e2c5e763",
+  "server_sha256": "a0143c9059ffd69d28c05c95318a7cef978de605db6f0bd24b6470951db94549",
+  "pid": 16722,
+  "services": {
+    "tokengo": "active",
+    "nginx": "active"
+  },
+  "schema": 40,
+  "integrity": "ok",
+  "foreign_key_errors": 0,
+  "pending": {
+    "running": 0,
+    "unsettled": 0,
+    "budget_reserved_micro": 0
+  },
+  "outbox_files": [],
+  "direct": {
+    "checks": {
+      "database": "ok",
+      "gateway_key_set": true,
+      "panel_password_set": true,
+      "routing_models_tracked": 37
+    },
+    "status": "ok"
+  },
+  "nginx": {
+    "checks": {
+      "database": "ok",
+      "gateway_key_set": true,
+      "panel_password_set": true,
+      "routing_models_tracked": 37
+    },
+    "status": "ok"
+  }
+}
