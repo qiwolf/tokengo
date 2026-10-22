@@ -3817,19 +3817,25 @@ async fn concurrent_http_accounting(priced: bool) {
             f.state.pending_writes()
         );
     }
-    // drain_writes deliberately uses try_lock: the billing retry worker can
-    // briefly own SQLite even after every HTTP response has completed. Wait for
-    // the queue's actual completion, rather than assuming one poll drained it.
+    // Diagnostic writes and durable financial settlement are independent
+    // queues. HTTP completion (or an empty diagnostic queue) does not mean the
+    // outbox retry worker has settled every reservation yet. Observe both
+    // completion conditions before asserting exact ledger and budget totals.
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while f.state.pending_writes() > 0 {
+        loop {
             f.state.drain_writes();
-            if f.state.pending_writes() > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let unsettled: i64 = f.state.conn().query_row(
+                "SELECT count(*) FROM billing_ledger WHERE settled_ms IS NULL",
+                [], |r| r.get(0),
+            ).unwrap();
+            if f.state.pending_writes() == 0 && unsettled == 0 {
+                break;
             }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("request and attempt writes must finish after HTTP load");
+    .expect("diagnostic writes and financial settlements must finish after HTTP load");
     let conn = f.state.conn();
     let (requests, ok, running): (i64, i64, i64) = conn
         .query_row(
