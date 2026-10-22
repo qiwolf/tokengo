@@ -6,7 +6,7 @@ GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中�
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
 
-本轮准备分发 **v0.34.0-qiwolf.8**，功能schema40，新增共享向量/重排回退、逐来源续验、回收站与服务授权；原生包、配套WASM、容器及精确发布提交正在验收，不预先宣称GitHub/GHCR发布成功。见[本版说明](releases/v0.34.0-qiwolf.8.md)和[验收状态](acceptance-status.md)。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复容器交付配置。安装包不会自动创建私有路由或切换调用方；[通用透传与MinerU](passthrough-development.md)仍限已实现的同步链路。由schema39升级前须一致备份数据库、主密钥和旧程序，不能用旧程序直接打开schema40数据库。
+当前公开分发 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**，功能schema40，新增共享向量/重排回退、逐来源续验、回收站与服务授权；发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。见[本版说明](releases/v0.34.0-qiwolf.8.md)和[验收状态](acceptance-status.md)。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复容器交付配置。安装包不会自动创建私有路由或切换调用方；[通用透传与MinerU](passthrough-development.md)仍限已实现的同步链路。由schema39升级前须一致备份数据库、主密钥和旧程序，不能用旧程序直接打开schema40数据库。
 
 ## 使用已发布的直接部署包
 

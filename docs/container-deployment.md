@@ -6,7 +6,7 @@
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
 
-本轮准备分发 **v0.34.0-qiwolf.8**，功能schema40；新增功能、已有现场验证与待完成的发布收据见[版本说明](releases/v0.34.0-qiwolf.8.md)。原生包和容器正在build-test构建验收，不据版本文档声明已推送GHCR。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应源码 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复固定SHA Compose与离线双标签；本轮保留该机制。升级schema40前一致备份数据卷、主密钥与旧镜像，回滚使用配套旧数据库。安装不自动切换既有调用方；MinerU原生异步资源API仍不支持，见[透传文档](passthrough.md)。
+当前公开分发 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**，功能schema40；新增功能、现场验证与公开发布收据见[版本说明](releases/v0.34.0-qiwolf.8.md)。发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应源码 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复固定SHA Compose与离线双标签；本轮保留该机制。升级schema40前一致备份数据卷、主密钥与旧镜像，回滚使用配套旧数据库。安装不自动切换既有调用方；MinerU原生异步资源API仍不支持，见[透传文档](passthrough.md)。
 
 ## 从镜像仓库安装
 
@@ -31,7 +31,7 @@ docker compose ps
 curl --fail http://127.0.0.1:3160/readyz
 ```
 
-Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，修改发布 Compose 的 `image:` 行（旧变量模板则修改 `.env` 中的 `TOKENGO_IMAGE`），使用其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。历史qiwolf.7已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`；qiwolf.8摘要待本轮发布收据核验，不沿用该历史摘要。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
+Release 的 `registry-image.txt` 与发布说明记录镜像摘要；需要固定不可变镜像时，修改发布 Compose 的 `image:` 行（旧变量模板则修改 `.env` 中的 `TOKENGO_IMAGE`），使用其中完整的 `ghcr.io/qiwolf/tokengo@sha256:...`。历史qiwolf.7已核对的不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`；qiwolf.8已验收镜像为 `ghcr.io/qiwolf/tokengo@sha256:7f8517a515c80d25635d0093f28fe3159bc4bd39b1e946c8e147650a815fe3d4`，不沿用历史摘要。同时提供 `sha-<完整提交>` 和 `latest` 标签；正式部署建议固定版本或摘要。镜像摘要可识别内容，不替代下载来源与源码提交核对。
 
 ## 从源码构建并首次启动
 

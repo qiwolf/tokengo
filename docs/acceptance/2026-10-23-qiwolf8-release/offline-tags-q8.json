@@ -1,0 +1,10 @@
+{
+  "result": "passed",
+  "tags": [
+    "tokengo:sha-ca008c7acfcc53d49c5c59670dd123fc28c37a5b",
+    "ghcr.io/qiwolf/tokengo:sha-ca008c7acfcc53d49c5c59670dd123fc28c37a5b"
+  ],
+  "source_commit": "ca008c7acfcc53d49c5c59670dd123fc28c37a5b",
+  "config_digest": "sha256:431209a9c67bc3f3c8dd66de9cb9528077298515f1bf13ed237adb233ce07379",
+  "literal_compose": true
+}

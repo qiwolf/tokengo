@@ -1,0 +1,17 @@
+{
+  "result": "passed",
+  "source_commit": "ca008c7acfcc53d49c5c59670dd123fc28c37a5b",
+  "runtime": "native Linux x86_64 build-test; no emulation",
+  "checks": [
+    "native-manifest-checksums",
+    "cli-version",
+    "readyz",
+    "exact-index-and-wasm",
+    "root-auth",
+    "passthrough-crud-secret-mask-hidden-channel",
+    "ops-mint-me-90-actions-forbidden-new-route-revoke401",
+    "graceful-stop"
+  ],
+  "production_access": false,
+  "credentials": "synthetic memory only"
+}
