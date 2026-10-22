@@ -1,0 +1,12 @@
+{
+  "server_groups": 56,
+  "server_passed": 928,
+  "server_ignored": 3,
+  "server_failed": 0,
+  "web_passed": 121,
+  "web_failed": 0,
+  "execution_host": "build-test",
+  "composite": false,
+  "server_command": "cargo test --offline --locked -p tokengo-server --lib --tests -- --test-threads=4",
+  "web_command": "cargo test --offline --locked -p tokengo-web --lib"
+}

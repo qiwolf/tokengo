@@ -14,6 +14,9 @@ pub struct Policy {
     pub allowed_models: Option<Vec<String>>,
     #[serde(default)]
     pub allowed_channels: Option<Vec<i64>>,
+    /// None preserves legacy per-key route grants for users; keys inherit.
+    #[serde(default)]
+    pub allowed_services: Option<Vec<i64>>,
     #[serde(default = "yes")]
     pub allow_paid: bool,
     /// Explicit management capability; legacy credentials never receive this implicitly.
@@ -31,6 +34,7 @@ impl Default for Policy {
         Self {
             allowed_models: None,
             allowed_channels: None,
+            allowed_services: None,
             allow_paid: true,
             admin_access: false,
             rpm: None,
@@ -69,6 +73,11 @@ impl Policy {
                 ));
             }
         }
+        if let Some(ids) = &self.allowed_services {
+            if ids.len() > 256 || ids.iter().enumerate().any(|(i,id)| *id <= 0 || ids[..i].contains(id)) {
+                return Err(DbError::Other("Invalid or duplicate allowed service".into()));
+            }
+        }
         if self.rpm == Some(0)
             || self.tpm == Some(0)
             || self.max_concurrent == Some(0)
@@ -94,6 +103,10 @@ impl Policy {
             (None, x) | (x, None) => x.clone(),
             (Some(a), Some(b)) => Some(a.iter().filter(|id| b.contains(id)).copied().collect()),
         };
+        let allowed_services = match (&self.allowed_services, &other.allowed_services) {
+            (None,x)|(x,None) => x.clone(),
+            (Some(a),Some(b)) => Some(a.iter().filter(|id| b.contains(id)).copied().collect()),
+        };
         fn minimum<T: Ord + Copy>(a: Option<T>, b: Option<T>) -> Option<T> {
             match (a, b) {
                 (Some(a), Some(b)) => Some(a.min(b)),
@@ -103,6 +116,7 @@ impl Policy {
         Self {
             allowed_models,
             allowed_channels,
+            allowed_services,
             allow_paid: self.allow_paid && other.allow_paid,
             admin_access: self.admin_access && other.admin_access,
             rpm: minimum(self.rpm, other.rpm),
@@ -122,6 +136,14 @@ impl Policy {
             (Some(a), Some(b)) => a.iter().all(|n| b.contains(n)),
             _ => true,
         };
+        // Service null on a key inherits; unlike models, it does not mean
+        // every service. The owner boundary is checked separately at issuance.
+        let services = match (&self.allowed_services, &parent.allowed_services) {
+            (Some(a),Some(b)) => a.iter().all(|id|b.contains(id)),
+            (Some(_),None) => true,
+            (None,Some(_)) => true,
+            (None,None) => true,
+        };
         fn capped<T: Ord>(child: Option<T>, parent: Option<T>) -> bool {
             match (child, parent) {
                 (None, Some(_)) => false,
@@ -131,6 +153,7 @@ impl Policy {
         }
         models
             && channels
+            && services
             && (!self.allow_paid || parent.allow_paid)
             && (!self.admin_access || parent.admin_access)
             && capped(self.rpm, parent.rpm)
@@ -261,6 +284,7 @@ pub fn create_user(c: &Connection, name: &str, role: &str, policy: &Policy) -> R
     let name = validate_name(name)?;
     validate_role(role)?;
     policy.validate()?;
+    super::passthrough::validate_service_grants(c,None,policy.allowed_services.as_deref())?;
     c.execute(
         "INSERT INTO users(name,role,policy_json,created_at_ms) VALUES(?1,?2,?3,?4)",
         params![name, role, serde_json::to_string(policy).unwrap(), now_ms()],
@@ -271,6 +295,8 @@ pub fn update_user(c: &Connection, row: &User) -> Result<()> {
     validate_name(&row.name)?;
     validate_role(&row.role)?;
     row.policy.validate()?;
+    let previous=user(c,row.id)?;
+    super::passthrough::validate_service_grants(c,previous.as_ref().and_then(|u|u.policy.allowed_services.as_deref()),row.policy.allowed_services.as_deref())?;
     c.execute(
         "UPDATE users SET name=?2,role=?3,enabled=?4,policy_json=?5 WHERE id=?1",
         params![
@@ -357,6 +383,7 @@ fn policy_version(auth: &AuthContext) -> Result<String> {
                 .collect();
             models.sort();
         }
+        if let Some(services) = &mut policy.allowed_services { services.sort_unstable(); }
         if let Some(channels) = &mut policy.allowed_channels {
             channels.sort_unstable();
         }
@@ -458,6 +485,7 @@ pub fn create_key(
 ) -> Result<(VKey, String)> {
     let name = validate_name(name)?;
     policy.validate()?;
+    super::passthrough::validate_service_grants(c,None,policy.allowed_services.as_deref())?;
     let owner = user(c, user_id)?.ok_or_else(|| DbError::Other("User does not exist".into()))?;
     if !owner.enabled {
         return Err(DbError::Other("User is disabled".into()));
@@ -505,6 +533,8 @@ pub fn clear_self_pause(c: &Connection, id: i64) -> Result<()> {
 }
 pub fn update_key(c: &Connection, row: &VKey) -> Result<()> {
     row.policy.validate()?;
+    let previous=key(c,row.id)?;
+    super::passthrough::validate_service_grants(c,previous.as_ref().and_then(|k|k.policy.allowed_services.as_deref()),row.policy.allowed_services.as_deref())?;
     validate_name(&row.name)?;
     if row.enabled || row.revoked_at.is_some() { clear_self_pause(c,row.id)?; }
     c.execute("UPDATE gateway_keys SET name=?2,enabled=?3,revoked_at=?4,expires_at=?5,policy_json=?6 WHERE id=?1",params![row.id,row.name,row.enabled,row.revoked_at,row.expires_at,serde_json::to_string(&row.policy).unwrap()])?;

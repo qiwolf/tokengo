@@ -340,3 +340,24 @@ async fn manual_probe_records_system_cost_without_user_budget_or_body_echo() {
     assert_eq!(budget.reserved_micro, 0);
     task.abort();
 }
+
+#[tokio::test]
+async fn queued_service_request_rechecks_user_grant_before_upstream_bytes() {
+    use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+    let f=Fixture::new();
+    let entered=Arc::new(tokio::sync::Notify::new());let release=Arc::new(tokio::sync::Notify::new());let calls=Arc::new(AtomicUsize::new(0));
+    let(e,r,n)=(entered.clone(),release.clone(),calls.clone());
+    let(url,task)=mock(Router::new().fallback(move||{let(e,r,n)=(e.clone(),r.clone(),n.clone());async move{n.fetch_add(1,Ordering::SeqCst);e.notify_one();r.notified().await;"ok"}})).await;
+    let route=f.route(&url,"/queued-service/",serde_json::json!({"max_concurrent":1,"price_micro_usd_per_request":0,"allowed_key_ids":[]}));
+    {let c=f.state.conn();let mut user=identity::user(&c,1).unwrap().unwrap();user.policy.allowed_services=Some(vec![route.id]);identity::update_user(&c,&user).unwrap();}
+    let request=|state:SharedState,key:String|async move{app(state).oneshot(Request::builder().method("POST").uri("/queued-service/check").header("authorization",format!("Bearer {key}")).body(Body::empty()).unwrap()).await.unwrap()};
+    let first=tokio::spawn(request(f.state.clone(),f.key.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(2),entered.notified()).await.unwrap();
+    let before:i64=f.state.conn().query_row("SELECT COUNT(*) FROM quota_events",[],|r|r.get(0)).unwrap();
+    let second=tokio::spawn(request(f.state.clone(),f.key.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(2),async{loop{let count:i64=f.state.conn().query_row("SELECT COUNT(*) FROM quota_events",[],|r|r.get(0)).unwrap();if count>before{break}tokio::task::yield_now().await;}}).await.unwrap();
+    {let c=f.state.conn();let mut user=identity::user(&c,1).unwrap().unwrap();user.policy.allowed_services=Some(vec![]);identity::update_user(&c,&user).unwrap();}
+    release.notify_one();assert_eq!(first.await.unwrap().status(),200);
+    assert_eq!(second.await.unwrap().status(),403);assert_eq!(calls.load(Ordering::SeqCst),1);
+    task.abort();
+}

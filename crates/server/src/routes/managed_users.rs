@@ -44,6 +44,7 @@ pub fn router() -> Router<SharedState> {
         .route("/api/managed-users", get(list).post(create))
         .route("/api/managed-users/{id}", patch(update).delete(delete))
         .route("/api/managed-users/{id}/login-credential", post(add_login))
+        .route("/api/account/services", get(own_services))
         .route("/api/account/keys", get(own_keys).post(own_create))
         .route(
             "/api/account/keys/{id}",
@@ -164,6 +165,7 @@ async fn create(
     require_root(&root, &c)?;
     full(&c)?;
     let value = credentials::atomic(&c, || {
+        db::passthrough::validate_service_grants(&c,None,body.policy.allowed_services.as_deref())?;
         let u = identity::create_user(&c, &body.display_name, "user", &body.policy)?;
         credentials::create(&c, &name, &body.display_name, u.id, &hash)?;
         if body.limit_micro.is_some() {
@@ -246,6 +248,7 @@ async fn update(
         u.enabled = v;
     }
     if let Some(v) = body.policy {
+        db::passthrough::validate_service_grants(&c,u.policy.allowed_services.as_deref(),v.allowed_services.as_deref()).map_err(invalid)?;
         u.policy = v;
     }
     let value=credentials::atomic(&c,||{
@@ -317,6 +320,10 @@ fn safe_policy(u: &identity::User) -> Policy {
     p.admin_access = false;
     p
 }
+async fn own_services(browser: Browser, State(state): State<SharedState>) -> Result<Json<Value>, ApiError> {
+    let c=state.conn();let u=owner(&browser,&c)?;
+    Ok(Json(json!({"services":db::passthrough::services_for_user(&c,u.id)?,"policy":safe_policy(&u)})))
+}
 async fn own_keys(
     browser: Browser,
     State(state): State<SharedState>,
@@ -372,7 +379,7 @@ async fn own_keys(
         .map(|k| key_view(&c, k))
         .collect::<db::Result<Vec<_>>>()?;
     Ok(Json(
-        json!({"keys":keys,"policy":policy,"budget":budget(&c,"user",u.id)?,"models":models,"max_active_keys":MAX_ACTIVE_KEYS}),
+        json!({"keys":keys,"services":db::passthrough::services_for_user(&c,u.id)?,"policy":policy,"budget":budget(&c,"user",u.id)?,"models":models,"max_active_keys":MAX_ACTIVE_KEYS}),
     ))
 }
 #[derive(Deserialize)]
@@ -427,9 +434,10 @@ async fn own_create(
     let c = state.conn();
     let u = owner(&browser, &c)?;
     full(&c)?;
-    let p = body.policy.unwrap_or_else(|| safe_policy(&u));
+    let p = body.policy.unwrap_or_else(|| {let mut p=safe_policy(&u);p.allowed_services=None;p});
     p.validate().map_err(invalid)?;
-    if p.admin_access || !p.no_broader_than(&safe_policy(&u)) {
+    let legacy_service_escalation=u.policy.allowed_services.is_none() && p.allowed_services.as_ref().is_some_and(|ids|!ids.is_empty());
+    if legacy_service_escalation || p.admin_access || !p.no_broader_than(&safe_policy(&u)) {
         return Err(forbidden());
     }
     let limit = body
@@ -508,7 +516,13 @@ async fn own_update(
     }
     if let Some(p) = body.policy {
         p.validate().map_err(invalid)?;
-        if p.admin_access || !p.no_broader_than(&row.policy) || !p.no_broader_than(&safe_policy(&u))
+        // Null inherits owner/ancestor limits, but must not erase this key's
+        // existing explicit restriction through a self-service edit.
+        let service_widening = p.allowed_services.is_none() && row.policy.allowed_services.is_some();
+        let legacy_service_escalation=u.policy.allowed_services.is_none() && p.allowed_services.as_ref().is_some_and(|ids| {
+            ids.iter().any(|id|row.policy.allowed_services.as_ref().is_none_or(|old|!old.contains(id)))
+        });
+        if legacy_service_escalation || service_widening || p.admin_access || !p.no_broader_than(&row.policy) || !p.no_broader_than(&safe_policy(&u))
         {
             return Err(forbidden());
         }

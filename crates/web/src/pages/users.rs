@@ -101,6 +101,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     let draft = RwSignal::new(policy::default_policy());
     let limit = RwSignal::new(String::new());
     let models = RwSignal::new(Vec::<String>::new());
+    let services=RwSignal::new(Vec::<Value>::new());
     let channels = RwSignal::new(Vec::<(i64, String)>::new());
     let busy = RwSignal::new(false);
     let loading = RwSignal::new(false);
@@ -158,6 +159,10 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
                     list_error.set(format!("可见模型目录读取失败：{}。已有授权保留，当前不提供新增模型选项。",e.message));
                 }
             }
+            match api::request("GET","/api/passthrough-routes",None).await {
+                Ok(v)=>services.set(v.as_array().cloned().unwrap_or_default()),
+                Err(e)=>{services.set(Vec::new());ctx.note_err(&e);list_error.set(format!("透传服务目录读取失败：{}。已有授权保留。",e.message));}
+            }
             loading.set(false);
         });
     });
@@ -173,7 +178,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         let generated=generate_password();
         password.set(generated.as_ref().cloned().unwrap_or_default());
         enabled.set(true);
-        draft.set(policy::default_policy());
+        draft.set(policy::new_user_policy());
         limit.set(String::new());
         error.set(generated.err().unwrap_or_default());
         notice.set(String::new());
@@ -347,7 +352,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     <div class="user-workspace">
         <Show when=move||created_credentials.get().is_some()><section class="user-credential-delivery" aria-labelledby="user-credential-title"><h3 id="user-credential-title">"新用户登录信息"</h3><p class="account-help">"用户已保存。下列信息仅在当前页面内存中保留，关闭此处或用户设置后会清除；请及时交付并安全保存。"</p><label class="account-field" for="user-credential-text"><span>"可选择并手动复制"</span><textarea id="user-credential-text" readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||created_credentials.get().map(|v|v.text()).unwrap_or_default()/></label><p role=move||if credentials_copy_failed.get(){"alert"}else{"status"}>{move||credentials_copy_note.get()}</p><div class="user-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let Some(delivery)=created_credentials.get_untracked()else{return};busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&delivery.text()).await;credentials_copy_failed.set(!copied);credentials_copy_note.set(if copied{"登录信息已复制到剪贴板。"}else{"复制失败，请选中上方文字手动复制。"}.into());busy.set(false);});}>"复制登录信息"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{created_credentials.set(None);credentials_copy_note.set(String::new());credentials_copy_failed.set(false);}>"关闭并清除"</button></div></section></Show>
         <Show when=move||!key_editor_active.get()><header class="user-identity"><div><h3>{move||selected.get().map(|v|api::text(&v,"name")).unwrap_or_else(||"新建用户".into())}</h3><p>{move||selected.get().map(|v|login_username(&v).map(|s|format!("登录账号：{s}")).unwrap_or_else(||"尚未开通登录 · 已有 Key 与历史保留".into())).unwrap_or_else(||"设置账号并分配权限，保存后用户即可登录。".into())}</p></div><Show when=move||selected.get().is_some()><span class=move||if enabled.get(){"badge good"}else{"badge"}>{move||if enabled.get(){"已启用"}else{"已停用"}}</span><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{if let Some(u)=selected.get_untracked(){toggle_user(u)}}>{move||if enabled.get(){"停用用户"}else{"启用用户"}}</button></Show></header>
-        <nav class="user-workspace-nav" aria-label="用户设置分区">{[(UserSection::Profile,"基本资料"),(UserSection::Access,"模型授权"),(UserSection::Limits,"限流与额度"),(UserSection::Keys,"API Key")].into_iter().map(|(tab,label)|view!{
+        <nav class="user-workspace-nav" aria-label="用户设置分区">{[(UserSection::Profile,"基本资料"),(UserSection::Access,"模型与服务"),(UserSection::Limits,"限流与额度"),(UserSection::Keys,"API Key")].into_iter().map(|(tab,label)|view!{
             <button type="button" class="ghost" aria-pressed=move||(section.get()==tab).to_string() disabled=move||busy.get()||(tab==UserSection::Keys&&selected.get().is_none()) title=if tab==UserSection::Keys{"创建用户后可管理其 API Key"}else{""} on:click=move |_|section.set(tab)>{label}</button>
         }).collect_view()}</nav></Show>
         <Show when=move||section.get()!=UserSection::Keys>
@@ -360,14 +365,14 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             <div class="user-profile-grid"><Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><label class="account-field"><span>"登录账号"</span><input type="text" minlength="3" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" readonly=move||selected.get().is_some_and(|u|login_username(&u).is_some()) prop:value=username on:input=move|e|username.set(event_target_value(&e))/></label></Show><label class="account-field"><span>"显示名称"</span><input type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label></div>
             <Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><crate::account_ui::PasswordField id="user-password" label="设置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/><Show when=move||selected.get().is_none()><div class="user-password-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{match generate_password(){Ok(generated)=>{password.set(generated);error.set(String::new());},Err(message)=>error.set(message)}}>"重新生成密码"</button></div></Show><p id="user-help" class="account-help">{move||if selected.get().is_none(){"默认生成24位安全随机密码，可修改或重新生成；若浏览器无法生成，请手动设置。保存成功后自动复制登录信息；复制失败可再次点击复制。"}else if open_login.get(){"请输入至少12字节的初始密码。"}else{"密码留空不修改；设置新密码将退出此用户现有登录会话。登录账号创建后不可在此修改。"}}</p></Show>
         </Show>
-        <Show when=move||section.get()==UserSection::Access><h3>"模型授权"</h3><PolicyEditor policy=draft models=models channels=channels prefix="user-access" admin=true show_limits=false/></Show>
-        <Show when=move||section.get()==UserSection::Limits><h3>"限流与额度"</h3><PolicyEditor policy=draft models=models channels=channels prefix="user-limits" admin=true show_access=false/><label class="account-field user-budget-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按实际用量与模型价格累计费用。留空不限，0 表示无付费额度；此处是累计金额，不是月度套餐或 Token 余额。"</p></Show>
+        <Show when=move||section.get()==UserSection::Access><h3>"模型与透传服务授权"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-access" admin=true show_limits=false/></Show>
+        <Show when=move||section.get()==UserSection::Limits><h3>"限流与额度"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-limits" admin=true show_access=false/><label class="account-field user-budget-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按实际用量与模型价格累计费用。留空不限，0 表示无付费额度；此处是累计金额，不是月度套餐或 Token 余额。"</p></Show>
         </div>
         <Show when=move||!error.get().is_empty()><p id="user-error" class="banner bad" role="alert">{move||error.get()}</p></Show><Show when=move||!notice.get().is_empty()><p class="banner good" role="status">{move||notice.get()}</p></Show>
         <footer class="user-workspace-footer"><span>"保存会同时应用基本资料、授权和额度。"</span><div class="user-actions"><button type="button" class="ghost" on:click=move |_|editing.set(false)>"取消"</button><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button></div></footer>
         </fieldset></form>
         </Show>
-        <Show when=move||editing.get()&&section.get()==UserSection::Keys&&owner.get().is_some()><Show when=move||!key_editor_active.get()><p class="account-help">"Key 操作独立保存；其他分区的草稿保留，返回后可继续编辑。"</p></Show><KeyManager ctx=ctx owner=owner models=models channels=channels form_busy=busy embedded=true editor_active=key_editor_active/></Show>
+        <Show when=move||editing.get()&&section.get()==UserSection::Keys&&owner.get().is_some()><Show when=move||!key_editor_active.get()><p class="account-help">"Key 操作独立保存；其他分区的草稿保留，返回后可继续编辑。"</p></Show><KeyManager ctx=ctx owner=owner models=models channels=channels services=services form_busy=busy embedded=true editor_active=key_editor_active/></Show>
     </div>
     </super::ModuleDialog>
     <super::ModuleDialog open=delete_open busy=busy title="删除用户".to_string()>

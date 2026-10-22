@@ -1,0 +1,60 @@
+{
+  "success": true,
+  "models": [
+    {
+      "name": "ct104-acceptance-a715ec34174c/fallback",
+      "visible": false,
+      "enabled": false,
+      "internal_only": true
+    },
+    {
+      "name": "ct104-acceptance-a715ec34174c/stream",
+      "visible": false,
+      "enabled": false,
+      "internal_only": true
+    },
+    {
+      "name": "ct104-acceptance-e25f4e9337ca/fallback",
+      "visible": false,
+      "enabled": false,
+      "internal_only": true
+    },
+    {
+      "name": "ct104-acceptance-e25f4e9337ca/stream",
+      "visible": false,
+      "enabled": false,
+      "internal_only": true
+    }
+  ],
+  "providers": [
+    {
+      "id": 14,
+      "name": "验收已停用 · e25f4e9337ca/a"
+    },
+    {
+      "id": 15,
+      "name": "验收已停用 · e25f4e9337ca/b"
+    },
+    {
+      "id": 16,
+      "name": "验收已停用 · e25f4e9337ca/c"
+    },
+    {
+      "id": 17,
+      "name": "验收已停用 · a715ec34174c/a"
+    },
+    {
+      "id": 18,
+      "name": "验收已停用 · a715ec34174c/b"
+    },
+    {
+      "id": 19,
+      "name": "验收已停用 · a715ec34174c/c"
+    }
+  ],
+  "backup": "/var/backups/tokengo/catalog-cleanup-20261022T164035Z",
+  "history_preserved": {
+    "requests": 7
+  },
+  "business_channels_preserved": true
+}

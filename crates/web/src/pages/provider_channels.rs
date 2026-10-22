@@ -122,7 +122,7 @@ pub fn Providers(ctx: Ctx) -> impl IntoView {
     <label class="account-check provider-filter"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用渠道"</label><div class="provider-list">{move||providers.get().into_iter().filter(|p|p.enabled||show_disabled.get()).map(|provider|view!{<ProviderCard ctx=ctx provider=provider channels=channels.get() all_providers=providers.get() reload=reload model_panels=model_panels key_panels=key_panels/>}).collect_view()}</div>
     <Show when=move||!busy.get()&&providers.get().is_empty()><p class="account-empty">"尚未设置渠道。填写供应方名称与API URL，再添加上游Key和模型。"</p></Show>
     <section class="card provider-ungrouped"><header class="card-head"><h2>"未分组接入"</h2><span>{move||format!("{} 条",channels.get().iter().filter(|c|c.provider_id.is_none()).count())}</span><button type="button" class="ghost" aria-expanded=move||ungrouped_open.get().to_string() on:click=move |_|ungrouped_open.update(|v|*v=!*v)>{move||if ungrouped_open.get(){"收起"}else{"查看与整理"}}</button></header><super::ModuleDialog open=ungrouped_open title="未分组接入".to_string()><Show when=move||ungrouped_open.get()><div class="card-body"><p class="muted small">"尚未归属服务商的上游接入，可在此设置分组。原有模型、Key、权限与历史保留。"</p><super::channels::Connections ctx=ctx on_changed=reload providers=providers.get()/></div></Show></super::ModuleDialog></section>
-    <super::passthrough::PassthroughRoutes ctx=ctx/>
+    <p class="muted small">"按路径访问的接口请在“透传服务”中添加与管理。" <a href="#services">"打开透传服务"</a></p>
     </div>}
 }
 #[component]

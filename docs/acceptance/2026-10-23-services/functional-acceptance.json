@@ -1,0 +1,33 @@
+{
+  "success": true,
+  "tests": [
+    {
+      "check": "root_service_create_disabled_edit_delete",
+      "fixture_id": 13,
+      "upstream_called": false
+    },
+    {
+      "check": "owner_service_directory_and_root_management_isolation",
+      "visible_service_ids": [
+        12
+      ]
+    },
+    {
+      "check": "new_key_inherits_user_service_and_real_MinerU_health",
+      "status": 200,
+      "model_permissions": [],
+      "legacy_route_key_acl_changed": false
+    },
+    {
+      "check": "service_uncheck_revokes_existing_key_immediately",
+      "status": 403,
+      "no_additional_ledger": true
+    },
+    {
+      "check": "original_FACE_CLIP_MinerU_config_and_retired_models_preserved"
+    }
+  ],
+  "temporary_user_id": 41,
+  "temporary_key_id": 78,
+  "cleanup_errors": []
+}

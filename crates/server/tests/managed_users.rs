@@ -900,3 +900,68 @@ async fn resuming_self_paused_key_enforces_parent_and_active_key_capacity() {
     f.req("PATCH",&format!("/api/account/keys/{other}"),Some(&cookie),None,true,None,json!({"enabled":false})).await;
     assert_eq!(f.req("PATCH",&path,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::OK);
 }
+
+#[tokio::test]
+async fn passthrough_owner_directory_and_user_grants_are_explicit_and_scoped() {
+    let f=Fixture::new();
+    let route=db::passthrough::create(&f.state.conn(),&f.state.secrets,&serde_json::from_value(json!({"name":"Face","prefix":"/face/","upstream":"http://127.0.0.1:8066","enabled":true,"headers":[{"name":"api-key","value":"synthetic-hidden-header"}]})).unwrap()).unwrap();
+    let(s,v,_)=f.admin("POST","/api/managed-users",json!({"username":"services","display_name":"Services","password":PASSWORD,"policy":{"allowed_services":[route.id]}})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");let uid=v["user"]["id"].as_i64().unwrap();
+    let(_,cookie)=f.login("services",PASSWORD).await;
+    for path in ["/api/account/services","/api/account/keys"] {
+        let(s,v,h)=f.req("GET",path,Some(&cookie),None,false,None,json!({})).await;
+        assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(h["cache-control"],"no-store");
+        assert_eq!(v["services"].as_array().unwrap().len(),1);assert_eq!(v["services"][0]["id"],route.id);
+        assert_eq!(v["services"][0].as_object().unwrap().len(),6);
+        assert!(!v.to_string().contains("synthetic-hidden-header"));assert!(v["services"][0].get("upstream").is_none());
+    }
+    let(s,key,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"inherited","policy":{"allowed_services":null}})).await;
+    assert_eq!(s,StatusCode::OK,"{key}");
+    let kid=key["key"]["id"].as_i64().unwrap();
+    let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{kid}"),Some(&cookie),None,true,None,json!({"policy":{"allowed_services":null}})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");
+    let auth=f.state.authenticate_context(key["secret"].as_str().unwrap().to_owned()).await.unwrap();
+    let runtime=db::passthrough::match_route(&f.state.conn(),&f.state.secrets,"/face/check").unwrap().unwrap();
+    assert!(db::passthrough::authorize(&f.state.conn(),&runtime,&auth).unwrap());
+    let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{kid}"),Some(&cookie),None,true,None,json!({"policy":{"allowed_services":[route.id]}})).await;
+    assert_eq!(s,StatusCode::OK,"null key can narrow to selected owner services: {v}");
+    let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{kid}"),Some(&cookie),None,true,None,json!({"policy":{"allowed_services":[]}})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");
+    let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{kid}"),Some(&cookie),None,true,None,json!({"policy":{"allowed_services":null}})).await;
+    assert_eq!(s,StatusCode::FORBIDDEN,"inherited scope cannot erase an existing key restriction: {v}");
+    let(s,v,_)=f.admin("PATCH",&format!("/api/managed-users/{uid}"),json!({"policy":{"allowed_services":[]}})).await;assert_eq!(s,StatusCode::OK,"{v}");
+    assert!(!db::passthrough::authorize(&f.state.conn(),&runtime,&auth).unwrap());
+    let(s,v,_)=f.admin("PATCH",&format!("/api/managed-users/{uid}"),json!({"policy":{"allowed_services":[999999]}})).await;assert_eq!(s,StatusCode::BAD_REQUEST,"{v}");
+    let(s,v,_)=f.admin("PATCH",&format!("/api/managed-users/{uid}"),json!({"policy":{"allowed_services":null}})).await;assert_eq!(s,StatusCode::OK,"{v}");
+    let(s,v,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"escalate","policy":{"allowed_services":[route.id]}})).await;
+    assert_eq!(s,StatusCode::FORBIDDEN,"{v}");
+    let(s,v,_)=f.req("GET","/api/account/services",None,None,false,None,json!({})).await;assert_eq!(s,StatusCode::UNAUTHORIZED,"{v}");
+}
+
+#[tokio::test]
+async fn service_key_default_inherits_and_legacy_restrictions_remain_editable() {
+    let f=Fixture::new();
+    let a=db::passthrough::create(&f.state.conn(),&f.state.secrets,&serde_json::from_value(json!({"name":"A","prefix":"/service-a/","upstream":"http://127.0.0.1:8066","enabled":true})).unwrap()).unwrap();
+    let b=db::passthrough::create(&f.state.conn(),&f.state.secrets,&serde_json::from_value(json!({"name":"B","prefix":"/service-b/","upstream":"http://127.0.0.1:8066","enabled":true})).unwrap()).unwrap();
+    let(s,v,_)=f.admin("POST","/api/managed-users",json!({"username":"servicekeys","display_name":"Services","password":PASSWORD,"policy":{"allowed_services":[a.id]}})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");let uid=v["user"]["id"].as_i64().unwrap();let(_,cookie)=f.login("servicekeys",PASSWORD).await;
+    let(s,v,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"default"})).await;
+    assert_eq!(s,StatusCode::OK,"{v}");assert!(v["key"]["policy"]["allowed_services"].is_null());
+    let key_id=v["key"]["id"].as_i64().unwrap();let secret=v["secret"].as_str().unwrap().to_owned();
+    // An explicit cap must survive even when the current owner scope is narrower.
+    let(s,v,_)=f.admin("PATCH",&format!("/api/vkeys/{key_id}"),json!({"policy":{"allowed_services":[a.id,b.id]}})).await;assert_eq!(s,StatusCode::OK,"{v}");
+    let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{key_id}"),Some(&cookie),None,true,None,json!({"policy":{"allowed_services":null}})).await;
+    assert_eq!(s,StatusCode::FORBIDDEN,"must preserve explicit cap for future owner grants: {v}");
+    let(s,v,_)=f.admin("PATCH",&format!("/api/managed-users/{uid}"),json!({"policy":{"allowed_services":null}})).await;assert_eq!(s,StatusCode::OK,"{v}");
+    for services in [json!([a.id,b.id]),json!([a.id])] {
+        let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{key_id}"),Some(&cookie),None,true,None,json!({"name":"renamed","policy":{"allowed_services":services}})).await;
+        assert_eq!(s,StatusCode::OK,"legacy key cap must remain editable: {v}");
+    }
+    let(s,v,_)=f.req("PATCH",&format!("/api/account/keys/{key_id}"),Some(&cookie),None,true,None,json!({"policy":{"allowed_services":[b.id]}})).await;assert_eq!(s,StatusCode::FORBIDDEN,"{v}");
+    let(s,v,_)=f.req("POST","/v1/keys",None,Some(&secret),false,None,json!({"name":"outside","policy":{"allowed_services":[b.id]}})).await;assert_eq!(s,StatusCode::FORBIDDEN,"{v}");
+    let(s,v,_)=f.req("POST","/v1/keys",None,Some(&secret),false,None,json!({"name":"subset","policy":{"allowed_services":[a.id]}})).await;assert_eq!(s,StatusCode::OK,"{v}");
+    for path in [format!("/api/users/{uid}"),format!("/api/vkeys/{key_id}")] {
+        let(s,v,_)=f.admin("PATCH",&path,json!({"policy":{"allowed_services":[999999]}})).await;assert_eq!(s,StatusCode::BAD_REQUEST,"{path}: {v}");
+    }
+    let(s,v,_)=f.admin("POST","/api/users",json!({"name":"bad-service","policy":{"allowed_services":[999999]}})).await;assert_eq!(s,StatusCode::BAD_REQUEST,"{v}");
+}

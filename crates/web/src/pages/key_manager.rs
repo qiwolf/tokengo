@@ -17,7 +17,7 @@ fn new_key_policy(base: Value, personal: bool) -> Value {
     if !personal { return base; }
     // Parent grants are inherited, not historical explicit grants of a new Key.
     // The existing save path materializes that inheritance within the parent's bounds.
-    let mut inherited = base; inherited["allowed_models"] = Value::Null; inherited
+    let mut inherited = base; inherited["allowed_models"] = Value::Null; inherited["allowed_services"]=Value::Null; inherited
 }
 /// A Key task replaces its host panel when embedded, rather than stacking dialogs.
 #[component]
@@ -35,6 +35,7 @@ pub fn KeyManager(
     owner: RwSignal<Option<i64>>,
     models: RwSignal<Vec<String>>,
     channels: RwSignal<Vec<(i64, String)>>,
+    services: RwSignal<Vec<Value>>,
     #[prop(default = false)] personal: bool,
     #[prop(default = false)] embedded: bool,
     #[prop(optional)] editor_active: Option<RwSignal<bool>>,
@@ -64,6 +65,7 @@ pub fn KeyManager(
         let token = generation.get_untracked() + 1;
         generation.set(token);
         secret.set(None);
+        if personal {services.set(Vec::new());}
         rows.set(vec![]);
         selected.set(None);
         editor_open.set(false);
@@ -128,6 +130,7 @@ pub fn KeyManager(
                         }
                         rows.set(loaded);
                         if personal {
+                            services.set(v["services"].as_array().cloned().unwrap_or_default());
                             base.set(v["policy"].clone());
                             draft.set(v["policy"].clone());
                             user_budget.set(v["budget"].clone());
@@ -371,7 +374,7 @@ pub fn KeyManager(
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
     <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
     <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label>
-    <PolicyEditor policy=draft models=models channels=channels prefix=if personal{"my-key"}else{"admin-key"} admin=!personal/>
+    <PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal/>
     <div class="policy-limits"><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p>
     <div class="account-actions"><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset><div class="account-actions"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></form>
     <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p>
@@ -415,6 +418,7 @@ mod tests {
         let mut parent=policy::default_policy();parent["allowed_models"]=json!(["visible","hidden"]);parent["allowed_channels"]=json!([]);
         let draft=new_key_policy(parent.clone(),true);
         assert!(draft["allowed_models"].is_null());
+        assert!(draft["allowed_services"].is_null());
         let saved=policy::inherit_policy(draft,&parent);
         assert_eq!(saved["allowed_models"],parent["allowed_models"]);
         assert_eq!(saved["allowed_channels"],json!([]));

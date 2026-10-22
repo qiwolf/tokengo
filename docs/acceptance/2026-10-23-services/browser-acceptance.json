@@ -1,0 +1,29 @@
+{
+  "production237": {
+    "independent_services_nav": true,
+    "FACE_CLIP_MinerU_visible": true,
+    "new_service_form_opens": true,
+    "user_model_and_service_sections": true,
+    "three_services_selectable": true,
+    "new_user_service_defaults_unchecked": true,
+    "retired_acceptance_models_absent": true,
+    "no_UI_user_created": true,
+    "root_logged_out": true
+  },
+  "isolated_build_test": {
+    "same_release_server_and_web": true,
+    "ordinary_only_granted_MinerU_visible": true,
+    "FACE_CLIP_hidden_for_ungranted_user": true,
+    "management_nav_hidden": true,
+    "key_default_dynamic_inheritance": true,
+    "key_can_select_only_granted_service": true,
+    "passthrough_channel_available_in_advanced_sources": true,
+    "draft_canceled_without_creating_key": true,
+    "ordinary_logged_out": true,
+    "fixture_stopped_and_DB_removed": true
+  },
+  "automation_notes": [
+    "Native AX click used for summary after role locator mismatch; then actual DOM select used for implicit label. No app defect inferred from those locator failures."
+  ],
+  "credentials_in_evidence": false
+}

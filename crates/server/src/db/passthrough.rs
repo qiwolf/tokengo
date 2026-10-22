@@ -467,13 +467,47 @@ pub fn authorize(c: &Connection, r: &RuntimeRoute, auth: &AuthContext) -> Result
     let Some(current) = identity::context(c, auth.key_id)? else {
         return Ok(false);
     };
-    Ok(current.user_id == auth.user_id
-        && r.route.enabled
-        && current.permits_channel(r.route.channel_id, r.price.micro_per_call > 0)
-        && r.route
-            .allowed_key_ids
-            .iter()
-            .any(|k| *k == current.key_id || current.ancestor_key_ids.contains(k)))
+    Ok(current.user_id == auth.user_id && permits_route(&r.route, &current))
+}
+
+/// Kept separate from credential loading for the safe owner service directory.
+fn permits_route(route: &Route, auth: &AuthContext) -> bool {
+    let user_granted = match &auth.user_policy.allowed_services {
+        Some(ids) => ids.contains(&route.id),
+        None => route.allowed_key_ids.iter().any(|k| *k == auth.key_id || auth.ancestor_key_ids.contains(k)),
+    };
+    route.enabled && user_granted
+        && auth.key_policy.allowed_services.as_ref().is_none_or(|ids|ids.contains(&route.id))
+        && auth.permits_channel(route.channel_id, route.price_micro_usd_per_request > 0)
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ServiceSummary {
+    pub id: i64,
+    pub name: String,
+    pub prefix: String,
+    pub enabled: bool,
+    pub channel_id: i64,
+    pub price_micro_usd_per_request: i64,
+}
+/// Owner metadata never exposes upstream addresses, secret headers or ACL key IDs.
+pub fn services_for_user(c: &Connection, user_id: i64) -> Result<Vec<ServiceSummary>> {
+    let Some(user) = identity::user(c,user_id)?.filter(|u|u.enabled) else { return Ok(vec![]); };
+    let mut identities = Vec::new();
+    for key in identity::keys(c,user_id)? {
+        if let Some(auth) = identity::context(c,key.id)? { identities.push(auth); }
+    }
+    let user_auth = AuthContext {user_id,key_id:0,role:user.role.clone(),user_policy:user.policy.clone(),key_policy:identity::Policy::default(),ancestor_key_ids:vec![],expires_at:None,policy_version:String::new()};
+    Ok(list(c)?.into_iter().filter(|r|permits_route(r,&user_auth)||identities.iter().any(|a|permits_route(r,a))).map(|r|ServiceSummary{id:r.id,name:r.name,prefix:r.prefix,enabled:r.enabled,channel_id:r.channel_id,price_micro_usd_per_request:r.price_micro_usd_per_request}).collect())
+}
+/// Validate only additions; old references remain editable after a service is deleted.
+pub fn validate_service_grants(c:&Connection, previous:Option<&[i64]>, next:Option<&[i64]>) -> Result<()> {
+    for id in next.unwrap_or_default() {
+        if !previous.is_some_and(|old|old.contains(id)) && get(c,*id)?.is_none() {
+            return Err(bad("Unknown passthrough service grant"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -633,6 +667,60 @@ mod tests {
             )
             .unwrap()
         );
+    }
+    #[test]
+    fn user_service_grants_inherit_narrow_and_revocation_overrides_legacy_acl() {
+        let (c,sb)=setup();
+        let mut user=identity::create_user(&c,"service user","user",&identity::Policy::default()).unwrap();
+        let (parent,_)=identity::create_key(&c,user.id,"parent",&identity::Policy::default(),None,None).unwrap();
+        let (child,_)=identity::create_key(&c,user.id,"child",&identity::Policy::default(),None,Some(parent.id)).unwrap();
+        let mut v=input("/face/");let route=create(&c,&sb,&v).unwrap();
+        let runtime=||match_route(&c,&sb,"/face/a").unwrap().unwrap();
+        let auth=identity::context(&c,child.id).unwrap().unwrap();
+        assert!(!authorize(&c,&runtime(),&auth).unwrap(),"legacy null must not open routes");
+        user.policy.allowed_services=Some(vec![route.id]);identity::update_user(&c,&user).unwrap();
+        assert!(authorize(&c,&runtime(),&auth).unwrap(),"fresh user grant reaches pre-existing keys");
+        let (new_key,_)=identity::create_key(&c,user.id,"new",&identity::Policy::default(),None,None).unwrap();
+        assert!(authorize(&c,&runtime(),&identity::context(&c,new_key.id).unwrap().unwrap()).unwrap());
+        let mut p=identity::key(&c,parent.id).unwrap().unwrap();p.policy.allowed_services=Some(vec![]);identity::update_key(&c,&p).unwrap();
+        assert!(!authorize(&c,&runtime(),&auth).unwrap(),"live ancestor narrowing is enforced");
+        p.policy.allowed_services=None;identity::update_key(&c,&p).unwrap();
+        v.allowed_key_ids=vec![parent.id];update(&c,&sb,route.id,1,&v).unwrap();
+        user.policy.allowed_services=Some(vec![]);identity::update_user(&c,&user).unwrap();
+        assert!(!authorize(&c,&runtime(),&auth).unwrap(),"explicit revoke must override old ACL");
+        user.policy.allowed_services=None;identity::update_user(&c,&user).unwrap();
+        assert!(authorize(&c,&runtime(),&auth).unwrap(),"legacy ACL still reaches descendants");
+        assert!(!authorize(&c,&runtime(),&identity::context(&c,new_key.id).unwrap().unwrap()).unwrap(),"legacy ACL cannot expand to siblings");
+        user.policy.allowed_channels=Some(vec![]);identity::update_user(&c,&user).unwrap();
+        assert!(!authorize(&c,&runtime(),&auth).unwrap());
+    }
+    #[test]
+    fn service_directory_is_safe_scoped_and_deleted_grants_can_be_removed() {
+        let(c,sb)=setup();let mut user=identity::create_user(&c,"owner","user",&Default::default()).unwrap();
+        let mut v=input("/face/");let a=create(&c,&sb,&v).unwrap();v.prefix="/clip/".into();let b=create(&c,&sb,&v).unwrap();
+        assert!(services_for_user(&c,user.id).unwrap().is_empty());
+        user.policy.allowed_services=Some(vec![a.id]);identity::update_user(&c,&user).unwrap();
+        let directory=serde_json::to_value(services_for_user(&c,user.id).unwrap()).unwrap();
+        assert_eq!(directory.as_array().unwrap().len(),1);assert_eq!(directory[0]["id"],a.id);
+        let keys=directory[0].as_object().unwrap();assert_eq!(keys.len(),6);
+        for forbidden in ["upstream","headers","allowed_key_ids"] {assert!(!keys.contains_key(forbidden));}
+        assert!(validate_service_grants(&c,None,Some(&[b.id])).is_ok());
+        assert!(validate_service_grants(&c,None,Some(&[999999])).is_err());
+        delete(&c,a.id,a.revision).unwrap();
+        assert!(services_for_user(&c,user.id).unwrap().is_empty());
+        assert!(validate_service_grants(&c,Some(&[a.id]),Some(&[a.id])).is_ok());
+        assert!(validate_service_grants(&c,Some(&[a.id]),Some(&[])).is_ok());
+    }
+    #[test]
+    fn service_policy_intersection_and_self_service_do_not_invent_user_grants() {
+        let legacy=identity::Policy::default();let grants=identity::Policy{allowed_services:Some(vec![1,2]),..Default::default()};
+        assert!(grants.no_broader_than(&legacy),"null key parent permits narrowing; owner legacy guard is enforced at issuance");
+        assert!(legacy.no_broader_than(&grants),"null service scope inherits rather than expanding parent grants");
+        assert!(!identity::Policy{allowed_services:Some(vec![3]),..Default::default()}.no_broader_than(&grants));
+        let limited=identity::Policy{allowed_services:Some(vec![2]),..Default::default()};
+        assert!(limited.no_broader_than(&grants));assert_eq!(limited.intersection(&grants).allowed_services,Some(vec![2]));
+        assert_eq!(legacy.intersection(&grants).allowed_services,Some(vec![1,2]));
+        for ids in [vec![0],vec![-1],vec![1,1]] {assert!(identity::Policy{allowed_services:Some(ids),..Default::default()}.validate().is_err());}
     }
     #[test]
     fn prices_immutable_ids_not_reused_and_invalid_grants_rollback() {

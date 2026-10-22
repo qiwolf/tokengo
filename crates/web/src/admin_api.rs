@@ -178,6 +178,7 @@ pub fn billing_page_summary(rows: &[Value]) -> Vec<String> {
 
 pub const POLICY: &str = r#"{
   "allowed_models": null,
+  "allowed_services": null,
   "allowed_channels": null,
   "allow_paid": true,
   "admin_access": false,

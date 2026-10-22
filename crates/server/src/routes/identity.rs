@@ -136,6 +136,7 @@ async fn create_user(
     identity::validate_role(&body.role).map_err(bad)?;
     body.policy.validate().map_err(bad)?;
     let c = state.conn();
+    db::passthrough::validate_service_grants(&c,None,body.policy.allowed_services.as_deref()).map_err(bad)?;
     let row = db::in_tx(&c, |c| {
         let row = identity::create_user(c, &body.name, &body.role, &body.policy)?;
         identity::audit(
@@ -176,6 +177,7 @@ async fn update_user(
     }
     if let Some(v) = body.policy {
         v.validate().map_err(bad)?;
+        db::passthrough::validate_service_grants(&c,row.policy.allowed_services.as_deref(),v.allowed_services.as_deref()).map_err(bad)?;
         row.policy = v;
     }
     if let Some(v) = body.enabled {
@@ -239,6 +241,7 @@ async fn admin_create_key(
         return Err(ApiError::bad_request("Expiry must be in the future"));
     }
     let c = state.conn();
+    db::passthrough::validate_service_grants(&c,None,policy.allowed_services.as_deref()).map_err(bad)?;
     let owner = missing_user(&c, id)?;
     if !owner.enabled {
         return Err(ApiError::bad_request("User is disabled"));
@@ -286,6 +289,7 @@ async fn update_key(
     }
     if let Some(v) = body.policy {
         v.validate().map_err(bad)?;
+        db::passthrough::validate_service_grants(&c,row.policy.allowed_services.as_deref(),v.allowed_services.as_deref()).map_err(bad)?;
         row.policy = v;
     }
     if let Some(v) = body.expires_at {
@@ -354,7 +358,10 @@ async fn own_create_key(
     let effective = auth.effective_policy();
     let policy = body.policy.unwrap_or_else(|| effective.clone());
     policy.validate().map_err(bad)?;
-    if !policy.no_broader_than(&effective) {
+    let legacy_service_escalation=auth.user_policy.allowed_services.is_none() && policy.allowed_services.as_ref().is_some_and(|ids| {
+        ids.iter().any(|id|auth.key_policy.allowed_services.as_ref().is_none_or(|old|!old.contains(id)))
+    });
+    if legacy_service_escalation || !policy.no_broader_than(&effective) {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "policy_broadening",

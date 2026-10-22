@@ -13,6 +13,7 @@ pub fn validate(p: &Value) -> Result<(), String> {
         !matches!(
             k.as_str(),
             "allowed_models"
+                | "allowed_services"
                 | "allowed_channels"
                 | "allow_paid"
                 | "admin_access"
@@ -49,6 +50,7 @@ pub fn validate(p: &Value) -> Result<(), String> {
     {
         return Err("模型授权数据无效。".into());
     }
+    if !p["allowed_services"].is_null() && p["allowed_services"].as_array().is_none_or(|a| a.len()>256 || a.iter().any(|v|v.as_i64().is_none_or(|n|n<=0))) { return Err("透传服务授权数据无效。".into()); }
     if !p["allowed_channels"].is_null()
         && p["allowed_channels"]
             .as_array()
@@ -77,7 +79,7 @@ fn toggle(p: RwSignal<Value>, k: &str, value: Value, on: bool) {
 /// Only the server's visible catalog can introduce grants. Historical names are
 /// returned separately and never become unselected options for new grants.
 pub fn visible_model_names(routes: &crate::model::ModelRoutesResp) -> Vec<String> {
-    let mut names = routes.models.iter().filter(|m|m.visible&&!m.internal_only).map(|m|m.name.clone()).collect::<Vec<_>>();
+    let mut names = routes.models.iter().filter(|m|m.visible&&!m.internal_only&&m.enabled&&m.routed).map(|m|m.name.clone()).collect::<Vec<_>>();
     names.extend(routes.shared_virtual_models.iter().filter(|m|m.enabled).map(|m|m.name.clone()));
     names.sort(); names.dedup(); names
 }
@@ -95,6 +97,29 @@ fn revoke_model(policy: &mut Value, name: &str) {
         models.retain(|model|model.as_str()!=Some(name));
     }
 }
+/// New users explicitly start without service grants; legacy null remains unchanged on edit.
+pub fn new_user_policy() -> Value { let mut p=default_policy(); p["allowed_services"]=json!([]); p }
+pub fn service_options(policy:&Value, catalog:&[Value])->(Vec<(i64,String)>,Vec<i64>) {
+    let mut choices=catalog.iter().filter(|s|s["enabled"]==true).filter_map(|s|Some((s["id"].as_i64().filter(|id|*id>0)?,format!("{} · {}",s["name"].as_str().unwrap_or("透传服务"),s["prefix"].as_str().unwrap_or(""))))).collect::<Vec<_>>();
+    choices.sort_by(|a,b|a.1.cmp(&b.1));choices.dedup_by_key(|s|s.0);
+    let mut retained=policy["allowed_services"].as_array().into_iter().flatten().filter_map(Value::as_i64).filter(|id|!choices.iter().any(|s|s.0==*id)).collect::<Vec<_>>();retained.sort();retained.dedup();(choices,retained)
+}
+/// Service source IDs are selectable without modifying any existing source grant.
+fn source_options(channels:&[(i64,String)],services:&[Value],current:&[Value])->Vec<(i64,String)> {
+    let mut options=channels.to_vec();
+    for service in services {
+        if let Some(id)=service["channel_id"].as_i64().filter(|id|*id>0) {
+            if !options.iter().any(|(n,_)|*n==id) {
+                options.push((id,format!("透传服务：{}",service["name"].as_str().unwrap_or("未命名服务"))));
+            }
+        }
+    }
+    for id in current.iter().filter_map(Value::as_i64) {
+        if !options.iter().any(|(n,_)|*n==id) {options.push((id,format!("已有来源 #{id}")));}
+    }
+    options
+}
+fn revoke_service(policy:&mut Value,id:i64){if let Some(ids)=policy["allowed_services"].as_array_mut(){ids.retain(|v|v.as_i64()!=Some(id));}}
 pub fn inherit_policy(mut p: Value, parent: &Value) -> Value {
     for field in [
         "allowed_models",
@@ -142,6 +167,7 @@ pub fn PolicyEditor(
     policy: RwSignal<Value>,
     models: RwSignal<Vec<String>>,
     channels: RwSignal<Vec<(i64, String)>>,
+    services: RwSignal<Vec<Value>>,
     prefix: &'static str,
     #[prop(default = false)] admin: bool,
     #[prop(default = true)] show_access: bool,
@@ -167,9 +193,14 @@ pub fn PolicyEditor(
         <p class="account-help">"这些模型已隐藏、设为仅内部调用或不在当前目录中。保留旧授权不会解除仅内部调用限制；撤销后不再可选。"</p>
         <div class="policy-options">{move||authorization_options(&policy.get(),&models.get()).1.into_iter().map(|n|{let label=n.clone();view!{<div class="account-check"><span>{label}</span><button type="button" class="ghost danger" aria-label=format!("撤销 {n} 的已有兼容授权") on:click=move |_|policy.update(|p|revoke_model(p,&n))>"撤销授权"</button></div>}}).collect_view()}</div>
     </details></Show></Show>
+    <div class="account-field"><label for=format!("{prefix}-services")>"透传服务授权"</label><select id=format!("{prefix}-services") prop:value=move||mode(&policy.get(),"allowed_services") on:change=move|e|set_mode(policy,"allowed_services",&event_target_value(&e))><option value="all">{if admin{"保留逐 Key 授权 / 不额外限制"}else{"继承用户授权 / 不额外限制"}}</option><option value="selected">"仅勾选的服务（未选即禁止）"</option></select></div>
+    <p class="account-help">{if admin{"为用户勾选服务后，其 Key 可继承使用；Key 中的勾选只会缩小范围。保留旧的逐 Key 模式不会自动授予全部服务。"}else{"服务和模型分别授权；此处只能缩小管理员授予的服务范围。"}}</p>
+    <Show when=move||!policy.get()["allowed_services"].is_null()><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_services"].as_array().cloned().unwrap_or_default();service_options(&p,&services.get()).0.into_iter().map(|(id,label)|{let checked=current.contains(&json!(id));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_services",json!(id),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div>
+    <Show when=move||service_options(&policy.get(),&services.get()).0.is_empty()><p class="account-help">"没有可新增授权的已启用服务。已有授权保留；管理员可到“透传服务”添加或启用。"</p></Show>
+    <Show when=move||!service_options(&policy.get(),&services.get()).1.is_empty()><details><summary>"已有停用或不在目录中的服务授权"</summary><div class="policy-options">{move||service_options(&policy.get(),&services.get()).1.into_iter().map(|id|view!{<div class="account-check"><span>{format!("服务 #{id}（当前不可用）")}</span><button type="button" class="ghost danger" on:click=move |_|policy.update(|p|revoke_service(p,id))>"撤销授权"</button></div>}).collect_view()}</div></details></Show></Show>
     <label class="account-check"><input type="checkbox" prop:checked=move||policy.get()["allow_paid"].as_bool().unwrap_or(true) on:change=move|e|policy.update(|p|p["allow_paid"]=json!(event_target_checked(&e)))/>"允许使用付费来源（仍受用户和 Key 余额共同约束）"</label>
     </Show><Show when=move||show_limits><div class="policy-limits">{[("rpm","每分钟请求数"),("tpm","每分钟 Token 上限"),("max_concurrent","最大并发")].into_iter().map(|(key,label)|view!{<label class="account-field"><span>{label}</span><input type="number" min="1" step="1" placeholder="继承 / 不额外限制" prop:value=move||policy.get()[key].as_u64().map(|n|n.to_string()).unwrap_or_default() on:input=move|e|{let s=event_target_value(&e);policy.update(|p|p[key]=if s.is_empty(){Value::Null}else{s.parse::<u64>().map(|n|json!(n)).unwrap_or_else(|_|json!(s))})}/></label>}).collect_view()}</div>
-    </Show><Show when=move||show_access><details><summary>"高级：来源范围"</summary><label class="account-field"><span>"可用来源"</span><select prop:value=move||mode(&policy.get(),"allowed_channels") on:change=move|e|set_mode(policy,"allowed_channels",&event_target_value(&e))><option value="all">"继承 / 不额外限制"</option><option value="selected">"仅勾选的来源（未选即禁止）"</option></select></label><Show when=move||!policy.get()["allowed_channels"].is_null()><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_channels"].as_array().cloned().unwrap_or_default();let mut options=channels.get();for id in current.iter().filter_map(Value::as_i64){if !options.iter().any(|(n,_)|*n==id){options.push((id,format!("已有来源 #{id}")))}}options.into_iter().map(|(id,label)|{let checked=current.contains(&json!(id));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_channels",json!(id),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div></Show></details>
+    </Show><Show when=move||show_access><details><summary>"高级：来源范围"</summary><label class="account-field"><span>"可用来源"</span><select prop:value=move||mode(&policy.get(),"allowed_channels") on:change=move|e|set_mode(policy,"allowed_channels",&event_target_value(&e))><option value="all">"继承 / 不额外限制"</option><option value="selected">"仅勾选的来源（未选即禁止）"</option></select></label><Show when=move||!policy.get()["allowed_channels"].is_null()><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_channels"].as_array().cloned().unwrap_or_default();source_options(&channels.get(),&services.get(),&current).into_iter().map(|(id,label)|{let checked=current.contains(&json!(id));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_channels",json!(id),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div></Show></details>
     <Show when=move||admin&&policy.get()["admin_access"]==true><p class="account-help">"此旧用户/密钥保留管理接口权限；本页面不会静默删除该权限。"</p></Show>
     </Show><Show when=move||show_limits><p class="account-help">"限流留空表示继承；用户、Key 和父密钥限制同时生效。TPM 是速率限制，不是套餐 Token 余额。"</p></Show>
     </div>}
@@ -225,9 +256,9 @@ mod tests {
     fn authorization_catalog_uses_real_visibility_not_model_suffixes() {
         let routes=crate::model::ModelRoutesResp {
             models:vec![
-                crate::model::NameRoute{name:"visible-high".into(),visible:true,..Default::default()},
+                crate::model::NameRoute{name:"visible-high".into(),visible:true,enabled:true,routed:true,..Default::default()},
                 crate::model::NameRoute{name:"ordinary-hidden".into(),visible:false,..Default::default()},
-                crate::model::NameRoute{name:"visible-high".into(),visible:true,..Default::default()},
+                crate::model::NameRoute{name:"visible-high".into(),visible:true,enabled:true,routed:true,..Default::default()},
             ],..Default::default()
         };
         let visible=visible_model_names(&routes);
@@ -241,7 +272,7 @@ mod tests {
     fn authorization_catalog_includes_enabled_shared_names_but_excludes_internal_targets() {
         let routes=crate::model::ModelRoutesResp {
             models:vec![
-                crate::model::NameRoute{name:"public".into(),visible:true,..Default::default()},
+                crate::model::NameRoute{name:"public".into(),visible:true,enabled:true,routed:true,..Default::default()},
                 crate::model::NameRoute{name:"gpu-target".into(),visible:true,internal_only:true,..Default::default()},
                 crate::model::NameRoute{name:"cloud-target".into(),visible:false,..Default::default()},
             ],
@@ -278,6 +309,52 @@ mod tests {
         revoke_model(&mut p,"absent");assert_eq!(p["allowed_models"],json!([]));
         p["allowed_models"]=Value::Null;revoke_model(&mut p,"absent");
         assert!(p["allowed_models"].is_null(),"no-op revoke cannot invent a whitelist");
+    }
+
+    #[test]
+    fn disabled_and_unrouted_models_are_not_new_authorization_choices() {
+        let routes=crate::model::ModelRoutesResp{models:vec![
+            crate::model::NameRoute{name:"ready".into(),visible:true,enabled:true,routed:true,..Default::default()},
+            crate::model::NameRoute{name:"disabled-fixture".into(),visible:true,enabled:false,routed:true,..Default::default()},
+            crate::model::NameRoute{name:"unrouted-fixture".into(),visible:true,enabled:true,routed:false,..Default::default()},
+        ],..Default::default()};
+        assert_eq!(visible_model_names(&routes),vec!["ready"]);
+    }
+    #[test]
+    fn services_preserve_legacy_null_explicit_deny_and_key_inheritance() {
+        let mut old=default_policy(); assert!(old["allowed_services"].is_null());
+        old["rpm"]=json!(8);assert!(validate(&old).is_ok());assert!(old["allowed_services"].is_null());
+        assert_eq!(new_user_policy()["allowed_services"],json!([]));
+        let mut parent=default_policy(); parent["allowed_services"]=json!([3,5]);
+        let inherited=inherit_policy(default_policy(),&parent);
+        assert!(inherited["allowed_services"].is_null(),"Key inheritance must remain dynamic, not become an explicit service grant");
+        let mut child=default_policy();child["allowed_services"]=json!([]);
+        assert_eq!(inherit_policy(child,&parent)["allowed_services"],json!([]));
+        for invalid in [json!([0]),json!([-1]),json!(["3"]),json!("all")] {old["allowed_services"]=invalid;assert!(validate(&old).is_err());}
+    }
+    #[test]
+    fn service_options_never_offer_disabled_or_missing_entries_as_new_grants() {
+        let mut p=default_policy();p["allowed_services"]=json!([3,4,99]);
+        let catalog=vec![json!({"id":3,"name":"Faces","prefix":"/face/","enabled":true}),json!({"id":4,"name":"Paused","prefix":"/pause/","enabled":false})];
+        let original=p.clone();let (choices,retained)=service_options(&p,&catalog);
+        assert_eq!(choices,vec![(3,"Faces · /face/".into())]);assert_eq!(retained,vec![4,99]);assert_eq!(p,original);
+        revoke_service(&mut p,4);assert_eq!(p["allowed_services"],json!([3,99]));
+        assert_eq!(service_options(&p,&[]).1,vec![3,99]);
+        revoke_service(&mut p,3);revoke_service(&mut p,99);assert_eq!(p["allowed_services"],json!([]));
+        p["allowed_services"]=Value::Null;revoke_service(&mut p,3);assert!(p["allowed_services"].is_null());
+    }
+
+    #[test]
+    fn service_sources_are_selectable_without_granting_or_materializing_inheritance() {
+        let channels=vec![(1,"LLM source".into()),(3,"Existing shared source".into())];
+        let services=vec![json!({"id":11,"channel_id":2,"name":"Faces","enabled":true}),json!({"id":12,"channel_id":3,"name":"Duplicate","enabled":true})];
+        let mut p=default_policy();p["allowed_models"]=json!([]);p["allowed_services"]=json!([11]);p["allowed_channels"]=json!([1,99]);
+        let original=p.clone();
+        assert_eq!(source_options(&channels,&services,p["allowed_channels"].as_array().unwrap()),vec![(1,"LLM source".into()),(3,"Existing shared source".into()),(2,"透传服务：Faces".into()),(99,"已有来源 #99".into())]);
+        assert_eq!(p,original,"listing sources cannot grant them or change model/service ACLs");
+        p["allowed_channels"]=Value::Null;let original=p.clone();
+        assert_eq!(source_options(&channels,&services,&[]).len(),3);assert_eq!(p,original);assert!(p["allowed_channels"].is_null());
+        assert!(inherit_policy(p,&default_policy())["allowed_services"].as_array().is_some_and(|ids|ids==&vec![json!(11)]));
     }
 
 }
