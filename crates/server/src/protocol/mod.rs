@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 mod request;
 mod response;
+mod oauth_response;
 mod sparse;
 pub mod sse;
 pub mod collect;
@@ -24,6 +25,7 @@ impl Protocol {
 }
 pub use request::{convert_request, has_image, normalization_notes};
 pub use response::{convert_response, validate_response};
+pub use oauth_response::convert_oauth_buffered_response;
 /// Only the exact supported plaintext shape may bypass opaque-state ownership.
 pub(crate) fn is_plain_reasoning(item: &Value) -> bool {
     request::plain_reasoning(item).is_ok()

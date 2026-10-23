@@ -3640,7 +3640,7 @@ async fn buffer_responses_stream(
     let usage=guard.usage;
     let fail=|note:String| {let mut invalid=invalid_buffer(note);invalid.4=usage;invalid};
     let value=match result {Ok(v)=>v,Err(note)=>return fail(note)};
-    let converted=match crate::protocol::convert_response(crate::protocol::Protocol::Responses,client,&value) {
+    let converted=match crate::protocol::convert_oauth_buffered_response(client,&value) {
         Ok(v)=>v,Err(note)=>return fail(conversion_fault(note)),
     };
     let bytes=match serde_json::to_vec(&converted) {Ok(b)=>b,Err(_)=>return fail("Invalid collected Responses JSON".into())};
