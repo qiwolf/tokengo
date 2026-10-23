@@ -631,7 +631,7 @@ async fn targeted_shared_lookup_rechecks_revocation_policy_source_and_version() 
 }
 
 #[tokio::test]
-async fn targeted_shared_lookup_preserves_legacy_index_names_and_first_active_precedence() {
+async fn targeted_shared_lookup_preserves_legacy_names_and_rejects_duplicate_conflicts() {
     let mut f=Fixture::new(ModelKind::Chat).await;f.config.targets.truncate(1);
     let saved=f.publish().await;let id=saved["id"].as_i64().unwrap();
     let c=f.state.conn();let auth=db::identity::context(&c,f.key_id).unwrap().unwrap();
@@ -640,6 +640,8 @@ async fn targeted_shared_lookup_preserves_legacy_index_names_and_first_active_pr
     c.execute("INSERT INTO shared_virtual_models(name,normalized_name,enabled,config_json,version,actor_account_id,created_ms,updated_ms) SELECT name,?2,enabled,config_json,version,actor_account_id,created_ms,updated_ms FROM shared_virtual_models WHERE id=?1",rusqlite::params![id,tokengo_shared::normalize_model_name("shared-model")]).unwrap();
     c.execute("INSERT INTO shared_virtual_models(name,normalized_name,enabled,config_json,version,actor_account_id,created_ms,updated_ms) VALUES('broken','broken',1,'unrelated invalid',1,1,1,1)",[]).unwrap();
     assert!(db::shared_virtual_routes::name_exists(&c,"SHARED_MODEL").unwrap());
+    assert_eq!(db::shared_virtual_routes::resolve(&c,&auth,"SHARED_MODEL",db::now_ms()).unwrap_err().code,"virtual_route_conflict","duplicate active aliases must keep the existing fail-closed conflict policy");
+    c.execute("DELETE FROM shared_virtual_models WHERE id<>?1 AND name='shared-model'",[id]).unwrap();
     assert_eq!(db::shared_virtual_routes::resolve(&c,&auth,"SHARED_MODEL",db::now_ms()).unwrap().unwrap().id,id,"keep the old first active route; never switch sources because an import had a legacy index");
     assert!(db::shared_virtual_routes::validate_current(&c,&auth,id,1,1,db::now_ms()).is_ok());
     c.execute("UPDATE gateway_keys SET enabled=0 WHERE id=?1",[f.key_id]).unwrap();
