@@ -1,6 +1,6 @@
 # Linux x86_64 私有站部署与回滚
 
-当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。本轮未升级237，现场仍为私有0d0性能补丁。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
+当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。237已冷备升级至公开原生包，既有调用、授权、Key和300×4096真实上游回退验收通过，见[独立升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 

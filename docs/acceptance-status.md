@@ -1,18 +1,18 @@
 # 功能与验收状态
 
-当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。本轮未升级237，现场仍为私有0d0性能补丁。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
+当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。237已冷备升级至公开原生包，既有调用、授权、Key和300×4096真实上游回退验收通过，见[独立升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
 
 更新日期：2026-10-24。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
 
-### qiwolf.12公开产物与现场私有补丁
+### qiwolf.12公开发行与后续生产升级
 
 发行源码 `6bf36fa917cd87209286c88a805ddc2cb6e52669`。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40000977772)与[发布工作流](https://github.com/qiwolf/tokengo/actions/runs/40001310546)均成功。GitHub对精确发行提交运行完整Rust工作区，**1160通过、0失败、3忽略**。忽略项分别为由父测试调用的子进程helper、外部联网registry测试、需显式凭据的真实云到GPU向量/重排回退测试；不将三项统称为凭据缺失。本轮build-test重新执行**Web125项、Python22项**并通过，native/WASM release构建与本地原生/容器Key及生命周期检查通过。172个后端文件与此前0d0e6e7完整工作区检查的源码逐字节一致，后端沿用该证据；**没有在本轮build-test重新运行完整工作区**，也不将CI、旧检查和重复运行相加。
 
 9个公开资产匿名下载校验通过。公开原生包 `tokengo-6bf36fa917cd-linux-x86_64.tar.gz` 的SHA256为 `aa4b94472ffecf6a5a941f2c05e5e7eb55ccd7b380da4409f2dfe06271eb3393`；GHCR不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:ac134402e1f4f3af17aa321b63a9e29235f41b597ef8f007dc822c2e6d93c583`。匿名实际拉取、离线镜像双标签、无.env固定引用Compose启动、非root/只读根、ready/WASM、重启/同卷重建、原生运行与原生/容器Key检查均通过。公开产物身份与本地独立构建hash分开，不混用。
 
-本轮没有访问或升级生产237，现场仍运行私有 `0d0e6e7` 性能补丁，不视为已切换qiwolf.12正式产物。GPU分词器及8192窗口为独立现场配置，网关包不会自动修改。标签和资产内文档是构建时快照；最终发布后收据维护在main和Release页面，后补文档不表示资产重新打包。 具体忽略项、检查范围及产物身份见[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。
+公开发行隔离验收阶段没有访问或升级生产237；其后已完成独立冷备升级，当前运行qiwolf.12公开原生包。既有调用、共享入口授权、Key生命周期及300×4096真实上游回退通过，隔离副本清理完成，见[后续升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。此前私有 `0d0e6e7` 为升级前状态，不再表示当前运行版本。GPU分词器及8192窗口为独立现场配置，网关包不会自动修改。标签和资产内文档是构建时快照；最终发布后收据维护在main和Release页面，后补文档不表示资产重新打包。 具体忽略项、检查范围及产物身份见[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。
 
 
 ### qiwolf.11公开发行与既有热修复

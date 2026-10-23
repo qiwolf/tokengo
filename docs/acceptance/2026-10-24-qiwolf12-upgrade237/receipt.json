@@ -1,0 +1,71 @@
+{
+  "result": "passed",
+  "phase": "production upgrade after independent public release acceptance",
+  "production_access": true,
+  "production_upgrade_performed": true,
+  "deployment_kind": "published Linux x86_64 native bundle; no production container deployment",
+  "source_commit": "6bf36fa917cd87209286c88a805ddc2cb6e52669",
+  "native_archive_sha256": "aa4b94472ffecf6a5a941f2c05e5e7eb55ccd7b380da4409f2dfe06271eb3393",
+  "runtime_server_sha256": "7c409a1cd664fe57858db711ae9d2db630695fc3103629668ae909f121031159",
+  "schema_version": 40,
+  "tables": 59,
+  "cold_backup_verified": true,
+  "business_tables_preserved": 14,
+  "settings_unchanged": true,
+  "credentials_preserved": {
+    "provider_credentials": 20,
+    "source_credentials": 36
+  },
+  "env_master_unit_preserved": true,
+  "previous_release_preserved": true,
+  "direct_and_nginx_assets_verified": 4,
+  "existing_authorization_preserved": true,
+  "key_lifecycle_passed": true,
+  "existing_calls": {
+    "shared_embeddings": 200,
+    "shared_rerank": 200,
+    "internal_models_denied_without_outbound": 5,
+    "mineru_health": 200
+  },
+  "real_fallback_in_isolated_copies": {
+    "synthetic_only": true,
+    "production_configuration_changed": false,
+    "rerank": {
+      "primary": "GPU",
+      "fallback": "cloud",
+      "fault": 503,
+      "result_status": 200,
+      "duration_ms": 7494,
+      "results": 300,
+      "chars_per_document": 4096,
+      "all_indices": true,
+      "finite_sorted_scores": true,
+      "exact_original_documents": true,
+      "original_input_preserved_at_both_sources": true,
+      "pending_new_ledger_rows": 0
+    },
+    "embeddings": {
+      "primary": "cloud",
+      "fallback": "GPU",
+      "fault": 503,
+      "result_status": 200,
+      "duration_ms": 24851,
+      "results": 300,
+      "chars_per_text": 4096,
+      "dimensions": 1024,
+      "all_indices": true,
+      "finite_nonzero_vectors": true,
+      "original_input_preserved_at_both_sources": true,
+      "pending_new_ledger_rows": 0
+    }
+  },
+  "cleanup": {
+    "isolated_processes_stopped": true,
+    "isolated_ports_released": true,
+    "isolated_directories_removed": true,
+    "production_pid_unchanged_during_isolated_checks": true,
+    "ready_and_live": 200,
+    "backup_preserved": true
+  },
+  "public_release_receipt_unchanged": true
+}
