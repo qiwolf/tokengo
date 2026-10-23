@@ -537,10 +537,35 @@ fn choice(from: Protocol, to: Protocol, v: &Value) -> Result<Value, String> {
     }
 }
 
+/// A narrow Chat-to-Responses compatibility alias. Native protocols retain their
+/// payloads; no summary, budget, context or provider-specific semantics are dropped.
+fn chat_reasoning_effort_alias(body: &Value) -> Result<Option<Value>, String> {
+    let Some(alias)=body.get("reasoning") else {return Ok(None);};
+    fields(alias,&["effort"])?;
+    let value=alias.get("effort").ok_or("Chat reasoning alias requires effort")?;
+    let effort=control_token(value,"reasoning.effort")?;
+    if let Some(canonical)=body.get("reasoning_effort") {
+        if control_token(canonical,"reasoning_effort")?!=effort {
+            return Err("Conflicting reasoning_effort and reasoning.effort".into());
+        }
+    }
+    let mut normalized=body.clone();
+    let object=normalized.as_object_mut().ok_or("Expected JSON object")?;
+    object.remove("reasoning");
+    object.insert("reasoning_effort".into(),value.clone());
+    Ok(Some(normalized))
+}
+
 pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Value, String> {
     if from == to {
         return Ok(body.clone());
     }
+    let alias = if from == Protocol::Chat && to == Protocol::Responses {
+        chat_reasoning_effort_alias(body)?
+    } else {
+        None
+    };
+    let body=alias.as_ref().unwrap_or(body);
     fields(
         body,
         match from {
@@ -953,6 +978,9 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
         return vec![];
     }
     let mut notes = vec![];
+    if from == Protocol::Chat && to == Protocol::Responses && body.get("reasoning").is_some() {
+        notes.push("Chat reasoning.effort compatibility alias normalized to canonical reasoning_effort before Responses conversion");
+    }
     if to == Protocol::Responses && body["stream"] == true {
         notes.push("Responses source moderation telemetry in the known OpenAI namespace is not mapped across protocols; control and unknown metadata remain unsupported");
     }

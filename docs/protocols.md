@@ -81,3 +81,9 @@ Hermes 等客户端使用 `store:false` 时，应在首轮即通过专用会话�
 首轮没有真实会话 ID 时可以正常调用，但不能在后续无绑定地回放 opaque history；仅有 `prompt_cache_key` 也不能建立或借用绑定。这类请求返回 HTTP400，保留 `error.type=invalid_request_error`，另加 `error.code=explicit_session_required`。历史会话在升级前没有建立真实会话绑定的，需要新建会话或从不含旧 opaque history 的上下文重新开始；升级不会根据缓存键自动追认旧产物的归属。
 
 已核对 Cyber Hermes `a4973c3f11d9cc92da986cbe150d1e79d094626f` 及官方 `8edc5ea255aaf17b1f1f944bc2dcce52fce06fa8`：其缓存键由逻辑作用域、instructions 和 tools 共同生成，部分 fork 可以继承作用域；普通 custom Responses 不自动发送 `session_id` 请求头。因此 Hermes 对 QLF 的接入还须转发真实的稳定会话 ID。工具或提示词变化后，只要真实会话 ID 不变，仍可沿原绑定回放；新建或旋转会话后，不允许借用旧会话的 opaque 产物。Tokengo 发行包不会自动修改第三方 Hermes 客户端。
+
+## Chat 请求中的 effort 对象兼容
+
+当 Chat 请求需要转换到仅原生支持 Responses 的来源时，兼容客户端使用的 `"reasoning":{"effort":"low"}` 写法，精确映射到 Responses 的 `reasoning.effort`；Chat 标准写法 `"reasoning_effort":"low"` 继续支持。客户端显式档位优先于来源默认，档位仍由来源能力声明校验，不按模型名称猜测。
+
+兼容对象仅允许 `effort` 字段。两个字段同时出现且值相同可合并；值冲突、非字符串档位、空对象及含有无法无损转换的其他 reasoning 属性时，返回明确 400 并且不发送上游。不会静默删除推理参数，也不通过普遍重试 400 掩盖参数错误。原生 Chat 的供应商扩展透传与原生 Responses 对象语义保持原样；这条兼容规则只用于 Chat→Responses 转换，不扩大 Messages 或不透明推理历史的转换范围。

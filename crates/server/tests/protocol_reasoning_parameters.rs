@@ -181,3 +181,52 @@ fn tier_maps_independently_and_chat_none_is_not_rewritten() {
         "none"
     );
 }
+
+
+#[test]
+fn chat_effort_object_alias_is_wire_equivalent_only_when_converting_to_responses() {
+    for effort in ["none","low","medium","high","xhigh","vendor_future-2"] {
+        let mut canonical=chat();canonical["reasoning_effort"]=json!(effort);
+        let mut alias=chat();alias["reasoning"]=json!({"effort":effort});
+        let original=alias.clone();
+        let expected=convert_request(Protocol::Chat,Protocol::Responses,&canonical).unwrap();
+        let actual=convert_request(Protocol::Chat,Protocol::Responses,&alias).unwrap();
+        assert_eq!(actual,expected);
+        assert_eq!(actual["reasoning"],json!({"effort":effort}));
+        assert!(actual.get("reasoning_effort").is_none());
+        assert_eq!(alias,original,"conversion must not modify the caller input");
+        assert_eq!(convert_request(Protocol::Chat,Protocol::Chat,&alias).unwrap(),alias,"native Chat stays untouched");
+        assert!(convert_request(Protocol::Chat,Protocol::Messages,&alias).is_err());
+        assert!(normalization_notes(Protocol::Chat,Protocol::Responses,&alias).iter().any(|note|note.contains("compatibility alias")));
+    }
+}
+
+#[test]
+fn chat_effort_object_alias_merges_identical_canonical_values_and_rejects_conflicts() {
+    let mut body=chat();body["reasoning"]=json!({"effort":"low"});body["reasoning_effort"]=json!("low");
+    assert_eq!(convert_request(Protocol::Chat,Protocol::Responses,&body).unwrap()["reasoning"],json!({"effort":"low"}));
+    body["reasoning_effort"]=json!("high");
+    assert!(convert_request(Protocol::Chat,Protocol::Responses,&body).unwrap_err().contains("Conflicting reasoning_effort"));
+    assert_eq!(convert_request(Protocol::Chat,Protocol::Chat,&body).unwrap(),body);
+}
+
+#[test]
+fn chat_effort_alias_never_silently_discards_unknown_or_malformed_semantics() {
+    let invalid=vec![
+        json!(null),json!(true),json!("high"),json!([]),json!({}),
+        json!({"effort":null}),json!({"effort":1}),json!({"effort":false}),
+        json!({"effort":""}),json!({"effort":"HIGH"}),json!({"effort":"high value"}),
+        json!({"effort":"high\n"}),json!({"effort":"x".repeat(33)}),
+        json!({"effort":"high","summary":"none"}),json!({"effort":"high","summary":"auto"}),
+        json!({"effort":"high","context":"all_turns"}),json!({"effort":"high","budget_tokens":1024}),
+    ];
+    for value in invalid {
+        let mut body=chat();body["reasoning"]=value;
+        assert!(convert_request(Protocol::Chat,Protocol::Responses,&body).is_err(),"{body}");
+        assert_eq!(convert_request(Protocol::Chat,Protocol::Chat,&body).unwrap(),body,"native Chat passthrough is unchanged");
+    }
+    let mut native=responses();native["reasoning"]=json!({"effort":"high","summary":"auto"});
+    native["include"]=json!(["reasoning.encrypted_content"]);
+    assert_eq!(convert_request(Protocol::Responses,Protocol::Responses,&native).unwrap(),native);
+    assert!(convert_request(Protocol::Responses,Protocol::Chat,&native).is_err(),"Responses summary/opaque protections remain closed");
+}

@@ -521,3 +521,46 @@ async fn responses_cache_only_opaque_replay_requires_a_real_session_identity() {
         assert_eq!(f.seen.seen.lock().unwrap().len(), 1, "unowned replay must fail before the source attempt");
     }
 }
+
+
+#[tokio::test]
+async fn converted_chat_effort_alias_keeps_explicit_effort_ahead_of_mapping_defaults() {
+    let f=Fixture::new(vec![Protocol::Responses],true).await;
+    tokengo_server::reasoning_capabilities::configure(
+        &f.state.conn(),f.channel_id,"matrix",Some(&["low".into(),"high".into()]),Some("high"),
+    ).unwrap();
+    for stream in [false,true] {
+        let request=json!({"model":"matrix","messages":[{"role":"user","content":"hello"}],"reasoning":{"effort":"low"},"stream":stream,"max_tokens":16});
+        let (status,text)=f.call(Protocol::Chat,request).await;
+        assert_eq!(status,200,"{text}");
+        let seen=f.seen.seen.lock().unwrap();let (path,body)=seen.last().unwrap();
+        assert_eq!(path,"/v1/responses");
+        assert_eq!(body["reasoning"],json!({"effort":"low"}),"configured high must not override explicit low");
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["model"],"upstream");
+    }
+    assert_eq!(f.seen.seen.lock().unwrap().len(),2);
+}
+
+#[tokio::test]
+async fn invalid_converted_chat_effort_aliases_are_rejected_before_outbound_attempts() {
+    let f=Fixture::new(vec![Protocol::Responses],true).await;
+    tokengo_server::reasoning_capabilities::configure(
+        &f.state.conn(),f.channel_id,"matrix",Some(&["low".into(),"high".into()]),Some("high"),
+    ).unwrap();
+    for extra in [
+        json!({"reasoning":{"effort":"low"},"reasoning_effort":"high"}),
+        json!({"reasoning":{"effort":"low","summary":"none"}}),
+        json!({"reasoning":{"effort":true}}),
+        json!({"reasoning":{"effort":"ultra"}}),
+    ] {
+        let mut body=json!({"model":"matrix","messages":[{"role":"user","content":"hello"}],"max_tokens":16});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let (status,text)=f.call(Protocol::Chat,body).await;
+        assert_eq!(status,400,"{text}");
+    }
+    assert!(f.seen.seen.lock().unwrap().is_empty());
+    f.state.drain_writes();
+    let attempts:i64=f.state.conn().query_row("SELECT COUNT(*) FROM attempts",[],|row|row.get(0)).unwrap();
+    assert_eq!(attempts,0,"invalid aliases must not cause upstream calls or retry attempts");
+}
