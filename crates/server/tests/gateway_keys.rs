@@ -415,10 +415,12 @@ async fn legacy_gateway_delete_preserves_managed_credentials_and_hides_tombstone
 #[tokio::test]
 async fn legacy_gateway_delete_revocation_rolls_back_when_audit_fails() {
     let cfg=config();let state=AppState::init(cfg.clone()).unwrap();let token=sessions::create_session(&state.conn(),None).unwrap();
-    let key=gateway_keys::create(&state.conn(),&state.secrets,"legacy active fixture","synthetic-test-only-active",false).unwrap();
+    let secret=gateway_keys::generate();
+    let key=gateway_keys::create(&state.conn(),&state.secrets,"legacy active fixture",&secret,false).unwrap();
+    assert!(state.authenticate_gateway_key(secret.clone()).await,"fixture must initially authenticate");
     state.conn().execute_batch("CREATE TRIGGER reject_legacy_key_delete_audit BEFORE INSERT ON audit_events WHEN NEW.action='key.delete' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();
     assert!(!request(state.clone(),"DELETE",&format!("/api/gateway-keys/{}",key.id),Some(&token),json!({})).await.0.is_success());
     {let c=state.conn();let row=db::identity::key(&c,key.id).unwrap().unwrap();assert!(row.enabled);assert!(row.revoked_at.is_none());assert!(!db::identity::key_deleted(&c,key.id).unwrap());}
-    assert!(state.check_gateway_key("synthetic-test-only-active"));
+    assert!(state.authenticate_gateway_key(secret).await);
     drop(state);std::fs::remove_dir_all(cfg.db_path.parent().unwrap()).unwrap();
 }
