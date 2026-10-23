@@ -1,8 +1,8 @@
 # tokengo
 
-正在准备 **v0.34.0-qiwolf.12**：按名路由与兼容续验性能修复、旧虚拟模型名称兼容、BGE-M3原生维度适配及管理界面布局整理。当前公开基线仍为下列qiwolf.11；.12的CI、二进制、容器和公开验收收据待完成，见[本版范围](docs/releases/v0.34.0-qiwolf.12.md)。现场私有性能补丁与正式发行分别验收。
+当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。本轮未升级237，现场仍为私有0d0性能补丁。见[版本说明](docs/releases/v0.34.0-qiwolf.12.md)与[最终收据](docs/acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
 
-当前正式版 **[v0.34.0-qiwolf.11](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.11)**，源码`551f1c1487a1`，Cargo0.34.0/schema40。包含Chatbox订阅系统指令、Responses显式会话、按真实后端能力接收的向量/重排及v4有界噪声兼容检查。精确提交CI、9个公开资产、原生与容器独立验收通过；本次未升级生产。GPU官方分词器和8192窗口为独立现场配置，不由网关升级自动应用。见[版本说明](docs/releases/v0.34.0-qiwolf.11.md)与[公开发行收据](docs/acceptance/2026-10-24-qiwolf11-release/README.md)。标签及资产内文档为构建时快照，最终收据维护在main和Release页面。
+历史公开版 [qiwolf.11](docs/releases/v0.34.0-qiwolf.11.md) 的既有收据保留。
 
 历史公开版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)** 修复管理员停用Key后的删除，既有冷备升级与Key验收见[历史收据](docs/releases/v0.34.0-qiwolf.10.md)。
 

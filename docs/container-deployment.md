@@ -1,8 +1,6 @@
 # 容器部署与分发
 
-当前已验收正式版为 **[v0.34.0-qiwolf.11](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.11)**，源码`551f1c1487a1`，Cargo0.34.0/schema40。9个公开资产、匿名镜像拉取和原生/容器独立验收见[公开收据](acceptance/2026-10-24-qiwolf11-release/README.md)。
-
-**v0.34.0-qiwolf.12正在准备**，范围见[版本说明](releases/v0.34.0-qiwolf.12.md)。其最终提交、CI、原生包SHA及镜像digest待发布后核实；不要用qiwolf.11或本地临时构建的摘要代替本版身份，也不要据此推定生产已从私有性能补丁升级正式版。
+当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。本轮未升级237，现场仍为私有0d0性能补丁。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
 
 镜像包含同一源码提交的 Rust 服务端、CLI 和完整 WASM 控制台，不需要在运行主机安装 Rust、Node.js 或 Nginx。默认源码多阶段构建；Linux CI 也将已经校验的同提交原生包封装成镜像，并验证隔离容器的启动、鉴权、WASM、重启持久化及停止行为。
 

@@ -2,6 +2,13 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
+## v0.34.0-qiwolf.12 — 2026-10-24（北京时间）
+
+- 按名/ID加载命中路由与private/shared策略，兼容续验不再重复展开无关完整目录；保留七类元数据语义、旧名称优先级及实时授权，仍有少量metadata扫描，不宣称O(1)。
+- 精确适配SiliconFlow BGE-M3原生1024维的冗余dimensions参数；其他来源/模型/维数不变。
+- 收录Key操作、服务商模型/映射、推理设置、虚拟策略和透传表单的已有布局整理。
+- 发行源码`6bf36fa917cd87209286c88a805ddc2cb6e52669`；main CI完整Rust1160通过、0失败、3忽略。本轮build-test Web125/Python22及native/WASM、公开9资产和原生/容器独立验收通过；后端172文件与此前证据相同，本轮未重跑build-test完整workspace。本轮未升级生产237，仍为private0d0补丁。见[版本说明](docs/releases/v0.34.0-qiwolf.12.md)与[最终收据](docs/acceptance/2026-10-24-qiwolf12-release/README.md)。
+
 ## v0.34.0-qiwolf.11 — 2026-10-24（北京时间）
 
 - 保留 Chatbox 订阅路径的 system 指令，兼容已观测的非流式订阅响应元数据。

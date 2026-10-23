@@ -1,0 +1,48 @@
+{
+  "result": "passed",
+  "source_commit": "6bf36fa917cd87209286c88a805ddc2cb6e52669",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12",
+  "assets": 9,
+  "host": "build-test Linux x86_64",
+  "anonymous_downloads": true,
+  "anonymous_registry": true,
+  "offline_archive_two_tags": true,
+  "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+  "smoke_restart_recreation": true,
+  "native_runtime": true,
+  "recoverable_key_runtime": true,
+  "container_key_runtime": true,
+  "production_access": false,
+  "created_release": false,
+  "published_at": "2026-10-23T18:25:37Z",
+  "main_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40000977772",
+    "result": "success",
+    "workspace_passed": 1160,
+    "workspace_failed": 0,
+    "workspace_ignored": 3,
+    "ignored_reasons": [
+      "child process helper invoked by parent test",
+      "external registry network test",
+      "explicit credentials for real cloud-to-GPU embedding/rerank fallback"
+    ]
+  },
+  "release_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40001310546",
+    "result": "success"
+  },
+  "build_test": {
+    "web_passed": 125,
+    "python_passed": 22,
+    "full_workspace_rerun": false,
+    "unchanged_backend_files": 172,
+    "backend_reference_commit": "0d0e6e722c6cf9ac4d93c3bc3c270a783a3c0876",
+    "native_release_build": true,
+    "web_release_build": true
+  },
+  "native_asset": "tokengo-6bf36fa917cd-linux-x86_64.tar.gz",
+  "native_sha256": "aa4b94472ffecf6a5a941f2c05e5e7eb55ccd7b380da4409f2dfe06271eb3393",
+  "container_digest": "sha256:ac134402e1f4f3af17aa321b63a9e29235f41b597ef8f007dc822c2e6d93c583",
+  "production_upgrade_performed": false,
+  "production_state": "private performance patch 0d0e6e7"
+}
