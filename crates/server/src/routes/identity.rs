@@ -337,7 +337,7 @@ async fn update_key(
     })?;
     Ok(Json(json!({"key":key_view(&c,&row)?})))
 }
-/// Remove an already revoked credential from daily lists without deleting its row.
+/// Permanently revoke and hide a disabled credential while retaining its history.
 async fn delete_key(
     admin: AdminAuth,
     State(state): State<SharedState>,
@@ -345,7 +345,7 @@ async fn delete_key(
 ) -> Result<Json<Value>, ApiError> {
     let c=state.conn();
     let row=missing_key(&c,id)?;
-    if row.revoked_at.is_none() { return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"key_not_revoked","请先撤销密钥，再从列表删除；暂停或停用不等于撤销")); }
+    if row.enabled && row.revoked_at.is_none() { return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"key_not_revoked","请先停用或撤销密钥，再从列表删除")); }
     db::in_tx(&c,|c| {
         let changed=identity::delete_key(c,id)?;
         if changed {
@@ -353,7 +353,7 @@ async fn delete_key(
         }
         Ok(())
     })?;
-    Ok(Json(json!({"key":key_view(&c,&row)?,"deleted":true,"id":id})))
+    Ok(Json(json!({"key":key_view(&c,&missing_key(&c,id)?)?,"deleted":true,"id":id})))
 }
 /// Every response, including authentication/ownership errors, forbids caching.
 pub(crate) async fn reveal_no_store(mut response:axum::response::Response)->axum::response::Response {

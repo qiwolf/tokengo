@@ -147,8 +147,8 @@ print("会话已撤销，再次访问返回401")
 | POST /api/account/keys | `{name,policy?,expires_at?,limit_micro?}`；顶级Key归属当前user，不要求先有VKey；事务内检查活动Key数 | `{key,secret}`；同时加密留存，可通过显示接口再次读取 |
 | PATCH /api/account/keys/{id} | `{name?,policy?,enabled?,expires_at?,limit_micro?,revoke?}`；只能收紧本人Key策略；允许暂停、撤销及恢复自己暂停的未到期Key，恢复须通过祖先有效性和活动Key数量检查；不能恢复管理员停用或已撤销的Key | `{key}` |
 | DELETE /api/account/keys/{id} | 撤销本人Key；非本人404；已撤销不能复活 | `{key}` |
-| POST /api/account/keys/{id}/delete | 本人浏览器会话+CSRF；只能删除已永久撤销Key，活动/暂停409，跨用户404；幂等且保留历史 | `{key,deleted:true,id}` |
-| POST /api/vkeys/{id}/delete | 管理授权；只能删除已永久撤销Key，活动/暂停409；首次写key.delete审计，重复幂等 | `{key,deleted:true,id}` |
+| POST /api/account/keys/{id}/delete | 本人浏览器会话+CSRF；可删除已停用、本人暂停或已撤销Key；删除时原子永久撤销；仍启用且未撤销409，跨用户404；幂等且保留历史 | `{key,deleted:true,id}` |
+| POST /api/vkeys/{id}/delete | 管理授权；可删除已停用、本人暂停或已撤销Key；删除时原子永久撤销；仍启用且未撤销409；首次写key.delete审计，重复幂等 | `{key,deleted:true,id}` |
 | POST /api/account/keys/{id}/reveal | 本人浏览器+CSRF；读取加密副本，成功前写审计，响应no-store；已删除404/历史无密文409 | `{key:完整Key字符串}` |
 | POST /api/vkeys/{id}/reveal | 管理授权；同上，不自动授予独立运维令牌访问 | `{key:完整Key字符串}` |
 
@@ -156,7 +156,7 @@ print("会话已撤销，再次访问返回401")
 
 新建 API Key 成功后，前端切换到独立的明文保存界面并自动尝试复制完整 Key；页面提供“复制 Key”重试和只读文本框手动复制。普通 HTTP 或剪贴板权限限制导致复制失败时明确提示，并保留本次明文，直到关闭交付界面或离开页面。管理员代建同样适用。完整 Key 可从列表点击“显示 Key”再次查看和复制，关闭后清除本页明文，不写入浏览器持久存储。旧版本只存摘要、未保存密文的历史 Key 无法恢复，界面会明确提示；已有密文的历史 Key 可以读取。新建Key的恢复材料使用服务器主密钥与AES-256-GCM保存，与创建、额度及审计同事务；写入失败不退回仅存摘要。历史Hermes Key已核实没有密文副本，保持原Key可调用但不能再次显示原值。普通HTTP的嵌套弹窗复制使用当前操作所在对话框内的回退控件；现场以原生系统剪贴板内容核对，不能只凭页面“复制成功”提示判断交付。关闭只清除本页明文，不自动清除用户已复制的系统剪贴板。
 
-已永久撤销的 Key 可以点击“删除 Key”并确认，从日常列表移除；调用历史、账务、审计与父子约束保留。已删除 Key 不再允许编辑或启用。此删除能力与前述明文交付修复属于 qiwolf.8 之后的 main 改动，已在237部署验收，原 qiwolf.8 发行附件保持原样，详见[删除验收](acceptance/2026-10-23-key-delete/README.md)。
+已停用、本人暂停或已撤销的 Key 可以点击“删除 Key”并确认；删除会永久撤销，不能再恢复，从日常列表移除；调用历史、账务、审计与父子约束保留。已删除 Key 不再允许编辑或启用。此删除能力与前述明文交付修复属于 qiwolf.8 之后的 main 改动，已在237部署验收，原 qiwolf.8 发行附件保持原样，详见[删除验收](acceptance/2026-10-23-key-delete/README.md)。
 
 自助策略必须不宽于实时用户策略，管理能力强制关闭；编辑既有Key还须不宽于其旧策略和父链。金额上限不能高于用户、既有Key或父链上限，不能清空有限上限来逃限；多个Key仍共享用户总额。Key到期可缩短，不能超出既有或父链期限。密码修改/重置撤登录会话，保留API Key与财务身份；用户整体停用阻断登录和新API请求。
 

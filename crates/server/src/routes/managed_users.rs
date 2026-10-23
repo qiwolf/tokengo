@@ -634,13 +634,13 @@ async fn own_delete(
     let row=identity::key(&c,id)?
         .filter(|k|k.user_id==u.id)
         .ok_or_else(||ApiError::not_found("密钥不存在"))?;
-    if row.revoked_at.is_none() { return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"key_not_revoked","请先撤销密钥，再从列表删除；暂停或停用不等于撤销")); }
+    if row.enabled && row.revoked_at.is_none() { return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"key_not_revoked","请先停用或撤销密钥，再从列表删除")); }
     let value=credentials::atomic(&c,|| {
         let changed=identity::delete_key(&c,id)?;
         if changed {
             c.execute("INSERT INTO audit_events(ts_ms,action,target_type,target_id,metadata_json) VALUES(?1,'key.delete','key',?2,?3)",params![db::now_ms(),id,json!({"actor_account_id":browser.credential.account.id,"user_id":u.id,"physical_record_retained":true}).to_string()])?;
         }
-        key_view(&c,&row)
+        key_view(&c,&identity::key(&c,id)?.ok_or_else(||db::DbError::Other("Key not found".into()))?)
     }).map_err(invalid)?;
     Ok(Json(json!({"key":value,"deleted":true,"id":id})))
 }

@@ -1034,7 +1034,7 @@ async fn deleted_revoked_key_hides_from_lists_but_preserves_ancestry_and_financi
 }
 
 #[tokio::test]
-async fn key_delete_requires_revocation_ownership_browser_csrf_or_explicit_administrator() {
+async fn key_delete_requires_inactive_state_ownership_browser_csrf_or_explicit_administrator() {
     let f = Fixture::new();
     let (user, cookie) = deletion_user(&f, "key-delete-scope").await;
     let (_, other_cookie) = deletion_user(&f, "key-delete-other").await;
@@ -1053,12 +1053,6 @@ async fn key_delete_requires_revocation_ownership_browser_csrf_or_explicit_admin
         assert_eq!(status, StatusCode::CONFLICT, "active key cannot be deleted: {path}");
     }
     assert_eq!(f.req("PATCH", &own, Some(&cookie), None, true, None, json!({"enabled":false})).await.0, StatusCode::OK);
-    for path in [&delete, &admin] {
-        let (status, _, _) = if path == &delete {
-            f.req("POST", path, Some(&cookie), None, true, None, json!({})).await
-        } else { f.admin("POST", path, json!({})).await };
-        assert_eq!(status, StatusCode::CONFLICT, "a reversible pause is not permanent revocation: {path}");
-    }
     assert_eq!(f.req("DELETE", &own, Some(&cookie), None, true, None, json!({})).await.0, StatusCode::OK);
     assert_eq!(f.req("POST", &delete, Some(&other_cookie), None, true, None, json!({})).await.0, StatusCode::NOT_FOUND);
     assert_eq!(f.req("POST", &delete, None, None, true, None, json!({})).await.0, StatusCode::UNAUTHORIZED);
@@ -1242,5 +1236,62 @@ async fn reveal_audit_failure_hides_plaintext_and_encrypted_creation_failure_rol
         }else{f.admin("POST",&format!("/api/users/{user}/keys"),json!({"name":"must roll back admin"})).await};
         assert!(!status.is_success(),"creation cannot silently fall back to unrevealable hash-only storage");
         assert!(value["secret"].is_null());assert_eq!(snapshot(),before,"key, budget and audit writes must roll back atomically");
+    }
+}
+
+
+#[tokio::test]
+async fn disabled_keys_can_be_deleted_by_owner_or_admin_and_permanently_block_children() {
+    let f=Fixture::new();
+    let (user,cookie)=deletion_user(&f,"disabled-delete-owner").await;
+    let (_,other_cookie)=deletion_user(&f,"disabled-delete-other").await;
+    for personal in [true,false] {
+        for self_pause in [false,true] {
+            let (parent,secret,child,child_secret)={
+                let c=f.state.conn();
+                let (parent,secret)=db::identity::create_key(&c,user,"disabled parent",&Default::default(),None,None).unwrap();
+                let (child,child_secret)=db::identity::create_key(&c,user,"retained child",&Default::default(),None,Some(parent.id)).unwrap();
+                (parent.id,secret,child.id,child_secret)
+            };
+            let own=format!("/api/account/keys/{parent}");
+            let admin=format!("/api/vkeys/{parent}");
+            let (status,value,_)=if self_pause {f.req("PATCH",&own,Some(&cookie),None,true,None,json!({"enabled":false})).await} else {f.admin("PATCH",&admin,json!({"enabled":false})).await};
+            assert_eq!(status,StatusCode::OK,"{value}");
+            assert!(value["key"]["revoked_at"].is_null());
+            if !self_pause {
+                assert_eq!(f.req("PATCH",&own,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::FORBIDDEN,"admin-disabled key must not be resumed by its owner");
+            }
+            assert_eq!(f.req("POST",&format!("{own}/delete"),Some(&other_cookie),None,true,None,json!({})).await.0,StatusCode::NOT_FOUND);
+            let path=if personal {format!("{own}/delete")} else {format!("{admin}/delete")};
+            for _ in 0..2 {
+                let (status,value,_)=if personal {f.req("POST",&path,Some(&cookie),None,true,None,json!({})).await} else {f.admin("POST",&path,json!({})).await};
+                assert_eq!(status,StatusCode::OK,"{value}");assert_eq!(value["deleted"],true);
+                assert!(value["key"]["revoked_at"].is_i64());assert_eq!(value["key"]["enabled"],false);
+            }
+            assert!(f.state.authenticate_context(secret).await.is_none());
+            assert!(f.state.authenticate_context(child_secret).await.is_none());
+            assert_eq!(f.admin("PATCH",&admin,json!({"enabled":true})).await.0,StatusCode::NOT_FOUND);
+            assert_eq!(f.req("PATCH",&own,Some(&cookie),None,true,None,json!({"enabled":true})).await.0,StatusCode::NOT_FOUND);
+            assert!(!f.admin("GET",&format!("/api/users/{user}/keys"),json!(null)).await.1["keys"].as_array().unwrap().iter().any(|k|k["id"]==parent));
+            assert!(!f.req("GET","/api/account/keys",Some(&cookie),None,false,None,json!(null)).await.1["keys"].as_array().unwrap().iter().any(|k|k["id"]==parent));
+            let c=f.state.conn();
+            let retained=db::identity::key(&c,parent).unwrap().unwrap();assert!(retained.revoked_at.is_some());assert!(!retained.enabled);
+            assert_eq!(db::identity::key(&c,child).unwrap().unwrap().parent_key_id,Some(parent));
+            assert!(!db::identity::self_paused(&c,&retained).unwrap());
+            assert_eq!(c.query_row("SELECT count(*) FROM audit_events WHERE target_id=?1 AND action='key.delete'",[parent],|r|r.get::<_,i64>(0)).unwrap(),1,"idempotent deletion must not duplicate audit events");
+        }
+    }
+}
+
+#[tokio::test]
+async fn deleting_disabled_key_rolls_back_revocation_and_tombstone_when_audit_fails() {
+    let f=Fixture::new();let (user,cookie)=deletion_user(&f,"disabled-delete-audit").await;
+    let id={let c=f.state.conn();let (mut key,_)=db::identity::create_key(&c,user,"disabled audit retained",&Default::default(),None,None).unwrap();key.enabled=false;db::identity::update_key(&c,&key).unwrap();
+        c.execute_batch("CREATE TRIGGER reject_disabled_delete_audit BEFORE INSERT ON audit_events WHEN NEW.action='key.delete' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();key.id};
+    for personal in [true,false] {
+        let path=if personal {format!("/api/account/keys/{id}/delete")}else{format!("/api/vkeys/{id}/delete")};
+        let (status,_,_)=if personal {f.req("POST",&path,Some(&cookie),None,true,None,json!({})).await}else{f.admin("POST",&path,json!({})).await};
+        assert!(!status.is_success());let c=f.state.conn();
+        let retained=db::identity::key(&c,id).unwrap().unwrap();assert!(retained.revoked_at.is_none(),"failed audit must roll back implicit revocation");assert!(!retained.enabled);assert!(!db::identity::key_deleted(&c,id).unwrap());
     }
 }

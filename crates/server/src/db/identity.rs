@@ -556,17 +556,22 @@ pub fn update_key(c: &Connection, row: &VKey) -> Result<()> {
 }
 /// List-only tombstone: retain the credential row, parent chain and accounting IDs.
 /// Deliberately separate from `key()` so historical and authentication reads keep
-/// their physical record. Only already-revoked keys can acquire this metadata.
+/// their physical record. Disabled keys are permanently revoked before hiding.
 pub fn key_deleted(c: &Connection, id: i64) -> Result<bool> {
     Ok(super::settings::get(c,&format!("deleted_key:{id}"))?.is_some())
 }
 /// Call inside the caller's audit transaction; false means already deleted.
 pub fn delete_key(c: &Connection, id: i64) -> Result<bool> {
-    let row=key(c,id)?.ok_or_else(||DbError::Other("Key not found".into()))?;
-    if row.revoked_at.is_none() { return Err(DbError::Other("请先撤销密钥，再从列表删除；暂停或停用不等于撤销".into())); }
-    if key_deleted(c,id)? { return Ok(false); }
-    super::settings::set(c,&format!("deleted_key:{id}"),&now_ms().to_string())?;
-    Ok(true)
+    let remove=|c:&Connection| {
+        let row=key(c,id)?.ok_or_else(||DbError::Other("Key not found".into()))?;
+        if key_deleted(c,id)? { return Ok(false); }
+        if row.enabled && row.revoked_at.is_none() { return Err(DbError::Other("请先停用或撤销密钥，再从列表删除".into())); }
+        // Revoking the retained ancestor permanently blocks its descendants too.
+        revoke(c,id)?;
+        super::settings::set(c,&format!("deleted_key:{id}"),&now_ms().to_string())?;
+        Ok(true)
+    };
+    if c.is_autocommit() {super::in_tx(c,remove)}else{remove(c)}
 }
 pub fn revoke(c: &Connection, id: i64) -> Result<bool> {
     clear_self_pause(c,id)?;
