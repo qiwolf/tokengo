@@ -27,6 +27,38 @@ impl std::fmt::Display for ChannelFault {
     }
 }
 
+/// Adapt the fixed-size SiliconFlow BGE-M3 request at the final transport boundary.
+/// Every other request retains its original bytes.
+fn fixed_embedding_dimensions(base_url: &str, path: &str, body: Bytes) -> Bytes {
+    if path != "embeddings" {
+        return body;
+    }
+    let Ok(url) = url::Url::parse(base_url) else {
+        return body;
+    };
+    if url.scheme() != "https"
+        || url.host_str() != Some("api.siliconflow.cn")
+        || url.port_or_known_default() != Some(443)
+        || url.path().trim_end_matches('/') != "/v1"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return body;
+    }
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return body;
+    };
+    if value.get("model").and_then(|v| v.as_str()) != Some("BAAI/bge-m3")
+        || value.get("dimensions").and_then(|v| v.as_u64()) != Some(1024)
+    {
+        return body;
+    }
+    // The native output already has 1024 dimensions. SiliconFlow rejects the
+    // optional dimensions field for BGE-M3; do not truncate or alter vectors.
+    value.as_object_mut().unwrap().remove("dimensions");
+    serde_json::to_vec(&value).map(Bytes::from).unwrap_or(body)
+}
+
 /// 打上游的客户端。内部连接池复用，进程里只建一个。
 #[derive(Clone)]
 pub struct Upstream {
@@ -87,6 +119,7 @@ impl Upstream {
             #[cfg(test)]let allowed=allowed||reqwest::Url::parse(&channel.base_url).is_ok_and(|url|url.host_str()==Some("127.0.0.1"));
             if !allowed {return Err(ChannelFault{message:"Invalid OpenAI subscription destination".into()});}
         }
+        let body = fixed_embedding_dimensions(&channel.base_url, path, body);
         let url = join_url(&channel.base_url, path);
         let client=if subscription {&self.subscription_client}else{&self.client};
         let mut rb = client
@@ -798,6 +831,60 @@ fn probe_error_note(bytes:&[u8],redactions:&[&str])->Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn siliconflow_bge_native_dimensions_are_omitted_without_changing_payload() {
+        let original = serde_json::json!({"model":"BAAI/bge-m3","input":["test","文本"],
+            "dimensions":1024,"encoding_format":"float","user":"caller","extra":{"keep":true}});
+        let mut expected = original.clone();
+        expected.as_object_mut().unwrap().remove("dimensions");
+        for base in ["https://api.siliconflow.cn/v1", "https://api.siliconflow.cn/v1/"] {
+            let result = fixed_embedding_dimensions(base, "embeddings",
+                Bytes::from(serde_json::to_vec(&original).unwrap()));
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&result).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn siliconflow_bge_compatibility_preserves_other_models_sources_and_endpoints() {
+        let cases = [
+            ("https://api.siliconflow.cn/v1", "embeddings", "Qwen/Qwen3-Embedding-4B"),
+            ("https://api.siliconflow.cn/v1", "embeddings", "Pro/BAAI/bge-m3"),
+            ("https://api.siliconflow.cn/v1", "chat/completions", "BAAI/bge-m3"),
+            ("https://api.siliconflow.cn/v1", "rerank", "BAAI/bge-m3"),
+            ("http://127.0.0.1:11436/v1", "embeddings", "BAAI/bge-m3"),
+            ("https://api.siliconflow.cn.example/v1", "embeddings", "BAAI/bge-m3"),
+            ("https://api.siliconflow.cn/custom", "embeddings", "BAAI/bge-m3"),
+            ("http://api.siliconflow.cn/v1", "embeddings", "BAAI/bge-m3"),
+        ];
+        for (base,path,model) in cases {
+            let raw = Bytes::from(format!("{{ \"model\":\"{model}\", \"dimensions\":1024, \"input\":\"test\" }}"));
+            assert_eq!(fixed_embedding_dimensions(base,path,raw.clone()),raw,"{base} {path} {model}");
+        }
+    }
+
+    #[test]
+    fn siliconflow_bge_compatibility_preserves_unsupported_dimensions_and_encodings() {
+        for dimensions in [serde_json::json!(512), serde_json::json!(1536), serde_json::json!(0),
+            serde_json::json!("1024"), serde_json::Value::Null] {
+            let raw = Bytes::from(serde_json::to_vec(&serde_json::json!({
+                "model":"BAAI/bge-m3","input":"test","dimensions":dimensions})).unwrap());
+            assert_eq!(fixed_embedding_dimensions("https://api.siliconflow.cn/v1","embeddings",raw.clone()),raw);
+        }
+        for encoding in ["float", "base64"] {
+            let original = serde_json::json!({"model":"BAAI/bge-m3","input":[1,2,3],
+                "dimensions":1024,"encoding_format":encoding});
+            let result = fixed_embedding_dimensions("https://api.siliconflow.cn/v1", "embeddings",
+                Bytes::from(serde_json::to_vec(&original).unwrap()));
+            let result:serde_json::Value=serde_json::from_slice(&result).unwrap();
+            assert!(result.get("dimensions").is_none());
+            assert_eq!(result["encoding_format"],encoding);
+            assert_eq!(result["input"],original["input"]);
+        }
+        for raw in [Bytes::from_static(b"{invalid"),Bytes::from_static(br#"{ "model":"BAAI/bge-m3", "input":"test" }"#)] {
+            assert_eq!(fixed_embedding_dimensions("https://api.siliconflow.cn/v1","embeddings",raw.clone()),raw);
+        }
+    }
+
     #[test]
     fn probe_errors_are_structured_bounded_and_redacted() {
         let v=super::probe_error_note(br#"{"error":{"message":"quota exhausted secret-key custom-header"}}"#,&["secret-key","custom-header"]).unwrap();
