@@ -88,13 +88,11 @@ pub(crate) struct RouteGuard {
 impl RouteGuard {
     pub(crate) fn check(&self, c: &Connection) -> Result<(), vr::VirtualError> {
         let valid = if self.user == 0 {
-            db::shared_virtual_routes::list(c)?
-                .into_iter()
-                .any(|r| r.id == self.id && r.version == self.version && r.config.enabled)
+            db::shared_virtual_routes::get(c,self.id)?
+                .is_some_and(|r| r.version == self.version && r.config.enabled)
         } else {
-            vr::list(c, self.user)?
-                .into_iter()
-                .any(|r| r.id == self.id && r.version == self.version && r.config.enabled)
+            vr::get(c,self.user,self.id)?
+                .is_some_and(|r| r.version == self.version && r.config.enabled)
         };
         if !valid {
             return Err(fail("续验期间策略已停用或修改，旧检查结果不再发布"));

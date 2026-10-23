@@ -84,7 +84,12 @@ fn usable(l: &channels::ChannelRow) -> bool {
 ///
 /// 行的顺序是稳定的（按名字），刷新前后不会跳；`declared_by` / `channels` 里是渠道顺序。
 pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
-    let chans = channels::list(conn)?;
+    build_routes(conn, channels::list(conn)?)
+}
+
+// One implementation preserves list and point-lookup routing semantics. Runtime
+// callers supply only channels/mappings for the requested normalized name.
+fn build_routes(conn: &Connection, chans: Vec<channels::ChannelRow>) -> Result<Vec<NameRoute>> {
     let kind_of = kinds::all(conn)?;
     let mut out: Vec<NameRoute> = Vec::new();
     for l in &chans {
@@ -132,7 +137,8 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
         }
     }
     let catalogs = chans.iter().map(|ch| {
-        super::catalog::list(conn, ch.id).map(|entries| (ch.id, entries))
+        let names = ch.models.iter().flat_map(|m| [m.model.as_str(),m.upstream.as_deref().unwrap_or(&m.model)]).collect::<Vec<_>>();
+        super::catalog::routing_entries(conn, ch.id, &names).map(|entries| (ch.id, entries))
     }).collect::<Result<HashMap<_, _>>>()?;
     for r in &mut out {
         let policy = super::route_policy::load(conn, &r.name)?;
@@ -221,7 +227,8 @@ pub fn servable(conn: &Connection) -> Result<Vec<NameRoute>> {
 
 /// 一个名字在哪几行上写的（面板要显示「谁勾了它」），按渠道顺序。
 pub fn routes_for(conn: &Connection, name: &str) -> Result<Option<NameRoute>> {
-    Ok(list(conn)?
+    if name.trim().is_empty() || is_auto(name) { return Ok(None); }
+    Ok(build_routes(conn, channels::for_model(conn,name)?)?
         .into_iter()
         .find(|r| same_model_name(&r.name, name)))
 }
@@ -234,7 +241,7 @@ pub fn routes_for(conn: &Connection, name: &str) -> Result<Option<NameRoute>> {
 pub fn channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
     let mut out = Vec::new();
     if !enabled(conn,name)? {return Ok(out);}
-    for l in channels::list(conn)? {
+    for l in channels::for_model(conn,name)? {
         let Some(m) = l
             .models
             .iter()
@@ -338,6 +345,81 @@ mod tests {
 
     fn declare(conn: &Connection, id: ChannelId, models: &[ModelMapping]) {
         channels::set_models(conn, id, models).unwrap();
+    }
+
+    #[test]
+    fn point_routes_match_list_for_every_kind_and_normalized_spelling() {
+        let conn=open_in_memory().unwrap();
+        let a=channel(&conn,"A");let b=channel(&conn,"B");
+        let kinds=[ModelKind::Unknown,ModelKind::Chat,ModelKind::Embeddings,ModelKind::Rerank,ModelKind::Image,ModelKind::Video,ModelKind::Audio];
+        let first=kinds.iter().enumerate().map(|(i,_)|ModelMapping::new(format!("Ä模型_{i}_Public (vendor) free"),Some(format!("native-{i}")),true)).collect::<Vec<_>>();
+        let second=kinds.iter().enumerate().map(|(i,_)|ModelMapping::new(format!("ä模型-{i}-public"),Some(format!("other-{i}")),false)).collect::<Vec<_>>();
+        declare(&conn,a,&first);declare(&conn,b,&second);
+        for (i,kind) in kinds.into_iter().enumerate() {
+            kinds::set(&conn,&first[i].model,kind).unwrap();
+        }
+        let all=list(&conn).unwrap();assert_eq!(all.len(),7);
+        for (i,expected_kind) in kinds.into_iter().enumerate() {
+            let requested=format!(" Ä模型 {i} PUBLIC FREE (another-provider) ");
+            let point=routes_for(&conn,&requested).unwrap().unwrap();
+            assert_eq!(point.kind,expected_kind);
+            assert_eq!(point,all.iter().find(|row|same_model_name(&row.name,&requested)).unwrap().clone());
+            assert_eq!(point.declared_by,vec![a,b]);
+            assert_eq!(channels_for(&conn,&requested).unwrap().iter().map(|row|row.id).collect::<Vec<_>>(),vec![a,b]);
+        }
+        assert!(routes_for(&conn,"nobody").unwrap().is_none());
+        assert!(routes_for(&conn,"AUTO (vendor)").unwrap().is_none());
+    }
+
+    #[test]
+    fn point_routes_preserve_context_conflict_policy_visibility_and_live_source_changes() {
+        let conn=open_in_memory().unwrap();let a=channel(&conn,"A");let b=channel(&conn,"B");
+        declare(&conn,a,&[ModelMapping::new("Public_模型",Some("embedding-native".into()),true)]);
+        declare(&conn,b,&[ModelMapping::new("public 模型 (vendor)",Some("chat-native".into()),false)]);
+        conn.execute("INSERT INTO channel_catalog(channel_id,model_id,context_window,kind_claim)VALUES(?1,'embedding-native',8192,'embeddings')",[a.0]).unwrap();
+        conn.execute("INSERT INTO channel_catalog(channel_id,model_id,context_window,kind_claim)VALUES(?1,'chat-native',4096,'chat')",[b.0]).unwrap();
+        conn.execute("INSERT INTO channel_context_overrides(channel_id,upstream_model,context_window)VALUES(?1,'embedding-native',16384)",[a.0]).unwrap();
+        kinds::set(&conn,"Public_模型",ModelKind::Embeddings).unwrap();
+        super::super::route_policy::save(&conn,"public-模型",&super::super::route_policy::RoutePolicy{channel_ids:Some(vec![b.0,a.0]),..Default::default()}).unwrap();
+        let parity=|| {
+            let point=routes_for(&conn,"PUBLIC 模型").unwrap().unwrap();
+            assert_eq!(point,list(&conn).unwrap().into_iter().find(|r|same_model_name(&r.name,"public 模型")).unwrap());
+            point
+        };
+        let row=parity();assert_eq!(row.channels,vec![b,a]);assert!(row.kind_conflict);
+        assert_eq!(row.context_window,Some(4096));assert_eq!(row.context_source.as_deref(),Some("user_confirmed+upstream"));
+        set_visible(&conn,"public 模型",false).unwrap();assert!(!visible(&conn,"PUBLIC_模型").unwrap());assert!(parity().routed());
+        conn.execute("INSERT INTO provider_channels(name,enabled,created_ms)VALUES('parent',0,1)",[]).unwrap();
+        let provider=conn.last_insert_rowid();
+        super::super::provider_channels::set_membership(&conn,b.0,Some(provider)).unwrap();
+        let row=parity();assert_eq!(row.channels,vec![a]);assert_eq!(row.declared_by,vec![a,b]);
+        assert_eq!(row.context_window,Some(16384));assert!(row.kind_conflict);
+        assert!(!channels_for(&conn,"public 模型").unwrap().iter().find(|ch|ch.id==b).unwrap().enabled);
+        let revision=super::super::faults::revision(&conn,a.0).unwrap();
+        let permit=super::super::faults::claim(&conn,a.0,"Public_模型",revision,crate::db::now_ms()).unwrap().unwrap();
+        super::super::faults::suspend(&conn,&permit,"Public_模型",super::super::faults::Fault::Model,"synthetic model denial",crate::db::now_ms()).unwrap();
+        assert!(parity().channels.is_empty());
+        set_enabled(&conn,"public 模型",false).unwrap();assert!(!parity().enabled);
+        assert!(channels_for(&conn,"PUBLIC_模型").unwrap().is_empty());
+    }
+
+    #[test]
+    fn routing_ignores_reasoning_catalog_hydration_and_unrelated_bad_channel_rows() {
+        let conn=open_in_memory().unwrap();let a=channel(&conn,"A");let other=channel(&conn,"unrelated");
+        declare(&conn,a,&[ModelMapping::new("public",Some("native".into()),false)]);
+        declare(&conn,other,&[ModelMapping::new("unrelated",None,false)]);
+        let entries=crate::upstream::parse_model_catalog(r#"{"data":[{"id":"native","kind":"embeddings","context_length":8192},{"id":"unselected","kind":"chat"}]}"#);
+        super::super::catalog::replace(&conn,a,&entries,1).unwrap();
+        conn.execute("UPDATE channel_reasoning_catalog SET capability_json='{' WHERE channel_id=?1",[a.0]).unwrap();
+        assert!(super::super::catalog::list(&conn,a).is_err(),"fixture proves reasoning DTO hydration is malformed");
+        conn.execute("UPDATE channel_catalog SET context_window='bad unrelated context' WHERE channel_id=?1 AND model_id='unselected'",[a.0]).unwrap();
+        let row=routes_for(&conn,"PUBLIC (vendor)").unwrap().unwrap();
+        assert_eq!(row.kind,ModelKind::Embeddings);
+        assert_eq!(list(&conn).unwrap().iter().find(|r|r.name=="public").unwrap(),&row);
+        conn.execute("UPDATE channels SET max_concurrent='bad unrelated integer' WHERE id=?1",[other.0]).unwrap();
+        assert!(channels::list(&conn).is_err());
+        assert_eq!(routes_for(&conn,"public").unwrap().unwrap(),row);
+        assert_eq!(channels_for(&conn,"public").unwrap().len(),1);
     }
 
     /// 顺序：渠道页从上到下就是「先试哪条」，名字下面直接按它排。

@@ -150,6 +150,28 @@ pub fn list(conn: &Connection) -> Result<Vec<ChannelRow>> {
     Ok(rows)
 }
 
+/// Runtime lookup: inspect only mapping names before hydrating matching channels.
+/// Rust normalization is required: SQL lower/trim does not implement provider
+/// suffixes, separator folding, or Unicode case folding from same_model_name.
+pub(crate) fn for_model(conn: &Connection, name: &str) -> Result<Vec<ChannelRow>> {
+    let mut statement = conn.prepare("SELECT channel_id,model_name FROM channel_models")?;
+    let mappings = statement.query_map([], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut ids = std::collections::HashSet::new();
+    for (id, model) in mappings {
+        if tokengo_shared::same_model_name(&model, name) { ids.insert(id); }
+    }
+    let mut channels = Vec::new();
+    for id in ids {
+        if let Some(mut channel) = get(conn, ChannelId(id))? {
+            channel.models.retain(|mapping| tokengo_shared::same_model_name(&mapping.model, name));
+            channels.push(channel);
+        }
+    }
+    channels.sort_by_key(|channel| (channel.priority,channel.id.0));
+    Ok(channels)
+}
+
 pub fn get(conn: &Connection, id: ChannelId) -> Result<Option<ChannelRow>> {
     let mut stmt = conn.prepare(&format!("{SELECT_CHANNEL} WHERE l.id = ?1 AND l.transport_kind='llm'"))?;
     let mut channel: Option<ChannelRow> = stmt.query_row([id.0], row_to_channel).optional()?;

@@ -524,3 +524,70 @@ fn paid_permission_follows_real_target_price_not_the_alias() {
     db::billing::create_price(&c, &price, "root").unwrap();
     assert!(vr::alias_names(&c, &auth, 0).unwrap().is_empty());
 }
+
+
+fn unrelated_corrupt_private_row(c: &rusqlite::Connection, user: i64, template: i64) {
+    c.execute(
+        "INSERT INTO user_virtual_models(user_id,name,normalized_name,enabled,mode,timezone,default_positions_json,version,created_ms,updated_ms) SELECT ?1,'unrelated-broken','unrelated-broken',enabled,mode,timezone,'{invalid-json',version,created_ms,updated_ms FROM user_virtual_models WHERE id=?2",
+        rusqlite::params![user,template],
+    ).unwrap();
+}
+
+#[test]
+fn private_request_lookup_reads_only_selected_owned_route_and_rechecks_authorization() {
+    let f = Fixture::new();
+    let c = f.state.conn();
+    let route = vr::create(&c, f.u, &cfg("point-private", f.provider)).unwrap();
+    let foreign = vr::create(&c, f.other, &cfg("foreign-private", f.provider)).unwrap();
+    unrelated_corrupt_private_row(&c, f.u, route.id);
+    assert!(vr::list(&c, f.u).is_err(), "fixture proves a directory hydration would fail");
+    assert_eq!(vr::resolve(&c, f.u, " POINT-PRIVATE ", 0).unwrap().unwrap().id, route.id);
+    assert!(vr::resolve(&c, f.u, "real-model", 0).unwrap().is_none(), "ordinary endpoints must not hydrate private siblings");
+    assert!(vr::resolve(&c, f.u, "foreign-private", 0).unwrap().is_none());
+    assert!(vr::get(&c, f.u, foreign.id).unwrap().is_none());
+    assert_eq!(vr::get(&c, f.u, route.id).unwrap().unwrap().id, route.id);
+    vr::validate_current(&c, f.u, route.id, route.version, 1, 0).unwrap();
+    let mut user = db::identity::user(&c, f.u).unwrap().unwrap();
+    user.policy.allowed_models = Some(vec![]);
+    db::identity::update_user(&c, &user).unwrap();
+    assert_eq!(vr::validate_current(&c, f.u, route.id, route.version, 1, 0).unwrap_err().code, "virtual_target_forbidden", "point lookup must not cache away live revocation");
+    user.enabled = false;
+    db::identity::update_user(&c, &user).unwrap();
+    assert_eq!(vr::resolve(&c, f.u, "point-private", 0).unwrap_err().code, "virtual_route_forbidden");
+}
+
+#[test]
+fn private_point_reads_preserve_time_windows_and_recycle_bin_without_sibling_hydration() {
+    let f = Fixture::new();
+    let c = f.state.conn();
+    let mut config = cfg("scheduled-point", f.provider);
+    config.mode = "scheduled".into();
+    config.timezone = "UTC".into();
+    config.windows = vec![vr::Window {days_mask:127,start_minute:0,end_minute:1,target_positions:vec![1]}];
+    let route = vr::create(&c, f.u, &config).unwrap();
+    unrelated_corrupt_private_row(&c, f.u, route.id);
+    assert_eq!(vr::resolve(&c, f.u, "scheduled-point", 0).unwrap().unwrap().targets.len(), 1);
+    assert_eq!(vr::validate_current(&c, f.u, route.id, route.version, 1, 60_000).unwrap_err().code, "route_time_unavailable");
+    let deleted = vr::trash(&c, f.u, route.id, route.version).unwrap();
+    assert!(vr::resolve(&c, f.u, "scheduled-point", 0).unwrap().is_none());
+    assert!(vr::get(&c, f.u, route.id).unwrap().is_none());
+    assert_eq!(vr::validate_current(&c, f.u, route.id, route.version, 1, 0).unwrap_err().code, "virtual_route_forbidden");
+    let restored = vr::restore(&c, f.u, route.id, deleted.version).unwrap();
+    assert!(!restored.config.enabled);
+    assert_eq!(vr::resolve(&c, f.u, "scheduled-point", 0).unwrap_err().code, "virtual_route_forbidden");
+}
+
+#[test]
+fn private_name_and_id_queries_use_existing_point_indexes() {
+    let f = Fixture::new();
+    let c = f.state.conn();
+    let route = vr::create(&c, f.u, &cfg("indexed-point", f.provider)).unwrap();
+    for (query,params) in [
+        ("EXPLAIN QUERY PLAN SELECT id FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2", vec![rusqlite::types::Value::Integer(f.u),rusqlite::types::Value::Text("indexed-point".into())]),
+        ("EXPLAIN QUERY PLAN SELECT id FROM user_virtual_models WHERE id=?1 AND user_id=?2", vec![rusqlite::types::Value::Integer(route.id),rusqlite::types::Value::Integer(f.u)]),
+    ] {
+        let mut statement = c.prepare(query).unwrap();
+        let plan = statement.query_map(rusqlite::params_from_iter(params), |row| row.get::<_,String>(3)).unwrap().collect::<Result<Vec<_>,_>>().unwrap().join(" ");
+        assert!(plan.contains("SEARCH") && !plan.contains("SCAN"), "private point read must not scan a user directory: {plan}");
+    }
+}

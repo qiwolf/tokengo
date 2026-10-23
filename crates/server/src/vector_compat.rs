@@ -156,8 +156,11 @@ pub fn require(
     targets: &[vr::Target],
     kind: ModelKind,
 ) -> Result<Contract, vr::VirtualError> {
-    crate::vector_renewal::check_failure(c,user,&fingerprint(c,user,targets,kind)?)?;
-    let contract=historical(c,user,targets,kind)?;
+    // One fresh snapshot within this DB critical section; never cache authority
+    // across requests or across the queued send-time validation.
+    let current=snapshot(c,user,targets,kind)?;
+    crate::vector_renewal::check_failure(c,user,&current.fingerprint)?;
+    let contract=historical_snapshot(c,user,&current,kind)?;
     let age=db::now_ms().saturating_sub(contract.verified_at_ms);
     if age<0||age>TTL_MS {return Err(unverified("兼容证据已过期，系统将逐来源自动续验，请稍后重试"));}
     Ok(contract)
@@ -165,6 +168,9 @@ pub fn require(
 /// Exact current fingerprint and contract shape are mandatory even for renewal of old evidence.
 fn historical(c:&Connection,user:i64,targets:&[vr::Target],kind:ModelKind)->Result<Contract,vr::VirtualError>{
     let snapshot=snapshot(c,user,targets,kind)?;
+    historical_snapshot(c,user,&snapshot,kind)
+}
+fn historical_snapshot(c:&Connection,user:i64,snapshot:&Snapshot,kind:ModelKind)->Result<Contract,vr::VirtualError>{
     let raw=db::settings::get(c,&key(user,&snapshot.fingerprint))?.ok_or_else(||unverified("尚无此来源身份的兼容证据，不能套用旧模型证据"))?;
     let contract:Contract=serde_json::from_str(&raw).map_err(|_|unverified("兼容记录无效，系统将重新校验"))?;
     if !valid_shape(&contract)||contract.fingerprint!=snapshot.fingerprint||(kind==ModelKind::Embeddings&&contract.dimensions.is_none_or(|d|d==0)){return Err(unverified("兼容合同版本、来源身份或边界已改变，不能继承旧证据"));}

@@ -1,9 +1,9 @@
 //! Root-managed aliases. Source credentials and user financial ownership stay independent.
 use super::{identity, model_routes, user_virtual_routes as vr, DbError};
 use crate::vector_compat::Contract;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tokengo_shared::{normalize_model_name, same_model_name, ModelKind};
+use tokengo_shared::{normalize_model_name, ModelKind};
 pub const SQL: &str = include_str!("shared_virtual_routes.sql");
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SharedModel {
@@ -49,8 +49,10 @@ pub fn list_all(c: &Connection) -> super::Result<Vec<SharedModel>> {
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    raw.into_iter()
-        .map(|(id, version, actor_account_id, raw, enabled)| {
+    raw.into_iter().map(|row| hydrate(c,row)).collect()
+}
+type Persisted = (i64,i64,i64,String,bool);
+fn hydrate(c:&Connection,(id, version, actor_account_id, raw, enabled):Persisted)->super::Result<SharedModel>{
             let mut config: vr::Config = serde_json::from_str(&raw)
                 .map_err(|_| DbError::Other("Invalid persisted shared model".into()))?;
             config.enabled &= enabled;
@@ -70,14 +72,22 @@ pub fn list_all(c: &Connection) -> super::Result<Vec<SharedModel>> {
                 kind,
                 config,
             })
-        })
-        .collect()
+}
+fn read_one(c:&Connection,sql:&str,value:rusqlite::types::Value)->super::Result<Option<SharedModel>>{
+    let row=c.query_row(sql,[value],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+    row.map(|row|hydrate(c,row)).transpose()
+}
+fn by_id(c:&Connection,id:i64)->super::Result<Option<SharedModel>>{
+    read_one(c,"SELECT id,version,actor_account_id,config_json,enabled FROM shared_virtual_models WHERE id=?1",id.into())
+}
+pub fn get(c:&Connection,id:i64)->super::Result<Option<SharedModel>>{
+    Ok(by_id(c,id)?.filter(|r|r.deleted_at_ms.is_none()))
+}
+fn by_name(c:&Connection,name:&str)->super::Result<Option<SharedModel>>{
+    Ok(read_one(c,"SELECT id,version,actor_account_id,config_json,enabled FROM shared_virtual_models WHERE normalized_name=?1",normalize_model_name(name).into())?.filter(|r|r.deleted_at_ms.is_none()))
 }
 fn name_available(c: &Connection, name: &str, except: Option<i64>) -> Result<(), vr::VirtualError> {
-    if model_routes::list(c)?
-        .iter()
-        .any(|r| same_model_name(&r.name, name))
-    {
+    if model_routes::routes_for(c,name)?.is_some() {
         return Err(err(
             "virtual_route_conflict",
             "共享模型名不能与标准模型重名",
@@ -88,11 +98,9 @@ fn name_available(c: &Connection, name: &str, except: Option<i64>) -> Result<(),
         [normalize_model_name(name)],
         |r| r.get(0),
     )?;
-    if private
-        || list(c)?
-            .iter()
-            .any(|r| Some(r.id) != except && same_model_name(&r.config.name, name))
-    {
+    let collision:Option<i64>=c.query_row("SELECT id FROM shared_virtual_models WHERE normalized_name=?1 AND (?2 IS NULL OR id<>?2)",params![normalize_model_name(name),except],|r|r.get(0)).optional()?;
+    let active_collision = match collision {Some(id)=>vr::deleted_at(c,0,id)?.is_none(),None=>false};
+    if private || active_collision {
         return Err(err(
             "virtual_route_conflict",
             "共享模型名不能与现有私有或共享模型重名",
@@ -144,7 +152,7 @@ pub fn create(c: &Connection, v: &vr::Config, actor: i64) -> Result<SharedModel,
     let id = tx.last_insert_rowid();
     audit(&tx, id, 1, actor, "shared_virtual_model.create")?;
     tx.commit()?;
-    Ok(list(c)?.into_iter().find(|r| r.id == id).unwrap())
+    Ok(get(c,id)?.unwrap())
 }
 pub fn replace(
     c: &Connection,
@@ -155,9 +163,7 @@ pub fn replace(
 ) -> Result<SharedModel, vr::VirtualError> {
     let tx = c.unchecked_transaction()?;
     root_actor(&tx, actor)?;
-    let old = list(&tx)?
-        .into_iter()
-        .find(|r| r.id == id)
+    let old = get(&tx,id)?
         .ok_or_else(|| err("virtual_route_not_found", "共享模型不存在"))?;
     if old.version != version {
         return Err(err("virtual_route_changed", "共享模型已修改，请刷新"));
@@ -172,7 +178,7 @@ pub fn replace(
     }
     audit(&tx, id, version + 1, actor, "shared_virtual_model.update")?;
     tx.commit()?;
-    Ok(list(c)?.into_iter().find(|r| r.id == id).unwrap())
+    Ok(get(c,id)?.unwrap())
 }
 pub fn disable(
     c: &Connection,
@@ -182,9 +188,7 @@ pub fn disable(
 ) -> Result<SharedModel, vr::VirtualError> {
     let tx = c.unchecked_transaction()?;
     root_actor(&tx, actor)?;
-    let mut old = list(&tx)?
-        .into_iter()
-        .find(|r| r.id == id)
+    let mut old = get(&tx,id)?
         .ok_or_else(|| err("virtual_route_not_found", "共享模型不存在"))?;
     if old.version != version {
         return Err(err("virtual_route_changed", "共享模型已修改，请刷新"));
@@ -196,27 +200,27 @@ pub fn disable(
     }
     audit(&tx, id, version + 1, actor, "shared_virtual_model.disable")?;
     tx.commit()?;
-    Ok(list(c)?.into_iter().find(|r| r.id == id).unwrap())
+    Ok(get(c,id)?.unwrap())
 }
 pub fn trash(c:&Connection,id:i64,version:i64,actor:i64)->Result<SharedModel,vr::VirtualError>{
     let tx=c.unchecked_transaction()?;root_actor(&tx,actor)?;
-    let mut old=list(&tx)?.into_iter().find(|r|r.id==id).ok_or_else(||err("virtual_route_not_found","共享模型不存在"))?;
+    let mut old=get(&tx,id)?.ok_or_else(||err("virtual_route_not_found","共享模型不存在"))?;
     if old.version!=version{return Err(err("virtual_route_changed","共享模型已修改，请刷新"));}
     old.config.enabled=false;let now=super::now_ms();
     let n=tx.execute("UPDATE shared_virtual_models SET enabled=0,normalized_name=?3,config_json=?4,version=version+1,actor_account_id=?5,updated_ms=?6 WHERE id=?1 AND version=?2",params![id,version,format!("\u{1}tokengo-trash:0:{id}"),serde_json::to_string(&old.config).map_err(|_|err("invalid_virtual_route","无法编码共享配置"))?,actor,now])?;
     if n!=1{return Err(err("virtual_route_changed","共享模型已修改，请刷新"));}
     super::settings::set(&tx,&format!("internal_virtual_model_trash_v1:0:{id}"),&now.to_string())?;audit(&tx,id,version+1,actor,"shared_virtual_model.trash")?;
-    let saved=list_all(&tx)?.into_iter().find(|r|r.id==id).unwrap();tx.commit()?;Ok(saved)
+    let saved=by_id(&tx,id)?.unwrap();tx.commit()?;Ok(saved)
 }
 pub fn restore(c:&Connection,id:i64,version:i64,actor:i64)->Result<SharedModel,vr::VirtualError>{
     let tx=c.unchecked_transaction()?;root_actor(&tx,actor)?;
-    let mut old=list_all(&tx)?.into_iter().find(|r|r.id==id&&r.deleted_at_ms.is_some()).ok_or_else(||err("virtual_route_not_found","回收站中不存在此共享模型"))?;
+    let mut old=by_id(&tx,id)?.filter(|r|r.deleted_at_ms.is_some()).ok_or_else(||err("virtual_route_not_found","回收站中不存在此共享模型"))?;
     if old.version!=version{return Err(err("virtual_route_changed","共享模型已修改，请刷新"));}
     name_available(&tx,&old.config.name,Some(id))?;old.config.enabled=false;
     let n=tx.execute("UPDATE shared_virtual_models SET enabled=0,normalized_name=?3,config_json=?4,version=version+1,actor_account_id=?5,updated_ms=?6 WHERE id=?1 AND version=?2",params![id,version,normalize_model_name(&old.config.name),serde_json::to_string(&old.config).map_err(|_|err("invalid_virtual_route","无法编码共享配置"))?,actor,super::now_ms()])?;
     if n!=1{return Err(err("virtual_route_changed","共享模型已修改，请刷新"));}
     super::settings::delete(&tx,&format!("internal_virtual_model_trash_v1:0:{id}"))?;audit(&tx,id,version+1,actor,"shared_virtual_model.restore")?;
-    let saved=list(&tx)?.into_iter().find(|r|r.id==id).unwrap();tx.commit()?;Ok(saved)
+    let saved=get(&tx,id)?.unwrap();tx.commit()?;Ok(saved)
 }
 
 fn fresh(
@@ -249,10 +253,7 @@ pub fn resolve(
     name: &str,
     now: i64,
 ) -> Result<Option<vr::ResolvedVirtualPlan>, vr::VirtualError> {
-    let Some(r) = list(c)?
-        .into_iter()
-        .find(|r| same_model_name(&r.config.name, name))
-    else {
+    let Some(r) = by_name(c,name)? else {
         return Ok(None);
     };
     let auth = fresh(c, auth)?;
@@ -296,9 +297,7 @@ pub fn validate_current(
     pos: usize,
     now: i64,
 ) -> Result<Option<Contract>, vr::VirtualError> {
-    let r = list(c)?
-        .into_iter()
-        .find(|r| r.id == id)
+    let r = get(c,id)?
         .ok_or_else(|| err("virtual_route_not_found", "共享模型不存在"))?;
     let auth = fresh(c, auth)?;
     live(c, &auth, &r)?;

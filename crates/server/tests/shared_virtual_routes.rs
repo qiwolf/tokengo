@@ -577,3 +577,55 @@ async fn successful_certificate_timestamp_refresh_does_not_reject_queued_request
         assert_eq!(f.count(),1);
     }
 }
+
+/// A call to one alias must not parse unrelated aliases, including recycle-bin
+/// entries. This covers the generic planner for every declared model kind; HTTP
+/// forwarding remains restricted to the endpoints the gateway already supports.
+#[tokio::test]
+async fn targeted_shared_lookup_ignores_unrelated_payloads_for_every_model_kind() {
+    for kind in [ModelKind::Unknown,ModelKind::Chat,ModelKind::Embeddings,ModelKind::Rerank,ModelKind::Image,ModelKind::Video,ModelKind::Audio] {
+        let mut f=Fixture::new(kind).await;
+        f.config.targets.truncate(1);
+        {
+            let c=f.state.conn();
+            for i in 0..32 {
+                c.execute("INSERT INTO shared_virtual_models(name,normalized_name,enabled,config_json,version,actor_account_id,created_ms,updated_ms) VALUES(?1,?1,1,'invalid unrelated payload',1,1,1,1)",[format!("unrelated-{i}")]).unwrap();
+            }
+        }
+        let saved=f.publish().await;
+        let c=f.state.conn();
+        let auth=db::identity::context(&c,f.key_id).unwrap().unwrap();
+        let plan=db::shared_virtual_routes::resolve(&c,&auth,"SHARED-MODEL",db::now_ms()).unwrap().unwrap();
+        assert_eq!(plan.id,saved["id"].as_i64().unwrap());
+        assert_eq!(plan.targets.len(),1);
+        assert!(db::shared_virtual_routes::validate_current(&c,&auth,plan.id,plan.version,1,db::now_ms()).unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn targeted_shared_lookup_rechecks_revocation_policy_source_and_version() {
+    let mut f=Fixture::new(ModelKind::Chat).await;
+    f.config.targets.truncate(1);
+    let saved=f.publish().await;
+    let c=f.state.conn();
+    let auth=db::identity::context(&c,f.key_id).unwrap().unwrap();
+    let id=saved["id"].as_i64().unwrap();
+    let check=||db::shared_virtual_routes::validate_current(&c,&auth,id,1,1,db::now_ms());
+    assert!(check().is_ok());
+    c.execute("UPDATE gateway_keys SET enabled=0 WHERE id=?1",[f.key_id]).unwrap();
+    assert_eq!(check().unwrap_err().code,"virtual_route_forbidden");
+    c.execute("UPDATE gateway_keys SET enabled=1 WHERE id=?1",[f.key_id]).unwrap();
+    c.execute("UPDATE users SET enabled=0 WHERE id=?1",[f.user]).unwrap();
+    assert_eq!(check().unwrap_err().code,"virtual_route_forbidden");
+    c.execute("UPDATE users SET enabled=1 WHERE id=?1",[f.user]).unwrap();
+    c.execute("UPDATE channels SET enabled=0 WHERE id=?1",[f.sources[0].0]).unwrap();
+    assert_eq!(check().unwrap_err().code,"virtual_target_forbidden");
+    c.execute("UPDATE channels SET enabled=1 WHERE id=?1",[f.sources[0].0]).unwrap();
+    c.execute("UPDATE shared_virtual_models SET version=2 WHERE id=?1",[id]).unwrap();
+    assert_eq!(check().unwrap_err().code,"virtual_route_changed");
+    c.execute("UPDATE shared_virtual_models SET version=1 WHERE id=?1",[id]).unwrap();
+    let mut user=db::identity::user(&c,f.user).unwrap().unwrap();
+    user.policy.allowed_models=Some(vec![]);
+    db::identity::update_user(&c,&user).unwrap();
+    assert_eq!(check().unwrap_err().code,"virtual_route_forbidden");
+}

@@ -1,6 +1,6 @@
 //! User-owned metadata and an injected-clock planner. Never issues upstream HTTP.
 use super::{identity, model_routes, DbError};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tokengo_shared::{normalize_model_name, same_model_name, ModelKind};
@@ -261,12 +261,10 @@ fn validate(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError
 pub fn preflight(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError> {
     validate_shape(v)?;
     let auth = owner_auth(c, user_id)?;
-    if super::shared_virtual_routes::list(c)?.iter().any(|r| same_model_name(&r.config.name, &v.name)) {
+    if shared_name_exists(c, &v.name)? {
         return Err(invalid("虚拟模型名已被管理员共享入口使用"));
     }
-    if model_routes::list(c)?
-        .iter()
-        .any(|m| same_model_name(&m.name, &v.name))
+    if model_routes::routes_for(c, &v.name)?.is_some()
     {
         return Err(invalid("虚拟模型名不能与标准模型重名"));
     }
@@ -303,7 +301,7 @@ pub fn preflight(c: &Connection, user_id: i64, v: &Config) -> Result<(), Virtual
 /// Admin-owned chains may delegate real targets but never recurse into aliases.
 pub fn preflight_shared(c: &Connection, v: &Config) -> Result<ModelKind, VirtualError> {
     validate_shape(v)?;
-    if model_routes::list(c)?.iter().any(|m| same_model_name(&m.name, &v.name)) {
+    if model_routes::routes_for(c, &v.name)?.is_some() {
         return Err(invalid("共享虚拟模型名不能与标准模型重名"));
     }
     let collision: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM user_virtual_models WHERE normalized_name=?1)", [normalize_model_name(&v.name)], |r| r.get(0))?;
@@ -343,77 +341,88 @@ fn trash_key(user_id:i64,id:i64)->String {format!("internal_virtual_model_trash_
 pub fn list(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
     Ok(list_all(c,user_id)?.into_iter().filter(|r|r.deleted_at_ms.is_none()).collect())
 }
-pub fn list_all(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
-    let mut st=c.prepare("SELECT id,name,enabled,mode,timezone,version,default_positions_json FROM user_virtual_models WHERE user_id=?1 ORDER BY id")?;
-    let rows = st
-        .query_map([user_id], |r| {
+type StoredVirtualRow = (i64, String, i64, String, String, i64, String);
+const MODEL_COLUMNS: &str = "id,name,enabled,mode,timezone,version,default_positions_json";
+fn stored_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredVirtualRow> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
+}
+fn hydrate(c: &Connection, user_id: i64, row: StoredVirtualRow) -> super::Result<VirtualModel> {
+    let (id, name, enabled, mode, timezone, version, defaults) = row;
+    let mut st=c.prepare("SELECT provider_id,logical_model,switch_on_429,switch_on_400 FROM user_virtual_targets WHERE virtual_model_id=?1 ORDER BY position")?;
+    let targets = st
+        .query_map([id], |r| {
+            Ok(Target {
+                provider_id: r.get(0)?,
+                logical_model: r.get(1)?,
+                switch_on_429: r.get::<_, i64>(2)? != 0,
+                switch_on_400: r.get::<_, i64>(3)? != 0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut st=c.prepare("SELECT days_mask,start_minute,end_minute,target_positions_json FROM user_virtual_windows WHERE virtual_model_id=?1 ORDER BY position")?;
+    let raw = st
+        .query_map([id], |r| {
             Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
+                r.get::<_, u8>(0)?,
+                r.get::<_, u16>(1)?,
+                r.get::<_, u16>(2)?,
                 r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, i64>(5)?,
-                r.get::<_, String>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut out = Vec::new();
-    for (id, name, enabled, mode, timezone, version, defaults) in rows {
-        let mut st=c.prepare("SELECT provider_id,logical_model,switch_on_429,switch_on_400 FROM user_virtual_targets WHERE virtual_model_id=?1 ORDER BY position")?;
-        let targets = st
-            .query_map([id], |r| {
-                Ok(Target {
-                    provider_id: r.get(0)?,
-                    logical_model: r.get(1)?,
-                    switch_on_429: r.get::<_, i64>(2)? != 0,
-                    switch_on_400: r.get::<_, i64>(3)? != 0,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut st=c.prepare("SELECT days_mask,start_minute,end_minute,target_positions_json FROM user_virtual_windows WHERE virtual_model_id=?1 ORDER BY position")?;
-        let raw = st
-            .query_map([id], |r| {
-                Ok((
-                    r.get::<_, u8>(0)?,
-                    r.get::<_, u16>(1)?,
-                    r.get::<_, u16>(2)?,
-                    r.get::<_, String>(3)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut windows = Vec::new();
-        for (days_mask, start_minute, end_minute, s) in raw {
-            windows.push(Window {
-                days_mask,
-                start_minute,
-                end_minute,
-                target_positions: serde_json::from_str(&s)
-                    .map_err(|_| DbError::Other("Invalid virtual window".into()))?,
-            });
-        }
-        let config = Config {
-            name,
-            enabled: enabled != 0,
-            mode,
-            timezone,
-            targets,
-            windows,
-            default_positions: serde_json::from_str(&defaults)
-                .map_err(|_| DbError::Other("Invalid virtual defaults".into()))?,
-        };
-        validate_stored_shape(&config, true)
-            .map_err(|_| DbError::Other("Invalid persisted virtual route".into()))?;
-        out.push(VirtualModel {
-            deleted_at_ms: deleted_at(c,user_id,id)?,
-            id,
-            user_id,
-            version,
-            config,
+    let mut windows = Vec::new();
+    for (days_mask, start_minute, end_minute, s) in raw {
+        windows.push(Window {
+            days_mask,
+            start_minute,
+            end_minute,
+            target_positions: serde_json::from_str(&s)
+                .map_err(|_| DbError::Other("Invalid virtual window".into()))?,
         });
     }
-    Ok(out)
+    let config = Config {
+        name,
+        enabled: enabled != 0,
+        mode,
+        timezone,
+        targets,
+        windows,
+        default_positions: serde_json::from_str(&defaults)
+            .map_err(|_| DbError::Other("Invalid virtual defaults".into()))?,
+    };
+    validate_stored_shape(&config, true)
+        .map_err(|_| DbError::Other("Invalid persisted virtual route".into()))?;
+    Ok(VirtualModel {
+        deleted_at_ms: deleted_at(c,user_id,id)?, id, user_id, version, config,
+    })
 }
+pub fn list_all(c: &Connection, user_id: i64) -> super::Result<Vec<VirtualModel>> {
+    let mut statement = c.prepare(&format!("SELECT {MODEL_COLUMNS} FROM user_virtual_models WHERE user_id=?1 ORDER BY id"))?;
+    let rows = statement.query_map([user_id], stored_row)?.collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter().map(|row| hydrate(c,user_id,row)).collect()
+}
+fn get_including_trash(c: &Connection, user_id: i64, id: i64) -> super::Result<Option<VirtualModel>> {
+    let row = c.query_row(&format!("SELECT {MODEL_COLUMNS} FROM user_virtual_models WHERE id=?1 AND user_id=?2"), params![id,user_id], stored_row).optional()?;
+    row.map(|row| hydrate(c,user_id,row)).transpose()
+}
+/// Resolve one owned active record without reading unrelated routes or their children.
+pub fn get(c: &Connection, user_id: i64, id: i64) -> super::Result<Option<VirtualModel>> {
+    if deleted_at(c,user_id,id)?.is_some() { return Ok(None); }
+    get_including_trash(c,user_id,id)
+}
+fn by_name(c: &Connection, user_id: i64, name: &str) -> super::Result<Option<VirtualModel>> {
+    let row = c.query_row(&format!("SELECT {MODEL_COLUMNS} FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2"), params![user_id,normalize_model_name(name)], stored_row).optional()?;
+    let Some(row)=row else { return Ok(None); };
+    if deleted_at(c,user_id,row.0)?.is_some() { return Ok(None); }
+    hydrate(c,user_id,row).map(Some)
+}
+fn name_exists(c: &Connection, user_id: i64, name: &str, except_id: i64) -> super::Result<bool> {
+    c.query_row("SELECT EXISTS(SELECT 1 FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2 AND id<>?3)", params![user_id,normalize_model_name(name),except_id], |row|row.get(0)).map_err(Into::into)
+}
+fn shared_name_exists(c: &Connection, name: &str) -> super::Result<bool> {
+    c.query_row("SELECT EXISTS(SELECT 1 FROM shared_virtual_models WHERE normalized_name=?1)", [normalize_model_name(name)], |row|row.get(0)).map_err(Into::into)
+}
+
 fn save_children(c: &Connection, id: i64, v: &Config) -> Result<(), VirtualError> {
     c.execute(
         "DELETE FROM user_virtual_windows WHERE virtual_model_id=?1",
@@ -464,9 +473,7 @@ fn audit(
 pub fn create(c: &Connection, user_id: i64, v: &Config) -> Result<VirtualModel, VirtualError> {
     let tx = c.unchecked_transaction()?;
     validate(&tx, user_id, v)?;
-    if list(&tx, user_id)?
-        .iter()
-        .any(|r| same_model_name(&r.config.name, &v.name))
+    if name_exists(&tx, user_id, &v.name, -1)?
     {
         return Err(error(
             "virtual_route_conflict",
@@ -478,7 +485,7 @@ pub fn create(c: &Connection, user_id: i64, v: &Config) -> Result<VirtualModel, 
     save_children(&tx, id, v)?;
     audit(&tx, user_id, id, "virtual_model.create", 1)?;
     tx.commit()?;
-    Ok(list(c, user_id)?.into_iter().find(|r| r.id == id).unwrap())
+    Ok(get(c, user_id, id)?.unwrap())
 }
 pub fn replace(
     c: &Connection,
@@ -489,17 +496,13 @@ pub fn replace(
 ) -> Result<VirtualModel, VirtualError> {
     let tx = c.unchecked_transaction()?;
     owner_auth(&tx, user_id)?;
-    let old = list(&tx, user_id)?
-        .into_iter()
-        .find(|r| r.id == id)
+    let old = get(&tx, user_id, id)?
         .ok_or_else(|| error("virtual_route_not_found", "虚拟模型不存在"))?;
     if old.version != version {
         return Err(error("virtual_route_changed", "路由已修改，请刷新后重试"));
     }
     validate(&tx, user_id, v)?;
-    if list(&tx, user_id)?
-        .iter()
-        .any(|r| r.id != id && same_model_name(&r.config.name, &v.name))
+    if name_exists(&tx, user_id, &v.name, id)?
     {
         return Err(error("virtual_route_conflict", "已存在同名私有模型"));
     }
@@ -510,7 +513,7 @@ pub fn replace(
     save_children(&tx, id, v)?;
     audit(&tx, user_id, id, "virtual_model.update", version + 1)?;
     tx.commit()?;
-    Ok(list(c, user_id)?.into_iter().find(|r| r.id == id).unwrap())
+    Ok(get(c, user_id, id)?.unwrap())
 }
 pub fn disable(
     c: &Connection,
@@ -520,45 +523,42 @@ pub fn disable(
 ) -> Result<VirtualModel, VirtualError> {
     let tx = c.unchecked_transaction()?;
     owner_auth(&tx, user_id)?;
-    if !list(&tx,user_id)?.iter().any(|r|r.id==id) {return Err(error("virtual_route_not_found","虚拟模型不存在"));}
+    if get(&tx,user_id,id)?.is_none() {return Err(error("virtual_route_not_found","虚拟模型不存在"));}
     let n=tx.execute("UPDATE user_virtual_models SET enabled=0,version=version+1,updated_ms=?4 WHERE id=?1 AND user_id=?2 AND version=?3",params![id,user_id,version,super::now_ms()])?;
     if n != 1 {
-        return Err(if list(&tx, user_id)?.iter().any(|r| r.id == id) {
+        return Err(if get(&tx,user_id,id)?.is_some() {
             error("virtual_route_changed", "路由已修改，请刷新")
         } else {
             error("virtual_route_not_found", "虚拟模型不存在")
         });
     }
     audit(&tx, user_id, id, "virtual_model.disable", version + 1)?;
-    let saved = list(&tx, user_id)?
-        .into_iter()
-        .find(|r| r.id == id)
-        .unwrap();
+    let saved = get(&tx,user_id,id)?.unwrap();
     tx.commit()?;
     Ok(saved)
 }
 /// Soft deletion keeps route children and financial/audit history, freeing only its alias.
 pub fn trash(c:&Connection,user_id:i64,id:i64,version:i64)->Result<VirtualModel,VirtualError>{
     let tx=c.unchecked_transaction()?;owner_auth(&tx,user_id)?;
-    let old=list(&tx,user_id)?.into_iter().find(|r|r.id==id).ok_or_else(||error("virtual_route_not_found","虚拟模型不存在"))?;
+    let old=get(&tx,user_id,id)?.ok_or_else(||error("virtual_route_not_found","虚拟模型不存在"))?;
     if old.version!=version{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
     let now=super::now_ms();let tombstone=format!("\u{1}tokengo-trash:{user_id}:{id}");
     let n=tx.execute("UPDATE user_virtual_models SET enabled=0,normalized_name=?4,version=version+1,updated_ms=?5 WHERE id=?1 AND user_id=?2 AND version=?3",params![id,user_id,version,tombstone,now])?;
     if n!=1{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
     super::settings::set(&tx,&trash_key(user_id,id),&now.to_string())?;
     audit(&tx,user_id,id,"virtual_model.trash",version+1)?;
-    let saved=list_all(&tx,user_id)?.into_iter().find(|r|r.id==id).unwrap();tx.commit()?;Ok(saved)
+    let saved=get_including_trash(&tx,user_id,id)?.unwrap();tx.commit()?;Ok(saved)
 }
 pub fn restore(c:&Connection,user_id:i64,id:i64,version:i64)->Result<VirtualModel,VirtualError>{
     let tx=c.unchecked_transaction()?;owner_auth(&tx,user_id)?;
-    let old=list_all(&tx,user_id)?.into_iter().find(|r|r.id==id&&r.deleted_at_ms.is_some()).ok_or_else(||error("virtual_route_not_found","回收站中不存在此虚拟模型"))?;
+    let old=get_including_trash(&tx,user_id,id)?.filter(|r|r.deleted_at_ms.is_some()).ok_or_else(||error("virtual_route_not_found","回收站中不存在此虚拟模型"))?;
     if old.version!=version{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
     let name=&old.config.name;
-    if model_routes::list(&tx)?.iter().any(|r|same_model_name(&r.name,name)) || super::shared_virtual_routes::list(&tx)?.iter().any(|r|same_model_name(&r.config.name,name)) || list(&tx,user_id)?.iter().any(|r|same_model_name(&r.config.name,name)) {return Err(error("virtual_route_conflict","原模型名称已被占用，请先处理同名模型后恢复"));}
+    if model_routes::routes_for(&tx,name)?.is_some() || shared_name_exists(&tx,name)? || name_exists(&tx,user_id,name,id)? {return Err(error("virtual_route_conflict","原模型名称已被占用，请先处理同名模型后恢复"));}
     let n=tx.execute("UPDATE user_virtual_models SET enabled=0,normalized_name=?4,version=version+1,updated_ms=?5 WHERE id=?1 AND user_id=?2 AND version=?3",params![id,user_id,version,normalize_model_name(name),super::now_ms()])?;
     if n!=1{return Err(error("virtual_route_changed","路由已修改，请刷新后重试"));}
     super::settings::delete(&tx,&trash_key(user_id,id))?;audit(&tx,user_id,id,"virtual_model.restore",version+1)?;
-    let saved=list(&tx,user_id)?.into_iter().find(|r|r.id==id).unwrap();tx.commit()?;Ok(saved)
+    let saved=get(&tx,user_id,id)?.unwrap();tx.commit()?;Ok(saved)
 }
 
 pub fn resolve(
@@ -568,18 +568,14 @@ pub fn resolve(
     now_ms: i64,
 ) -> Result<Option<ResolvedVirtualPlan>, VirtualError> {
     owner_auth(c, user_id)?;
-    let Some(r) = list(c, user_id)?
-        .into_iter()
-        .find(|r| same_model_name(&r.config.name, name))
+    let Some(r) = by_name(c, user_id, name)?
     else {
         return Ok(None);
     };
     if !r.config.enabled {
         return Err(error("virtual_route_forbidden", "虚拟模型已停用"));
     }
-    if model_routes::list(c)?
-        .iter()
-        .any(|m| same_model_name(&m.name, &r.config.name))
+    if model_routes::routes_for(c, &r.config.name)?.is_some()
     {
         return Err(error(
             "virtual_route_changed",
@@ -620,16 +616,12 @@ pub fn validate_current(
     now_ms: i64,
 ) -> Result<Option<crate::vector_compat::Contract>, VirtualError> {
     let auth = owner_auth(c, user_id)?;
-    let r = list(c, user_id)?
-        .into_iter()
-        .find(|r| r.id == id)
+    let r = get(c, user_id, id)?
         .ok_or_else(|| error("virtual_route_forbidden", "路由不属于当前用户"))?;
     if r.version != version || !r.config.enabled {
         return Err(error("virtual_route_changed", "路由已修改或停用，请重试"));
     }
-    if model_routes::list(c)?
-        .iter()
-        .any(|m| same_model_name(&m.name, &r.config.name))
+    if model_routes::routes_for(c, &r.config.name)?.is_some()
     {
         return Err(error(
             "virtual_route_changed",
@@ -666,13 +658,10 @@ pub fn alias_names(
     } else {
         owner_auth(c, auth.user_id)?
     };
-    let standard = model_routes::list(c)?;
     let mut names = Vec::new();
     for r in list(c, fresh.user_id)? {
         if !r.config.enabled
-            || standard
-                .iter()
-                .any(|m| same_model_name(&m.name, &r.config.name))
+            || model_routes::routes_for(c, &r.config.name)?.is_some()
         {
             continue;
         }

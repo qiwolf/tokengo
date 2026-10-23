@@ -149,6 +149,27 @@ pub fn list(conn: &Connection, id: ChannelId) -> Result<Vec<CatalogEntry>> {
     Ok(entries)
 }
 
+/// Routing needs only matching context/kind claims, not panel reasoning metadata.
+/// Keep row order and the shared Rust name normalization used by mapped_context.
+pub(crate) fn routing_entries(conn: &Connection, id: ChannelId, names: &[&str]) -> Result<Vec<CatalogEntry>> {
+    if names.is_empty() { return Ok(Vec::new()); }
+    let names = names.iter().map(|name| tokengo_shared::normalize_model_name(name))
+        .collect::<std::collections::HashSet<_>>();
+    let mut statement = conn.prepare("SELECT model_id,context_window,kind_claim FROM channel_catalog WHERE channel_id=?1 ORDER BY rowid")?;
+    let mut rows = statement.query([id.0])?;
+    let mut entries = Vec::new();
+    while let Some(row) = rows.next()? {
+        let model: String = row.get(0)?;
+        if !names.contains(&tokengo_shared::normalize_model_name(&model)) { continue; }
+        entries.push(CatalogEntry {
+            model, context_window:row.get(1)?, kind:row.get(2)?,
+            reasoning:Default::default(), owned_by:None, price_note:None,
+            is_free:None, vision:None,
+        });
+    }
+    Ok(entries)
+}
+
 /// 上次问上游是什么时候（毫秒；0 = 从来没问过）。
 pub fn fetched_at(conn: &Connection, id: ChannelId) -> Result<i64> {
     let at: Option<i64> = conn
