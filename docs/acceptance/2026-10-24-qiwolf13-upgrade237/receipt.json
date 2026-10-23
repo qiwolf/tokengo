@@ -1,0 +1,140 @@
+{
+  "result": "passed",
+  "phase": "production upgrade after independent public release acceptance",
+  "production_access": true,
+  "production_upgrade_performed": true,
+  "deployment_kind": "published Linux x86_64 native bundle; no production container deployment",
+  "source_commit": "825285e12997ae1e07e1e4e4dce6a45b8b3c6793",
+  "native_archive_sha256": "9711d054054f05c7d92bd9db2dcd26da207d3c891bd538721012b298872e2574",
+  "runtime_server_sha256": "e4a40de219f45a95a234251efd204b3b8f7acef7f30ee597d18c059608e9c749",
+  "schema_version": 40,
+  "tables": 59,
+  "cold_backup_verified": true,
+  "business_tables_preserved": 14,
+  "settings_unchanged": true,
+  "credentials_preserved": {
+    "provider_credentials": 20,
+    "source_credentials": 36
+  },
+  "env_master_unit_preserved": true,
+  "previous_release_preserved": true,
+  "direct_and_nginx_assets_verified": 4,
+  "existing_authorization_preserved": true,
+  "key_lifecycle_passed": true,
+  "reasoning_compatibility": {
+    "existing_key_used": true,
+    "existing_user_key_grants_unchanged": true,
+    "synthetic_requests": true,
+    "cases": [
+      {
+        "case": "bare",
+        "http_status": 200,
+        "latency_ms": 1964.0,
+        "shape": {
+          "valid_chat_output": true,
+          "text_chars": 2
+        }
+      },
+      {
+        "case": "reasoning-object",
+        "http_status": 200,
+        "latency_ms": 2205.5,
+        "shape": {
+          "valid_chat_output": true,
+          "text_chars": 2
+        }
+      },
+      {
+        "case": "reasoning-string",
+        "http_status": 200,
+        "latency_ms": 2323.4,
+        "shape": {
+          "valid_chat_output": true,
+          "text_chars": 2
+        }
+      },
+      {
+        "case": "reasoning-same-dual",
+        "http_status": 200,
+        "latency_ms": 3789.0,
+        "shape": {
+          "valid_chat_output": true,
+          "text_chars": 2
+        }
+      },
+      {
+        "case": "reasoning-object-sse",
+        "http_status": 200,
+        "latency_ms": 7481.6,
+        "shape": {
+          "valid_chat_sse_output": true,
+          "text_chars": 2,
+          "done": true
+        }
+      },
+      {
+        "case": "conflicting-dual",
+        "http_status": 400,
+        "latency_ms": 6.8,
+        "no_outbound_attempt": true
+      },
+      {
+        "case": "native-responses-object",
+        "http_status": 200,
+        "latency_ms": 1755.8,
+        "valid_native_output": true,
+        "text_chars": 2
+      }
+    ],
+    "client_application_retest": false
+  },
+  "existing_calls": {
+    "shared_embeddings": 200,
+    "shared_rerank": 200,
+    "internal_models_denied_without_outbound": 5,
+    "mineru_health": 200
+  },
+  "real_fallback_in_isolated_copies": {
+    "synthetic_only": true,
+    "production_configuration_changed": false,
+    "rerank": {
+      "primary": "GPU",
+      "fallback": "cloud",
+      "fault": 503,
+      "result_status": 200,
+      "duration_ms": 7679,
+      "results": 300,
+      "chars_per_item": 4096,
+      "all_indices": true,
+      "original_input_preserved_at_both_sources": true,
+      "finite_sorted_scores": true,
+      "exact_original_documents": true,
+      "pending_new_ledger_rows": 0
+    },
+    "embeddings": {
+      "primary": "cloud",
+      "fallback": "GPU",
+      "fault": 503,
+      "result_status": 200,
+      "duration_ms": 24798,
+      "results": 300,
+      "chars_per_item": 4096,
+      "all_indices": true,
+      "original_input_preserved_at_both_sources": true,
+      "dimensions": 1024,
+      "finite_nonzero_vectors": true,
+      "pending_new_ledger_rows": 0
+    }
+  },
+  "cleanup": {
+    "isolated_processes_stopped": true,
+    "isolated_ports_released": true,
+    "isolated_directories_removed": true,
+    "production_pid_unchanged_during_isolated_checks": true,
+    "ready_and_live": 200,
+    "backup_preserved": true
+  },
+  "final_pending": 0,
+  "final_unsettled": 0,
+  "public_release_receipt_unchanged": true
+}

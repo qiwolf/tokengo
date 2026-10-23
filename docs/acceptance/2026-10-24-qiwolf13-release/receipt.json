@@ -1,0 +1,35 @@
+{
+  "result": "passed",
+  "source_commit": "825285e12997ae1e07e1e4e4dce6a45b8b3c6793",
+  "assets": 9,
+  "anonymous_downloads": true,
+  "anonymous_registry": true,
+  "offline_archive_two_tags": true,
+  "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+  "smoke_restart_recreation": true,
+  "native_runtime": true,
+  "recoverable_key_runtime": true,
+  "container_key_runtime": true,
+  "production_access": false,
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.13",
+  "published_at": "2026-10-23T19:29:37Z",
+  "native_asset": "tokengo-825285e12997-linux-x86_64.tar.gz",
+  "native_sha256": "9711d054054f05c7d92bd9db2dcd26da207d3c891bd538721012b298872e2574",
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:a484d133d8fbc0f613bedae3830b70dbbd743988c67d7c9a26a0c7df0774c99c",
+  "main_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40008836973",
+    "result": "success"
+  },
+  "release_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40010269779",
+    "result": "success"
+  },
+  "build_test": {
+    "workspace_passed": 1166,
+    "workspace_failed": 0,
+    "workspace_ignored": 3,
+    "python_tests": 22,
+    "backend_regression_reuse": false
+  },
+  "production_upgrade_performed": false
+}

@@ -1,10 +1,14 @@
 # 功能与验收状态
 
-当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。237已冷备升级至公开原生包，既有调用、授权、Key和300×4096真实上游回退验收通过，见[独立升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
+当前正式版 **[v0.34.0-qiwolf.13](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.13)**，发行源码`825285e12997`，Cargo0.34.0/schema40。修复Chat→Responses拒绝effort对象的兼容缺口，保留显式档位、来源能力校验与实时授权。本轮完整Rust1166/Python22项、native/WASM及9个公开资产和原生/容器验收通过。237已冷备升级；既有Key的普通/流式推理、原生Responses、向量/重排回退、授权与Key功能通过。见[版本说明](releases/v0.34.0-qiwolf.13.md)、[公开发行收据](acceptance/2026-10-24-qiwolf13-release/README.md)与[独立升级收据](acceptance/2026-10-24-qiwolf13-upgrade237/README.md)。标签/下载资产文档为构建快照，后补收据维护在main和Release页面。
 
 更新日期：2026-10-24。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
+
+### qiwolf.13 公开发行与后续生产升级
+
+Chat→Responses effort对象兼容及6项回归已发布。精确main CI和发行CI成功，build-test完整1166通过/0失败/3忽略，另Python22；公开9资产、实际拉取与原生/容器运行通过。237冷备升级及既有Key真实Chat普通/流式/原生Responses验收、授权/Key和两条300×4096真实回退通过；手机/智能体应用内重试未代测。详见[发行收据](acceptance/2026-10-24-qiwolf13-release/README.md)及[独立升级收据](acceptance/2026-10-24-qiwolf13-upgrade237/README.md)。以下q12及更早记录保留各自时间与阶段，不作为当前版本。
 
 ### qiwolf.12公开发行与后续生产升级
 

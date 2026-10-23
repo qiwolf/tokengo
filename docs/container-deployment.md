@@ -1,6 +1,6 @@
 # 容器部署与分发
 
-当前正式版 **[v0.34.0-qiwolf.12](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.12)**，源码`6bf36fa917cd`，Cargo0.34.0/schema40。按名路由减少无关目录展开，保留旧名称兼容与实时授权；适配SiliconFlow BGE-M3原生1024维参数并整理管理界面布局。精确CI、native/WASM及9个公开资产、原生/容器独立验收通过。237已冷备升级至公开原生包，既有调用、授权、Key和300×4096真实上游回退验收通过，见[独立升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。见[版本说明](releases/v0.34.0-qiwolf.12.md)与[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。标签/资产文档为构建快照，后补收据维护在main和Release页面。
+当前正式版 **[v0.34.0-qiwolf.13](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.13)**，发行源码`825285e12997`，Cargo0.34.0/schema40。修复Chat→Responses拒绝effort对象的兼容缺口，保留显式档位、来源能力校验与实时授权。本轮完整Rust1166/Python22项、native/WASM及9个公开资产和原生/容器验收通过。237已冷备升级；既有Key的普通/流式推理、原生Responses、向量/重排回退、授权与Key功能通过。见[版本说明](releases/v0.34.0-qiwolf.13.md)、[公开发行收据](acceptance/2026-10-24-qiwolf13-release/README.md)与[独立升级收据](acceptance/2026-10-24-qiwolf13-upgrade237/README.md)。标签/下载资产文档为构建快照，后补收据维护在main和Release页面。
 
 镜像包含同一源码提交的 Rust 服务端、CLI 和完整 WASM 控制台，不需要在运行主机安装 Rust、Node.js 或 Nginx。默认源码多阶段构建；Linux CI 也将已经校验的同提交原生包封装成镜像，并验证隔离容器的启动、鉴权、WASM、重启持久化及停止行为。
 

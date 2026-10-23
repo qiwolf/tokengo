@@ -7,6 +7,8 @@
 - Chat→Responses 转换兼容仅含 effort 的 reasoning 对象，保留标准 reasoning_effort 和客户端显式优先级；冲突或无法无损转换的属性明确拒绝。
 - 原生协议、来源能力校验、实时授权与400回退开关保持既有合同。Cargo0.34.0/schema40不变；发布和237升级证据见[本版说明](docs/releases/v0.34.0-qiwolf.13.md)。
 
+发行源码`825285e12997ae1e07e1e4e4dce6a45b8b3c6793`；main/发布CI成功。本轮build-test完整1166/0/3、Python22及native/WASM构建通过；公开9资产与原生/容器运行验收通过。237已冷备升级，既有Key推理、授权、Key生命周期和300×4096向量/重排真实回退通过。见[发行收据](docs/acceptance/2026-10-24-qiwolf13-release/README.md)及[升级收据](docs/acceptance/2026-10-24-qiwolf13-upgrade237/README.md)。
+
 ## v0.34.0-qiwolf.12 — 2026-10-24（北京时间）
 
 - 按名/ID加载命中路由与private/shared策略，兼容续验不再重复展开无关完整目录；保留七类元数据语义、旧名称优先级及实时授权，仍有少量metadata扫描，不宣称O(1)。
