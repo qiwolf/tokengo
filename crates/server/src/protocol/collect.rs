@@ -56,8 +56,64 @@ pub fn prepare_request(
         .get("input")
         .and_then(Value::as_array)
         .ok_or("ChatGPT plan requests require an input array")?;
-    if input.iter().any(|item| item["role"] == "system") {
-        return Err("ChatGPT plan preview requires instructions or developer messages; system input items are unsupported".into());
+    let leading_systems = input
+        .iter()
+        .take_while(|item| item["role"] == "system")
+        .count();
+    if input[leading_systems..]
+        .iter()
+        .any(|item| item["role"] == "system")
+    {
+        return Err(
+            "ChatGPT plan cannot move mid-conversation system messages into instructions".into(),
+        );
+    }
+    if leading_systems > 0 {
+        // Chat clients send a system prompt as the first message. The subscription
+        // transport accepts it as instructions, retaining its priority over developer
+        // messages. Validate everything before removing any source content.
+        let mut instructions = Vec::new();
+        if let Some(existing) = map.get("instructions") {
+            if !existing.is_null() {
+                instructions.push(
+                    existing
+                        .as_str()
+                        .ok_or("Expected text instructions")?
+                        .to_owned(),
+                );
+            }
+        }
+        for item in &input[..leading_systems] {
+            super::fields(item, &["type", "role", "content"])?;
+            if item.get("type").is_some_and(|kind| kind != "message") {
+                return Err("Expected system message item".into());
+            }
+            let content = &item["content"];
+            let text = if let Some(text) = content.as_str() {
+                text.to_owned()
+            } else {
+                let mut text = String::new();
+                for part in content.as_array().ok_or("Expected system text content")? {
+                    super::fields(part, &["type", "text"])?;
+                    if part["type"] != "input_text" {
+                        return Err(
+                            "ChatGPT plan system instructions require input_text blocks".into()
+                        );
+                    }
+                    text.push_str(part["text"].as_str().ok_or("Expected system text block")?);
+                }
+                text
+            };
+            instructions.push(text);
+        }
+        map.get_mut("input")
+            .and_then(Value::as_array_mut)
+            .unwrap()
+            .drain(..leading_systems);
+        map.insert(
+            "instructions".into(),
+            Value::String(instructions.join("\n\n")),
+        );
     }
     // The subscription preview accepts bare client tools inside additional_tools,
     // retaining each name/schema/call identity instead of inventing a namespace.
@@ -292,12 +348,10 @@ mod tests {
             assert!(prepare_request(&mut v, None, None).is_err());
             assert_eq!(v[field], 17, "must reject rather than strip");
         }
-        assert!(prepare_request(
-            &mut json!({"input":[{"role":"system","content":"rules"}]}),
-            None,
-            None
-        )
-        .is_err());
+        let mut v = json!({"input":[{"role":"system","content":"rules"}]});
+        prepare_request(&mut v, None, None).unwrap();
+        assert_eq!(v["instructions"], "rules");
+        assert_eq!(v["input"], json!([]));
     }
     #[test]
     fn subscription_client_tools_keep_names_schemas_and_replay_identity() {
