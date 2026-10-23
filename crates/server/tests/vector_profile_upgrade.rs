@@ -413,7 +413,7 @@ async fn manual_save_upgrades_fresh_old_profiles_with_full_workload_while_tick_s
             assert_eq!(f.count(), 0, "fresh old profile does not trigger paid background load tests");
             manual(&f, shared).await.unwrap();
             let (_, upgraded) = compatibility(&f, shared);
-            assert_eq!(upgraded["version"], 3);
+            assert_eq!(upgraded["version"], 4);
             assert!(upgraded["workload_verified_at_ms"].as_i64().unwrap() > 0);
             for source in &f.upstreams {
                 let seen = source.state.seen.lock().unwrap();
@@ -471,7 +471,7 @@ async fn failed_workload_upgrade_preserves_old_profile_and_complete_degraded_sou
             assert!(status["message"].as_str().unwrap().contains("新负载范围校验未通过"));
             f.upstreams[1].set(Behavior::Good);
             manual(&f, shared).await.unwrap();
-            assert_eq!(compatibility(&f, shared).1["version"], 3);
+            assert_eq!(compatibility(&f, shared).1["version"], 4);
             assert_eq!(f.status(shared)["state"], "valid");
             assert_eq!(f.status(shared)["profile_upgrade_error"], "");
         }

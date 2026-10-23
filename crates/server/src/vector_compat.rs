@@ -18,13 +18,13 @@ const MAX_DOCS: usize = 128;
 const MAX_TOTAL_CHARS: usize = 8192;
 const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const WORKLOAD_CHARS: usize = 4096;
 const WORKLOAD_BATCH: usize = 300;
 const WORKLOAD_DOCS: usize = 300;
 const WORKLOAD_QUERY_CHARS: usize = 512;
 const WORKLOAD_TOTAL_CHARS: usize = WORKLOAD_DOCS * WORKLOAD_CHARS + WORKLOAD_QUERY_CHARS;
-const WORKLOAD_PROFILE: &str = "unicode4096-batch300-rerank300-query512-numeric-envelope-v3";
+const WORKLOAD_PROFILE: &str = "unicode4096-batch300-rerank300-query512-source-noise-v4";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Contract {
@@ -177,9 +177,9 @@ fn valid_shape(c: &Contract) -> bool {
             && c.max_documents == MAX_DOCS && c.max_total_chars == MAX_TOTAL_CHARS
             && c.max_query_chars == 0 && c.workload_profile.is_empty()
             && c.workload_verified_at_ms.is_none(),
-        2 | VERSION => c.max_input_chars == WORKLOAD_CHARS && c.max_batch == WORKLOAD_BATCH
+        2 | 3 | VERSION => c.max_input_chars == WORKLOAD_CHARS && c.max_batch == WORKLOAD_BATCH
             && c.max_documents == WORKLOAD_DOCS && c.max_total_chars == WORKLOAD_TOTAL_CHARS
-            && c.max_query_chars == WORKLOAD_QUERY_CHARS && c.workload_profile == (if c.version == 2 {"unicode4096-batch300-rerank300-query512-v2"} else {WORKLOAD_PROFILE})
+            && c.max_query_chars == WORKLOAD_QUERY_CHARS && c.workload_profile == (match c.version {2=>"unicode4096-batch300-rerank300-query512-v2",3=>"unicode4096-batch300-rerank300-query512-numeric-envelope-v3",_=>WORKLOAD_PROFILE})
             && c.workload_verified_at_ms.is_some_and(|at| at > 0),
         _ => false,
     }
@@ -644,7 +644,7 @@ pub(crate) async fn verify_impl(state:&SharedState,user:i64,config:&vr::Config,a
         }
         contract.verified_at_ms=db::now_ms();
         contract.workload_verified_at_ms=Some(contract.verified_at_ms);
-        contract.evidence=json!({"profile":WORKLOAD_PROFILE,"method":"full input/output count, index integrity, original document equality and cross-source numeric/ranking checks; synthetic evidence is not model-weight identity","numeric_policy":{"short_and_renewal_cosine_min":0.999,"full_embedding_repetitions":2,"full_embedding_normalized_l2_base":0.002_f64.sqrt(),"full_embedding_normalized_l2_cap":0.1,"norm_ratio_tolerance":0.02,"rule":"maximum cross-repeat distance <= min(cap, sum of both within-source repeat distances + base); each within-source repeat distance <= cap"},"sources":evidence}).to_string();
+        contract.evidence=json!({"profile":WORKLOAD_PROFILE,"method":"full input/output count, index integrity, original document equality and cross-source numeric/ranking checks; synthetic evidence is not model-weight identity","numeric_policy":{"short_and_renewal_cosine_min":0.999,"full_embedding_repetitions":2,"full_embedding_normalized_l2_base":0.002_f64.sqrt(),"full_embedding_normalized_l2_cap":0.1,"norm_ratio_tolerance":0.02,"mean_cosine_min":0.999,"calibration_scope":"source-wide maximum repeat distance across the fixed corpus","rule":"each cross-repeat distance <= min(cap, sum of source-wide repeat maxima + base); self-repeat distances <= cap; self and worst-cross-pair mean cosines >= .999"},"sources":evidence}).to_string();
         Ok::<_,vr::VirtualError>(contract)
     }).await.map_err(|_|error("vector_source_unavailable","完整负载兼容检查超过时间预算；现有小域证据保持不变"))??;
     let c=state.conn();if let Some(g)=guard{g.check(&c)?;}if let Some(a)=actor{db::shared_virtual_routes::root_actor(&c,a)?;}if snapshot_fn(&c,user,&config.targets,kind)?.fingerprint!=snapshot.fingerprint{return Err(unverified("检查期间来源配置或权限已变化"));}
@@ -854,7 +854,7 @@ fn compare_vectors(a: &[Vec<f64>], b: &[Vec<f64>]) -> Result<(), String> {
     Ok(())
 }
 /// Calibrate only long-workload comparison against each source's measured repeat
-/// noise. Stable inputs retain the original .999 directional budget. A normalized
+/// noise. Stable sources retain the original .999 directional budget. A normalized
 /// L2 cap of .1 (cosine .995) prevents an unstable source widening it without bound.
 fn compare_workload_vectors(a: &[Vec<f64>], ar: &[Vec<f64>], b: &[Vec<f64>], br: &[Vec<f64>]) -> Result<Value,String> {
     if a.is_empty() || [ar.len(),b.len(),br.len()].iter().any(|n|*n!=a.len()) {return Err("重复向量批次不兼容".into());}
@@ -866,16 +866,30 @@ fn compare_workload_vectors(a: &[Vec<f64>], ar: &[Vec<f64>], b: &[Vec<f64>], br:
         if !cosine.is_finite() {return Err("重复向量方向无效".into());}
         Ok((2.0*(1.0-cosine.clamp(-1.0,1.0))).sqrt())
     };
-    let base=0.002_f64.sqrt();let cap=0.1;let mut max_noise:f64=0.0;let mut max_cross:f64=0.0;let mut max_utilization:f64=0.0;
+    let base=0.002_f64.sqrt();let cap=0.1;
+    let mut noise_a:f64=0.0;let mut noise_b:f64=0.0;let mut self_cos_a=0.0;let mut self_cos_b=0.0;
     for i in 0..a.len() {
         let an=distance(&a[i],&ar[i])?;let bn=distance(&b[i],&br[i])?;
         if an>cap+1e-12 || bn>cap+1e-12 {return Err("来源自身重复向量波动超过硬上限，不能安全回退".into());}
-        let budget=(base+an+bn).min(cap);let mut cross:f64=0.0;
-        for (x,y) in [(&a[i],&b[i]),(&a[i],&br[i]),(&ar[i],&b[i]),(&ar[i],&br[i])] {cross=cross.max(distance(x,y)?);}
-        if cross>budget+1e-12 {return Err("向量来源方向差异超过逐样本重复误差预算，不能安全回退".into());}
-        max_noise=max_noise.max(an.max(bn));max_cross=max_cross.max(cross);max_utilization=max_utilization.max(cross/budget);
+        noise_a=noise_a.max(an);noise_b=noise_b.max(bn);
+        self_cos_a+=1.0-an*an/2.0;self_cos_b+=1.0-bn*bn/2.0;
     }
-    Ok(json!({"items":a.len(),"max_within_source_l2":max_noise,"max_cross_source_l2":max_cross,"max_budget_utilization":max_utilization}))
+    let n=a.len() as f64;
+    if self_cos_a/n<0.999-1e-12 || self_cos_b/n<0.999-1e-12 {return Err("来源自身重复向量整批平均精度不足，不能安全回退".into());}
+    // Kernel/precision variants can move between items across independent calls.
+    // Calibrate against the source's entire fixed corpus, then retain both an
+    // individual hard cap and the original .999 worst-pair mean precision.
+    let budget=(base+noise_a+noise_b).min(cap);
+    let mut max_cross:f64=0.0;let mut cross_cos_sum=0.0;
+    for i in 0..a.len() {
+        let mut cross:f64=0.0;
+        for (x,y) in [(&a[i],&b[i]),(&a[i],&br[i]),(&ar[i],&b[i]),(&ar[i],&br[i])] {cross=cross.max(distance(x,y)?);}
+        if cross>budget+1e-12 {return Err("向量来源方向差异超过来源重复误差预算，不能安全回退".into());}
+        max_cross=max_cross.max(cross);cross_cos_sum+=1.0-cross*cross/2.0;
+    }
+    let mean_cosine=cross_cos_sum/n;
+    if mean_cosine<0.999-1e-12 {return Err("向量来源整批平均方向不兼容，不能安全回退".into());}
+    Ok(json!({"items":a.len(),"source_a_max_repeat_l2":noise_a,"source_b_max_repeat_l2":noise_b,"source_a_mean_repeat_cosine":self_cos_a/n,"source_b_mean_repeat_cosine":self_cos_b/n,"cross_worst_pair_mean_cosine":mean_cosine,"max_cross_source_l2":max_cross,"budget_l2":budget,"max_budget_utilization":max_cross/budget}))
 }
 fn ranks(output: &Value, documents: usize, count: usize) -> Result<Vec<(usize, f64)>, String> {
     let rows = output["results"]
@@ -1235,15 +1249,17 @@ mod tests {
         let a=vec![vector(0.0)];let stable=vec![vector(0.05)];
         assert!(compare_vectors(&a,&stable).is_err());
         assert!(compare_workload_vectors(&a,&a,&stable,&stable).is_err());
-        let noise=vec![vector(0.04)];let b=vec![vector(0.07)];
+        let a=vec![vector(0.0);300];let mut noise=a.clone();noise[0]=vector(0.04);
+        let mut b=a.clone();b[0]=vector(0.07);
         assert!(compare_workload_vectors(&a,&noise,&b,&b).is_ok());
-        let too_far=vec![vector(0.11)];
+        assert!(compare_workload_vectors(&a,&noise,&vec![vector(0.06);300],&vec![vector(0.06);300]).is_err());
+        let too_far=vec![vector(0.11);300];
         assert!(compare_workload_vectors(&a,&noise,&too_far,&too_far).is_err());
         assert!(compare_workload_vectors(&a,&too_far,&a,&a).is_err());
-        assert!(compare_workload_vectors(&a,&noise,&[vec![2.0,0.0]],&[vec![2.0,0.0]]).is_err());
-        assert!(compare_workload_vectors(&a,&noise,&[vec![0.0,1.0]],&[vec![0.0,1.0]]).is_err());
+        assert!(compare_workload_vectors(&a,&noise,&vec![vec![2.0,0.0];300],&vec![vec![2.0,0.0];300]).is_err());
+        assert!(compare_workload_vectors(&a,&noise,&vec![vec![0.0,1.0];300],&vec![vec![0.0,1.0];300]).is_err());
         assert!(compare_workload_vectors(&a,&noise,&[],&[]).is_err());
-        assert!(compare_workload_vectors(&a,&noise,&[vec![f64::NAN,0.0]],&a).is_err());
+        assert!(compare_workload_vectors(&a,&noise,&vec![vec![f64::NAN,0.0];300],&a).is_err());
     }
     #[test]
     fn full_observation_budget_covers_every_declared_embedding_request() {
@@ -1253,16 +1269,17 @@ mod tests {
     }
     #[test]
     fn noisy_source_compatibility_is_not_transitive() {
-        let v=|angle:f64|vec![vec![angle.cos(),angle.sin()]];
+        let v=|angle:f64|{let mut rows=vec![vec![1.0,0.0];300];rows[0]=vec![angle.cos(),angle.sin()];rows};
         assert!(compare_workload_vectors(&v(0.0),&v(0.0),&v(0.04),&v(0.08)).is_ok());
         assert!(compare_workload_vectors(&v(0.0),&v(0.0),&v(-0.04),&v(-0.08)).is_ok());
         assert!(compare_workload_vectors(&v(0.04),&v(0.08),&v(-0.04),&v(-0.08)).is_err());
     }
     #[test]
-    fn previous_v2_workload_evidence_remains_readable() {
+    fn previous_v2_and_v3_workload_evidence_remains_readable() {
         let mut c=workload_contract();c.version=2;c.workload_profile="unicode4096-batch300-rerank300-query512-v2".into();
         assert!(valid_shape(&c));assert!(!current_profile(&c));
         c.workload_profile=WORKLOAD_PROFILE.into();assert!(!valid_shape(&c));
+        c.version=3;c.workload_profile="unicode4096-batch300-rerank300-query512-numeric-envelope-v3".into();assert!(valid_shape(&c));assert!(!current_profile(&c));
     }
     #[test]
     fn same_dimension_does_not_prove_equivalence() {
