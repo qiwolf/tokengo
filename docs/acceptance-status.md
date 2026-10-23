@@ -1,18 +1,20 @@
 # 功能与验收状态
 
-当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](releases/v0.34.0-qiwolf.10.md)与[完整收据](acceptance/2026-10-23-disabled-key-upgrade/README.md)。
+当前正式版 **[v0.34.0-qiwolf.11](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.11)**，源码`551f1c1487a1`，Cargo0.34.0/schema40。精确提交CI、native/WASM构建、9个公开资产及原生/容器独立验收通过；本次未访问或升级生产。见[版本说明](releases/v0.34.0-qiwolf.11.md)及[最终收据](acceptance/2026-10-24-qiwolf11-release/README.md)。此前qiwolf.10生产升级作为历史收据保留。
 
-更新日期：2026-10-23。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
+更新日期：2026-10-24。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
 
-### qiwolf.11发布准备与既有热修复
+### qiwolf.11公开发行与既有热修复
 
 本版范围为 Chatbox 订阅 system 指令、Responses 显式会话、向量/重排真实负载与 v4 有界噪声兼容检查。300×4096 是完整验收样本，不限制用户请求；实际模型窗口和传输预算分别管理。单个来源续验失败不整体停用已核实健康的来源，真实容量拒绝可逐请求回退，原文和候选保留。详见[版本说明](releases/v0.34.0-qiwolf.11.md)与[能力合同](vector-model-capabilities.md)。
 
 现场热修复已有真实长负载、云/GPU故障回退、共享入口授权、账务与清理证据；v4最终定向检查单次402通过。冻结中文集合的新新和新查询/旧索引组合未观察到主要召回指标退化；只对376条文本、46个审定查询成立。GPU官方分词器、8192窗口和外部Hermes稳定会话头是独立现场改动，不由网关包自动部署。完整客户端聊天UAT和调用方超时配置不在上述验收内。
 
-**本版公开发行尚待验收。** 最终发行提交CI、完整构建测试、9个资产校验、原生/容器独立运行和公开摘要收据不能引用阶段性热修复结果代替。已部署热修复也不表示现场已切换本版正式发行产物；当前已验证公开基线仍为qiwolf.10。
+**本版公开发行已独立验收。** 精确提交[CI](https://github.com/qiwolf/tokengo/actions/runs/39982597664)及[发布](https://github.com/qiwolf/tokengo/actions/runs/39984393819)成功；build-test完整Rust工作区1144通过、0失败、3忽略，另22项Python通过，native/WASM release构建成功。9个公开资产匿名下载校验、GHCR实际拉取、离线双标签、无.env固定引用Compose、非root/只读根、ready/WASM、重启与同卷重建、正式原生和容器Key检查通过。详见[最终收据](acceptance/2026-10-24-qiwolf11-release/README.md)。阶段性热修复与重复检查不叠加数量；3项忽略分别为由父测试调用的子进程辅助入口、外部注册表联网检查和需显式凭据的真实上游检查。
+
+本次没有访问或升级生产，已部署热修复不表示现场已切换正式发行产物。标签及资产内文档为构建时快照，最终收据维护在main与Release页面，不追认先前资产已包含后补文档。
 
 
 

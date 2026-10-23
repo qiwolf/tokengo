@@ -1,8 +1,8 @@
 # tokengo
 
-正在准备 **v0.34.0-qiwolf.11**：Chatbox 系统提示兼容、Responses 显式会话，以及按真实后端能力接收的向量/重排与有界噪声续验。已有热修复验收不代表本版正式产物已发布；精确提交 CI、原生包、容器和公开下载收据待完成，见[本版说明](docs/releases/v0.34.0-qiwolf.11.md)。GPU 官方分词器和 8192 窗口属于独立现场配置，不由网关升级自动应用。
+当前正式版 **[v0.34.0-qiwolf.11](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.11)**，源码`551f1c1487a1`，Cargo0.34.0/schema40。包含Chatbox订阅系统指令、Responses显式会话、按真实后端能力接收的向量/重排及v4有界噪声兼容检查。精确提交CI、9个公开资产、原生与容器独立验收通过；本次未升级生产。GPU官方分词器和8192窗口为独立现场配置，不由网关升级自动应用。见[版本说明](docs/releases/v0.34.0-qiwolf.11.md)与[公开发行收据](docs/acceptance/2026-10-24-qiwolf11-release/README.md)。标签及资产内文档为构建时快照，最终收据维护在main和Release页面。
 
-当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](docs/releases/v0.34.0-qiwolf.10.md)与[完整收据](docs/acceptance/2026-10-23-disabled-key-upgrade/README.md)。
+历史公开版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)** 修复管理员停用Key后的删除，既有冷备升级与Key验收见[历史收据](docs/releases/v0.34.0-qiwolf.10.md)。
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 

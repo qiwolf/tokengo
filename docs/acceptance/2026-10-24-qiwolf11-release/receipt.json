@@ -1,0 +1,38 @@
+{
+  "result": "passed",
+  "source_commit": "551f1c1487a1f262725d916cfc3dbfcda874fbe8",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.11",
+  "assets": 9,
+  "host": "build-test Linux x86_64",
+  "anonymous_downloads": true,
+  "anonymous_registry": true,
+  "offline_archive_two_tags": true,
+  "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+  "smoke_restart_recreation": true,
+  "native_runtime": true,
+  "recoverable_key_runtime": true,
+  "container_key_runtime": true,
+  "production_access": false,
+  "created_release": false,
+  "published_at": "2026-10-23T16:22:46Z",
+  "main_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/39982597664",
+    "result": "success"
+  },
+  "release_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/39984393819",
+    "result": "success"
+  },
+  "build_test": {
+    "rust_passed": 1144,
+    "rust_failed": 0,
+    "rust_ignored": 3,
+    "python_passed": 22,
+    "native_release_build": true,
+    "web_release_build": true
+  },
+  "container_digest": "sha256:c25b2bcb1a934b29fd4ae7772294bbc8add810eff2d507ed9dca4288ab4eed17",
+  "native_asset": "tokengo-551f1c1487a1-linux-x86_64.tar.gz",
+  "native_sha256": "65e79c530662c61536e8011d93ad401e3502230d3897e64a5dec819a8ea646f5",
+  "production_upgrade_performed": false
+}
