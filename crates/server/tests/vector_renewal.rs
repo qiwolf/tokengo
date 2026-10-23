@@ -710,13 +710,14 @@ async fn fresh_healthy_contract_automatically_backfills_missing_reference() {
             vector_renewal::tick(&f.state).await.unwrap();
             for source in &f.upstreams {
                 let seen = source.state.seen.lock().unwrap();
-                // Embeddings: two compact probes, one full batch, and first/last singles.
+                // Embeddings: two compact probes, two fixed full batches, and their first/last singles.
                 // Rerank: three compact ranking probes plus the complete long-document corpus.
-                assert_eq!(seen.len(), if kind == ModelKind::Embeddings { 5 } else { 4 });
+                assert_eq!(seen.len(), if kind == ModelKind::Embeddings { 8 } else { 4 });
                 let batch_field = if kind == ModelKind::Embeddings { "input" } else { "documents" };
                 let workloads = seen.iter().filter_map(|body| body[batch_field].as_array())
                     .filter(|batch| batch.len() == 300).collect::<Vec<_>>();
-                assert_eq!(workloads.len(), 1, "missing reference requires a complete workload on every source");
+                assert_eq!(workloads.len(), if kind == ModelKind::Embeddings {2} else {1}, "missing reference requires every fixed complete observation on every source");
+                if workloads.len()==2 {assert_eq!(workloads[0],workloads[1],"noise calibration repeats the same complete corpus");}
                 assert!(workloads[0].iter().all(|text| text.as_str().unwrap().chars().count() == 4096));
             }
             let c = f.state.conn();
