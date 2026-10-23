@@ -23,7 +23,13 @@ pub(crate) async fn copy_text(text: &str) -> bool {
     let _ = area.set_attribute("style", "position:fixed;left:0;top:0;opacity:0");
     let _ = area.set_attribute("readonly", "");
     // Keep the selection inside an open modal's focus trap when copying from account forms.
-    let host = document.query_selector("dialog[open], [role='dialog'][aria-modal='true']").ok().flatten();
+    let selector = "dialog[open], [role='dialog'][aria-modal='true']";
+    // Copy buttons may live in a second modal inside the user's settings dialog.
+    // The outer dialog is inert then: selecting there can report success without copying.
+    let host = document.active_element()
+        .and_then(|element|element.closest(selector).ok().flatten())
+        .or_else(||document.query_selector("dialog[open] dialog[open]").ok().flatten())
+        .or_else(||document.query_selector(selector).ok().flatten());
     let appended = if let Some(host)=host {host.append_child(&area)}else{body.append_child(&area)};
     if appended.is_err() { return false; }
     let previous = document.active_element();

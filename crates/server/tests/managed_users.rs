@@ -1103,3 +1103,144 @@ async fn deleting_revoked_key_rolls_back_when_audit_cannot_be_persisted() {
     assert_eq!(status,StatusCode::OK,"{value}");
     assert!(value["keys"].as_array().unwrap().iter().any(|key|key["id"]==id));
 }
+
+async fn reveal_test_key(f: &Fixture, user: i64, cookie: &str, admin: bool) -> (i64, String) {
+    let (status, value, _) = if admin {
+        f.admin("POST", &format!("/api/users/{user}/keys"), json!({"name":"reveal admin-created"})).await
+    } else {
+        f.req("POST", "/api/account/keys", Some(cookie), None, true, None, json!({"name":"reveal owner-created"})).await
+    };
+    assert_eq!(status, StatusCode::OK, "key creation must succeed");
+    (value["key"]["id"].as_i64().unwrap(), value["secret"].as_str().unwrap().to_owned())
+}
+
+#[tokio::test]
+async fn created_keys_reveal_exact_secret_from_encrypted_storage_without_exposing_list_or_audit() {
+    let f = Fixture::new();
+    let (user, cookie) = deletion_user(&f, "key-reveal-storage").await;
+    for admin_created in [false, true] {
+        let (id, secret) = reveal_test_key(&f, user, &cookie, admin_created).await;
+        let (nonce, cipher): (Vec<u8>, Vec<u8>) = f.state.conn().query_row(
+            "SELECT nonce,cipher FROM gateway_keys WHERE id=?1", [id], |r|Ok((r.get(0)?,r.get(1)?))
+        ).unwrap();
+        assert!(!nonce.is_empty());assert!(!cipher.is_empty());
+        assert!(!cipher.windows(secret.len()).any(|bytes|bytes==secret.as_bytes()), "database must not contain plaintext key material");
+        assert!(f.state.secrets.open(&nonce,&cipher).unwrap()==secret);
+        let (wrong_master, _) = tokengo_server::crypto::SecretBox::generate();
+        assert!(wrong_master.open(&nonce,&cipher).is_err(), "a different master key cannot decrypt stored credentials");
+        for personal in [true,false] {
+            let path = if personal {format!("/api/account/keys/{id}/reveal")} else {format!("/api/vkeys/{id}/reveal")};
+            let (status, value, headers) = if personal {
+                f.req("POST", &path, Some(&cookie), None, true, None, json!({})).await
+            } else {f.admin("POST", &path, json!({})).await};
+            assert_eq!(status, StatusCode::OK, "reveal must succeed for an authorized caller");
+            assert!(value["key"].as_str()==Some(secret.as_str()), "reveal must return the original complete key");
+            assert_eq!(headers["cache-control"],"no-store");
+        }
+        for personal in [true,false] {
+            let (status, value, _) = if personal {
+                f.req("GET", "/api/account/keys", Some(&cookie), None, false, None, json!(null)).await
+            } else {f.admin("GET", &format!("/api/users/{user}/keys"), json!(null)).await};
+            assert_eq!(status,StatusCode::OK);
+            let row=value["keys"].as_array().unwrap().iter().find(|key|key["id"]==id).unwrap();
+            assert_eq!(row["can_reveal"],true);
+            for field in ["secret","nonce","cipher"] {assert!(row.get(field).is_none(), "metadata must not expose {field}");}
+            assert!(!value.to_string().contains(&secret));
+        }
+        let c=f.state.conn();
+        let mut statement=c.prepare("SELECT action,metadata_json FROM audit_events WHERE target_id=?1 AND action LIKE '%reveal%'").unwrap();
+        let events=statement.query_map([id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert!(events.len()>=2,"both administrator and owner reveal must be audited");
+        for (action,metadata) in events {assert!(!action.contains(&secret));assert!(!metadata.contains(&secret));}
+    }
+}
+
+#[tokio::test]
+async fn key_reveal_requires_owner_browser_csrf_or_administrator_and_does_not_restore_revoked_keys() {
+    let f=Fixture::new();
+    let (user,cookie)=deletion_user(&f,"key-reveal-scope").await;
+    let (_,other_cookie)=deletion_user(&f,"key-reveal-stranger").await;
+    let (_,root_cookie)=f.login("admin",PASSWORD).await;
+    let (id,secret)=reveal_test_key(&f,user,&cookie,false).await;
+    assert!(f.state.authenticate_context(secret.clone()).await.is_some(),"bearer rejection must be tested using an otherwise valid credential");
+    let own=format!("/api/account/keys/{id}");let reveal=format!("{own}/reveal");let admin=format!("/api/vkeys/{id}/reveal");
+    for (path,cookie,bearer,csrf,origin,expected) in [
+        (&reveal,None,None,true,None,StatusCode::UNAUTHORIZED),
+        (&reveal,Some(cookie.as_str()),None,false,None,StatusCode::FORBIDDEN),
+        (&reveal,Some(cookie.as_str()),None,true,Some("https://foreign.invalid"),StatusCode::FORBIDDEN),
+        (&reveal,Some(other_cookie.as_str()),None,true,None,StatusCode::NOT_FOUND),
+        (&reveal,None,Some(secret.as_str()),true,None,StatusCode::UNAUTHORIZED),
+        (&reveal,Some(root_cookie.as_str()),None,true,None,StatusCode::FORBIDDEN),
+        (&admin,None,None,true,None,StatusCode::UNAUTHORIZED),
+        (&admin,Some(cookie.as_str()),None,true,None,StatusCode::FORBIDDEN),
+        (&admin,None,Some(secret.as_str()),true,None,StatusCode::FORBIDDEN),
+        (&admin,Some(root_cookie.as_str()),None,false,None,StatusCode::FORBIDDEN),
+    ] {
+        let (status,value,headers)=f.req("POST",path,cookie,bearer,csrf,origin,json!({})).await;
+        assert_eq!(status,expected,"unexpected reveal authorization result for {path}");
+        assert_eq!(headers["cache-control"],"no-store");
+        assert!(!value.to_string().contains(&secret),"denied reveal must not expose key material");
+    }
+    let (status,value,headers)=f.req("POST",&admin,Some(&root_cookie),None,true,None,json!({})).await;
+    assert_eq!(status,StatusCode::OK);assert!(value["key"].as_str()==Some(secret.as_str()));assert_eq!(headers["cache-control"],"no-store");
+    assert_eq!(f.req("DELETE",&own,Some(&cookie),None,true,None,json!({})).await.0,StatusCode::OK);
+    for personal in [true,false] {
+        let (status,value,_)=if personal {f.req("POST",&reveal,Some(&cookie),None,true,None,json!({})).await}else{f.admin("POST",&admin,json!({})).await};
+        assert_eq!(status,StatusCode::OK,"revocation does not erase encrypted viewing material");assert!(value["key"].as_str()==Some(secret.as_str()));
+    }
+    assert!(f.state.authenticate_context(secret.clone()).await.is_none(),"viewing a revoked key never re-enables it");
+    assert_eq!(f.req("POST",&format!("{own}/delete"),Some(&cookie),None,true,None,json!({})).await.0,StatusCode::OK);
+    for personal in [true,false] {
+        let (status,value,_)=if personal {f.req("POST",&reveal,Some(&cookie),None,true,None,json!({})).await}else{f.admin("POST",&admin,json!({})).await};
+        assert_eq!(status,StatusCode::NOT_FOUND);assert!(!value.to_string().contains(&secret));
+    }
+    assert!(f.state.authenticate_context(secret).await.is_none());
+}
+
+#[tokio::test]
+async fn hash_only_legacy_keys_are_explicitly_unavailable_and_decryption_failure_never_returns_plaintext() {
+    let f=Fixture::new();let(user,cookie)=deletion_user(&f,"key-reveal-legacy").await;
+    let legacy={let c=f.state.conn();db::identity::create_key(&c,user,"hash only legacy",&Default::default(),None,None).unwrap().0.id};
+    for personal in [true,false] {
+        let path=if personal{format!("/api/account/keys/{legacy}/reveal")}else{format!("/api/vkeys/{legacy}/reveal")};
+        let(status,value,_)=if personal{f.req("POST",&path,Some(&cookie),None,true,None,json!({})).await}else{f.admin("POST",&path,json!({})).await};
+        assert_eq!(status,StatusCode::CONFLICT);assert_eq!(value["error"]["type"],"key_secret_unavailable");assert!(value["key"].is_null());
+    }
+    let (_,listed,_)=f.req("GET","/api/account/keys",Some(&cookie),None,false,None,json!(null)).await;
+    assert_eq!(listed["keys"].as_array().unwrap().iter().find(|key|key["id"]==legacy).unwrap()["can_reveal"],false);
+    let(id,secret)=reveal_test_key(&f,user,&cookie,false).await;
+    let (wrong_master,_)=tokengo_server::crypto::SecretBox::generate();let(nonce,cipher)=wrong_master.seal(&secret).unwrap();
+    f.state.conn().execute("UPDATE gateway_keys SET nonce=?2,cipher=?3 WHERE id=?1",rusqlite::params![id,nonce,cipher]).unwrap();
+    for personal in [true,false] {
+        let path=if personal{format!("/api/account/keys/{id}/reveal")}else{format!("/api/vkeys/{id}/reveal")};
+        let(status,value,_)=if personal{f.req("POST",&path,Some(&cookie),None,true,None,json!({})).await}else{f.admin("POST",&path,json!({})).await};
+        assert!(!status.is_success(),"unreadable encrypted material must fail closed");assert!(value["key"].is_null());assert!(!value.to_string().contains(&secret));
+    }
+}
+
+#[tokio::test]
+async fn reveal_audit_failure_hides_plaintext_and_encrypted_creation_failure_rolls_back_all_changes() {
+    let f=Fixture::new();let(user,cookie)=deletion_user(&f,"key-reveal-atomic").await;
+    let(id,secret)=reveal_test_key(&f,user,&cookie,false).await;
+    f.state.conn().execute_batch("CREATE TRIGGER reject_key_reveal_audit BEFORE INSERT ON audit_events WHEN NEW.action LIKE '%reveal%' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();
+    for personal in [true,false] {
+        let path=if personal{format!("/api/account/keys/{id}/reveal")}else{format!("/api/vkeys/{id}/reveal")};
+        let(status,value,_)=if personal{f.req("POST",&path,Some(&cookie),None,true,None,json!({})).await}else{f.admin("POST",&path,json!({})).await};
+        assert!(!status.is_success());assert!(value["key"].is_null());assert!(!value.to_string().contains(&secret));
+    }
+    let snapshot=|| {
+        let c=f.state.conn();
+        (c.query_row("SELECT count(*) FROM gateway_keys WHERE user_id=?1",[user],|r|r.get::<_,i64>(0)).unwrap(),
+         c.query_row("SELECT count(*) FROM billing_budgets",[],|r|r.get::<_,i64>(0)).unwrap(),
+         c.query_row("SELECT count(*) FROM audit_events",[],|r|r.get::<_,i64>(0)).unwrap())
+    };
+    let before=snapshot();
+    f.state.conn().execute_batch("CREATE TRIGGER reject_encrypted_key_insert BEFORE INSERT ON gateway_keys WHEN NEW.nonce IS NOT NULL OR NEW.cipher IS NOT NULL BEGIN SELECT RAISE(ABORT,'encrypted write unavailable'); END; CREATE TRIGGER reject_encrypted_key_update BEFORE UPDATE OF nonce,cipher ON gateway_keys WHEN NEW.nonce IS NOT NULL OR NEW.cipher IS NOT NULL BEGIN SELECT RAISE(ABORT,'encrypted write unavailable'); END;").unwrap();
+    for personal in [true,false] {
+        let(status,value,_)=if personal {
+            f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"must roll back owner","limit_micro":0})).await
+        }else{f.admin("POST",&format!("/api/users/{user}/keys"),json!({"name":"must roll back admin"})).await};
+        assert!(!status.is_success(),"creation cannot silently fall back to unrevealable hash-only storage");
+        assert!(value["secret"].is_null());assert_eq!(snapshot(),before,"key, budget and audit writes must roll back atomically");
+    }
+}

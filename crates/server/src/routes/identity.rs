@@ -32,6 +32,7 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/api/vkeys/{id}", patch(update_key))
         .route("/api/vkeys/{id}/delete", post(delete_key))
+        .route("/api/vkeys/{id}/reveal", post(reveal_key).layer(axum::middleware::map_response(reveal_no_store)))
         .route("/v1/me", get(me))
         .route("/v1/keys", get(own_keys).post(own_create_key))
         .route("/v1/keys/{id}", axum::routing::delete(own_revoke))
@@ -211,6 +212,11 @@ async fn disable_user(
     })?;
     Ok(Json(json!({"user":row})))
 }
+fn key_view(c:&rusqlite::Connection,key:&identity::VKey)->db::Result<Value> {
+    let mut row=serde_json::to_value(key).map_err(|e|db::DbError::Other(e.to_string()))?;
+    row["can_reveal"]=json!(db::gateway_keys::can_reveal(c,key.id)?);
+    Ok(row)
+}
 async fn admin_keys(
     _admin: AdminAuth,
     State(state): State<SharedState>,
@@ -218,7 +224,8 @@ async fn admin_keys(
 ) -> Result<Json<Value>, ApiError> {
     let c = state.conn();
     missing_user(&c, id)?;
-    Ok(Json(json!({"keys":identity::keys(&c,id)?})))
+    let keys=identity::keys(&c,id)?.iter().map(|key|key_view(&c,key)).collect::<db::Result<Vec<_>>>()?;
+    Ok(Json(json!({"keys":keys})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -249,7 +256,7 @@ async fn admin_create_key(
     }
     let (row, secret) = db::in_tx(&c, |c| {
         let (row, secret) =
-            identity::create_key(c, id, &body.name, &policy, body.expires_at, None)?;
+            identity::create_key_recoverable(c, &state.secrets, id, &body.name, &policy, body.expires_at, None)?;
         identity::audit(
             c,
             _admin.0.as_ref(),
@@ -260,7 +267,7 @@ async fn admin_create_key(
         )?;
         Ok((row, secret))
     })?;
-    Ok(Json(json!({"key":row,"secret":secret})))
+    Ok(Json(json!({"key":key_view(&c,&row)?,"secret":secret})))
 }
 fn present_nullable<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Option<i64>>, D::Error> {
     Option::<i64>::deserialize(d).map(Some)
@@ -328,7 +335,7 @@ async fn update_key(
             json!({"user_id":row.user_id,"enabled":row.enabled}),
         )
     })?;
-    Ok(Json(json!({"key":row})))
+    Ok(Json(json!({"key":key_view(&c,&row)?})))
 }
 /// Remove an already revoked credential from daily lists without deleting its row.
 async fn delete_key(
@@ -346,7 +353,19 @@ async fn delete_key(
         }
         Ok(())
     })?;
-    Ok(Json(json!({"key":row,"deleted":true,"id":id})))
+    Ok(Json(json!({"key":key_view(&c,&row)?,"deleted":true,"id":id})))
+}
+/// Every response, including authentication/ownership errors, forbids caching.
+pub(crate) async fn reveal_no_store(mut response:axum::response::Response)->axum::response::Response {
+    response.headers_mut().insert(axum::http::header::CACHE_CONTROL,"no-store".parse().unwrap());
+    response
+}
+async fn reveal_key(admin:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>)->Result<Json<Value>,ApiError> {
+    let c=state.conn();let row=missing_key(&c,id)?;
+    if identity::key_deleted(&c,id)? {return Err(ApiError::not_found("Key not found"));}
+    let secret=db::gateway_keys::reveal(&c,&state.secrets,id)?.ok_or_else(||ApiError::new(StatusCode::CONFLICT,"key_secret_unavailable","此历史 Key 仅保存哈希，无法恢复完整内容；请新建 Key 并更新客户端"))?;
+    db::in_tx(&c,|c|identity::audit(c,admin.0.as_ref(),"key.reveal","key",id,json!({"user_id":row.user_id,"actor":admin.actor_label()})))?;
+    Ok(Json(json!({"key":secret})))
 }
 async fn me(VKeyAuth(auth): VKeyAuth) -> Json<Value> {
     Json(json!({"identity":auth}))
@@ -406,8 +425,9 @@ async fn own_create_key(
         return Err(ApiError::bad_request("Expiry must be in the future"));
     }
     let (row, secret) = db::in_tx(&c, |c| {
-        let (row, secret) = identity::create_key(
+        let (row, secret) = identity::create_key_recoverable(
             c,
+            &state.secrets,
             auth.user_id,
             &body.name,
             &policy,
@@ -424,7 +444,7 @@ async fn own_create_key(
         )?;
         Ok((row, secret))
     })?;
-    Ok(Json(json!({"key":row,"secret":secret})))
+    Ok(Json(json!({"key":key_view(&c,&row)?,"secret":secret})))
 }
 async fn own_revoke(
     VKeyAuth(auth): VKeyAuth,

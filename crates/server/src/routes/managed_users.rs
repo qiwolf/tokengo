@@ -47,6 +47,7 @@ pub fn router() -> Router<SharedState> {
         .route("/api/account/services", get(own_services))
         .route("/api/account/keys", get(own_keys).post(own_create))
         .route("/api/account/keys/{id}/delete", post(own_delete))
+        .route("/api/account/keys/{id}/reveal",post(own_reveal).layer(axum::middleware::map_response(super::identity::reveal_no_store)))
         .route(
             "/api/account/keys/{id}",
             patch(own_update).delete(own_revoke),
@@ -92,6 +93,7 @@ fn user_view(c: &Connection, u: &identity::User) -> db::Result<Value> {
 fn key_view(c: &Connection, k: &identity::VKey) -> db::Result<Value> {
     let mut value = serde_json::to_value(k).map_err(dbbad)?;
     value["budget"] = json!(budget(c, "key", k.id)?);
+    value["can_reveal"]=json!(db::gateway_keys::can_reveal(c,k.id)?);
     let paused=identity::self_paused(c,k)?;
     let user_valid=identity::user(c,k.user_id)?.is_some_and(|u|u.enabled);
     let parent_valid=if let Some(parent)=k.parent_key_id { identity::context(c,parent)?.is_some_and(|a|a.user_id==k.user_id) } else { true };
@@ -454,7 +456,7 @@ async fn own_create(
         if active >= MAX_ACTIVE_KEYS {
             return Err(dbbad("活动密钥已达32把，请先停用或撤销旧密钥"));
         }
-        let (key, secret) = identity::create_key(&c, u.id, &body.name, &p, body.expires_at, None)?;
+        let (key, secret) = identity::create_key_recoverable(&c, &state.secrets, u.id, &body.name, &p, body.expires_at, None)?;
         if limit.is_some() {
             set_budget(
                 &c,
@@ -641,4 +643,16 @@ async fn own_delete(
         key_view(&c,&row)
     }).map_err(invalid)?;
     Ok(Json(json!({"key":value,"deleted":true,"id":id})))
+}
+
+async fn own_reveal(browser:Browser,State(state):State<SharedState>,Path(id):Path<i64>)->Result<Json<Value>,ApiError> {
+    let c=state.conn();let u=owner(&browser,&c)?;
+    let row=identity::key(&c,id)?.filter(|k|k.user_id==u.id).ok_or_else(||ApiError::not_found("密钥不存在"))?;
+    if identity::key_deleted(&c,id)? {return Err(ApiError::not_found("密钥不存在"));}
+    let secret=db::gateway_keys::reveal(&c,&state.secrets,id)?.ok_or_else(||ApiError::new(axum::http::StatusCode::CONFLICT,"key_secret_unavailable","此历史 Key 仅保存哈希，无法恢复完整内容；请新建 Key 并更新客户端"))?;
+    credentials::atomic(&c,|| {
+        c.execute("INSERT INTO audit_events(ts_ms,action,target_type,target_id,metadata_json) VALUES(?1,'key.reveal','key',?2,?3)",params![db::now_ms(),id,json!({"actor_account_id":browser.credential.account.id,"user_id":row.user_id}).to_string()])?;
+        Ok(())
+    })?;
+    Ok(Json(json!({"key":secret})))
 }

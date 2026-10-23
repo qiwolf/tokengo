@@ -1,0 +1,16 @@
+{
+  "result": "passed",
+  "production_actor": "root managing user andy (browser account changed from earlier ordinary session)",
+  "personal_endpoint": "isolated integration tests passed; production ordinary browser not repeated",
+  "key_id": 85,
+  "creation_and_reveal_exact_match": true,
+  "reveal_after_full_reload_exact_match": true,
+  "close_clears_dom_plaintext": true,
+  "native_macos_copy_replaces_sentinel_with_exact_key": true,
+  "legacy_hermes_hash_only_message": true,
+  "revoked_key_still_readable": true,
+  "test_key_revoked_and_deleted": true,
+  "hermes_unchanged": true,
+  "nested_modal_copy_regression": "initial falsely successful copy retained sentinel; nearest modal host fix passed native clipboard after full reload",
+  "raw_key_saved": false
+}

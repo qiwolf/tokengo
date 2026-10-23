@@ -104,7 +104,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/logs/level", get(logs_level_get).put(logs_level_set))
         .route("/timeline", get(|| async { unbuilt(5, "GET /api/timeline") }))
         .route("/gateway-keys", get(gateway_keys_list).post(gateway_keys_create))
-        .route("/gateway-keys/{id}/reveal", get(gateway_keys_reveal))
+        .route("/gateway-keys/{id}/reveal", get(gateway_keys_reveal).layer(axum::middleware::map_response(super::identity::reveal_no_store)))
         .route("/gateway-keys/{id}", axum::routing::delete(gateway_keys_delete))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/settings/generate-gateway-key", post(generate_gateway_key))
@@ -2086,13 +2086,16 @@ async fn gateway_keys_create(
 }
 
 async fn gateway_keys_reveal(
-    _auth: PanelAuth,
+    root: super::accounts::RootGrant,
     State(state): State<SharedState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let key = gateway_keys::reveal(&state.conn(), &state.secrets, id)?.ok_or_else(|| {
+    let conn=state.conn();
+    if !root.valid(&conn)? { return Err(ApiError::unauthorized("管理员登录已失效")); }
+    let key = gateway_keys::reveal(&conn, &state.secrets, id)?.ok_or_else(|| {
         ApiError::not_found("Key not found or hash-only legacy key cannot be revealed")
     })?;
+    crate::db::in_tx(&conn,|c|crate::db::identity::audit(c,None,"key.reveal","key",id,serde_json::json!({"actor_account_id":root.actor_account_id(),"source":"legacy_gateway_key_reveal"})))?;
     Ok(Json(serde_json::json!({"gateway_key":key})))
 }
 

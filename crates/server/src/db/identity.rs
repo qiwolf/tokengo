@@ -523,6 +523,19 @@ pub fn create_key(
         key(c, c.last_insert_rowid())?.ok_or_else(|| DbError::Other("Key disappeared".into()))?;
     Ok((row, secret))
 }
+/// Production creation stores encrypted recovery material in the same transaction.
+/// The hash-only helper remains available for legacy callers and test fixtures.
+pub fn create_key_recoverable(
+    c:&Connection,sb:&crate::crypto::SecretBox,user_id:i64,name:&str,policy:&Policy,
+    expires_at:Option<i64>,parent_key_id:Option<i64>,
+)->Result<(VKey,String)> {
+    let create=|c:&Connection| {
+        let (row,secret)=create_key(c,user_id,name,policy,expires_at,parent_key_id)?;
+        super::gateway_keys::retain_secret(c,sb,row.id,&secret)?;
+        Ok((row,secret))
+    };
+    if c.is_autocommit() {super::in_tx(c,create)}else{create(c)}
+}
 /// Only an explicit owner pause can be undone through self-service.
 pub fn self_paused(c: &Connection, key: &VKey) -> Result<bool> {
     Ok(super::settings::get(c,&format!("self_paused_key:{}",key.id))?.as_deref()==Some(key.user_id.to_string().as_str()))

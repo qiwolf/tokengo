@@ -111,10 +111,22 @@ pub fn set_default(conn: &Connection, sb: &SecretBox, key: &str) -> Result<()> {
     })
 }
 
+/// Persist only encrypted recovery material for an existing identity credential.
+/// The caller owns the create/audit transaction; the public lists never select it.
+pub fn retain_secret(conn:&Connection,sb:&SecretBox,id:i64,key:&str)->Result<()> {
+    let hash:Option<String>=conn.query_row("SELECT key_hash FROM gateway_keys WHERE id=?1",[id],|r|r.get(0)).optional()?;
+    if !hash.is_some_and(|hash|verify_credential(key,&hash)) { return Err(DbError::Other("Credential recovery material does not match key".into())); }
+    let (nonce,cipher)=sb.seal(key).map_err(|_|DbError::Other("Cannot encrypt gateway key".into()))?;
+    conn.execute("UPDATE gateway_keys SET nonce=?2,cipher=?3 WHERE id=?1",params![id,nonce,cipher])?;
+    Ok(())
+}
+pub fn can_reveal(conn:&Connection,id:i64)->Result<bool> {
+    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM gateway_keys g WHERE g.id=?1 AND g.nonce IS NOT NULL AND length(g.nonce)>0 AND g.cipher IS NOT NULL AND length(g.cipher)>0 AND NOT EXISTS(SELECT 1 FROM settings s WHERE s.key='deleted_key:'||CAST(g.id AS TEXT)))",[id],|r|r.get(0))?)
+}
 pub fn reveal(conn: &Connection, sb: &SecretBox, id: i64) -> Result<Option<String>> {
     let row: Option<(Option<Vec<u8>>, Option<Vec<u8>>)> = conn
         .query_row(
-            "SELECT nonce,cipher FROM gateway_keys WHERE id=?1",
+            "SELECT nonce,cipher FROM gateway_keys g WHERE g.id=?1 AND NOT EXISTS(SELECT 1 FROM settings s WHERE s.key='deleted_key:'||CAST(g.id AS TEXT))",
             [id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )

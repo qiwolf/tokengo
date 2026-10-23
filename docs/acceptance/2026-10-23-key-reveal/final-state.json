@@ -1,0 +1,29 @@
+{
+  "keys": [
+    {
+      "id": 82,
+      "name": "Hermes",
+      "enabled": true,
+      "revoked": false,
+      "encrypted_copy_present": false,
+      "deleted": false,
+      "reveal_audit_count": 0
+    },
+    {
+      "id": 85,
+      "name": "Key再次显示-临时验收",
+      "enabled": false,
+      "revoked": true,
+      "encrypted_copy_present": true,
+      "deleted": true,
+      "reveal_audit_count": 4
+    }
+  ],
+  "integrity": "ok",
+  "foreign_key_errors": 0,
+  "schema_version": 40,
+  "pending_requests": 0,
+  "unsettled_ledger": 0,
+  "release": "/opt/tokengo/releases/key-reveal-copy-0506430ed0d9",
+  "active": "active"
+}

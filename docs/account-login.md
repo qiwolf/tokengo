@@ -142,15 +142,17 @@ print("会话已撤销，再次访问返回401")
 | PATCH /api/managed-users/{id} | `{display_name?,enabled?,policy?,password?,limit_micro?}`；保留原ID；更新金额上限不清零spent/reserved；用户停用同步其登录状态 | `{user}` |
 | POST /api/managed-users/{id}/login-credential | `{username,password,display_name?}`；仅为尚无凭证的历史用户补登录，不重挂既有账号 | `{user}` |
 | GET /api/account/keys | 从普通Cookie会话推导owner，返回本人Key/预算/安全策略/获准可见模型/32把上限 | `{keys,policy,budget,models,max_active_keys}` |
-| POST /api/account/keys | `{name,policy?,expires_at?,limit_micro?}`；顶级Key归属当前user，不要求先有VKey；事务内检查活动Key数 | `{key,secret}`，secret仅本次返回 |
+| POST /api/account/keys | `{name,policy?,expires_at?,limit_micro?}`；顶级Key归属当前user，不要求先有VKey；事务内检查活动Key数 | `{key,secret}`；同时加密留存，可通过显示接口再次读取 |
 | PATCH /api/account/keys/{id} | `{name?,policy?,enabled?,expires_at?,limit_micro?,revoke?}`；只能收紧本人Key策略；允许暂停、撤销及恢复自己暂停的未到期Key，恢复须通过祖先有效性和活动Key数量检查；不能恢复管理员停用或已撤销的Key | `{key}` |
 | DELETE /api/account/keys/{id} | 撤销本人Key；非本人404；已撤销不能复活 | `{key}` |
 | POST /api/account/keys/{id}/delete | 本人浏览器会话+CSRF；只能删除已永久撤销Key，活动/暂停409，跨用户404；幂等且保留历史 | `{key,deleted:true,id}` |
 | POST /api/vkeys/{id}/delete | 管理授权；只能删除已永久撤销Key，活动/暂停409；首次写key.delete审计，重复幂等 | `{key,deleted:true,id}` |
+| POST /api/account/keys/{id}/reveal | 本人浏览器+CSRF；读取加密副本，成功前写审计，响应no-store；已删除404/历史无密文409 | `{key:完整Key字符串}` |
+| POST /api/vkeys/{id}/reveal | 管理授权；同上，不自动授予独立运维令牌访问 | `{key:完整Key字符串}` |
 
-统一管理入口支持root会话和明确登记的独立运维令牌，保留现有root运维Bearer兼容；独立令牌不返回root账号投影，也不因此获得root安全或令牌签发权限。普通自助Key接口只接受浏览器会话，Cookie写操作沿用CSRF门，Cookie/Bearer混合拒绝。所有新响应加no-store。模型选项不泄露未授权来源配置或凭据；数据库新Key只存安全摘要，列表永不返回secret。
+统一管理入口支持root会话和明确登记的独立运维令牌，保留现有root运维Bearer兼容；独立令牌不返回root账号投影，也不因此获得root安全或令牌签发权限。普通自助Key接口只接受浏览器会话，Cookie写操作沿用CSRF门，Cookie/Bearer混合拒绝。所有新响应加no-store。模型选项不泄露未授权来源配置或凭据；新 Key 用安全摘要鉴权，另用服务器主密钥加密保存可再次显示的副本；列表永不返回 secret 或密文。
 
-新建 API Key 成功后，前端切换到独立的明文保存界面并自动尝试复制完整 Key；页面提供“复制 Key”重试和只读文本框手动复制。普通 HTTP 或剪贴板权限限制导致复制失败时明确提示，并保留本次明文，直到关闭交付界面或离开页面。管理员代建同样适用。历史 Key 只有摘要与提示标识，无法恢复明文；未保存时须新建替代 Key，确认客户端使用新 Key 后再停用旧 Key。
+新建 API Key 成功后，前端切换到独立的明文保存界面并自动尝试复制完整 Key；页面提供“复制 Key”重试和只读文本框手动复制。普通 HTTP 或剪贴板权限限制导致复制失败时明确提示，并保留本次明文，直到关闭交付界面或离开页面。管理员代建同样适用。完整 Key 可从列表点击“显示 Key”再次查看和复制，关闭后清除本页明文，不写入浏览器持久存储。旧版本只存摘要、未保存密文的历史 Key 无法恢复，界面会明确提示；已有密文的历史 Key 可以读取。
 
 已永久撤销的 Key 可以点击“删除 Key”并确认，从日常列表移除；调用历史、账务、审计与父子约束保留。已删除 Key 不再允许编辑或启用。此删除能力与前述明文交付修复属于 qiwolf.8 之后的 main 改动，已在237部署验收，原 qiwolf.8 发行附件保持原样，详见[删除验收](acceptance/2026-10-23-key-delete/README.md)。
 
@@ -167,3 +169,5 @@ print("会话已撤销，再次访问返回401")
 新授权候选仅列可见模型；管理员使用可见模型目录，普通用户还须满足父级真实来源权限。已有隐藏或目录外显式授权放在“已有兼容授权”折叠区，只能撤销；保存其他资料不会丢弃原值，取消不会提交撤销。目录失败时不把全部来源模型作为备选。空集合仍表示禁止全部，与 null 继承不同。
 
 管理员可删除普通用户：`DELETE /api/managed-users/{id}` 归档稳定用户身份，撤销其全部 Key，移除登录凭证/会话和私有策略，保留请求、用量、账本及删除审计。存在该用户运行请求、预占或未结算项时拒绝；根管理员不能从普通用户删除入口移除。普通用户可恢复自己暂停的 Key，但不能恢复管理员停用、撤销或祖先禁用的 Key。
+
+Key 再次显示及嵌套弹窗系统剪贴板验收见[记录](acceptance/2026-10-23-key-reveal/README.md)。此能力属于 qiwolf.8 之后 main 与237的后续修改，原发行附件不变。

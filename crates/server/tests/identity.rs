@@ -105,7 +105,7 @@ impl Fixture {
     }
 }
 #[tokio::test]
-async fn create_once_secrets_owner_scope_and_child_policy_are_enforced() {
+async fn encrypted_recoverable_secrets_owner_scope_and_child_policy_are_enforced() {
     let f = Fixture::new();
     let a = f.user("alice", json!({})).await;
     let b = f.user("bob", json!({})).await;
@@ -182,13 +182,14 @@ async fn create_once_secrets_owner_scope_and_child_policy_are_enforced() {
     assert!(raw.0.starts_with("sha256:"));
     assert_eq!(raw.0.len(), 71);
     assert!(!raw.0.contains(secret));
-    assert!(raw.1.is_none() && raw.2.is_none());
-    assert_eq!(
-        f.admin("GET", &format!("/api/gateway-keys/{cid}/reveal"), json!({}))
-            .await
-            .0,
-        StatusCode::NOT_FOUND
-    );
+    let nonce=raw.1.as_ref().expect("production-created child stores recovery nonce");
+    let cipher=raw.2.as_ref().expect("production-created child stores encrypted recovery material");
+    assert!(!nonce.is_empty() && !cipher.is_empty());
+    assert_eq!(f.state.secrets.open(nonce,cipher).unwrap(),secret);
+    assert!(!cipher.windows(secret.len()).any(|part|part==secret.as_bytes()));
+    let (reveal_status,revealed)=f.admin("GET", &format!("/api/gateway-keys/{cid}/reveal"), json!({})).await;
+    assert_eq!(reveal_status,StatusCode::OK);
+    assert_eq!(revealed["gateway_key"],secret);
     let audit: String = f
         .state
         .conn()
