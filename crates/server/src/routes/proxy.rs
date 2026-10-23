@@ -15,7 +15,7 @@
 //! 鉴权用对外统一 key（`Authorization: Bearer <key>`）。**没配 key 就一律拒绝**：
 //! 少配一次 key 就变成公网裸奔的转发器，这种"默认开放"的坑不能留。
 
-use axum::extract::{FromRequestParts, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -34,11 +34,20 @@ pub fn router() -> Router<SharedState> {
         .route("/chat/completions", post(chat_completions))
         .route("/responses", post(responses))
         .route("/messages", post(messages))
-        .route("/embeddings", post(embeddings))
-        .route("/rerank", post(rerank))
+        .route("/embeddings", post(embeddings).layer(DefaultBodyLimit::max(vector_body_limit())))
+        .route("/rerank", post(rerank).layer(DefaultBodyLimit::max(vector_body_limit())))
         .route("/tools/search", post(search))
         .route("/tools/fetch", post(fetch))
         .route("/models", get(models))
+}
+
+// A transport resource budget shared by direct and virtual vector endpoints.
+// Model input/token/candidate capabilities are decided by the selected upstream.
+fn vector_body_limit() -> usize {
+    std::env::var("TOKENGO_VECTOR_BODY_LIMIT_BYTES").ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(64 * 1024 * 1024)
 }
 
 // ───────────────────────── 鉴权 ─────────────────────────

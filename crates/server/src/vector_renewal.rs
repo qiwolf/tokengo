@@ -30,6 +30,13 @@ struct Renewal {
     lease_until_ms: i64,
     #[serde(default)]
     token: String,
+    /// A failed voluntary workload upgrade must not revoke still-valid old evidence.
+    #[serde(default)]
+    profile_upgrade_error: String,
+    #[serde(default)]
+    profile_upgrade_message: String,
+    #[serde(default)]
+    profile_upgrade_at_ms: i64,
 }
 fn key(user: i64, fingerprint: &str) -> String {
     format!("internal_vector_renewal_v1:{user}:{fingerprint}")
@@ -107,7 +114,7 @@ pub(crate) async fn verify(
     if config.targets.len() < 2 {
         return Ok(());
     }
-    let (fingerprint, kind) = {
+    let (fingerprint, kind, full_verification, previous_valid) = {
         let c = state.conn();
         let kind = db::model_routes::routes_for(&c, &config.targets[0].logical_model)?
             .map(|r| r.kind)
@@ -126,13 +133,29 @@ pub(crate) async fn verify(
         }
         let fingerprint = vector_compat::fingerprint(&c, user, &config.targets, kind)?;
         let current = vector_compat::require(&c, user, &config.targets, kind);
+        let previous_valid = current.is_ok();
+        // Saving an old workload profile authorizes a complete upgrade. Background
+        // renewal keeps using the compact immutable reference and never does a load test.
+        let full_verification = !automatic
+            && current.as_ref().map_or(true, |contract| !vector_compat::current_profile(contract));
         if let Ok(contract) = current {
-            let renewal=read(&c,&key(user,&fingerprint))?;
-            if (!automatic && (renewal.state.is_empty()||renewal.state=="valid") && renewal.sources.iter().all(|s|s.usable(db::now_ms())) && vector_compat::has_reference(&c,user,&fingerprint).unwrap_or(false)) || ((renewal.state.is_empty()||renewal.state=="valid") && vector_compat::has_reference(&c,user,&fingerprint).unwrap_or(false) && renewal.sources.iter().all(|s|s.usable(db::now_ms())) && db::now_ms().saturating_sub(contract.verified_at_ms) < RENEW_AFTER_MS) {
+            let renewal = read(&c, &key(user, &fingerprint))?;
+            if !full_verification
+                && (renewal.state.is_empty() || renewal.state == "valid")
+                && renewal.sources.iter().all(|source| source.usable(db::now_ms()))
+                && vector_compat::has_reference(&c, user, &fingerprint).unwrap_or(false)
+                && (!automatic || db::now_ms().saturating_sub(contract.verified_at_ms) < RENEW_AFTER_MS)
+            {
                 return Ok(());
             }
         }
-        (fingerprint, kind)
+        (fingerprint, kind, full_verification, previous_valid)
+    };
+    let lease_ms = if full_verification {
+        vector_compat::full_verify_budget_ms(&state.conn(), user, &config.targets, kind)?
+            .saturating_add(30_000).min(i64::MAX as u64) as i64
+    } else {
+        LEASE_MS
     };
     let k = key(user, &fingerprint);
     let token = uuid::Uuid::new_v4().to_string();
@@ -141,7 +164,8 @@ pub(crate) async fn verify(
         let tx = c.unchecked_transaction()?;
         let mut r = read(&tx, &k)?;
         let now = db::now_ms();
-        if r.lease_until_ms > now || r.next_retry_at_ms > now {
+        if r.lease_until_ms > now
+            || (r.next_retry_at_ms > now && !(full_verification && previous_valid)) {
             if automatic {
                 return Ok(());
             }
@@ -157,19 +181,19 @@ pub(crate) async fn verify(
                 }
             });
         }
+        let previous = r.clone();
         r.state = "checking".into();
         r.token = token.clone();
         r.attempted_at_ms = now;
-        r.lease_until_ms = now + LEASE_MS;
+        r.lease_until_ms = now.saturating_add(lease_ms);
         r.next_retry_at_ms = 0;
-        let previous=r.sources.clone();
         write(&tx, &k, &r)?;
         tx.commit()?;
         previous
     };
     let has_history={let c=state.conn();vector_compat::has_history(&c,user,&config.targets,kind)};
     let has_reference={let c=state.conn();vector_compat::has_reference(&c,user,&fingerprint)};
-    let partial=if has_history&&matches!(has_reference,Ok(true)){Some(vector_compat::renew_sources(state,user,config,actor,guard.as_ref(),&previous).await)}else{None};
+    let partial=if !full_verification&&has_history&&matches!(has_reference,Ok(true)){Some(vector_compat::renew_sources(state,user,config,actor,guard.as_ref(),&previous.sources).await)}else{None};
     let result=if let Err(e)=has_reference{Err(e)}else if let Some(result)=&partial{result.as_ref().map(|_|()).map_err(|e|vr::VirtualError{code:e.code,message:e.message.clone()})}else{vector_compat::verify_impl(state,user,config,actor,true,guard.as_ref()).await};
     {
         let c=state.conn();let tx=c.unchecked_transaction()?;let mut r=read(&tx,&k)?;
@@ -184,13 +208,22 @@ pub(crate) async fn verify(
                 if usable>0 {outcome.publish(&tx,user)?;r.state=if usable==r.sources.len(){"valid"}else{"degraded"}.into();r.message=format!("{usable}/{} 个来源已通过续验；不可用或不兼容来源已独立隔离",r.sources.len());r.error_code.clear();r.next_retry_at_ms=if usable==r.sources.len(){0}else{db::now_ms()+RETRY_MS};}
                 else {r.state="failed".into();r.message="所有来源均未通过续验，暂无健康来源；系统将自动重试".into();r.error_code="vector_sources_unavailable".into();r.next_retry_at_ms=db::now_ms()+RETRY_MS;}
             },
-            (Ok(()),_)=>{r.sources.clear();r.state="valid".into();r.message="兼容校验通过，系统自动续验".into();r.error_code.clear();r.next_retry_at_ms=0;},
+            (Ok(()),_)=>{r.sources.clear();r.state="valid".into();r.message="兼容校验通过，系统自动续验".into();r.error_code.clear();r.next_retry_at_ms=0;r.profile_upgrade_error.clear();r.profile_upgrade_message.clear();r.profile_upgrade_at_ms=0;},
+            (Err(e),_) if full_verification && previous_valid
+                && vector_compat::require(&tx,user,&config.targets,kind).is_ok() => {
+                // Identity was checked immediately above; require also rechecks TTL and
+                // individual source health. A failed new profile is not old-profile revocation.
+                r = previous.clone();
+                r.profile_upgrade_error = e.code.into();
+                r.profile_upgrade_message = e.message.clone();
+                r.profile_upgrade_at_ms = db::now_ms();
+            },
             (Err(e),_)=>{let transient=has_history&&matches!(e.code,"vector_source_unavailable"|"vector_fallback_rate_limited");if !transient{r.sources.clear();}r.state=if transient{"degraded"}else{"failed"}.into();r.message=e.message.clone();r.error_code=e.code.into();r.next_retry_at_ms=db::now_ms()+RETRY_MS;},
         }
         write(&tx,&k,&r)?;tx.commit()?;
     }
     if let Err(e) = &result {
-        tracing::warn!(scope=user,model=%config.name,kind=?kind,error_code=e.code,"兼容自动续验失败，将在5分钟后重试");
+        tracing::warn!(scope=user,model=%config.name,kind=?kind,error_code=e.code,"兼容检查未完成；逐来源服务状态和负载升级失败原因已记录");
     }
     if !automatic {if let Some(Ok(outcome))=&partial {if !outcome.sources.iter().all(|s|s.usable(db::now_ms())){return Err(vr::VirtualError{code:"vector_source_unavailable",message:"部分来源尚未通过兼容检查；现有健康来源继续服务，请修复来源后再保存策略".into()});}}}
     result
@@ -230,7 +263,7 @@ pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
         let current = vector_compat::require(c, user, &config.targets, kind);
         let now = db::now_ms();
         let available=r.sources.iter().filter(|s|s.usable(now)).count();
-        let (phase, message) = if !r.sources.is_empty()&&available>0&&available<r.sources.len(){("degraded",format!("部分来源已隔离：{}；仍有 {available}/{} 个健康来源可用，系统5分钟后重试",r.sources.iter().filter(|s|!s.usable(now)).map(|s|format!("来源{}：{}",s.source_id,s.message)).collect::<Vec<_>>().join("；"),r.sources.len()))}else if r.state=="degraded" {("degraded",format!("续验未完成：{}；保留仍有效且身份未变的兼容证据继续服务，系统5分钟后重试",r.message))}else if r.state == "failed" {
+        let (phase, mut message) = if !r.sources.is_empty()&&available>0&&available<r.sources.len(){("degraded",format!("部分来源已隔离：{}；仍有 {available}/{} 个健康来源可用，系统5分钟后重试",r.sources.iter().filter(|s|!s.usable(now)).map(|s|format!("来源{}：{}",s.source_id,s.message)).collect::<Vec<_>>().join("；"),r.sources.len()))}else if r.state=="degraded" {("degraded",format!("续验未完成：{}；保留仍有效且身份未变的兼容证据继续服务，系统5分钟后重试",r.message))}else if r.state == "failed" {
             (
                 "failed",
                 format!(
@@ -255,8 +288,11 @@ pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
                 "兼容证据已过期或来源已变化，等待系统自动续验；多目标调用暂不可用".into(),
             )
         };
+        if !r.profile_upgrade_error.is_empty() {
+            message.push_str(&format!("；新负载范围校验未通过：{}；仍按原有有效证据和健康来源服务，未扩大已验证范围", r.profile_upgrade_message));
+        }
         Ok(
-            json!({"state":phase,"message":message,"verified_at_ms":verified,"expires_at_ms":verified.map(|v|v+vector_compat::TTL_MS),"attempted_at_ms":r.attempted_at_ms,"next_retry_at_ms":r.next_retry_at_ms,"lease_until_ms":r.lease_until_ms,"error_code":r.error_code,"sources":r.sources,"available_sources":available}),
+            json!({"state":phase,"message":message,"verified_at_ms":verified,"expires_at_ms":verified.map(|v|v+vector_compat::TTL_MS),"attempted_at_ms":r.attempted_at_ms,"next_retry_at_ms":r.next_retry_at_ms,"lease_until_ms":r.lease_until_ms,"error_code":r.error_code,"sources":r.sources,"available_sources":available,"profile_upgrade_error":r.profile_upgrade_error,"profile_upgrade_message":r.profile_upgrade_message,"profile_upgrade_at_ms":r.profile_upgrade_at_ms}),
         )
     })();
     result.unwrap_or_else(|e|json!({"state":"failed","message":format!("无法自动续验：{}；请检查策略权限与来源配置，系统会持续重新检查",e.message),"error_code":e.code}))

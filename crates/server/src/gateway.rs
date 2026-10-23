@@ -1053,14 +1053,23 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         Ok(p) => p,
         Err(e) => {
             if e.status.is_client_error() || e.status == StatusCode::SERVICE_UNAVAILABLE {
-                record_routing_refusal(&state, &req, started_ms, e.status.as_u16(), &e.message);
+                if matches!(req.endpoint, EndpointKind::Embeddings | EndpointKind::Rerank) {
+                    record_api_routing_refusal(&state, &req, started_ms, &e);
+                } else {
+                    record_routing_refusal(&state, &req, started_ms, e.status.as_u16(), &e.message);
+                }
             }
             return Err(e);
         }
     };
     if let Some(contract) = plan_all.vector_contract() {
-        crate::vector_compat::validate_request(contract, req.endpoint.as_model_kind(), &req.body)
-            .map_err(virtual_route_error)?;
+        if let Err(error) = crate::vector_compat::validate_request(
+            contract, req.endpoint.as_model_kind(), &req.body,
+        ) {
+            let error = virtual_route_error(error);
+            record_api_routing_refusal(&state, &req, started_ms, &error);
+            return Err(error);
+        }
     }
     if let Some(auth) = &req.auth {
         if (plan_all.virtual_route.is_none() || plan_all.virtual_route.as_ref().is_some_and(|r| r.shared)) && !auth.permits_model(&req.model) {
@@ -1450,6 +1459,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
     let mut last_http: Option<UpstreamError> = None;
+    let mut last_capacity_http: Option<UpstreamError> = None;
     let mut last_channel = ChannelId(0);
     // 上游说的「过多久再来」；下一次重试用它顶掉默认节拍。
 
@@ -2708,6 +2718,22 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                 continue;
                             }
                         };
+                        // A precise backend capacity refusal is request-local, not a broken
+                        // account/source. Preserve the whole body and walk authorized candidates.
+                        if let Some(capacity) = vector_capacity_rejection(req.endpoint, status, &err.body) {
+                            let note = format!("{}; request_shape={}", capacity, vector_request_shape(&req.body));
+                            guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                .map(|value| Usage::read(&value)).unwrap_or_default();
+                            guard.settle_billing("context_limit");
+                            guard.active_attempt = None;
+                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                "context_limit", Some(status), now_ms()-t0, Some(&note));
+                            ordinal += 1;
+                            last_fault = Some(note);
+                            last_capacity_http = Some(err);
+                            // Dropping the ticket releases recovery leases without changing health.
+                            continue 'channels;
+                        }
                         if matches!(status, 400 | 429) && (pooled || plan.virtual_route.is_some()) {
                             let switched = match advance_explicit_route(
                                 &state,
@@ -3056,6 +3082,22 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                                 continue;
                             }
                         };
+                        // A precise backend capacity refusal is request-local, not a broken
+                        // account/source. Preserve the whole body and walk authorized candidates.
+                        if let Some(capacity) = vector_capacity_rejection(req.endpoint, status, &err.body) {
+                            let note = format!("{}; request_shape={}", capacity, vector_request_shape(&req.body));
+                            guard.usage = serde_json::from_slice::<Value>(&err.body)
+                                .map(|value| Usage::read(&value)).unwrap_or_default();
+                            guard.settle_billing("context_limit");
+                            guard.active_attempt = None;
+                            record_attempt(&state, request_id, ordinal, channel, name, &sent_model,
+                                "context_limit", Some(status), now_ms()-t0, Some(&note));
+                            ordinal += 1;
+                            last_fault = Some(note);
+                            last_capacity_http = Some(err);
+                            // Dropping the ticket releases recovery leases without changing health.
+                            continue 'channels;
+                        }
                         if matches!(status, 400 | 429) && (pooled || plan.virtual_route.is_some()) {
                             let switched = match advance_explicit_route(
                                 &state,
@@ -3304,6 +3346,9 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
             ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "models_cooling", msg).into_response(),
         );
     }
+    // If capacity was the reason no candidate could serve the original request,
+    // preserve that real backend response rather than manufacturing a gateway 400.
+    let last_http = last_capacity_http.or(last_http);
     // 所有渠道都试完了
     let note = last_fault
         .clone()
@@ -3349,6 +3394,53 @@ fn output_ceiling(text: &str) -> Option<u64> {
         }
     }
     None
+}
+
+/// Narrow backend signatures only: arbitrary validation errors must never be retried.
+fn vector_capacity_rejection(endpoint: EndpointKind, status: u16, body: &[u8]) -> Option<Value> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let positive = |digits: &str| -> Option<u64> {
+        if digits.is_empty() || !digits.bytes().all(|byte|byte.is_ascii_digit()) {return None;}
+        digits.parse::<u64>().ok().filter(|n|*n>0)
+    };
+    if endpoint == EndpointKind::Rerank && matches!(status,400|413|422) {
+        let reason=value["detail"]["reason"].as_str()?;
+        let digits=reason.strip_prefix("encoded_query_document_pair_exceeds_")?.strip_suffix("_no_truncation_performed")?;
+        let limit=positive(digits)?;
+        let reported=value["detail"]["max_encoded_pair_tokens"].as_u64();
+        if reported.is_some_and(|n|n<=limit) {return None;}
+        return Some(serde_json::json!({"reason":"vector_pair_capacity_exceeded","reported_limit_tokens":limit,"reported_input_tokens":reported}));
+    }
+    if endpoint == EndpointKind::Embeddings && status==500 {
+        let message=value["error"]["message"].as_str()?;
+        let tail=message.strip_prefix("input (")?;
+        let (input,batch)=tail.split_once(" tokens) is too large to process. increase the physical batch size (current batch size: ")?;
+        let input=positive(input)?;let batch=positive(batch.strip_suffix(')')?)?;
+        if input<=batch {return None;}
+        return Some(serde_json::json!({"reason":"vector_physical_batch_capacity_exceeded","reported_input_tokens":input,"reported_limit_tokens":batch}));
+    }
+    None
+}
+#[cfg(test)]
+mod vector_capacity_tests {
+    use super::*;
+    #[test]
+    fn precise_capacity_signatures_only_match_correct_vector_kind_and_status() {
+        let rerank=serde_json::json!({"detail":{"reason":"encoded_query_document_pair_exceeds_8192_no_truncation_performed","max_encoded_pair_tokens":8193}}).to_string();
+        assert!(vector_capacity_rejection(EndpointKind::Rerank,422,rerank.as_bytes()).is_some());
+        assert!(vector_capacity_rejection(EndpointKind::Embeddings,422,rerank.as_bytes()).is_none());
+        assert!(vector_capacity_rejection(EndpointKind::Chat,422,rerank.as_bytes()).is_none());
+        for reason in ["invalid documents", "encoded_query_document_pair_exceeds_8192_no_truncation_performed user text", "encoded_query_document_pair_exceeds_x_no_truncation_performed", "encoded_query_document_pair_exceeds_0_no_truncation_performed"] {
+            let raw=serde_json::json!({"detail":{"reason":reason}}).to_string();
+            assert!(vector_capacity_rejection(EndpointKind::Rerank,422,raw.as_bytes()).is_none());
+        }
+        let embedding=serde_json::json!({"error":{"message":"input (8193 tokens) is too large to process. increase the physical batch size (current batch size: 8192)"}}).to_string();
+        assert!(vector_capacity_rejection(EndpointKind::Embeddings,500,embedding.as_bytes()).is_some());
+        assert!(vector_capacity_rejection(EndpointKind::Rerank,500,embedding.as_bytes()).is_none());
+        assert!(vector_capacity_rejection(EndpointKind::Embeddings,400,embedding.as_bytes()).is_none());
+        let extra=embedding.replace("8192)","8192) private trailing text");
+        assert!(vector_capacity_rejection(EndpointKind::Embeddings,500,extra.as_bytes()).is_none());
+    }
 }
 
 fn context_rejection(text: &str) -> bool {
@@ -3518,16 +3610,12 @@ pub fn usage_from_value(v: &Value) -> (i64,i64) { let u=Usage::read(v); (u.input
 /// 第四个返回值给出说明 —— 调用方拿它当**这条渠道的毛病**去重试/换渠道，而不是把空泡泡
 /// 原样丢给用户。
 #[allow(clippy::type_complexity)]
-async fn read_vector_body(mut response: reqwest::Response) -> Result<Bytes, String> {
-    const LIMIT: usize = 4 * 1024 * 1024;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| "兼容链响应读取失败或超时".to_owned())? {
-        if chunk.len() > LIMIT.saturating_sub(bytes.len()) {
-            return Err("兼容链响应超过4 MiB上限".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(Bytes::from(bytes))
+async fn read_vector_body(response: reqwest::Response) -> Result<Bytes, String> {
+    // Use the same response capacity as a direct model call. Compatibility evidence
+    // must never impose an additional body cap on an otherwise valid model result.
+    response.bytes().await.map_err(|e| if e.is_timeout() {
+        "等待非流式完成超时（读取正文）".into()
+    } else { format!("upstream body read failed: {e}") })
 }
 
 async fn buffer_passthrough(
@@ -4253,8 +4341,69 @@ fn record_routing_refusal(
     http: u16,
     msg: &str,
 ) {
-    let has_image =
-        req.endpoint.has_image(&req.body);
+    let code = if http == 503 { "models_cooling" }
+        else if http == 422 { "vision_not_ready" }
+        else if model_routes::is_auto(&req.model) { "auto_no_candidate" }
+        else { "model_not_configured" };
+    record_routing_refusal_with_code(state, req, started_ms, http, code, msg);
+}
+
+/// Compatibility denials preserve the original API error and safe payload dimensions.
+/// There was no upstream attempt: never mark a source unhealthy or write an attempt row.
+fn record_api_routing_refusal(
+    state: &SharedState,
+    req: &ForwardRequest,
+    started_ms: i64,
+    error: &ApiError,
+) {
+    let message = if matches!(req.endpoint, EndpointKind::Embeddings | EndpointKind::Rerank) {
+        format!("{}; request_shape={}", error.message, vector_request_shape(&req.body))
+    } else {
+        error.message.clone()
+    };
+    record_routing_refusal_with_code(
+        state, req, started_ms, error.status.as_u16(),
+        error.code.unwrap_or(error.kind), &message,
+    );
+}
+
+/// Only numeric request statistics are persisted; never text, parameters, or credentials.
+fn vector_request_shape(body: &Value) -> Value {
+    let texts: Vec<&str> = if let Some(text) = body.get("input").and_then(Value::as_str) {
+        vec![text]
+    } else {
+        body.get("input").and_then(Value::as_array).into_iter().flatten()
+            .filter_map(Value::as_str).collect()
+    };
+    let documents = body.get("documents").and_then(Value::as_array);
+    let document_chars = |v: &Value| v.as_str().or_else(|| v.get("text").and_then(Value::as_str))
+        .map_or(0, |text| text.chars().count());
+    let query_chars = body.get("query").and_then(Value::as_str).map_or(0, |text| text.chars().count());
+    let input_chars: usize = texts.iter().map(|text| text.chars().count()).sum();
+    let documents_chars: usize = documents.into_iter().flatten().map(document_chars).sum();
+    serde_json::json!({
+        "json_bytes": serde_json::to_vec(body).map_or(0, |bytes| bytes.len()),
+        "input_count": texts.len(),
+        "input_max_chars": texts.iter().map(|text| text.chars().count()).max().unwrap_or(0),
+        "input_total_chars": input_chars,
+        "query_chars": query_chars,
+        "documents_count": documents.map_or(0, Vec::len),
+        "document_max_chars": documents.into_iter().flatten().map(document_chars).max().unwrap_or(0),
+        "documents_total_chars": documents_chars,
+        "total_chars": input_chars + query_chars + documents_chars,
+        "top_n": body.get("top_n").and_then(Value::as_u64),
+    })
+}
+
+fn record_routing_refusal_with_code(
+    state: &SharedState,
+    req: &ForwardRequest,
+    started_ms: i64,
+    http: u16,
+    code: &str,
+    msg: &str,
+) {
+    let has_image = req.endpoint.has_image(&req.body);
     let request_id = {
         let conn = state.conn();
         match crate::db::requests::start(
@@ -4274,7 +4423,7 @@ fn record_routing_refusal(
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state,request_id,req.user_agent.as_deref());
     if let Err(e)=guard.identify(req.auth.as_ref()) { tracing::error!("refusal identity write failed: {e:?}"); }
-    guard.error_code=Some(if http==503 {"models_cooling"} else if http==422 {"vision_not_ready"} else if model_routes::is_auto(&req.model) {"auto_no_candidate"} else {"model_not_configured"}.into());
+    guard.error_code = Some(code.into());
 
     guard.finish(
         state,

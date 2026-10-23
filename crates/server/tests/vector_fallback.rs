@@ -28,6 +28,8 @@ enum Behavior {
     DifferentSpace,
     ReverseRanking,
     BadIndex,
+    WideEmbedding,
+    Capacity,
 }
 #[derive(Default)]
 struct UpstreamState {
@@ -51,6 +53,7 @@ impl Upstream {
         let router = Router::new()
             .route("/v1/embeddings", post(upstream))
             .route("/v1/rerank", post(upstream))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -76,6 +79,8 @@ fn embedding(text: &str, behavior: Behavior) -> Vec<f64> {
     let mut seed = hash(text);
     let n = if matches!(behavior, Behavior::Dimension) {
         7
+    } else if matches!(behavior, Behavior::WideEmbedding) {
+        1024
     } else {
         8
     };
@@ -106,6 +111,12 @@ async fn upstream(
     if let Some((entered, release)) = hold {
         entered.notify_one();
         release.notified().await;
+    }
+    if matches!(behavior, Behavior::Capacity) {
+        if uri.path().ends_with("embeddings") {
+            return (StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":{"message":"input (8193 tokens) is too large to process. increase the physical batch size (current batch size: 8192)"}}))).into_response();
+        }
+        return (StatusCode::UNPROCESSABLE_ENTITY,Json(json!({"detail":{"reason":"encoded_query_document_pair_exceeds_8192_no_truncation_performed","max_encoded_pair_tokens":8193}}))).into_response();
     }
     if matches!(behavior, Behavior::AccountFault) {
         return (
@@ -206,6 +217,9 @@ impl Fixture {
                     .unwrap();
             (user, key)
         };
+        db::billing::set_budget(
+            &state.conn(), "user", user, Some(1_000_000_000), "fixture-full-workload",
+        ).unwrap();
         let mut upstreams = Vec::new();
         let mut sources = Vec::new();
         let mut targets = Vec::new();
@@ -252,7 +266,7 @@ impl Fixture {
                     model: name,
                     input_micro_per_million: 1_000_000,
                     output_micro_per_million: 0,
-                    max_input_tokens: 50000,
+                    max_input_tokens: 8_000_000,
                     max_output_tokens: 0,
                 },
                 "fixture",
@@ -352,7 +366,7 @@ impl Fixture {
             .await
             .unwrap();
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
             .await
             .unwrap();
         (
@@ -382,7 +396,7 @@ impl Fixture {
             .unwrap();
         let response = app(self.state.clone()).oneshot(request).await.unwrap();
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
             .await
             .unwrap();
         (
@@ -556,28 +570,33 @@ async fn verified_alias_rejects_changed_source_mapping_and_credentials() {
 }
 
 #[tokio::test]
-async fn unverified_request_parameters_and_oversize_input_stop_before_upstream() {
+async fn valid_provider_parameters_and_inputs_beyond_sample_domain_forward_unchanged() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         let f = Fixture::new(kind, 2).await;
         f.verify_save().await;
-        let mut body = f.body();
-        body["unverified_provider_option"] = json!(true);
-        assert!(!f.call(body).await.0.is_success());
-        let mut body = f.body();
+        let mut custom = f.body();
+        custom["provider_option"] = json!({"original": "preserve-me"});
+        let mut long = f.body();
         if kind == ModelKind::Embeddings {
-            body["input"] = json!("x".repeat(513));
+            long["input"] = json!("x".repeat(4097));
         } else {
-            body["query"] = json!("x".repeat(513));
+            long["query"] = json!("x".repeat(4097));
         }
-        assert!(!f.call(body).await.0.is_success());
-        let mut body = f.body();
+        let mut large = f.body();
         if kind == ModelKind::Embeddings {
-            body["input"] = json!(vec!["short"; 17]);
+            large["input"] = json!(vec!["short"; 301]);
         } else {
-            body["documents"] = json!(vec!["short"; 129]);
+            large["documents"] = json!(vec!["short"; 301]);
         }
-        assert!(!f.call(body).await.0.is_success());
-        assert_eq!(f.upstreams[0].count() + f.upstreams[1].count(), 0);
+        for body in [custom, long, large] {
+            let (status, output) = f.call(body.clone()).await;
+            assert_eq!(status, StatusCode::OK, "{kind:?}: {output}");
+            let mut sent = f.upstreams[0].state.seen.lock().unwrap().last().unwrap().clone();
+            sent["model"] = body["model"].clone();
+            assert_eq!(sent, body);
+        }
+        assert_eq!(f.upstreams[0].count(), 3);
+        assert_eq!(f.upstreams[1].count(), 0);
     }
 }
 
@@ -944,5 +963,193 @@ async fn revoked_browser_session_cannot_commit_after_async_verification() {
                 assert!(routes.is_empty());
             }
         }
+    }
+}
+
+
+#[tokio::test]
+async fn vector_refusals_keep_original_code_safe_size_and_identity_without_attempts() {
+    for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+        let f = Fixture::new(kind, 2).await;
+        f.verify_save().await;
+        let marker = "PRIVATE-DOCUMENT-DO-NOT-LOG";
+        let mut body = f.body();
+        if kind == ModelKind::Embeddings {
+            body["input"] = json!([marker]);
+        } else {
+            body["query"] = json!(marker);
+            body["documents"] = json!([marker, marker]);
+        }
+        if kind == ModelKind::Embeddings {
+            body["dimensions"] = json!(0);
+        } else {
+            body["top_n"] = json!(0);
+        }
+        let expected_bytes = body.to_string().len();
+        let (status, output) = f.call(body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{output}");
+        f.flush().await;
+        let c = f.state.conn();
+        let (status, http, code, note, user): (String, i64, String, String, i64) = c.query_row(
+            "SELECT status,http_status,error_code,error,user_id FROM requests ORDER BY id DESC LIMIT 1",
+            [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+        ).unwrap();
+        assert_eq!(status, "client_error");
+        assert_eq!(http, 400);
+        assert_eq!(code, output["error"]["type"].as_str().unwrap());
+        assert_eq!(user, f.user);
+        assert!(!note.contains(marker), "input text must never appear in refusal logs");
+        let shape: Value = serde_json::from_str(note.split_once("request_shape=").unwrap().1).unwrap();
+        assert_eq!(shape["json_bytes"], expected_bytes);
+        if kind == ModelKind::Embeddings {
+            assert_eq!(shape["input_count"], 1);
+            assert_eq!(shape["input_total_chars"], marker.len());
+        } else {
+            assert_eq!(shape["query_chars"], marker.len());
+            assert_eq!(shape["documents_count"], 2);
+            assert_eq!(shape["document_max_chars"], marker.len());
+        }
+        let attempts: i64 = c.query_row("SELECT COUNT(*) FROM attempts WHERE request_id>0", [], |r|r.get(0)).unwrap();
+        assert_eq!(attempts, 0);
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(), 0);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM billing_ledger WHERE request_id>0", [], |r|r.get::<_,i64>(0)).unwrap(), 0);
+    }
+}
+
+#[tokio::test]
+async fn changed_vector_source_refusal_is_queryable_before_any_attempt() {
+    for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+        let f = Fixture::new(kind, 2).await;
+        f.verify_save().await;
+        db::channels::set_secret(&f.state.conn(), &f.state.secrets, f.sources[1], "rotated-after-verification").unwrap();
+        let (status, output) = f.call(f.body()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{output}");
+        f.flush().await;
+        let c = f.state.conn();
+        let (http, code, note): (i64, String, String) = c.query_row(
+            "SELECT http_status,error_code,error FROM requests ORDER BY id DESC LIMIT 1", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+        ).unwrap();
+        assert_eq!(http, 400);
+        assert_eq!(code, output["error"]["type"].as_str().unwrap());
+        assert_ne!(code, "model_not_configured");
+        assert!(note.contains("request_shape="));
+        drop(c);
+        assert!(f.attempts().is_empty());
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(), 0);
+    }
+}
+
+#[tokio::test]
+async fn route_budget_overrides_short_global_deadline_and_preserves_large_rerank_fallback() {
+    for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+        let f = Fixture::new(kind, 2).await;
+        f.verify_save().await;
+        {
+            let mut routing = f.state.routing();
+            routing.cfg.nonstream_timeout_ms = 1;
+            routing.cfg.request_budget_ms = 1;
+        }
+        db::route_policy::save(&f.state.conn(), &f.config.name, &db::route_policy::RoutePolicy {
+            nonstream_timeout_ms: Some(500),
+            request_budget_ms: Some(5000),
+            retry_times: Some(0),
+            ..Default::default()
+        }).unwrap();
+        f.upstreams[0].set(Behavior::Slow);
+        let mut input = f.body();
+        if kind == ModelKind::Rerank {
+            input["documents"] = json!((0..300).map(|i|format!("{i}: {}", "original-document ".repeat(160))).collect::<Vec<_>>());
+            input["top_n"] = json!(300);
+            input["return_documents"] = json!(false);
+        }
+        let started = std::time::Instant::now();
+        let (status, output) = f.call(input.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{kind:?}: {output}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(f.upstreams[0].count(), 1);
+        assert_eq!(f.upstreams[1].count(), 1);
+        for upstream in &f.upstreams {
+            let mut sent = upstream.state.seen.lock().unwrap()[0].clone();
+            sent["model"] = input["model"].clone();
+            assert_eq!(sent, input, "fallback must preserve every candidate and original text");
+        }
+        if kind == ModelKind::Rerank {
+            assert_eq!(output["results"].as_array().unwrap().len(), 300);
+            let mut indices = output["results"].as_array().unwrap().iter().map(|row|row["index"].as_u64().unwrap()).collect::<Vec<_>>();
+            indices.sort_unstable();
+            assert_eq!(indices, (0..300).collect::<Vec<_>>());
+        }
+        f.flush().await;
+        assert_eq!(f.attempts(), f.sources.iter().map(|id| id.0).collect::<Vec<_>>());
+    }
+}
+
+
+#[tokio::test]
+async fn real_proxy_accepts_300_long_chinese_documents_above_default_body_limit() {
+    let f = Fixture::new(ModelKind::Rerank, 2).await;
+    f.verify_save().await;
+    let docs: Vec<String> = (0..300).map(|i| {
+        format!("{i}: ").chars().chain("医院证据资料与临床研究".chars().cycle()).take(4096).collect()
+    }).collect();
+    let input = json!({"model":f.config.name,"query":"医院证据","documents":docs,"top_n":300,"return_documents":false});
+    assert!(input.to_string().len() > 2 * 1024 * 1024);
+    let (status, output) = f.call(input.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["results"].as_array().unwrap().len(), 300);
+    assert_eq!(f.upstreams[0].state.seen.lock().unwrap()[0]["documents"], input["documents"]);
+    assert_eq!(f.upstreams[1].count(), 0);
+}
+
+#[tokio::test]
+async fn real_proxy_preserves_300_by_1024_embedding_response_above_old_four_mib_cap() {
+    let f = Fixture::new(ModelKind::Embeddings, 2).await;
+    for source in &f.upstreams { source.set(Behavior::WideEmbedding); }
+    f.verify_save().await;
+    let input = json!({"model":f.config.name,"input":(0..300).map(|i| format!("Original full input {i}")).collect::<Vec<_>>()});
+    let (status, output) = f.call(input.clone()).await;
+    assert_eq!(status, StatusCode::OK, "wide embedding must survive proxy response collection");
+    assert!(output.to_string().len() > 4 * 1024 * 1024);
+    let rows = output["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 300);
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row["index"], index);
+        assert_eq!(row["embedding"].as_array().unwrap().len(), 1024);
+    }
+    assert_eq!(f.upstreams[0].state.seen.lock().unwrap()[0]["input"], input["input"]);
+    assert_eq!(f.upstreams[1].count(), 0);
+}
+
+#[tokio::test]
+async fn precise_vector_capacity_refusals_fall_back_unchanged_without_cooldown_or_400_switch() {
+    for kind in [ModelKind::Embeddings,ModelKind::Rerank] {
+        let f=Fixture::new(kind,2).await;f.verify_save().await;
+        assert!(!f.config.targets[0].switch_on_400);
+        f.upstreams[0].set(Behavior::Capacity);
+        let input=f.body();let(status,result)=f.call(input.clone()).await;
+        assert_eq!(status,StatusCode::OK,"{kind:?}: {result}");
+        assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),1);
+        let key=if kind==ModelKind::Embeddings{"input"}else{"documents"};
+        assert_eq!(f.upstreams[1].state.seen.lock().unwrap()[0][key],input[key]);
+        f.flush().await;
+        let c=f.state.conn();
+        let(note,outcome):(String,String)=c.query_row("SELECT error,outcome FROM attempts ORDER BY id LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(outcome,"context_limit");assert!(note.contains("reported_limit_tokens"));
+        assert!(!note.contains("hospital"));
+        assert!(db::policy::peek(&c,f.sources[0].0,&f.config.targets[0].logical_model,&f.config.targets[0].logical_model,db::now_ms()).unwrap().is_none());
+        drop(c);
+        // A normal malformed422 remains a client error; the previous capacity attempt
+        // must not suspend the source or silently bypass its next request.
+        f.clear();f.upstreams[0].set(Behavior::Status(422));
+        let(status,_)=f.call(f.body()).await;
+        assert_eq!(status,StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),0);
+        f.clear();for source in &f.upstreams {source.set(Behavior::Capacity);}
+        let(status,original)=f.call(f.body()).await;
+        assert_eq!(status,if kind==ModelKind::Embeddings {StatusCode::INTERNAL_SERVER_ERROR}else{StatusCode::UNPROCESSABLE_ENTITY});
+        assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),1);
+        if kind==ModelKind::Embeddings {assert!(original["error"]["message"].as_str().unwrap().starts_with("input (8193 tokens)"));}
+        else {assert_eq!(original["detail"]["reason"],"encoded_query_document_pair_exceeds_8192_no_truncation_performed");}
     }
 }

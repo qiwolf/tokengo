@@ -45,6 +45,7 @@ impl Upstream {
         let router = Router::new()
             .route("/v1/embeddings", post(upstream))
             .route("/v1/rerank", post(upstream))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -191,6 +192,9 @@ impl Fixture {
                 .id;
             user
         };
+        db::billing::set_budget(
+            &state.conn(), "user", user, Some(1_000_000_000), "fixture-full-workload",
+        ).unwrap();
         let mut upstreams = Vec::new();
         let mut sources = Vec::new();
         let mut targets = Vec::new();
@@ -237,7 +241,7 @@ impl Fixture {
                     model: name,
                     input_micro_per_million: 1_000_000,
                     output_micro_per_million: 0,
-                    max_input_tokens: 50000,
+                    max_input_tokens: 8_000_000,
                     max_output_tokens: 0,
                 },
                 "fixture",
@@ -691,12 +695,45 @@ async fn missing_legacy_reference_never_bootstraps_from_only_one_healthy_source(
 
 #[tokio::test]
 async fn fresh_healthy_contract_automatically_backfills_missing_reference() {
-    for shared in [false,true] {
-        let f=Fixture::new(ModelKind::Embeddings,2).await;f.publish(shared).await;
-        {let c=f.state.conn();for(k,_)in db::settings::all(&c).unwrap(){if k.starts_with("internal_vector_reference_v1:"){db::settings::delete(&c,&k).unwrap();}}}
-        vector_renewal::tick(&f.state).await.unwrap();assert_eq!(f.count(),4,"fresh legacy contract still needs complete numeric-reference bootstrap");
-        let c=f.state.conn();let references=db::settings::all(&c).unwrap().into_iter().filter(|(k,_)|k.starts_with("internal_vector_reference_v1:")).collect::<Vec<_>>();assert_eq!(references.len(),1);let reference:Value=serde_json::from_str(&references[0].1).unwrap();assert!(reference["vectors"].as_array().is_some_and(|v|!v.is_empty()));assert!(reference["single"].as_array().is_some_and(|v|!v.is_empty()));drop(c);
-        assert!(f.require(shared).is_ok());assert_eq!(f.status(shared)["state"],"valid");
+    for shared in [false, true] {
+        for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+            let f = Fixture::new(kind, 2).await;
+            f.publish(shared).await;
+            {
+                let c = f.state.conn();
+                for (key, _) in db::settings::all(&c).unwrap() {
+                    if key.starts_with("internal_vector_reference_v1:") {
+                        db::settings::delete(&c, &key).unwrap();
+                    }
+                }
+            }
+            vector_renewal::tick(&f.state).await.unwrap();
+            for source in &f.upstreams {
+                let seen = source.state.seen.lock().unwrap();
+                // Embeddings: two compact probes, one full batch, and first/last singles.
+                // Rerank: three compact ranking probes plus the complete long-document corpus.
+                assert_eq!(seen.len(), if kind == ModelKind::Embeddings { 5 } else { 4 });
+                let batch_field = if kind == ModelKind::Embeddings { "input" } else { "documents" };
+                let workloads = seen.iter().filter_map(|body| body[batch_field].as_array())
+                    .filter(|batch| batch.len() == 300).collect::<Vec<_>>();
+                assert_eq!(workloads.len(), 1, "missing reference requires a complete workload on every source");
+                assert!(workloads[0].iter().all(|text| text.as_str().unwrap().chars().count() == 4096));
+            }
+            let c = f.state.conn();
+            let references = db::settings::all(&c).unwrap().into_iter()
+                .filter(|(key, _)| key.starts_with("internal_vector_reference_v1:")).collect::<Vec<_>>();
+            assert_eq!(references.len(), 1);
+            let reference: Value = serde_json::from_str(&references[0].1).unwrap();
+            if kind == ModelKind::Embeddings {
+                assert!(reference["vectors"].as_array().is_some_and(|vectors| !vectors.is_empty()));
+                assert!(reference["single"].as_array().is_some_and(|vectors| !vectors.is_empty()));
+            } else {
+                assert_eq!(reference["rank"].as_array().unwrap().len(), 3);
+            }
+            drop(c);
+            assert!(f.require(shared).is_ok());
+            assert_eq!(f.status(shared)["state"], "valid");
+        }
     }
 }
 

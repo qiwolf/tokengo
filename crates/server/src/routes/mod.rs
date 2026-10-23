@@ -31,6 +31,7 @@ pub struct ApiError {
     pub message: String,
     /// 机器可读的类型标识，面板按它分支。
     pub kind: &'static str,
+    pub code: Option<&'static str>,
 }
 
 impl ApiError {
@@ -38,8 +39,14 @@ impl ApiError {
         Self {
             status,
             kind,
+            code: None,
             message: message.into(),
         }
+    }
+
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
@@ -61,11 +68,13 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let mut error = serde_json::json!({"message": self.message, "type": self.kind});
+        if let Some(code) = self.code {
+            error["code"] = serde_json::json!(code);
+        }
         (
             self.status,
-            Json(serde_json::json!({
-                "error": { "message": self.message, "type": self.kind }
-            })),
+            Json(serde_json::json!({"error": error})),
         )
             .into_response()
     }

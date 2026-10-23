@@ -98,6 +98,7 @@ impl Adapter {
         let router = Router::new()
             .route("/v1/embeddings", post(forward))
             .route("/v1/rerank", post(forward))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -142,6 +143,9 @@ impl Fixture {
                     .unwrap();
             (user, key)
         };
+        db::billing::set_budget(
+            &state.conn(), "user", user, Some(1_000_000_000), "fixture-full-workload",
+        ).unwrap();
         let mut adapters = Vec::new();
         let mut ids = Vec::new();
         let mut targets = Vec::new();
@@ -192,7 +196,7 @@ impl Fixture {
                     model: name,
                     input_micro_per_million: 1_000_000,
                     output_micro_per_million: 0,
-                    max_input_tokens: 50000,
+                    max_input_tokens: 8_000_000,
                     max_output_tokens: 0,
                 },
                 "real-vector-test",

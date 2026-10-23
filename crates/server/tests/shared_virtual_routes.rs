@@ -51,6 +51,7 @@ impl Upstream {
             .route("/v1/tools/fetch", post(upstream))
             .route("/v1/embeddings", post(upstream))
             .route("/v1/rerank", post(upstream))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -196,6 +197,9 @@ impl Fixture {
             let root=format!("tokengo_account_session={token}");
             (user,key.id,secret,root)
         };
+        if matches!(kind,ModelKind::Embeddings|ModelKind::Rerank) {
+            db::billing::set_budget(&state.conn(),"user",user,Some(1_000_000_000),"fixture-full-workload").unwrap();
+        }
         let mut sources=vec![];let mut upstreams=vec![];let mut targets=vec![];
         for i in 0..2 {
             let upstream=Upstream::start().await;
@@ -206,7 +210,7 @@ impl Fixture {
             db::kinds::set(&c,&name,kind).unwrap();
             db::provider_pool::backfill(&c,&state.secrets).unwrap();
             let provider=db::provider_pool::source_credential(&c,source.0).unwrap().unwrap().provider_id;
-            db::billing::create_price(&c,&db::billing::Price{id:0,channel_id:source.0,model:name.clone(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:50000,max_output_tokens:1024},"fixture").unwrap();
+            db::billing::create_price(&c,&db::billing::Price{id:0,channel_id:source.0,model:name.clone(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:if matches!(kind,ModelKind::Embeddings|ModelKind::Rerank){8_000_000}else{50000},max_output_tokens:1024},"fixture").unwrap();
             targets.push(vr::Target{provider_id:provider,logical_model:name,switch_on_429:true,switch_on_400:false});
             sources.push(source);upstreams.push(upstream);
         }

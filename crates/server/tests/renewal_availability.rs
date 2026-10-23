@@ -47,6 +47,7 @@ impl Upstream {
         let router = Router::new()
             .route("/v1/embeddings", post(upstream))
             .route("/v1/rerank", post(upstream))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -198,6 +199,9 @@ impl Fixture {
             user
         };
         let (_, key) = db::identity::create_key(&state.conn(), user, "availability-client", &Default::default(), None, None).unwrap();
+        db::billing::set_budget(
+            &state.conn(), "user", user, Some(1_000_000_000), "fixture-full-workload",
+        ).unwrap();
         let mut upstreams = Vec::new();
         let mut sources = Vec::new();
         let mut targets = Vec::new();
@@ -244,7 +248,7 @@ impl Fixture {
                     model: name,
                     input_micro_per_million: 1_000_000,
                     output_micro_per_million: 0,
-                    max_input_tokens: 50000,
+                    max_input_tokens: 8_000_000,
                     max_output_tokens: 0,
                 },
                 "fixture",

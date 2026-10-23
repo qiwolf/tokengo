@@ -187,3 +187,5 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 ---
 
 完整英文说明、请求示例及通用 systemd 模板见 [README.en.md](README.en.md)。
+
+向量及重排共享虚拟入口完整保留真实后端的输入规模与扩展参数，兼容探针样本不作为接收上限；详见[模型能力与兼容证据](docs/vector-model-capabilities.md)。

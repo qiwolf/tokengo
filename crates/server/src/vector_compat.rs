@@ -1,5 +1,5 @@
-//! Server-issued, expiring compatibility evidence for bounded embedding/rerank fallback.
-//! Synthetic checks establish a small request domain, not universal model equivalence.
+//! Server-issued identity and numeric evidence for embedding/rerank fallback.
+//! Workload profiles record measured samples; upstream model capacity governs live requests.
 use crate::{
     db::{self, user_virtual_routes as vr},
     state::SharedState,
@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, time::Duration};
+use std::{collections::{HashMap, HashSet}, time::Duration};
 use tokengo_shared::{Channel, ModelKind};
 
 pub(crate) const TTL_MS: i64 = 24 * 60 * 60 * 1000;
@@ -16,14 +16,27 @@ const MAX_CHARS: usize = 512;
 const MAX_BATCH: usize = 16;
 const MAX_DOCS: usize = 128;
 const MAX_TOTAL_CHARS: usize = 8192;
-const MAX_BYTES: usize = 4 * 1024 * 1024;
-const VERSION: u32 = 1;
+const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const VERSION: u32 = 2;
+const WORKLOAD_CHARS: usize = 4096;
+const WORKLOAD_BATCH: usize = 300;
+const WORKLOAD_DOCS: usize = 300;
+const WORKLOAD_QUERY_CHARS: usize = 512;
+const WORKLOAD_TOTAL_CHARS: usize = WORKLOAD_DOCS * WORKLOAD_CHARS + WORKLOAD_QUERY_CHARS;
+const WORKLOAD_PROFILE: &str = "unicode4096-batch300-rerank300-query512-v2";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Contract {
     pub dimensions: Option<usize>,
     pub unit_normalized: bool,
     pub max_input_chars: usize,
+    #[serde(default)]
+    pub max_query_chars: usize,
+    #[serde(default)]
+    pub workload_profile: String,
+    #[serde(default)]
+    pub workload_verified_at_ms: Option<i64>,
     pub max_batch: usize,
     pub max_documents: usize,
     pub max_total_chars: usize,
@@ -123,7 +136,8 @@ fn snapshot(
         return Err(unverified("兼容检查要求1至32个已授权来源"));
     }
     let bytes = serde_json::to_vec(
-        &json!({"version":VERSION,"kind":format!("{kind:?}"),"user":user,"targets":facts}),
+        // Identity namespace deliberately remains v1: old evidence is valid for its old bounds.
+        &json!({"version":1,"kind":format!("{kind:?}"),"user":user,"targets":facts}),
     )
     .map_err(|_| unverified("无法生成兼容检查指纹"))?;
     Ok(Snapshot {
@@ -153,10 +167,32 @@ fn historical(c:&Connection,user:i64,targets:&[vr::Target],kind:ModelKind)->Resu
     let snapshot=snapshot(c,user,targets,kind)?;
     let raw=db::settings::get(c,&key(user,&snapshot.fingerprint))?.ok_or_else(||unverified("尚无此来源身份的兼容证据，不能套用旧模型证据"))?;
     let contract:Contract=serde_json::from_str(&raw).map_err(|_|unverified("兼容记录无效，系统将重新校验"))?;
-    if contract.version!=VERSION||contract.fingerprint!=snapshot.fingerprint||contract.max_input_chars!=MAX_CHARS||contract.max_batch!=MAX_BATCH||contract.max_documents!=MAX_DOCS||contract.max_total_chars!=MAX_TOTAL_CHARS||(kind==ModelKind::Embeddings&&contract.dimensions.is_none_or(|d|d==0||d>65536)){return Err(unverified("兼容合同版本、来源身份或边界已改变，不能继承旧证据"));}
+    if !valid_shape(&contract)||contract.fingerprint!=snapshot.fingerprint||(kind==ModelKind::Embeddings&&contract.dimensions.is_none_or(|d|d==0)){return Err(unverified("兼容合同版本、来源身份或边界已改变，不能继承旧证据"));}
     Ok(contract)
 }
 
+fn valid_shape(c: &Contract) -> bool {
+    match c.version {
+        1 => c.max_input_chars == MAX_CHARS && c.max_batch == MAX_BATCH
+            && c.max_documents == MAX_DOCS && c.max_total_chars == MAX_TOTAL_CHARS
+            && c.max_query_chars == 0 && c.workload_profile.is_empty()
+            && c.workload_verified_at_ms.is_none(),
+        VERSION => c.max_input_chars == WORKLOAD_CHARS && c.max_batch == WORKLOAD_BATCH
+            && c.max_documents == WORKLOAD_DOCS && c.max_total_chars == WORKLOAD_TOTAL_CHARS
+            && c.max_query_chars == WORKLOAD_QUERY_CHARS && c.workload_profile == WORKLOAD_PROFILE
+            && c.workload_verified_at_ms.is_some_and(|at| at > 0),
+        _ => false,
+    }
+}
+/// Old evidence remains usable; a complete v2 check adds workload evidence without shrinking live capacity.
+pub(crate) fn current_profile(contract: &Contract) -> bool { contract.version == VERSION && valid_shape(contract) }
+fn candidate_contract(fingerprint: String) -> Contract {
+    Contract { dimensions: None, unit_normalized: false, max_input_chars: WORKLOAD_CHARS,
+        max_query_chars: WORKLOAD_QUERY_CHARS, max_batch: WORKLOAD_BATCH,
+        max_documents: WORKLOAD_DOCS, max_total_chars: WORKLOAD_TOTAL_CHARS,
+        workload_profile: WORKLOAD_PROFILE.into(), workload_verified_at_ms: None,
+        evidence: String::new(), fingerprint, verified_at_ms: 0, version: VERSION }
+}
 fn samples() -> Vec<String> {
     vec![
         "医院知识检索与安全用药".into(),
@@ -305,6 +341,9 @@ async fn request(
     mut body: Value,
 ) -> Result<Value, vr::VirtualError> {
     body["model"] = json!(source.channel.upstream_model(&source.model));
+    let request_bytes = serde_json::to_vec(&body).map_err(|_| unverified("兼容检查输入无法序列化"))?;
+    if request_bytes.len() > MAX_REQUEST_BYTES { return Err(unverified("兼容检查请求超过4MiB正文上限")); }
+    let timeout = if request_bytes.len() > MAX_TOTAL_CHARS * 3 { Duration::from_secs(120) } else { Duration::from_secs(15) };
     let bound = input_bound(path, &body)?;
     let _permit = if context.user == 0 {
         None
@@ -379,8 +418,8 @@ async fn request(
             secret.as_deref(),
             path,
             bytes::Bytes::from(body.to_string()),
-            Duration::from_secs(15),
-            MAX_BYTES,
+            timeout,
+            MAX_RESPONSE_BYTES,
         )
         .await
         .map_err(|_| {
@@ -465,7 +504,28 @@ fn compare_reference(reference:&Reference,current:&Reference,kind:ModelKind)->Re
         compare_vectors(reference.single.as_ref().ok_or_else(||unverified("单条向量参考缺失"))?,current.single.as_ref().ok_or_else(||incompatible("单条向量缺失"))?).map_err(incompatible)?;
     }else{
         let a=reference.rank.as_ref().ok_or_else(||unverified("重排参考缺失"))?;let b=current.rank.as_ref().ok_or_else(||incompatible("重排输出缺失"))?;
-        if a.len()!=b.len()||a.iter().zip(b).any(|(a,b)|a.len()!=b.len()||a.iter().zip(b).any(|((i,x),(j,y))|i!=j||(x-y).abs()>0.02)){return Err(incompatible("重排来源的排序或评分不兼容，已隔离此来源"));}
+        if a.len()!=b.len() {return Err(incompatible("重排来源的查询参考数量不兼容，已隔离此来源"));}
+        for (a,b) in a.iter().zip(b) {compare_ranks(a,b).map_err(incompatible)?;}
+    }
+    Ok(())
+}
+/// Provider floating-point kernels may permute near ties. Compare scores by original
+/// candidate index, and reject inversions only when either ranking has a real margin.
+fn compare_ranks(a: &[(usize,f64)], b: &[(usize,f64)]) -> Result<(), &'static str> {
+    const SCORE_TOLERANCE: f64 = 0.02 + 1e-12;
+    let by_index=b.iter().enumerate().map(|(position,(index,score))|(*index,(position,*score))).collect::<HashMap<_,_>>();
+    if a.len()!=b.len() || by_index.len()!=b.len() || a.iter().map(|(index,_)|index).collect::<HashSet<_>>().len()!=a.len()
+        || a.iter().any(|(index,score)|by_index.get(index).is_none_or(|(_,other)|!score.is_finite()||!other.is_finite()||(score-other).abs()>SCORE_TOLERANCE)) {
+        return Err("重排来源的候选集合或逐项评分不兼容，已隔离此来源");
+    }
+    for (position,(index,score)) in a.iter().enumerate() {
+        let (other_position,other_score)=by_index[index];
+        for (next_index,next_score) in &a[position+1..] {
+            let (next_position,next_other_score)=by_index[next_index];
+            if other_position>next_position && ((score-next_score).abs()>SCORE_TOLERANCE || (other_score-next_other_score).abs()>SCORE_TOLERANCE) {
+                return Err("重排来源出现显著评分差的排序逆序，已隔离此来源");
+            }
+        }
     }
     Ok(())
 }
@@ -477,6 +537,9 @@ async fn observe(state:&SharedState,context:&ProbeContext<'_>,source:&Source,con
         let body=json!({"input":short[0]});let output=request(state,context,source,"embeddings",body.clone()).await?;validate_output(contract,context.kind,&body,&output).map_err(incompatible)?;
         let single=embedding_vectors(&output,1,Some(vectors[0].len())).map_err(incompatible)?;
         let unit_normalized=vectors.iter().chain(single.iter()).all(|v|unit_norm(v));
+        if contract.unit_normalized && !unit_normalized {
+            return Err(incompatible("兼容探针的默认归一化与既有来源证据不一致，不能重新签发改变后的模型空间"));
+        }
         Ok(Reference{vectors:Some(vectors),single:Some(single),rank:None,unit_normalized})
     }else{
         let docs=rerank_docs();let mut source_ranks=Vec::new();
@@ -488,6 +551,48 @@ async fn observe(state:&SharedState,context:&ProbeContext<'_>,source:&Source,con
         Ok(Reference{rank:Some(source_ranks),unit_normalized:true,..Reference::default()})
     }
 }
+/// Deterministic long-form corpus: every candidate is preserved and individually identifiable.
+fn workload_texts(count: usize) -> Vec<String> {
+    (0..count).map(|i| {
+        let prefix = format!("Document {i:03}: 医院临床资料，证据编号 {i:03}。 ");
+        let topic = match i % 4 {
+            0 => "Hospital evidence and safe medication. 医院证据与安全用药，医学图书馆保存临床研究。 ",
+            1 => "Quiet river and green mountain. 山川河流与自然风光，记录生态环境。 ",
+            2 => "Reliable clinical research and patient care. 临床研究和患者照护，需要可靠的证据。 ",
+            _ => "Library books and historical records. 图书馆书籍与历史资料，可以帮助检索。 ",
+        };
+        prefix.chars().chain(topic.chars().cycle()).take(WORKLOAD_CHARS).collect()
+    }).collect()
+}
+async fn observe_workload(state: &SharedState, context: &ProbeContext<'_>, source: &Source, contract: &Contract) -> Result<(Reference, String, String), vr::VirtualError> {
+    let body = if context.kind == ModelKind::Embeddings {
+        json!({"input":workload_texts(WORKLOAD_BATCH),"encoding_format":"float"})
+    } else {
+        let query: String = "hospital evidence 医院临床研究与安全用药资料。".chars().cycle().take(WORKLOAD_QUERY_CHARS).collect();
+        json!({"query":query,"documents":workload_texts(WORKLOAD_DOCS),"top_n":WORKLOAD_DOCS,"return_documents":true})
+    };
+    validate_request(contract, context.kind, &body)?;
+    let input_digest = hex::encode(Sha256::digest(serde_json::to_vec(&body).map_err(|_| unverified("无法记录负载摘要"))?));
+    let output = request(state,context,source,if context.kind == ModelKind::Embeddings {"embeddings"} else {"rerank"},body.clone()).await?;
+    validate_output(contract,context.kind,&body,&output).map_err(incompatible)?;
+    let observed = if context.kind == ModelKind::Embeddings {
+        let vectors = embedding_vectors(&output,WORKLOAD_BATCH,contract.dimensions).map_err(incompatible)?;
+        // Check mapping to the first and last original input, rather than count alone.
+        for index in [0, WORKLOAD_BATCH - 1] {
+            let single_body=json!({"input":body["input"][index],"encoding_format":"float"});
+            let single=request(state,context,source,"embeddings",single_body.clone()).await?;
+            validate_output(contract,context.kind,&single_body,&single).map_err(incompatible)?;
+            let single=embedding_vectors(&single,1,contract.dimensions).map_err(incompatible)?;
+            compare_vectors(&[vectors[index].clone()],&single).map_err(incompatible)?;
+        }
+        Reference {vectors:Some(vectors),single:Some(Vec::new()),unit_normalized:contract.unit_normalized,..Reference::default()}
+    } else {
+        Reference {rank:Some(vec![ranks(&output,WORKLOAD_DOCS,WORKLOAD_DOCS).map_err(incompatible)?]),unit_normalized:true,..Reference::default()}
+    };
+    // Numeric evidence excludes usage counters, model display names and other volatile metadata.
+    let output_digest=hex::encode(Sha256::digest(serde_json::to_vec(&observed).map_err(|_| unverified("无法记录输出摘要"))?));
+    Ok((observed,input_digest,output_digest))
+}
 fn read_reference(c:&Connection,user:i64,fp:&str)->Result<Option<Reference>,vr::VirtualError>{
     db::settings::get(c,&reference_key(user,fp))?.map(|raw|serde_json::from_str(&raw).map_err(|_|unverified("合成参考记录损坏，不能静默更换模型空间"))).transpose()
 }
@@ -495,15 +600,33 @@ pub(crate) async fn verify_impl(state:&SharedState,user:i64,config:&vr::Config,a
     if config.targets.len()<2{return Ok(());}
     let(kind,snapshot,mut reference,previous_contract)={let c=state.conn();let kind=db::model_routes::routes_for(&c,&config.targets[0].logical_model)?.ok_or_else(||unverified("目标模型不存在"))?.kind;if !supported(kind){return Ok(());}if !force&&require(&c,user,&config.targets,kind).is_ok(){return Ok(());}let snap=snapshot(&c,user,&config.targets,kind)?;let reference=read_reference(&c,user,&snap.fingerprint)?;let previous=historical(&c,user,&config.targets,kind).ok();(kind,snap,reference,previous)};
     let context=ProbeContext{user,actor,targets:&config.targets,kind,fingerprint:&snapshot.fingerprint,guard};
-    let checked=tokio::time::timeout(Duration::from_secs(60),async{
-        let mut contract=previous_contract.clone().unwrap_or_else(||Contract{dimensions:None,unit_normalized:false,max_input_chars:MAX_CHARS,max_batch:MAX_BATCH,max_documents:MAX_DOCS,max_total_chars:MAX_TOTAL_CHARS,evidence:"合成样本的数值和排序一致性检查；不是模型权重相同的证明".into(),fingerprint:snapshot.fingerprint.clone(),verified_at_ms:0,version:VERSION});
+    // Full workload certification is explicit; daily renewal never reruns 300 long documents.
+    let budget = Duration::from_secs((snapshot.sources.len() as u64).saturating_mul(270));
+    let checked=tokio::time::timeout(budget,async{
+        let mut contract=candidate_contract(snapshot.fingerprint.clone());
+        // A missing numeric reference does not erase existing identity evidence.
+        // Inherit the known dimensions/default normalization before the very first
+        // response is checked, including legacy-reference bootstrap and v1 upgrade.
+        if let Some(previous)=&previous_contract {
+            contract.dimensions=previous.dimensions;
+            contract.unit_normalized=previous.unit_normalized;
+        }
+        let mut workload_reference = None;
+        let mut evidence = Vec::new();
         for source in &snapshot.sources {
             let observed=observe(state,&context,source,&contract).await?;
             if let Some(baseline)=&reference{compare_reference(baseline,&observed,kind)?;}else{reference=Some(observed.clone());}
             if kind==ModelKind::Embeddings {contract.unit_normalized=if contract.dimensions.is_none(){observed.unit_normalized}else{contract.unit_normalized&&observed.unit_normalized};contract.dimensions=Some(observed.vectors.as_ref().unwrap()[0].len());}
+            let (workload, input_digest, output_digest)=observe_workload(state,&context,source,&contract).await?;
+            if let Some(baseline)=&workload_reference { compare_reference(baseline,&workload,kind)?; }
+            else { workload_reference=Some(workload); }
+            evidence.push(json!({"source_id":source.channel.id.0,"logical_model":source.model,"input_sha256":input_digest,"output_sha256":output_digest}));
         }
-        contract.verified_at_ms=db::now_ms();Ok::<_,vr::VirtualError>(contract)
-    }).await.map_err(|_|error("vector_source_unavailable","兼容检查总时间超过60秒"))??;
+        contract.verified_at_ms=db::now_ms();
+        contract.workload_verified_at_ms=Some(contract.verified_at_ms);
+        contract.evidence=json!({"profile":WORKLOAD_PROFILE,"method":"full input/output count, index integrity, original document equality and cross-source numeric/ranking checks; synthetic evidence is not model-weight identity","sources":evidence}).to_string();
+        Ok::<_,vr::VirtualError>(contract)
+    }).await.map_err(|_|error("vector_source_unavailable","完整负载兼容检查超过时间预算；现有小域证据保持不变"))??;
     let c=state.conn();if let Some(g)=guard{g.check(&c)?;}if let Some(a)=actor{db::shared_virtual_routes::root_actor(&c,a)?;}if snapshot_fn(&c,user,&config.targets,kind)?.fingerprint!=snapshot.fingerprint{return Err(unverified("检查期间来源配置或权限已变化"));}
     let tx=c.unchecked_transaction()?;db::settings::set(&tx,&key(user,&checked.fingerprint),&serde_json::to_string(&checked).map_err(|_|unverified("无法保存兼容记录"))?)?;
     if let Some(reference)=reference{db::settings::set(&tx,&reference_key(user,&snapshot.fingerprint),&serde_json::to_string(&reference).map_err(|_|unverified("无法保存合成参考"))?)?;}tx.commit()?;Ok(())
@@ -557,91 +680,73 @@ fn checked_text(value: &Value, max: usize) -> bool {
         .as_str()
         .is_some_and(|s| !s.is_empty() && s.chars().count() <= max)
 }
-/// Reject parameters and input forms outside the empirically verified request domain.
+/// The certification corpus describes measured evidence, never a synthetic capacity limit.
+/// Provider extensions remain untouched and are accepted/rejected by the actual upstream.
 pub fn validate_request(
-    contract: &Contract,
+    _contract: &Contract,
     kind: ModelKind,
     body: &Value,
 ) -> Result<(), vr::VirtualError> {
-    let object = body
-        .as_object()
-        .ok_or_else(|| unverified("请求必须是 JSON 对象"))?;
-    let allowed: &[&str] = if kind == ModelKind::Embeddings {
-        &["model", "input", "encoding_format", "dimensions"]
-    } else if kind == ModelKind::Rerank {
-        &["model", "query", "documents", "top_n", "return_documents"]
-    } else {
-        return Err(unverified("兼容合同不适用于此接口"));
-    };
-    if object.keys().any(|k| !allowed.contains(&k.as_str())) {
-        return Err(unverified("多目标回退请求含未经过兼容检查的参数"));
-    }
-    let total_chars = if kind == ModelKind::Embeddings {
-        body["input"].as_str().map_or_else(
-            || {
-                body["input"].as_array().map_or(0, |items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(|s| s.chars().count())
-                        .sum::<usize>()
-                })
-            },
-            |s| s.chars().count(),
-        )
-    } else {
-        body["query"].as_str().map_or(0, |s| s.chars().count())
-            + body["documents"].as_array().map_or(0, |docs| {
-                docs.iter()
-                    .filter_map(Value::as_str)
-                    .map(|s| s.chars().count())
-                    .sum::<usize>()
-            })
-    };
-    if total_chars > contract.max_total_chars {
-        return Err(unverified(format!(
-            "多目标回退请求文本总量超过已验证的{}字符范围",
-            contract.max_total_chars
-        )));
-    }
+    if !body.is_object() { return Err(unverified("请求必须是 JSON 对象")); }
     if kind == ModelKind::Embeddings {
-        let valid = checked_text(&body["input"], contract.max_input_chars)
-            || body["input"].as_array().is_some_and(|a| {
-                !a.is_empty()
-                    && a.len() <= contract.max_batch
-                    && a.iter().all(|v| checked_text(v, contract.max_input_chars))
-            });
-        if !valid
-            || body.get("encoding_format").is_some_and(|v| v != "float")
-            || body.get("dimensions").is_some()
-        {
-            return Err(unverified(format!(
-                "向量回退仅已验证每条1至{}字符、最多{}条文本、float编码，暂不支持dimensions参数",
-                contract.max_input_chars, contract.max_batch
-            )));
+        embedding_input_count(&body["input"]).map_err(unverified)?;
+        if body.get("encoding_format").is_some_and(|v| v != "float" && v != "base64") {
+            return Err(unverified("向量encoding_format必须为float或base64"));
         }
-    } else {
-        let Some(docs) = body["documents"].as_array() else {
-            return Err(unverified("重排回退仅支持字符串文档数组"));
-        };
-        if !checked_text(&body["query"], contract.max_input_chars)
-            || docs.is_empty()
-            || docs.len() > contract.max_documents
-            || docs
-                .iter()
-                .any(|v| !checked_text(v, contract.max_input_chars))
-            || body
-                .get("top_n")
-                .is_some_and(|v| v.as_u64().is_none_or(|n| n == 0 || n > docs.len() as u64))
-            || body
-                .get("return_documents")
-                .is_some_and(|v| !v.is_boolean())
-        {
-            return Err(unverified(format!("重排回退仅已验证查询和文档各不超过{}字符、最多{}篇字符串文档及有效top_n/return_documents",contract.max_input_chars,contract.max_documents)));
+        if body.get("dimensions").is_some_and(|v| v.as_u64().is_none_or(|n| n == 0 || usize::try_from(n).is_err())) {
+            return Err(unverified("向量dimensions必须是正整数，实际支持范围由上游模型决定"));
         }
-    }
+    } else if kind == ModelKind::Rerank {
+        let docs=body["documents"].as_array().filter(|docs| !docs.is_empty()).ok_or_else(||unverified("重排documents必须是非空文档数组"))?;
+        if !body["query"].is_string() || docs.iter().any(|doc| document_text(doc).is_none()) {
+            return Err(unverified("重排query必须是字符串，documents必须是字符串或包含text字符串的对象"));
+        }
+        if body.get("top_n").is_some_and(|v| v.as_u64().is_none_or(|n| n == 0))
+            || body.get("return_documents").is_some_and(|v| !v.is_boolean()) {
+            return Err(unverified("重排top_n须为正整数，return_documents须为布尔值"));
+        }
+    } else { return Err(unverified("兼容合同不适用于此接口")); }
     Ok(())
 }
+fn document_text(value: &Value) -> Option<&str> {
+    value.as_str().or_else(||value.get("text").and_then(Value::as_str))
+}
+fn embedding_input_count(input: &Value) -> Result<usize, &'static str> {
+    if input.is_string() { return Ok(1); }
+    let items=input.as_array().filter(|items| !items.is_empty()).ok_or("向量input必须是文本、文本数组、token数组或token数组批次")?;
+    let token=|v: &Value| v.as_u64().is_some_and(|n| u32::try_from(n).is_ok());
+    if items.iter().all(Value::is_string) { return Ok(items.len()); }
+    if items.iter().all(token) { return Ok(1); }
+    if items.iter().all(|v|v.as_array().is_some_and(|tokens|!tokens.is_empty()&&tokens.iter().all(token))) { return Ok(items.len()); }
+    Err("向量input包含混合类型或无效token")
+}
+/// True only inside the original empirical evidence. False does not mean unsupported.
+/// Callers may report the evidence boundary, but must not turn it into a chain-wide 400.
+pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    if validate_request(contract,kind,body).is_err() { return false; }
+    let Some(object)=body.as_object() else {return false;};
+    let allowed: &[&str]=if kind==ModelKind::Embeddings {&["model","input","encoding_format"]} else {&["model","query","documents","top_n","return_documents"]};
+    if object.keys().any(|k|!allowed.contains(&k.as_str())) {return false;}
+    if serde_json::to_vec(body).map_or(true,|bytes|bytes.len()>MAX_REQUEST_BYTES) {return false;}
+    if kind==ModelKind::Embeddings {
+        if body.get("encoding_format").is_some_and(|v|v!="float") {return false;}
+        let texts=if let Some(text)=body["input"].as_str(){vec![text]}else if let Some(items)=body["input"].as_array(){
+            let Some(texts)=items.iter().map(Value::as_str).collect::<Option<Vec<_>>>() else{return false;};texts
+        }else{return false;};
+        texts.len()<=contract.max_batch && texts.iter().all(|s|!s.is_empty()&&s.chars().count()<=contract.max_input_chars)
+            && texts.iter().map(|s|s.chars().count()).sum::<usize>()<=contract.max_total_chars
+    }else{
+        let query=&body["query"];let docs=body["documents"].as_array().unwrap();
+        if body.get("top_n").and_then(Value::as_u64).is_some_and(|n|n>docs.len() as u64) {return false;}
+        checked_text(query,if contract.max_query_chars==0{contract.max_input_chars}else{contract.max_query_chars})
+            && docs.len()<=contract.max_documents && docs.iter().all(|v|checked_text(v,contract.max_input_chars))
+            && query.as_str().unwrap().chars().count()+docs.iter().map(|v|v.as_str().map_or(0,|s|s.chars().count())).sum::<usize>()<=contract.max_total_chars
+    }
+}
+pub(crate) fn full_verify_budget_ms(c: &Connection, user: i64, targets: &[vr::Target], kind: ModelKind) -> Result<u64, vr::VirtualError> {
+    Ok((snapshot(c,user,targets,kind)?.sources.len() as u64).saturating_mul(270_000))
+}
+
 fn embedding_vectors(
     output: &Value,
     count: usize,
@@ -664,7 +769,7 @@ fn embedding_vectors(
         }
         let array = row["embedding"]
             .as_array()
-            .filter(|a| !a.is_empty() && a.len() <= 65536)
+            .filter(|a| !a.is_empty())
             .ok_or("向量响应必须是非空float数组")?;
         if dim.is_some_and(|d| d != array.len()) {
             return Err("向量响应维度与兼容合同不一致".into());
@@ -689,6 +794,24 @@ fn embedding_vectors(
         .map(|v| v.ok_or_else(|| "向量响应索引不完整".into()))
         .collect()
 }
+fn decode_base64_embeddings(output: &Value) -> Result<Value, String> {
+    use base64::Engine;
+    let mut decoded=output.clone();
+    let rows=decoded["data"].as_array_mut().ok_or("base64向量响应缺少data数组")?;
+    for row in rows {
+        let raw=row["embedding"].as_str().ok_or("base64向量响应必须是base64字符串")?;
+        let bytes=base64::engine::general_purpose::STANDARD.decode(raw).map_err(|_|"向量响应base64编码无效")?;
+        if bytes.is_empty() || bytes.len()%4!=0 {return Err("base64向量字节数不是非空float32数组".into());}
+        let values=bytes.chunks_exact(4).map(|chunk| {
+            let n=f32::from_le_bytes(chunk.try_into().unwrap());
+            if !n.is_finite(){return Err("base64向量包含非有限数值");}
+            Ok(json!(n))
+        }).collect::<Result<Vec<_>,_>>()?;
+        row["embedding"]=Value::Array(values);
+    }
+    Ok(decoded)
+}
+
 fn unit_norm(vector: &[f64]) -> bool {
     (vector.iter().map(|x| x * x).sum::<f64>().sqrt() - 1.0).abs() <= 0.02
 }
@@ -743,17 +866,22 @@ pub fn validate_output(
     output: &Value,
 ) -> Result<(), String> {
     if kind == ModelKind::Embeddings {
-        let count = body["input"].as_array().map_or(1, Vec::len);
-        let vectors = embedding_vectors(output, count, contract.dimensions)?;
-        if contract.unit_normalized && vectors.iter().any(|v| !unit_norm(v)) {
-            return Err("向量响应归一化方式与兼容合同不一致".into());
-        }
+        let count = embedding_input_count(&body["input"]).map_err(str::to_owned)?;
+        let dimension = body.get("dimensions").and_then(Value::as_u64).and_then(|n|usize::try_from(n).ok()).or(contract.dimensions);
+        let decoded;
+        let output = if body["encoding_format"] == "base64" {
+            decoded = decode_base64_embeddings(output)?;
+            &decoded
+        } else { output };
+        // The live result must preserve shape and finite, nonzero vectors. Normalization
+        // is recorded by certification probes, not imposed on valid provider extensions.
+        embedding_vectors(output, count, dimension)?;
     } else if kind == ModelKind::Rerank {
         let docs = body["documents"].as_array().ok_or("重排文档无效")?;
         let count = body
             .get("top_n")
             .and_then(Value::as_u64)
-            .map_or(docs.len(), |n| n as usize);
+            .map_or(docs.len(), |n|usize::try_from(n).unwrap_or(usize::MAX).min(docs.len()));
         ranks(output, docs.len(), count)?;
         if body["return_documents"] == true {
             for row in output["results"].as_array().ok_or("重排结果无效")? {
@@ -761,7 +889,7 @@ pub fn validate_output(
                 let text = row
                     .get("document")
                     .and_then(|v| v.as_str().or_else(|| v.get("text").and_then(Value::as_str)));
-                if text != docs.get(i).and_then(Value::as_str) {
+                if text != docs.get(i).and_then(document_text) {
                     return Err("重排返回文档与输入不一致".into());
                 }
             }
@@ -779,18 +907,27 @@ mod tests {
             dimensions: Some(2),
             unit_normalized: true,
             max_input_chars: MAX_CHARS,
+            max_query_chars: 0,
+            workload_profile: String::new(),
+            workload_verified_at_ms: None,
             max_batch: MAX_BATCH,
             max_documents: MAX_DOCS,
             max_total_chars: MAX_TOTAL_CHARS,
             evidence: "合成样本的数值和排序一致性检查；不是模型权重相同的证明".into(),
             fingerprint: "test".into(),
             verified_at_ms: 0,
-            version: VERSION,
+            version: 1,
         }
     }
     #[test]
-    fn embedding_domain_rejects_unverified_parameters_and_token_inputs() {
+    fn request_validation_preserves_real_provider_capabilities_outside_evidence() {
         let c = contract();
+        for body in [
+            json!({"input":[1,"mixed"]}),
+            json!({"input":"x","dimensions":0}),
+            json!({"input":"x","encoding_format":"invalid"}),
+            json!({"input":[[1],[-1]]}),
+        ] { assert!(validate_request(&c, ModelKind::Embeddings, &body).is_err()); }
         for body in [
             json!({"input":[1,2]}),
             json!({"input":"x","dimensions":2}),
@@ -798,14 +935,12 @@ mod tests {
             json!({"input":"x","user":"u"}),
             json!({"input":"中".repeat(513)}),
         ] {
-            assert!(validate_request(&c, ModelKind::Embeddings, &body).is_err());
+            assert!(validate_request(&c, ModelKind::Embeddings, &body).is_ok());
+            assert!(!within_verified_domain(&c, ModelKind::Embeddings, &body));
         }
-        assert!(validate_request(
-            &c,
-            ModelKind::Embeddings,
-            &json!({"input":["中".repeat(512),"text"],"encoding_format":"float"})
-        )
-        .is_ok());
+        let body=json!({"input":["中".repeat(512),"text"],"encoding_format":"float"});
+        assert!(validate_request(&c, ModelKind::Embeddings, &body).is_ok());
+        assert!(within_verified_domain(&c, ModelKind::Embeddings, &body));
     }
     #[test]
     fn embedding_output_checks_dimensions_indexes_and_nonzero() {
@@ -820,17 +955,109 @@ mod tests {
         }
     }
     #[test]
-    fn request_total_size_is_bounded() {
+    fn certification_size_is_evidence_not_a_user_request_limit() {
         let c = contract();
         let docs = vec!["中".repeat(512); 17];
-        assert!(validate_request(
-            &c,
-            ModelKind::Rerank,
-            &json!({"query":"q","documents":docs})
-        )
-        .is_err());
+        let body=json!({"query":"q","documents":docs});
+        assert!(validate_request(&c,ModelKind::Rerank,&body).is_ok());
+        assert!(!within_verified_domain(&c,ModelKind::Rerank,&body));
         let batch = vec!["中".repeat(512); 16];
         assert!(validate_request(&c, ModelKind::Embeddings, &json!({"input":batch})).is_ok());
+    }
+    fn workload_contract() -> Contract {
+        let mut c = candidate_contract("test".into());
+        c.dimensions = Some(2);
+        c.workload_verified_at_ms = Some(1);
+        c
+    }
+    #[test]
+    fn legacy_evidence_remains_readable_without_capping_live_capacity() {
+        let mut raw = serde_json::to_value(contract()).unwrap();
+        for name in ["max_query_chars", "workload_profile", "workload_verified_at_ms"] {
+            raw.as_object_mut().unwrap().remove(name);
+        }
+        let c: Contract = serde_json::from_value(raw).unwrap();
+        assert!(valid_shape(&c));
+        assert!(!current_profile(&c));
+        assert!(validate_request(&c, ModelKind::Rerank, &json!({"query":"q","documents":["中".repeat(513)]})).is_ok());
+        assert!(!within_verified_domain(&c, ModelKind::Rerank, &json!({"query":"q","documents":["中".repeat(513)]})));
+        let mut altered = c;
+        altered.max_input_chars = WORKLOAD_CHARS;
+        assert!(!valid_shape(&altered));
+    }
+    #[test]
+    fn workload_profile_accepts_300_full_length_original_documents_and_embeddings() {
+        let c = workload_contract();
+        assert!(current_profile(&c));
+        let docs = workload_texts(WORKLOAD_DOCS);
+        assert_eq!(docs.len(), 300);
+        assert!(docs.iter().all(|text| text.chars().count() == WORKLOAD_CHARS));
+        assert_eq!(docs.iter().collect::<HashSet<_>>().len(), 300);
+        let body = json!({"query":"中".repeat(512),"documents":docs,"top_n":300,"return_documents":true});
+        let original = body.clone();
+        assert!(validate_request(&c, ModelKind::Rerank, &body).is_ok());
+        assert_eq!(body, original);
+        let embedding = json!({"input":workload_texts(WORKLOAD_BATCH),"encoding_format":"float"});
+        assert!(validate_request(&c, ModelKind::Embeddings, &embedding).is_ok());
+        for invalid in [
+            json!({"query":"中".repeat(513),"documents":["x"]}),
+            json!({"query":"q","documents":["中".repeat(4097)]}),
+            json!({"query":"q","documents":vec!["x";301]}),
+        ] {
+            assert!(validate_request(&c, ModelKind::Rerank, &invalid).is_ok());
+            assert!(!within_verified_domain(&c, ModelKind::Rerank, &invalid));
+        }
+        let extra=json!({"input":vec!["x";301]});
+        assert!(validate_request(&c, ModelKind::Embeddings, &extra).is_ok());
+        assert!(!within_verified_domain(&c, ModelKind::Embeddings, &extra));
+        // Characters and wire bytes are separate limits: escaped JSON can exceed 4 MiB.
+        let escaped=json!({"input":vec!["\u{0001}".repeat(WORKLOAD_CHARS);WORKLOAD_BATCH]});
+        assert!(validate_request(&c, ModelKind::Embeddings, &escaped).is_ok());
+        assert!(!within_verified_domain(&c, ModelKind::Embeddings, &escaped));
+    }
+    #[test]
+    fn provider_rerank_extensions_and_large_query_are_forwardable_without_certification_claim() {
+        let c=workload_contract();
+        let body=json!({"query":"中".repeat(1000),"documents":vec!["x".repeat(9000);400],"max_chunks_per_doc":20,"overlap_tokens":80,"top_n":300});
+        assert!(validate_request(&c,ModelKind::Rerank,&body).is_ok());
+        assert!(!within_verified_domain(&c,ModelKind::Rerank,&body));
+    }
+    #[test]
+    fn token_batches_base64_and_requested_dimensions_keep_output_integrity() {
+        use base64::Engine;
+        let c=workload_contract();
+        let encode=|xs: &[f32]| base64::engine::general_purpose::STANDARD.encode(xs.iter().flat_map(|n|n.to_le_bytes()).collect::<Vec<_>>());
+        let body=json!({"input":[10,20,30],"encoding_format":"base64","dimensions":3});
+        let out=json!({"data":[{"index":0,"embedding":encode(&[1.0,0.0,0.0])}]});
+        assert!(validate_request(&c,ModelKind::Embeddings,&body).is_ok());
+        assert!(validate_output(&c,ModelKind::Embeddings,&body,&out).is_ok());
+        let batch=json!({"input":[[10,20],[30]],"encoding_format":"base64","dimensions":3});
+        assert!(validate_output(&c,ModelKind::Embeddings,&batch,&out).is_err());
+        let wrong=json!({"data":[{"index":0,"embedding":encode(&[1.0,0.0])}]});
+        assert!(validate_output(&c,ModelKind::Embeddings,&body,&wrong).is_err());
+        let invalid=json!({"data":[{"index":0,"embedding":encode(&[f32::NAN,0.0,0.0])}]});
+        assert!(validate_output(&c,ModelKind::Embeddings,&body,&invalid).is_err());
+    }
+    #[test]
+    fn cross_source_rerank_accepts_near_tie_swaps_but_rejects_material_disagreement() {
+        assert!(compare_ranks(&[(0,0.8),(1,0.79),(2,0.1)],&[(1,0.8),(0,0.79),(2,0.1)]).is_ok());
+        assert!(compare_ranks(&[(0,0.8),(1,0.775)],&[(1,0.785),(0,0.78)]).is_err());
+        assert!(compare_ranks(&[(0,0.8),(1,0.7)],&[(1,0.8),(0,0.7)]).is_err());
+        assert!(compare_ranks(&[(0,0.8),(1,0.79)],&[(0,0.8),(2,0.79)]).is_err());
+        assert!(compare_ranks(&[(0,0.8),(1,0.79)],&[(0,0.8),(0,0.79)]).is_err());
+    }
+    #[test]
+    fn full_rerank_output_requires_all_candidates_and_original_text() {
+        let c=workload_contract();
+        let docs=workload_texts(WORKLOAD_DOCS);
+        let body=json!({"query":"q","documents":docs,"top_n":300,"return_documents":true});
+        let rows=(0..300).map(|i|json!({"index":i,"relevance_score":1.0-i as f64/300.0,"document":{"text":body["documents"][i]}})).collect::<Vec<_>>();
+        let mut output=json!({"results":rows});
+        assert!(validate_output(&c,ModelKind::Rerank,&body,&output).is_ok());
+        output["results"][299]["document"]["text"]=json!("truncated");
+        assert!(validate_output(&c,ModelKind::Rerank,&body,&output).is_err());
+        output["results"].as_array_mut().unwrap().pop();
+        assert!(validate_output(&c,ModelKind::Rerank,&body,&output).is_err());
     }
     #[test]
     fn compatibility_source_capacity_busy_rejects_before_billing_and_releases_on_drop() {
@@ -885,11 +1112,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
     #[test]
-    fn output_normalization_drift_is_rejected() {
+    fn live_output_does_not_impose_probe_normalization_on_provider_requests() {
         let c = contract();
         let body = json!({"input":"text"});
         let out = json!({"data":[{"index":0,"embedding":[2.0,0.0]}]});
-        assert!(validate_output(&c, ModelKind::Embeddings, &body, &out).is_err());
+        assert!(validate_output(&c, ModelKind::Embeddings, &body, &out).is_ok());
         let mut nonunit = c;
         nonunit.unit_normalized = false;
         assert!(validate_output(&nonunit, ModelKind::Embeddings, &body, &out).is_ok());
@@ -971,7 +1198,7 @@ mod tests {
             ModelKind::Rerank,
             &json!({"query":"q","documents":[{"text":"a"}]})
         )
-        .is_err());
+        .is_ok());
         let body = json!({"query":"q","documents":["a","b"],"top_n":1,"return_documents":true});
         assert!(validate_output(
             &c,
