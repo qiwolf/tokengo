@@ -2,6 +2,10 @@ use super::policy_editor::{self as policy, PolicyEditor};
 use crate::{Ctx, admin_api as api, fmt};
 use leptos::prelude::*;
 use serde_json::{Value, json};
+fn key_copy_notice(copied: bool) -> &'static str {
+    if copied { "完整 API Key 已复制到系统剪贴板，请安全保存。" }
+    else { "自动复制未成功。请点击“复制 Key”重试，或选中上方完整 Key 手动复制；关闭后无法再次查看。" }
+}
 /// A status change only changes enabled; credentials, policy and limits remain untouched.
 fn status_patch(key: &Value, personal: bool) -> Result<(i64, Value, bool), String> {
     if !key["revoked_at"].is_null() {return Err("此 Key 已永久撤销，不能恢复；请新建 Key。".into());}
@@ -57,6 +61,8 @@ pub fn KeyManager(
     let generation = RwSignal::new(0u64);
     let loading = RwSignal::new(false);
     let secret = RwSignal::new(None::<String>);
+    let copy_note = RwSignal::new(String::new());
+    let copy_failed = RwSignal::new(false);
     let revision = RwSignal::new(0u64);
     let user_budget = RwSignal::new(Value::Null);
     Effect::new(move |_| {
@@ -279,7 +285,9 @@ pub fn KeyManager(
                         return;
                     }
                     let has_new_secret = new_secret.is_some();
-                    secret.set(new_secret);
+                    secret.set(new_secret.clone());
+                    copy_note.set(String::new());
+                    copy_failed.set(false);
                     rows.update(|r| {
                         r.retain(|k| k["id"] != row["id"]);
                         r.insert(0, row.clone());
@@ -287,6 +295,13 @@ pub fn KeyManager(
                     selected.set(Some(row));
                     notice.set(if has_new_secret {"密钥已创建，请立即保存明文。"} else {"密钥设置已保存。"}.into());
                     if !has_new_secret && error.get_untracked().is_empty() { editor_open.set(false); }
+                    if let Some(value) = new_secret {
+                        let copied = super::settings::copy_text(&value).await;
+                        if owner.get_untracked() == owner_id && generation.get_untracked() == token && secret.get_untracked().as_ref() == Some(&value) {
+                            copy_failed.set(!copied);
+                            copy_note.set(key_copy_notice(copied).into());
+                        }
+                    }
                 }
                 Err(e) => {
                     ctx.note_err(&e);
@@ -371,20 +386,35 @@ pub fn KeyManager(
     <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let key_id=api::text(&k,"id");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div><div class="muted small">{format!("VKey ID：{key_id}")}</div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限和额度限制"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button></td></tr>}}).collect_view()}</tbody></table></div>
     <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
     </Show><KeyEditorSurface open=editor_open busy=busy embedded=embedded>
+    <Show when=move||secret.get().is_some()><section class="one-time-key" aria-labelledby=if personal{"my-created-key-title"}else{"admin-created-key-title"}>
+    <h3 id=if personal{"my-created-key-title"}else{"admin-created-key-title"}>"API Key 已创建，请立即保存"</h3>
+    <p>"完整 Key 仅在此处显示一次，关闭后无法再次查看。请保存到密码管理器；未写入浏览器持久存储。"</p>
+    <label class="account-field"><span>"完整 API Key（可手动选择复制）"</span><textarea readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||secret.get().unwrap_or_default()/></label>
+    <p role=move||if copy_failed.get(){"alert"}else{"status"}>{move||copy_note.get()}</p>
+    <div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let Some(value)=secret.get_untracked()else{return};busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&value).await;copy_failed.set(!copied);copy_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button>
+    <button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{secret.set(None);copy_note.set(String::new());editor_open.set(false);}>"已保存，关闭并清除"</button></div></section></Show>
+    <Show when=move||secret.get().is_none()>
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
     <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
     <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label>
     <PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal/>
     <div class="policy-limits"><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p>
     <div class="account-actions"><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset><div class="account-actions"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></form>
+    </Show>
     <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p>
-    {move||secret.get().map(|s|view!{<div class="one-time-key" role="status"><h3>"请立即保存 API Key"</h3><p>"关闭后无法再次查看。未写入浏览器持久存储。"</p><code class="one-time-secret">{s}</code><button class="ghost" type="button" on:click=move |_|secret.set(None)>"已保存，隐藏明文"</button></div>})}
     </KeyEditorSurface>}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_copy_keeps_actionable_manual_delivery_message() {
+        assert!(key_copy_notice(false).contains("手动复制"));
+        assert!(key_copy_notice(false).contains("关闭后无法再次查看"));
+        assert!(!key_copy_notice(false).contains("已复制"));
+        assert!(key_copy_notice(true).contains("已复制到系统剪贴板"));
+    }
     #[test]
     fn enabling_and_disabling_only_patch_enabled() {
         for enabled in [false,true] {

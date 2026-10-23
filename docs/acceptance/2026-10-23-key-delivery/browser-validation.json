@@ -1,0 +1,21 @@
+{
+  "result": "passed",
+  "origin": "http://192.168.240.237",
+  "account": "andy",
+  "created_key_bytes": 68,
+  "secret_visible_in_viewport": true,
+  "form_replaced_by_delivery": true,
+  "auto_copy_native_macos_clipboard_match": true,
+  "manual_copy_native_macos_clipboard_match": true,
+  "close_clears_secret": true,
+  "reopen_has_no_secret": true,
+  "created_rows_for_one_submission": 1,
+  "test_keys_revoked": [
+    83,
+    84
+  ],
+  "existing_hermes_key_preserved": true,
+  "failure_copy_prompt": "source-reviewed; failure not forced in live browser",
+  "clipboard_check": "pbpaste SHA256 matched in-memory DOM secret; no plaintext stored",
+  "browser_clipboard_api_note": "session clipboard readText differed; native pbpaste used as authoritative system clipboard"
+}
