@@ -2110,9 +2110,66 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 .module-dialog .provider-model-table td { vertical-align: middle; }
 @media(max-width:600px) { .module-dialog:has(.provider-model-table) { width: calc(100% - 16px); } }
 
-/* Keep model status and its action on one compact row at desktop widths. */
-@media(min-width:801px){
- .table-wrap .provider-model-table :is(th,td):nth-child(1),.table-wrap .provider-model-table :is(th,td):nth-child(2){width:22%;}
- .table-wrap .provider-model-table :is(th,td):nth-child(5){width:20%;}
- .table-wrap .provider-model-table .model-state-actions{flex-wrap:nowrap;gap:6px;}
+/* Preserve readable actions within all seven model-management columns. */
+@media(min-width:801px) {
+ .table-wrap .provider-model-table { min-width:900px; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(1) { width:18%; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(2) { width:23%; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(3) { width:6%; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(4) { width:10%; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(5) { width:14%; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(6) { width:18%; }
+ .table-wrap .provider-model-table :is(th,td):nth-child(7) { width:11%; }
+}
+.table-wrap .provider-model-table .model-state-actions { flex-wrap:wrap; gap:8px; }
+.table-wrap .provider-model-table button { flex-shrink:0; padding:10px 12px; white-space:nowrap; }
+
+/* Form rows align controls, rather than labels with their accumulated margins. */
+.provider-model-mapping { align-items:end; row-gap:12px; }
+.provider-model-mapping > .account-field { margin-bottom:0; }
+.provider-model-mapping > .account-check { min-height:48px; margin:0; }
+.provider-model-mapping > button { align-self:end; }
+.provider-model-mapping > .account-help { margin:0; }
+.key-row-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.key-row-actions > button { flex:0 0 auto; }
+
+/* Repeated steps and service records each retain their own breathing room. */
+.virtual-policy-form > fieldset { display:grid; gap:16px; min-width:0; margin:0; padding:0; border:0; }
+.virtual-policy-form > fieldset > :is(h3,p,.account-check,.account-actions) { margin:0; }
+.virtual-policy-form :is(.virtual-target, .panel) { margin:0; padding:16px; border:1px solid var(--line); border-radius:8px; }
+.virtual-target > .card-head { display:flex; flex-direction:row; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:0; }
+.virtual-target > .card-head :is(h3,.account-actions) { margin:0; }
+.virtual-target > .account-field { margin:0; }
+.virtual-target > .account-actions { margin:0; }
+.passthrough-routes > .card-body { display:grid; gap:24px; }
+.passthrough-routes .card-body > .panel { padding:20px; border:1px solid var(--line); border-radius:8px; }
+.passthrough-routes .panel > p { margin:0; }
+
+/* Passthrough forms must not depend on the custom-probe page's lazy stylesheet. */
+.custom-probe-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.passthrough-form { display:grid; gap:24px; }
+.module-dialog .passthrough-form > fieldset { min-width:0; margin:0; padding:16px; border:1px solid var(--line); border-radius:8px; }
+.passthrough-form legend { padding:0 8px; font-size:14px; font-weight:600; }
+.passthrough-form .account-field { margin:0; }
+.passthrough-form .account-check { margin:0; }
+.passthrough-form fieldset > .panel { margin-block:16px; }
+.passthrough-form > .banner:empty { display:none; }
+@media(max-width:600px) {
+ .custom-probe-fields { grid-template-columns:minmax(0,1fr); }
+ .passthrough-routes .card-body > .panel { padding:16px; }
+}
+
+.provider-key-priority { align-items:end; margin-bottom:24px; }
+.provider-key-priority > :is(.account-field,.account-check) { margin:0; }
+.provider-key-priority > .account-check { min-height:48px; }
+.reasoning-actions { margin-block:16px; }
+
+.provider-model-management > .pick { margin-block:12px 16px; }
+.virtual-policy-form > fieldset > button { justify-self:start; }
+
+.virtual-policy-form .account-field { margin-bottom:0; }
+.virtual-policy-form > fieldset > p:empty { display:none; }
+@media(min-width:801px) {
+ .provider-model-mapping { grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; }
+ .provider-model-mapping > button { grid-column:3; }
 }

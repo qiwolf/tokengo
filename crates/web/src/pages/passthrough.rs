@@ -351,7 +351,7 @@ pub fn PassthroughRoutes(ctx: Ctx) -> impl IntoView {
                 }/>
             </div>
             <super::ModuleDialog open=open busy=busy title="配置透传路由".to_string()>
-                <form class="account-form" on:submit=save>
+                <form class="account-form passthrough-form" on:submit=save>
                     <fieldset disabled=move||busy.get()><legend>"地址与匹配规则"</legend>
                         <div class="custom-probe-fields"><Field draft=draft field="name" label="名称"/><Field draft=draft field="prefix" label="路径前缀" hint="如 /face/；最长前缀优先，不能覆盖网关管理路径"/><Field draft=draft field="upstream" label="上游地址" kind="url" hint="完整 HTTP(S) 地址，不含账号、查询或片段"/>
                         <label class="account-check"><input type="checkbox" prop:checked=move||draft.get()["strip_prefix"]==true on:change=move|ev|draft.update(|d|d["strip_prefix"]=json!(event_target_checked(&ev)))/>"剥离路径前缀"</label><label class="account-check"><input type="checkbox" prop:checked=move||draft.get()["enabled"]==true on:change=move|ev|draft.update(|d|d["enabled"]=json!(event_target_checked(&ev)))/>"启用此路由"</label></div>

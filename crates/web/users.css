@@ -28,7 +28,7 @@
 .user-workspace .account-field input, .user-workspace .account-field select { width:100%; box-sizing:border-box; }
 .user-workspace .user-budget-field { max-width:384px; margin-top:24px; }
 .user-workspace .policy-options { max-height:192px; overflow-y:auto; overscroll-behavior:contain; margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:8px; }
-.user-workspace .policy-options .account-check { align-items:flex-start; padding:4px 0; overflow-wrap:anywhere; }
+.user-workspace .policy-options .account-check { align-items:center; margin:0; padding:4px 0; overflow-wrap:anywhere; }
 .user-workspace .policy-editor > details { margin-top:16px; }
 .user-workspace .user-workspace-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; border-top:1px solid var(--line); padding:16px 24px; background:var(--bg-soft); }
 .user-workspace .user-workspace-footer > span { color:var(--fg-2); font-size:12px; max-width:384px; }

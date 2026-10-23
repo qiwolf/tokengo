@@ -1,6 +1,8 @@
 # 容器部署与分发
 
-当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](releases/v0.34.0-qiwolf.10.md)与[完整收据](acceptance/2026-10-23-disabled-key-upgrade/README.md)。
+当前已验收正式版为 **[v0.34.0-qiwolf.11](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.11)**，源码`551f1c1487a1`，Cargo0.34.0/schema40。9个公开资产、匿名镜像拉取和原生/容器独立验收见[公开收据](acceptance/2026-10-24-qiwolf11-release/README.md)。
+
+**v0.34.0-qiwolf.12正在准备**，范围见[版本说明](releases/v0.34.0-qiwolf.12.md)。其最终提交、CI、原生包SHA及镜像digest待发布后核实；不要用qiwolf.11或本地临时构建的摘要代替本版身份，也不要据此推定生产已从私有性能补丁升级正式版。
 
 镜像包含同一源码提交的 Rust 服务端、CLI 和完整 WASM 控制台，不需要在运行主机安装 Rust、Node.js 或 Nginx。默认源码多阶段构建；Linux CI 也将已经校验的同提交原生包封装成镜像，并验证隔离容器的启动、鉴权、WASM、重启持久化及停止行为。
 
