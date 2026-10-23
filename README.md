@@ -2,6 +2,8 @@
 
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
+**v0.34.0-qiwolf.9 发布准备中，尚未公开。** 本轮收录 qiwolf.8 后的 Key 直接交付与自动复制、已撤销 Key 从列表删除，以及加密留存后的再次显示/复制。Cargo 仍为 **0.34.0**、schema **40**，交付目标为 Linux x86_64 原生包与 linux/amd64 容器。214项定向检查及现场部署/浏览器验收已通过；最终合并源码的完整测试、精确提交 CI 和本版公开产物验收待核验，不能借用 qiwolf.8 的收据。见[本版准备记录](docs/releases/v0.34.0-qiwolf.9.md)。
+
 当前公开版本为 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**：共享向量/重排回退、逐来源自动续验、虚拟模型回收站、透传服务授权与目录展示整理。发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。详见[本版说明](docs/releases/v0.34.0-qiwolf.8.md)与[验收状态](docs/acceptance-status.md)。Cargo仍为上游0.34.0。
 
 上游 Key 管理使用独立弹窗，“编辑 Key”与“选择模型”分开。已有 API Key 可由管理员显式查看或复制，编辑留空保留原值。点击上游模型输入框即读取当前 Key 的目录，搜索、多选后生成上游名称与本地映射对照，也可手工输入；本地映射留空沿用上游名。既有映射保持原名，详见[操作说明](docs/provider-key-pools.md)。
