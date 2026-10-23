@@ -1,0 +1,36 @@
+{
+  "observed": true,
+  "source_commit": "92f560a667e133fffdf79ecb3b602eacbe5f3b58",
+  "request_fix_commit": "0ea696d12366ac0f0fad555d5f82f6b11fb5a7ec",
+  "host": "tokengo-geren-wangguan",
+  "current": "/opt/tokengo/releases/chatbox-system-92f560a667e1",
+  "runtime_sha256": "8b14d0c8416c8f4151de5dc628da9220839b3a5932e8941f8d2f327adb1fb1c2",
+  "build_host": "build-test",
+  "related_tests_passed": 71,
+  "calls": [
+    {
+      "stream": false,
+      "http_status": 200,
+      "content": "SYS_b810f27ad8e2441c",
+      "system_instruction_followed": true,
+      "duration_ms": 2497.68,
+      "sse_done": null
+    },
+    {
+      "stream": true,
+      "http_status": 200,
+      "content": "SYS_97646a67783348e5",
+      "system_instruction_followed": true,
+      "duration_ms": 3658.21,
+      "sse_done": true
+    }
+  ],
+  "request_ids": [
+    955,
+    956
+  ],
+  "existing_keys_unchanged": true,
+  "backup": "/var/backups/tokengo/20261023T070422Z-ec580fd7",
+  "original_qiwolf10_backup": "/var/backups/tokengo/20261023T064610Z-e063fadd",
+  "scope": "Real upstream calls through 237 nginx loopback; Chatbox device and external TLS entry not exercised; existing unpriced ledger status unchanged; no public release or push"
+}
