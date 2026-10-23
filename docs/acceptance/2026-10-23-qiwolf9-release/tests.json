@@ -1,0 +1,18 @@
+{
+  "host": "build-test",
+  "source_commit": "8598fc070ca4a91e700d5748947d0343766ad06b",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--workspace",
+    "--",
+    "--test-threads=4"
+  ],
+  "rust_groups": 63,
+  "passed": 1103,
+  "failed": 0,
+  "ignored": 3,
+  "python_tests": 22
+}

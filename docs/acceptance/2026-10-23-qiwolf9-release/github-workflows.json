@@ -1,0 +1,14 @@
+{
+  "ci": {
+    "headSha": "8598fc070ca4a91e700d5748947d0343766ad06b",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/39898866368"
+  },
+  "publish": {
+    "headSha": "8598fc070ca4a91e700d5748947d0343766ad06b",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/39898890902"
+  }
+}

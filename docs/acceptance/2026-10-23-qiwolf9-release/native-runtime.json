@@ -1,0 +1,18 @@
+{
+  "result": "passed",
+  "source_commit": "8598fc070ca4a91e700d5748947d0343766ad06b",
+  "runtime": "native Linux x86_64 build-test; no emulation",
+  "production_access": false,
+  "key_recovery_checks": [
+    "anonymous-csrf-bearer-and-ops-isolation",
+    "deleted-key-404-and-hidden",
+    "exact-owner-and-admin-reveal-no-store",
+    "isolated-hash-only-history-409-no-magic-recovery",
+    "metadata-no-plaintext",
+    "native-encrypted-storage-no-plaintext",
+    "native-physical-key-and-audit-preserved-without-plaintext",
+    "owner-and-admin-key-create",
+    "owner-and-admin-revoked-and-deleted-key-contract",
+    "revoked-key-viewable-but-authentication-denied"
+  ]
+}

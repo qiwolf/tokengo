@@ -1,0 +1,16 @@
+{
+  "result": "passed",
+  "source_commit": "8598fc070ca4a91e700d5748947d0343766ad06b",
+  "image_id": "sha256:f7821bab0216e5317ce4cb3bbd44c4e3610bfe0e2fe75f14dc09d0274e2ea92e",
+  "production_access": false,
+  "checks": [
+    "anonymous-csrf-bearer-and-ops-isolation",
+    "deleted-key-404-and-hidden",
+    "exact-owner-and-admin-reveal-no-store",
+    "metadata-no-plaintext",
+    "owner-and-admin-key-create",
+    "owner-and-admin-revoked-and-deleted-key-contract",
+    "revoked-key-viewable-but-authentication-denied"
+  ],
+  "database_inspection": "native isolated fixture only"
+}

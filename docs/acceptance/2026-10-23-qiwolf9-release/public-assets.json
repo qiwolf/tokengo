@@ -1,0 +1,10 @@
+{
+  "result": "passed",
+  "source_commit": "8598fc070ca4a91e700d5748947d0343766ad06b",
+  "platform": "linux/amd64",
+  "native_archive": "tokengo-8598fc070ca4-linux-x86_64.tar.gz",
+  "native_sha256": "8ef62e86b8f845add9d1404432980afb8776b7071ada89f39a740c11b26cea3a",
+  "image_archive": "tokengo-8598fc070ca4a91e700d5748947d0343766ad06b-linux-amd64.tar.gz",
+  "image_sha256": "a82ca93288f5f9402d7a02056622bd758092281ab8ed627d47b07be809307c23",
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:a25ef92a226b8921e3339d744e718572f10fd7bf7e7b4258e1e8c77d7aa5250a"
+}

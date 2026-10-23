@@ -1,0 +1,16 @@
+{
+  "result": "passed",
+  "source_commit": "8598fc070ca4a91e700d5748947d0343766ad06b",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9",
+  "assets": 9,
+  "host": "build-test Linux x86_64",
+  "anonymous_downloads": true,
+  "anonymous_registry": true,
+  "offline_archive_two_tags": true,
+  "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+  "smoke_restart_recreation": true,
+  "native_runtime": true,
+  "recoverable_key_runtime": true,
+  "container_key_runtime": true,
+  "production_access": false
+}

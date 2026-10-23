@@ -5,19 +5,17 @@
 ## 当前代码、部署与发布分界
 
 
-### qiwolf.9发布准备（尚未公开）
+### qiwolf.9公开分发与独立验收
 
-本轮收录 `0ecd357`（Key交付）、`9d21454`（撤销后列表删除）、`8cc0c34`（加密再次显示与嵌套弹窗复制）。Cargo0.34.0、schema40不变，交付目标仍为Linux x86_64原生包和linux/amd64容器。当前公开版本仍为下述qiwolf.8，其标签、附件与历史收据不改写。
+当前公开 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**，Cargo0.34.0/schema40。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。原生包SHA256 `8ef62e86b8f845add9d1404432980afb8776b7071ada89f39a740c11b26cea3a`；镜像 `ghcr.io/qiwolf/tokengo@sha256:a25ef92a226b8921e3339d744e718572f10fd7bf7e7b4258e1e8c77d7aa5250a`。最终发行源码在build-test完整工作区测试为 **1103通过、0失败、3忽略**，另 **22项Python通过**；精确提交GitHub CI独立成功，不把CI、214项历史定向检查或补丁重复运行相加为唯一测试总数。
 
-build-test定向检查214通过：Web124、身份/代理/用户管理/运维令牌67、旧网关与账号23。复制补丁后Web124重新通过，与前述用例重叠，不能再次相加；旧“不保留密文”与复制文案断言按新合同修正，错误JSON字段统一为type，首轮失败日志保留。这些检查不等于最终合并源码完整workspace或本版公开产物验收。
+原生及容器独立临时实例验证本人/管理员Key创建、精确显示、no-store、权限/CSRF/运维令牌隔离、撤销后不可调用及删除后不可读取。原生隔离库另核实AES密文、物理历史与无明文审计，以及hash-only历史409；容器检查不冒充生产库直查。未在本轮访问或升级237，现场Key交付及原生系统剪贴板仍引用各阶段既有证据，不从隔离Key API检查推定全部浏览器验收。标签及公开资产内的文档是发布前源码快照；完整发布后收据保存在main分支与GitHub Release说明中，不代表先前资产已包含后补回执。
 
-现场部署已完成，普通HTTP的管理员嵌套弹窗复制经过原生macOS系统剪贴板核对。新Key关闭后再次显示、刷新后读取、关闭清除DOM明文，以及撤销/删除保护有回执；普通用户权限与失败场景由隔离集成测试覆盖。历史Hermes Key确认无密文副本，409明确提示无法恢复；保持既有Key与授权。临时验收Key已撤销并从列表删除，物理历史保留。
+完整结构化收据见[本次公开发行验收](acceptance/2026-10-23-qiwolf9-release/README.md)。历史214项定向检查及现场结果见[再次显示与系统剪贴板](acceptance/2026-10-23-key-reveal/README.md)，不与最终数量相加；历史Hermes无密文无法恢复的限制保留。
 
-最终合并源码完整测试、精确提交CI、公开原生包/镜像摘要、匿名获取及运行验收均待核验。收据留位见[qiwolf.9准备记录](releases/v0.34.0-qiwolf.9.md#发布收据待补)。阶段证据见[直接交付](acceptance/2026-10-23-key-delivery/README.md)、[列表删除](acceptance/2026-10-23-key-delete/README.md)、[再次显示与系统剪贴板](acceptance/2026-10-23-key-reveal/README.md)。
+### qiwolf.8公开分发与独立验收（历史）
 
-### qiwolf.8公开分发与独立验收
-
-当前公开 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)** 包含共享向量/重排回退、逐来源独立续验、回收站、透传服务授权与目录管理。Cargo0.34.0、schema40。发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。镜像 `ghcr.io/qiwolf/tokengo@sha256:7f8517a515c80d25635d0093f28fe3159bc4bd39b1e946c8e147650a815fe3d4`；原生包SHA256 `e0bda84fe4a79fea2be5d9009151c043889a62d1996069af5970486363bbb616`。完整收据见[本版说明](releases/v0.34.0-qiwolf.8.md#发布收据)。标签及公开资产内的文档是发布前源码快照；完整发布后收据保存在main分支与GitHub Release说明中，不能据此声称资产携带本次最终回执。
+历史公开 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)** 包含共享向量/重排回退、逐来源独立续验、回收站、透传服务授权与目录管理。Cargo0.34.0、schema40。发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。镜像 `ghcr.io/qiwolf/tokengo@sha256:7f8517a515c80d25635d0093f28fe3159bc4bd39b1e946c8e147650a815fe3d4`；原生包SHA256 `e0bda84fe4a79fea2be5d9009151c043889a62d1996069af5970486363bbb616`。完整收据见[本版说明](releases/v0.34.0-qiwolf.8.md#发布收据)。标签及公开资产内的文档是发布前源码快照；完整发布后收据保存在main分支与GitHub Release说明中，不能据此声称资产携带本次最终回执。
 
 最终发布源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b` 在build-test以完整 `cargo test --workspace -- --test-threads=4` 验证，GitHub Ubuntu默认线程CI另行通过：两者各1095通过、0失败、3忽略，另22项Python通过；不是两者相加的独立测试总数。两组压力测试分别通过。build-test默认16线程完整运行曾出现本机连接和10秒尾部超时；保留原精确计数/状态断言，补充财务队列等待后形成此发布提交，不把隔离机高线程压力失败隐去或解释为所有生产环境的容量结论。
 
