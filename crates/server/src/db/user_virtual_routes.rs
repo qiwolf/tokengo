@@ -410,17 +410,45 @@ pub fn get(c: &Connection, user_id: i64, id: i64) -> super::Result<Option<Virtua
     if deleted_at(c,user_id,id)?.is_some() { return Ok(None); }
     get_including_trash(c,user_id,id)
 }
+// Older installations can contain normalized_name values written by a previous
+// normalizer. A miss may inspect only this user's id/name metadata; it never
+// hydrates unrelated targets, windows or JSON configuration.
+fn legacy_name_id(c: &Connection, user_id: i64, name: &str, except_id: i64, candidate_id: Option<i64>) -> super::Result<Option<i64>> {
+    let mut statement=c.prepare("SELECT id,name FROM user_virtual_models WHERE user_id=?1 AND id<>?2 AND id<=?3 ORDER BY id")?;
+    let mut rows=statement.query(params![user_id,except_id,candidate_id.unwrap_or(i64::MAX)])?;
+    while let Some(row)=rows.next()? {
+        let id:i64=row.get(0)?;
+        let stored_name:String=row.get(1)?;
+        if same_model_name(&stored_name,name) && deleted_at(c,user_id,id)?.is_none() {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
 fn by_name(c: &Connection, user_id: i64, name: &str) -> super::Result<Option<VirtualModel>> {
-    let row = c.query_row(&format!("SELECT {MODEL_COLUMNS} FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2"), params![user_id,normalize_model_name(name)], stored_row).optional()?;
-    let Some(row)=row else { return Ok(None); };
-    if deleted_at(c,user_id,row.0)?.is_some() { return Ok(None); }
-    hydrate(c,user_id,row).map(Some)
+    let indexed=c.query_row("SELECT id,name FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2", params![user_id,normalize_model_name(name)], |row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?))).optional()?;
+    let candidate_id=match indexed {
+        Some((id,stored_name)) if same_model_name(&stored_name,name) && deleted_at(c,user_id,id)?.is_none()=>Some(id),
+        _=>None,
+    };
+    // The old directory selected the first non-trashed matching name in ID order.
+    // Legacy and canonical indexes may coexist, so inspect only metadata up to
+    // the indexed candidate before hydrating exactly the selected record.
+    match legacy_name_id(c,user_id,name,-1,candidate_id)? {
+        Some(id)=>get(c,user_id,id),
+        None=>Ok(None),
+    }
 }
+
 fn name_exists(c: &Connection, user_id: i64, name: &str, except_id: i64) -> super::Result<bool> {
-    c.query_row("SELECT EXISTS(SELECT 1 FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2 AND id<>?3)", params![user_id,normalize_model_name(name),except_id], |row|row.get(0)).map_err(Into::into)
+    let indexed=c.query_row("SELECT id,name FROM user_virtual_models WHERE user_id=?1 AND normalized_name=?2 AND id<>?3", params![user_id,normalize_model_name(name),except_id], |row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?))).optional()?;
+    if let Some((id,stored_name))=indexed {
+        if same_model_name(&stored_name,name) && deleted_at(c,user_id,id)?.is_none() {return Ok(true);}
+    }
+    Ok(legacy_name_id(c,user_id,name,except_id,None)?.is_some())
 }
-fn shared_name_exists(c: &Connection, name: &str) -> super::Result<bool> {
-    c.query_row("SELECT EXISTS(SELECT 1 FROM shared_virtual_models WHERE normalized_name=?1)", [normalize_model_name(name)], |row|row.get(0)).map_err(Into::into)
+fn shared_name_exists(c: &Connection, name: &str) -> Result<bool,VirtualError> {
+    super::shared_virtual_routes::name_exists(c,name).map_err(Into::into)
 }
 
 fn save_children(c: &Connection, id: i64, v: &Config) -> Result<(), VirtualError> {

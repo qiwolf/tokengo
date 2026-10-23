@@ -629,3 +629,29 @@ async fn targeted_shared_lookup_rechecks_revocation_policy_source_and_version() 
     db::identity::update_user(&c,&user).unwrap();
     assert_eq!(check().unwrap_err().code,"virtual_route_forbidden");
 }
+
+#[tokio::test]
+async fn targeted_shared_lookup_preserves_legacy_index_names_and_first_active_precedence() {
+    let mut f=Fixture::new(ModelKind::Chat).await;f.config.targets.truncate(1);
+    let saved=f.publish().await;let id=saved["id"].as_i64().unwrap();
+    let c=f.state.conn();let auth=db::identity::context(&c,f.key_id).unwrap().unwrap();
+    // Historical imports stored lower-case display names instead of Rust-normalized names.
+    c.execute("UPDATE shared_virtual_models SET normalized_name='shared-model' WHERE id=?1",[id]).unwrap();
+    c.execute("INSERT INTO shared_virtual_models(name,normalized_name,enabled,config_json,version,actor_account_id,created_ms,updated_ms) SELECT name,?2,enabled,config_json,version,actor_account_id,created_ms,updated_ms FROM shared_virtual_models WHERE id=?1",rusqlite::params![id,tokengo_shared::normalize_model_name("shared-model")]).unwrap();
+    c.execute("INSERT INTO shared_virtual_models(name,normalized_name,enabled,config_json,version,actor_account_id,created_ms,updated_ms) VALUES('broken','broken',1,'unrelated invalid',1,1,1,1)",[]).unwrap();
+    assert!(db::shared_virtual_routes::name_exists(&c,"SHARED_MODEL").unwrap());
+    assert_eq!(db::shared_virtual_routes::resolve(&c,&auth,"SHARED_MODEL",db::now_ms()).unwrap().unwrap().id,id,"keep the old first active route; never switch sources because an import had a legacy index");
+    assert!(db::shared_virtual_routes::validate_current(&c,&auth,id,1,1,db::now_ms()).is_ok());
+    c.execute("UPDATE gateway_keys SET enabled=0 WHERE id=?1",[f.key_id]).unwrap();
+    assert_eq!(db::shared_virtual_routes::resolve(&c,&auth,"shared-model",db::now_ms()).unwrap_err().code,"virtual_route_forbidden");
+}
+
+#[tokio::test]
+async fn targeted_shared_lookup_does_not_trust_an_index_pointing_to_another_name() {
+    let mut f=Fixture::new(ModelKind::Chat).await;f.config.targets.truncate(1);
+    let saved=f.publish().await;let id=saved["id"].as_i64().unwrap();
+    let c=f.state.conn();let auth=db::identity::context(&c,f.key_id).unwrap().unwrap();
+    c.execute("UPDATE shared_virtual_models SET normalized_name=?2 WHERE id=?1",rusqlite::params![id,tokengo_shared::normalize_model_name("another-name")]).unwrap();
+    assert!(db::shared_virtual_routes::resolve(&c,&auth,"another-name",db::now_ms()).unwrap().is_none());
+    assert_eq!(db::shared_virtual_routes::resolve(&c,&auth,"shared-model",db::now_ms()).unwrap().unwrap().id,id);
+}

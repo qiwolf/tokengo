@@ -591,3 +591,61 @@ fn private_name_and_id_queries_use_existing_point_indexes() {
         assert!(plan.contains("SEARCH") && !plan.contains("SCAN"), "private point read must not scan a user directory: {plan}");
     }
 }
+
+
+#[test]
+fn legacy_private_name_index_resolves_without_hydrating_siblings_and_keeps_live_guards() {
+    let f = Fixture::new();
+    let c = f.state.conn();
+    let route = vr::create(&c, f.u, &cfg("Memory-BGE-M3", f.provider)).unwrap();
+    c.execute("UPDATE user_virtual_models SET normalized_name='legacy-private-index' WHERE id=?1", [route.id]).unwrap();
+    unrelated_corrupt_private_row(&c, f.u, route.id);
+    assert!(vr::list(&c,f.u).is_err(), "legacy fallback must not parse unrelated bad JSON");
+    assert_eq!(vr::resolve(&c,f.u," memory-bge-m3 ",0).unwrap().unwrap().id,route.id);
+    assert!(vr::resolve(&c,f.other,"memory-bge-m3",0).unwrap().is_none());
+    vr::validate_current(&c,f.u,route.id,route.version,1,0).unwrap();
+    assert_eq!(vr::create(&c,f.u,&cfg("memory-bge-m3",f.provider)).unwrap_err().code,"virtual_route_conflict", "legacy metadata still owns its active alias");
+    let mut user=db::identity::user(&c,f.u).unwrap().unwrap();
+    user.policy.allowed_models=Some(vec![]);
+    db::identity::update_user(&c,&user).unwrap();
+    assert_eq!(vr::validate_current(&c,f.u,route.id,route.version,1,0).unwrap_err().code,"virtual_target_forbidden");
+    user.policy.allowed_models=None;
+    db::identity::update_user(&c,&user).unwrap();
+    let deleted=vr::trash(&c,f.u,route.id,route.version).unwrap();
+    assert!(vr::resolve(&c,f.u,"memory-bge-m3",0).unwrap().is_none(),"metadata fallback must exclude the recycle bin");
+    let replacement=vr::create(&c,f.u,&cfg("memory-bge-m3",f.provider)).unwrap();
+    assert_ne!(replacement.id,route.id);
+    assert_eq!(vr::resolve(&c,f.u,"memory-bge-m3",0).unwrap().unwrap().id,replacement.id);
+    assert_eq!(vr::restore(&c,f.u,route.id,deleted.version).unwrap_err().code,"virtual_route_conflict");
+}
+
+#[test]
+fn private_index_hit_must_match_real_name_before_it_can_own_an_alias() {
+    let f=Fixture::new();let c=f.state.conn();
+    let route=vr::create(&c,f.u,&cfg("private-original",f.provider)).unwrap();
+    c.execute("UPDATE user_virtual_models SET normalized_name='different-alias' WHERE id=?1",[route.id]).unwrap();
+    assert!(vr::resolve(&c,f.u,"different-alias",0).unwrap().is_none(),"stale index metadata must never route an unrelated requested name");
+    assert_eq!(vr::resolve(&c,f.u,"private-original",0).unwrap().unwrap().id,route.id);
+    let second=vr::create(&c,f.u,&cfg("private-second",f.provider)).unwrap();
+    assert_eq!(vr::replace(&c,f.u,second.id,second.version,&cfg("PRIVATE-ORIGINAL",f.provider)).unwrap_err().code,"virtual_route_conflict");
+}
+
+
+#[test]
+fn earlier_legacy_private_name_keeps_precedence_over_a_later_canonical_index() {
+    let f=Fixture::new();let c=f.state.conn();
+    let old=vr::create(&c,f.u,&cfg("memory-bge-m3",f.provider)).unwrap();
+    c.execute("UPDATE user_virtual_models SET normalized_name='legacy-index-name' WHERE id=?1",[old.id]).unwrap();
+    // Reproduce a legacy/canonical duplicate without using the guarded write API.
+    c.execute("INSERT INTO user_virtual_models(user_id,name,normalized_name,enabled,mode,timezone,default_positions_json,version,created_ms,updated_ms) SELECT user_id,name,?1,enabled,mode,timezone,default_positions_json,version,created_ms,updated_ms FROM user_virtual_models WHERE id=?2",rusqlite::params![tokengo_shared::normalize_model_name("memory-bge-m3"),old.id]).unwrap();
+    let later=c.last_insert_rowid();
+    c.execute("INSERT INTO user_virtual_targets SELECT ?1,position,provider_id,logical_model,switch_on_429,switch_on_400 FROM user_virtual_targets WHERE virtual_model_id=?2",rusqlite::params![later,old.id]).unwrap();
+    unrelated_corrupt_private_row(&c,f.u,old.id);
+    assert_eq!(vr::resolve(&c,f.u,"memory-bge-m3",0).unwrap().unwrap().id,old.id,"indexed canonical candidate must not replace earlier legacy first-match semantics");
+    let mut user=db::identity::user(&c,f.u).unwrap().unwrap();
+    user.policy.allowed_models=Some(vec![]);db::identity::update_user(&c,&user).unwrap();
+    assert_eq!(vr::validate_current(&c,f.u,old.id,old.version,1,0).unwrap_err().code,"virtual_target_forbidden");
+    user.policy.allowed_models=None;db::identity::update_user(&c,&user).unwrap();
+    vr::trash(&c,f.u,old.id,old.version).unwrap();
+    assert_eq!(vr::resolve(&c,f.u,"memory-bge-m3",0).unwrap().unwrap().id,later,"trashed legacy rows no longer own their old name");
+}

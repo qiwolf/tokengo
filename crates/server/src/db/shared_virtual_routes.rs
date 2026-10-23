@@ -3,7 +3,7 @@ use super::{identity, model_routes, user_virtual_routes as vr, DbError};
 use crate::vector_compat::Contract;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tokengo_shared::{normalize_model_name, ModelKind};
+use tokengo_shared::{normalize_model_name, same_model_name, ModelKind};
 pub const SQL: &str = include_str!("shared_virtual_routes.sql");
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SharedModel {
@@ -84,7 +84,24 @@ pub fn get(c:&Connection,id:i64)->super::Result<Option<SharedModel>>{
     Ok(by_id(c,id)?.filter(|r|r.deleted_at_ms.is_none()))
 }
 fn by_name(c:&Connection,name:&str)->super::Result<Option<SharedModel>>{
-    Ok(read_one(c,"SELECT id,version,actor_account_id,config_json,enabled FROM shared_virtual_models WHERE normalized_name=?1",normalize_model_name(name).into())?.filter(|r|r.deleted_at_ms.is_none()))
+    matching_name_id(c,name,None)?.map(|id|by_id(c,id)).transpose().map(Option::flatten)
+}
+// Older imports did not all use the current Rust normalizer. Inspect only names
+// for that compatibility path, never hydrate every alias/catalog. Preserve the
+// previous first-active-id precedence if a legacy spelling duplicates an index.
+fn matching_name_id(c:&Connection,name:&str,except:Option<i64>)->super::Result<Option<i64>>{
+    let indexed:Option<(i64,String)>=c.query_row("SELECT id,name FROM shared_virtual_models WHERE normalized_name=?1 AND (?2 IS NULL OR id<>?2)",params![normalize_model_name(name),except],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let indexed=match indexed {Some((id,label))if same_model_name(&label,name)&&vr::deleted_at(c,0,id)?.is_none()=>Some(id),_=>None};
+    let mut q=c.prepare("SELECT id,name FROM shared_virtual_models WHERE (?1 IS NULL OR id<=?1) AND (?2 IS NULL OR id<>?2) ORDER BY id")?;
+    let mut rows=q.query(params![indexed,except])?;
+    while let Some(row)=rows.next()? {
+        let id:i64=row.get(0)?;let label:String=row.get(1)?;
+        if same_model_name(&label,name)&&vr::deleted_at(c,0,id)?.is_none(){return Ok(Some(id));}
+    }
+    Ok(indexed)
+}
+pub fn name_exists(c:&Connection,name:&str)->super::Result<bool>{
+    Ok(matching_name_id(c,name,None)?.is_some())
 }
 fn name_available(c: &Connection, name: &str, except: Option<i64>) -> Result<(), vr::VirtualError> {
     if model_routes::routes_for(c,name)?.is_some() {
@@ -98,8 +115,7 @@ fn name_available(c: &Connection, name: &str, except: Option<i64>) -> Result<(),
         [normalize_model_name(name)],
         |r| r.get(0),
     )?;
-    let collision:Option<i64>=c.query_row("SELECT id FROM shared_virtual_models WHERE normalized_name=?1 AND (?2 IS NULL OR id<>?2)",params![normalize_model_name(name),except],|r|r.get(0)).optional()?;
-    let active_collision = match collision {Some(id)=>vr::deleted_at(c,0,id)?.is_none(),None=>false};
+    let active_collision=matching_name_id(c,name,except)?.is_some();
     if private || active_collision {
         return Err(err(
             "virtual_route_conflict",
