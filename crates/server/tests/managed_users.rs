@@ -965,3 +965,141 @@ async fn service_key_default_inherits_and_legacy_restrictions_remain_editable() 
     }
     let(s,v,_)=f.admin("POST","/api/users",json!({"name":"bad-service","policy":{"allowed_services":[999999]}})).await;assert_eq!(s,StatusCode::BAD_REQUEST,"{v}");
 }
+
+async fn deletion_user(f: &Fixture, username: &str) -> (i64, String) {
+    let (status, value, _) = f.admin("POST", "/api/managed-users", json!({
+        "username":username,"display_name":username,"password":PASSWORD
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let (_, cookie) = f.login(username, PASSWORD).await;
+    (value["user"]["id"].as_i64().unwrap(), cookie)
+}
+
+#[tokio::test]
+async fn deleted_revoked_key_hides_from_lists_but_preserves_ancestry_and_financial_history() {
+    let f = Fixture::new();
+    let (user, cookie) = deletion_user(&f, "key-delete-owner").await;
+    let (parent, parent_secret, child, child_secret) = {
+        let c = f.state.conn();
+        let (parent, secret) = db::identity::create_key(&c, user, "retained parent", &Default::default(), None, None).unwrap();
+        let (child, child_secret) = db::identity::create_key(&c, user, "retained child", &Default::default(), None, Some(parent.id)).unwrap();
+        c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,user_id,key_id) VALUES(1,'/v1/chat/completions','kept-model','success',?1,?2)",rusqlite::params![user,parent.id]).unwrap();
+        let request = c.last_insert_rowid();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms,settled_ms) VALUES('key-delete-kept',?1,?2,?3,99,'kept-model',0,0,0,7,'success',1,2)",rusqlite::params![user,parent.id,request]).unwrap();
+        (parent.id, secret, child.id, child_secret)
+    };
+    assert!(f.state.authenticate_context(parent_secret.clone()).await.is_some());
+    assert!(f.state.authenticate_context(child_secret.clone()).await.is_some());
+    let path = format!("/api/account/keys/{parent}");
+    assert_eq!(f.req("DELETE", &path, Some(&cookie), None, true, None, json!(null)).await.0, StatusCode::OK);
+    let before = {
+        let c = f.state.conn();
+        let row = db::identity::key(&c, parent).unwrap().unwrap();
+        (row.revoked_at, row.name, serde_json::to_value(row.policy).unwrap())
+    };
+    for _ in 0..2 {
+        let (status, value, _) = f.req("POST", &format!("{path}/delete"), Some(&cookie), None, true, None, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert_eq!(value["deleted"], true);
+        assert_eq!(value["id"], parent);
+        assert_eq!(value["key"]["id"], parent);
+        assert!(value["key"].get("secret").is_none());
+    }
+    for (path, personal) in [("/api/account/keys".to_string(), true), (format!("/api/users/{user}/keys"), false)] {
+        let (status, value, _) = if personal {
+            f.req("GET", &path, Some(&cookie), None, false, None, json!(null)).await
+        } else { f.admin("GET", &path, json!(null)).await };
+        assert_eq!(status, StatusCode::OK, "{value}");
+        let keys = value["keys"].as_array().unwrap();
+        assert!(!keys.iter().any(|key| key["id"] == parent));
+        assert!(keys.iter().any(|key| key["id"] == child), "hiding a parent must not erase its child metadata");
+    }
+    assert!(f.state.authenticate_context(parent_secret).await.is_none());
+    assert!(f.state.authenticate_context(child_secret.clone()).await.is_none());
+    assert_eq!(f.req("PATCH", &path, Some(&cookie), None, true, None, json!({"enabled":true})).await.0, StatusCode::NOT_FOUND, "deleted keys are no longer public editing targets");
+    let (status, _, _) = f.admin("PATCH", &format!("/api/vkeys/{parent}"), json!({"enabled":true})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // A child retaining its own enabled bit cannot bypass a revoked ancestor.
+    f.admin("PATCH", &format!("/api/vkeys/{child}"), json!({"enabled":true})).await;
+    assert!(f.state.authenticate_context(child_secret).await.is_none());
+    let c = f.state.conn();
+    assert!(db::settings::get(&c, &format!("deleted_key:{parent}")).unwrap().is_some());
+    let row = db::identity::key(&c, parent).unwrap().unwrap();
+    assert_eq!((row.revoked_at, row.name, serde_json::to_value(row.policy).unwrap()), before);
+    assert!(!row.enabled);
+    assert_eq!(db::identity::key(&c, child).unwrap().unwrap().parent_key_id, Some(parent));
+    assert_eq!(c.query_row("SELECT count(*) FROM requests WHERE user_id=?1 AND key_id=?2 AND model='kept-model'",rusqlite::params![user,parent],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT debit_micro FROM billing_ledger WHERE attempt_id='key-delete-kept' AND key_id=?1",[parent],|r|r.get::<_,i64>(0)).unwrap(),7);
+    assert!(c.query_row("SELECT count(*) FROM audit_events WHERE target_id=?1 AND action LIKE '%delete%'",[parent],|r|r.get::<_,i64>(0)).unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn key_delete_requires_revocation_ownership_browser_csrf_or_explicit_administrator() {
+    let f = Fixture::new();
+    let (user, cookie) = deletion_user(&f, "key-delete-scope").await;
+    let (_, other_cookie) = deletion_user(&f, "key-delete-other").await;
+    let (id, secret) = {
+        let c = f.state.conn();
+        let (key, secret) = db::identity::create_key(&c, user, "scoped deletion", &Default::default(), None, None).unwrap();
+        (key.id, secret)
+    };
+    let own = format!("/api/account/keys/{id}");
+    let delete = format!("{own}/delete");
+    let admin = format!("/api/vkeys/{id}/delete");
+    for path in [&delete, &admin] {
+        let (status, _, _) = if path == &delete {
+            f.req("POST", path, Some(&cookie), None, true, None, json!({})).await
+        } else { f.admin("POST", path, json!({})).await };
+        assert_eq!(status, StatusCode::CONFLICT, "active key cannot be deleted: {path}");
+    }
+    assert_eq!(f.req("PATCH", &own, Some(&cookie), None, true, None, json!({"enabled":false})).await.0, StatusCode::OK);
+    for path in [&delete, &admin] {
+        let (status, _, _) = if path == &delete {
+            f.req("POST", path, Some(&cookie), None, true, None, json!({})).await
+        } else { f.admin("POST", path, json!({})).await };
+        assert_eq!(status, StatusCode::CONFLICT, "a reversible pause is not permanent revocation: {path}");
+    }
+    assert_eq!(f.req("DELETE", &own, Some(&cookie), None, true, None, json!({})).await.0, StatusCode::OK);
+    assert_eq!(f.req("POST", &delete, Some(&other_cookie), None, true, None, json!({})).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(f.req("POST", &delete, None, None, true, None, json!({})).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(f.req("POST", &delete, Some(&cookie), None, false, None, json!({})).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(f.req("POST", &delete, None, Some(&secret), true, None, json!({})).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(f.req("POST", &admin, Some(&cookie), None, true, None, json!({})).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(f.req("POST", &admin, None, Some(&secret), true, None, json!({})).await.0, StatusCode::UNAUTHORIZED);
+    assert!(db::settings::get(&f.state.conn(), &format!("deleted_key:{id}")).unwrap().is_none(), "rejected calls must not hide the key");
+    let (status, value, _) = f.admin("POST", &admin, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["deleted"], true);assert_eq!(value["id"], id);assert_eq!(value["key"]["id"], id);
+    // A subsequent owner deletion is idempotent across the two management surfaces.
+    assert_eq!(f.req("POST", &delete, Some(&cookie), None, true, None, json!({})).await.0, StatusCode::OK);
+    for path in [format!("/api/users/{user}/keys"), "/api/vkeys/999999/delete".into()] {
+        if path.ends_with("/keys") {
+            assert!(!f.admin("GET", &path, json!(null)).await.1["keys"].as_array().unwrap().iter().any(|key|key["id"]==id));
+        } else {assert_eq!(f.admin("POST", &path, json!({})).await.0,StatusCode::NOT_FOUND);}
+    }
+}
+
+#[tokio::test]
+async fn deleting_revoked_key_rolls_back_when_audit_cannot_be_persisted() {
+    let f = Fixture::new();
+    let (user, cookie) = deletion_user(&f, "key-delete-audit").await;
+    let id = {
+        let c = f.state.conn();
+        let (key, _) = db::identity::create_key(&c, user, "audit retained", &Default::default(), None, None).unwrap();
+        db::identity::revoke(&c, key.id).unwrap();
+        c.execute_batch("CREATE TRIGGER reject_key_delete_audit BEFORE INSERT ON audit_events WHEN NEW.action LIKE '%delete%' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();
+        key.id
+    };
+    for personal in [true,false] {
+        let path = if personal {format!("/api/account/keys/{id}/delete")} else {format!("/api/vkeys/{id}/delete")};
+        let (status, _, _) = if personal {f.req("POST", &path, Some(&cookie), None, true, None, json!({})).await} else {f.admin("POST", &path, json!({})).await};
+        assert!(!status.is_success(), "deletion must not succeed without its audit event");
+        let c = f.state.conn();
+        assert!(db::settings::get(&c, &format!("deleted_key:{id}")).unwrap().is_none());
+        let key = db::identity::key(&c, id).unwrap().unwrap();
+        assert!(key.revoked_at.is_some());assert!(!key.enabled);
+    }
+    let (status, value, _) = f.req("GET", "/api/account/keys", Some(&cookie), None, false, None, json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{value}");
+    assert!(value["keys"].as_array().unwrap().iter().any(|key|key["id"]==id));
+}

@@ -10,7 +10,7 @@ use crate::{
 use axum::{
     extract::{FromRequestParts, Path, State},
     http::{request::Parts, StatusCode},
-    routing::{get, patch},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Deserializer};
@@ -31,6 +31,7 @@ pub fn router() -> Router<SharedState> {
             get(admin_keys).post(admin_create_key),
         )
         .route("/api/vkeys/{id}", patch(update_key))
+        .route("/api/vkeys/{id}/delete", post(delete_key))
         .route("/v1/me", get(me))
         .route("/v1/keys", get(own_keys).post(own_create_key))
         .route("/v1/keys/{id}", axum::routing::delete(own_revoke))
@@ -283,6 +284,7 @@ async fn update_key(
 ) -> Result<Json<Value>, ApiError> {
     let c = state.conn();
     let mut row = missing_key(&c, id)?;
+    if identity::key_deleted(&c,id)? { return Err(ApiError::not_found("Key not found")); }
     if let Some(v) = body.name {
         identity::validate_name(&v).map_err(bad)?;
         row.name = v.trim().into();
@@ -327,6 +329,24 @@ async fn update_key(
         )
     })?;
     Ok(Json(json!({"key":row})))
+}
+/// Remove an already revoked credential from daily lists without deleting its row.
+async fn delete_key(
+    admin: AdminAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let c=state.conn();
+    let row=missing_key(&c,id)?;
+    if row.revoked_at.is_none() { return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"key_not_revoked","请先撤销密钥，再从列表删除；暂停或停用不等于撤销")); }
+    db::in_tx(&c,|c| {
+        let changed=identity::delete_key(c,id)?;
+        if changed {
+            identity::audit(c,admin.0.as_ref(),"key.delete","key",id,json!({"user_id":row.user_id,"actor":admin.actor_label(),"physical_record_retained":true}))?;
+        }
+        Ok(())
+    })?;
+    Ok(Json(json!({"key":row,"deleted":true,"id":id})))
 }
 async fn me(VKeyAuth(auth): VKeyAuth) -> Json<Value> {
     Json(json!({"identity":auth}))

@@ -1,0 +1,11 @@
+{
+  "execution_host": "build-test",
+  "source_manifest_sha256": "d9cd01d168980c27c9d1ad29db3bc1db98f311ccbfcce79552ea75967ff24e5d",
+  "files": {
+    "index.html": "86ce66179b9b68b3c13ac76f05114dcf10f5343be550027a4c4d93913356b8be",
+    "style-56ac0f59926388c3.css": "c85e5fa2ffceeb17ab69b1828d1d0dc6cac54e16f942b6a96d33d0b32cc148a8",
+    "tokengo-web-2219b016b19aca2d.js": "9553fdb5e0f5fa23641f9ce699e050974070bae285375dcd9fabafb4ab391382",
+    "tokengo-web-2219b016b19aca2d_bg.wasm": "44b6f33966a654020a8de2bb1dcb4a54f280bf907a9ad65cfc57de7237ad9246"
+  },
+  "archive_sha256": "5f6e1d75776258988f075c2fb406030cb63371e01b928ac3379d8bc8bf702ddf"
+}

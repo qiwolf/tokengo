@@ -145,10 +145,14 @@ print("会话已撤销，再次访问返回401")
 | POST /api/account/keys | `{name,policy?,expires_at?,limit_micro?}`；顶级Key归属当前user，不要求先有VKey；事务内检查活动Key数 | `{key,secret}`，secret仅本次返回 |
 | PATCH /api/account/keys/{id} | `{name?,policy?,enabled?,expires_at?,limit_micro?,revoke?}`；只能收紧本人Key策略；允许暂停、撤销及恢复自己暂停的未到期Key，恢复须通过祖先有效性和活动Key数量检查；不能恢复管理员停用或已撤销的Key | `{key}` |
 | DELETE /api/account/keys/{id} | 撤销本人Key；非本人404；已撤销不能复活 | `{key}` |
+| POST /api/account/keys/{id}/delete | 本人浏览器会话+CSRF；只能删除已永久撤销Key，活动/暂停409，跨用户404；幂等且保留历史 | `{key,deleted:true,id}` |
+| POST /api/vkeys/{id}/delete | 管理授权；只能删除已永久撤销Key，活动/暂停409；首次写key.delete审计，重复幂等 | `{key,deleted:true,id}` |
 
 统一管理入口支持root会话和明确登记的独立运维令牌，保留现有root运维Bearer兼容；独立令牌不返回root账号投影，也不因此获得root安全或令牌签发权限。普通自助Key接口只接受浏览器会话，Cookie写操作沿用CSRF门，Cookie/Bearer混合拒绝。所有新响应加no-store。模型选项不泄露未授权来源配置或凭据；数据库新Key只存安全摘要，列表永不返回secret。
 
 新建 API Key 成功后，前端切换到独立的明文保存界面并自动尝试复制完整 Key；页面提供“复制 Key”重试和只读文本框手动复制。普通 HTTP 或剪贴板权限限制导致复制失败时明确提示，并保留本次明文，直到关闭交付界面或离开页面。管理员代建同样适用。历史 Key 只有摘要与提示标识，无法恢复明文；未保存时须新建替代 Key，确认客户端使用新 Key 后再停用旧 Key。
+
+已永久撤销的 Key 可以点击“删除 Key”并确认，从日常列表移除；调用历史、账务、审计与父子约束保留。已删除 Key 不再允许编辑或启用。此删除能力与前述明文交付修复属于 qiwolf.8 之后的 main 改动，已在237部署验收，原 qiwolf.8 发行附件保持原样，详见[删除验收](acceptance/2026-10-23-key-delete/README.md)。
 
 自助策略必须不宽于实时用户策略，管理能力强制关闭；编辑既有Key还须不宽于其旧策略和父链。金额上限不能高于用户、既有Key或父链上限，不能清空有限上限来逃限；多个Key仍共享用户总额。Key到期可缩短，不能超出既有或父链期限。密码修改/重置撤登录会话，保留API Key与财务身份；用户整体停用阻断登录和新API请求。
 

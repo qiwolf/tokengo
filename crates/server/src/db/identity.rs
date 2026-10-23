@@ -341,7 +341,7 @@ pub fn key(c: &Connection, id: i64) -> Result<Option<VKey>> {
     .transpose()
 }
 pub fn keys(c: &Connection, user_id: i64) -> Result<Vec<VKey>> {
-    let mut q = c.prepare("SELECT id FROM gateway_keys WHERE user_id=?1 ORDER BY id")?;
+    let mut q = c.prepare("SELECT g.id FROM gateway_keys g WHERE g.user_id=?1 AND NOT EXISTS(SELECT 1 FROM settings s WHERE s.key='deleted_key:'||CAST(g.id AS TEXT)) ORDER BY g.id")?;
     let ids = q
         .query_map([user_id], |r| r.get::<_, i64>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -532,6 +532,7 @@ pub fn clear_self_pause(c: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 pub fn update_key(c: &Connection, row: &VKey) -> Result<()> {
+    if key_deleted(c,row.id)? { return Err(DbError::Other("Deleted keys cannot be modified or restored".into())); }
     row.policy.validate()?;
     let previous=key(c,row.id)?;
     super::passthrough::validate_service_grants(c,previous.as_ref().and_then(|k|k.policy.allowed_services.as_deref()),row.policy.allowed_services.as_deref())?;
@@ -539,6 +540,20 @@ pub fn update_key(c: &Connection, row: &VKey) -> Result<()> {
     if row.enabled || row.revoked_at.is_some() { clear_self_pause(c,row.id)?; }
     c.execute("UPDATE gateway_keys SET name=?2,enabled=?3,revoked_at=?4,expires_at=?5,policy_json=?6 WHERE id=?1",params![row.id,row.name,row.enabled,row.revoked_at,row.expires_at,serde_json::to_string(&row.policy).unwrap()])?;
     Ok(())
+}
+/// List-only tombstone: retain the credential row, parent chain and accounting IDs.
+/// Deliberately separate from `key()` so historical and authentication reads keep
+/// their physical record. Only already-revoked keys can acquire this metadata.
+pub fn key_deleted(c: &Connection, id: i64) -> Result<bool> {
+    Ok(super::settings::get(c,&format!("deleted_key:{id}"))?.is_some())
+}
+/// Call inside the caller's audit transaction; false means already deleted.
+pub fn delete_key(c: &Connection, id: i64) -> Result<bool> {
+    let row=key(c,id)?.ok_or_else(||DbError::Other("Key not found".into()))?;
+    if row.revoked_at.is_none() { return Err(DbError::Other("请先撤销密钥，再从列表删除；暂停或停用不等于撤销".into())); }
+    if key_deleted(c,id)? { return Ok(false); }
+    super::settings::set(c,&format!("deleted_key:{id}"),&now_ms().to_string())?;
+    Ok(true)
 }
 pub fn revoke(c: &Connection, id: i64) -> Result<bool> {
     clear_self_pause(c,id)?;

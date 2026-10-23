@@ -1,0 +1,16 @@
+{
+  "result": "passed",
+  "account": "andy",
+  "origin": "http://192.168.240.237",
+  "revoked_only_delete_buttons": true,
+  "active_hermes_has_no_delete_button": true,
+  "cancel_preserves_row": true,
+  "deleted_test_ids": [
+    83,
+    84
+  ],
+  "deleted_rows_absent_after_reload": true,
+  "physical_rows_and_audit_retained": true,
+  "existing_hermes_unchanged": true,
+  "administrator_flow": "integration-tested; not repeated with production root browser"
+}

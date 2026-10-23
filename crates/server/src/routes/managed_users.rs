@@ -46,6 +46,7 @@ pub fn router() -> Router<SharedState> {
         .route("/api/managed-users/{id}/login-credential", post(add_login))
         .route("/api/account/services", get(own_services))
         .route("/api/account/keys", get(own_keys).post(own_create))
+        .route("/api/account/keys/{id}/delete", post(own_delete))
         .route(
             "/api/account/keys/{id}",
             patch(own_update).delete(own_revoke),
@@ -500,6 +501,7 @@ async fn own_update(
     let mut row = identity::key(&c, id)?
         .filter(|k| k.user_id == u.id)
         .ok_or_else(|| ApiError::not_found("密钥不存在"))?;
+    if identity::key_deleted(&c,id)? { return Err(ApiError::not_found("密钥不存在")); }
     let was_enabled=row.enabled;
     let was_self_paused=identity::self_paused(&c,&row)?;
     if row.revoked_at.is_some() {
@@ -616,4 +618,27 @@ async fn own_revoke(
     })
     .map_err(invalid)?;
     Ok(Json(json!({"key":value})))
+}
+
+/// Browser ownership is checked against the physical row so repeated deletes are
+/// idempotent while another user's key remains indistinguishable from missing.
+async fn own_delete(
+    browser: Browser,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let c=state.conn();
+    let u=owner(&browser,&c)?;
+    let row=identity::key(&c,id)?
+        .filter(|k|k.user_id==u.id)
+        .ok_or_else(||ApiError::not_found("密钥不存在"))?;
+    if row.revoked_at.is_none() { return Err(ApiError::new(axum::http::StatusCode::CONFLICT,"key_not_revoked","请先撤销密钥，再从列表删除；暂停或停用不等于撤销")); }
+    let value=credentials::atomic(&c,|| {
+        let changed=identity::delete_key(&c,id)?;
+        if changed {
+            c.execute("INSERT INTO audit_events(ts_ms,action,target_type,target_id,metadata_json) VALUES(?1,'key.delete','key',?2,?3)",params![db::now_ms(),id,json!({"actor_account_id":browser.credential.account.id,"user_id":u.id,"physical_record_retained":true}).to_string()])?;
+        }
+        key_view(&c,&row)
+    }).map_err(invalid)?;
+    Ok(Json(json!({"key":value,"deleted":true,"id":id})))
 }

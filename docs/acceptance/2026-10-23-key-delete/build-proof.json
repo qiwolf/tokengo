@@ -1,0 +1,29 @@
+{
+  "execution_host": "build-test",
+  "source_files": 302,
+  "base_head": "0ecd3573cee35d7f881e2864e674bd5ac6be85f4",
+  "source_manifest_sha256": "d9cd01d168980c27c9d1ad29db3bc1db98f311ccbfcce79552ea75967ff24e5d",
+  "patch_sha256": "ba8513de18760bf55e0ff5efb8fb09a82ad05e2f508a2e9ef1b5cb60d4cb8251",
+  "server_sha256": "b7696f31470fcce700bb2fa7624c2db3353a11087bc41c8325987314a97e4132",
+  "server_build_command": "cargo build --offline --locked --release -p tokengo-server",
+  "server_exit_code": 0,
+  "web_build_command": "trunk build --release --locked",
+  "web_exit_code": 0,
+  "test_summary": {
+    "web-tests": {
+      "passed": 124,
+      "failed": 0,
+      "ignored": 0
+    },
+    "managed-users-tests": {
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0
+    },
+    "identity-operations-tests": {
+      "passed": 46,
+      "failed": 0,
+      "ignored": 0
+    }
+  }
+}
