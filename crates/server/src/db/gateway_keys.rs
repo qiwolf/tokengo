@@ -42,7 +42,7 @@ fn selector(key: &str) -> Option<&str> {
 
 pub fn list(conn: &Connection) -> Result<Vec<GatewayKey>> {
     let mut stmt =
-        conn.prepare("SELECT id,name,hint,created_at_ms FROM gateway_keys ORDER BY id")?;
+        conn.prepare("SELECT g.id,g.name,g.hint,g.created_at_ms FROM gateway_keys g WHERE NOT EXISTS(SELECT 1 FROM settings s WHERE s.key='deleted_key:'||CAST(g.id AS TEXT)) ORDER BY g.id")?;
     let rows = stmt
         .query_map([], |r| {
             Ok(GatewayKey {

@@ -2101,7 +2101,19 @@ async fn gateway_keys_reveal(
 
 async fn gateway_keys_delete(_auth: ManagementAuth, State(state): State<SharedState>, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, ApiError> {
     let conn = state.conn();
-    if !gateway_keys::delete(&conn,id)? { return Err(ApiError::not_found("Key not found")); }
+    let row=crate::db::identity::key(&conn,id)?.ok_or_else(||ApiError::not_found("Key not found"))?;
+    if row.user_id!=1 && row.enabled && row.revoked_at.is_none() {
+        return Err(ApiError::new(StatusCode::CONFLICT,"key_not_revoked","请先停用或撤销密钥，再从列表删除"));
+    }
+    crate::db::in_tx(&conn,|c| {
+        // Legacy Settings credentials retain one-step deletion, but public deletion
+        // must preserve credential ancestry and financial/audit history too.
+        if row.user_id==1 && !crate::db::identity::key_deleted(c,id)? { crate::db::identity::revoke(c,id)?; }
+        if crate::db::identity::delete_key(c,id)? {
+            crate::db::identity::audit(c,None,"key.delete","key",id,serde_json::json!({"user_id":row.user_id,"source":"legacy_gateway_key_delete","operations_token_id":super::operations::actor_id(),"physical_record_retained":true}))?;
+        }
+        Ok(())
+    })?;
     state.forget_gateway_key();
     Ok(Json(serde_json::json!({"deleted":true})))
 }

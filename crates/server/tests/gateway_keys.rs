@@ -380,3 +380,45 @@ fn concurrent_validation_and_deletion_cannot_refill_a_revoked_cache() {
     drop(state);
     std::fs::remove_dir_all(cfg.db_path.parent().unwrap()).unwrap();
 }
+
+
+#[tokio::test]
+async fn legacy_gateway_delete_preserves_managed_credentials_and_hides_tombstones() {
+    let cfg=config();let state=AppState::init(cfg.clone()).unwrap();
+    let token=sessions::create_session(&state.conn(),None).unwrap();
+    let user=db::identity::create_user(&state.conn(),"legacy-managed-delete","user",&Default::default()).unwrap();
+    for revoked in [false,true] {
+        let (key,secret)=db::identity::create_key(&state.conn(),user.id,"retained managed credential",&Default::default(),None,None).unwrap();
+        let path=format!("/api/gateway-keys/{}",key.id);
+        assert_eq!(request(state.clone(),"DELETE",&path,Some(&token),json!({})).await.0,StatusCode::CONFLICT);
+        assert!(state.authenticate_context(secret.clone()).await.is_some());
+        {
+            let c=state.conn();
+            if revoked {db::identity::revoke(&c,key.id).unwrap();}
+            else {let mut row=db::identity::key(&c,key.id).unwrap().unwrap();row.enabled=false;db::identity::update_key(&c,&row).unwrap();}
+        }
+        for _ in 0..2 {
+            let (status,value)=request(state.clone(),"DELETE",&path,Some(&token),json!({})).await;
+            assert_eq!(status,StatusCode::OK,"{value}");assert_eq!(value,json!({"deleted":true}));
+        }
+        let (status,listed)=request(state.clone(),"GET","/api/gateway-keys",Some(&token),json!({})).await;
+        assert_eq!(status,StatusCode::OK);assert!(!listed["keys"].as_array().unwrap().iter().any(|row|row["id"]==key.id));
+        assert!(!listed.to_string().contains(&secret));assert!(state.authenticate_context(secret.clone()).await.is_none());
+        assert_eq!(request(state.clone(),"GET",&format!("{path}/reveal"),Some(&token),json!({})).await.0,StatusCode::NOT_FOUND);
+        let c=state.conn();let retained=db::identity::key(&c,key.id).unwrap().unwrap();assert!(!retained.enabled);assert!(retained.revoked_at.is_some());assert!(db::identity::key_deleted(&c,key.id).unwrap());
+        let events:Vec<String>=c.prepare("SELECT metadata_json FROM audit_events WHERE target_id=?1 AND action='key.delete'").unwrap().query_map([key.id],|r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(events.len(),1);assert!(!events[0].contains(&secret));assert!(events[0].contains("legacy_gateway_key_delete"));
+    }
+    drop(state);std::fs::remove_dir_all(cfg.db_path.parent().unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn legacy_gateway_delete_revocation_rolls_back_when_audit_fails() {
+    let cfg=config();let state=AppState::init(cfg.clone()).unwrap();let token=sessions::create_session(&state.conn(),None).unwrap();
+    let key=gateway_keys::create(&state.conn(),&state.secrets,"legacy active fixture","synthetic-test-only-active",false).unwrap();
+    state.conn().execute_batch("CREATE TRIGGER reject_legacy_key_delete_audit BEFORE INSERT ON audit_events WHEN NEW.action='key.delete' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;").unwrap();
+    assert!(!request(state.clone(),"DELETE",&format!("/api/gateway-keys/{}",key.id),Some(&token),json!({})).await.0.is_success());
+    {let c=state.conn();let row=db::identity::key(&c,key.id).unwrap().unwrap();assert!(row.enabled);assert!(row.revoked_at.is_none());assert!(!db::identity::key_deleted(&c,key.id).unwrap());}
+    assert!(state.check_gateway_key("synthetic-test-only-active"));
+    drop(state);std::fs::remove_dir_all(cfg.db_path.parent().unwrap()).unwrap();
+}
