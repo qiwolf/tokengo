@@ -1,8 +1,10 @@
 # tokengo
 
+当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](docs/releases/v0.34.0-qiwolf.10.md)与[完整收据](docs/acceptance/2026-10-23-disabled-key-upgrade/README.md)。
+
 中文首页 | [English / 完整英文部署指南](README.en.md) | [MIT 许可证](LICENSE)
 
-当前公开版本为 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**：Key直接交付与自动复制、撤销后列表删除、加密再次显示及普通HTTP嵌套弹窗系统剪贴板修复。Cargo0.34.0、schema40，Linux x86_64原生包与linux/amd64容器。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。详见[本版说明](docs/releases/v0.34.0-qiwolf.9.md)与[验收状态](docs/acceptance-status.md)。标签及公开资产内的文档是发布前源码快照；完整发布后收据保存在main分支与GitHub Release说明中，不代表先前资产已包含后补回执。
+历史公开版本为 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**：Key直接交付与自动复制、撤销后列表删除、加密再次显示及普通HTTP嵌套弹窗系统剪贴板修复。Cargo0.34.0、schema40，Linux x86_64原生包与linux/amd64容器。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。详见[本版说明](docs/releases/v0.34.0-qiwolf.9.md)与[验收状态](docs/acceptance-status.md)。标签及公开资产内的文档是发布前源码快照；完整发布后收据保存在main分支与GitHub Release说明中，不代表先前资产已包含后补回执。
 
 上一公开版本（历史收据）为 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**：共享向量/重排回退、逐来源自动续验、虚拟模型回收站、透传服务授权与目录展示整理。发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。详见[本版说明](docs/releases/v0.34.0-qiwolf.8.md)与[验收状态](docs/acceptance-status.md)。Cargo仍为上游0.34.0。
 

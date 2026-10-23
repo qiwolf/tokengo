@@ -1,5 +1,7 @@
 # 浏览器账号与接口合同
 
+当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](releases/v0.34.0-qiwolf.10.md)与[完整收据](acceptance/2026-10-23-disabled-key-upgrade/README.md)。
+
 Key交付、列表删除和加密再次显示已随 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)** 公开，Cargo0.34.0/schema40。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。完整测试和公开产物收据见[本版记录](releases/v0.34.0-qiwolf.9.md)及[独立发行验收](acceptance/2026-10-23-qiwolf9-release/README.md)；214项定向和237部署证据单列，不合计或据此声称237换用本版公开二进制。
 
 主流程只有一个“用户”入口：管理员一次创建普通用户、登录凭证、授权及可选费用上限；历史用户可以在原详情内补开登录，普通用户登录后自助管理本人的 API Key。内部保留稳定 users.id 与 panel_accounts 凭证分表，用户无须手工关联两套身份。迁移32将旧panel_password_hash原样迁入唯一root，初始用户名admin，不重设旧密码；root仍是独立安全身份，不从API role/admin_access推导。

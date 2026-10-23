@@ -1,0 +1,85 @@
+{
+  "result": "passed",
+  "source_commit": "b619c57fb9beddf30936ab71789ea969255d1f32",
+  "tag": "v0.34.0-qiwolf.10",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10",
+  "ci": "https://github.com/qiwolf/tokengo/actions/runs/39905366097",
+  "publish": "https://github.com/qiwolf/tokengo/actions/runs/39905374137",
+  "native_sha256": "4fe6768fb7c0ec37abde55836ef4fef9038b8ab2f6d23080300c4232cdbb322e",
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:79f873339556a4ac808c56cb7f24133aeecc72aadc20d46223d81656d2234483",
+  "tests": {
+    "host": "build-test",
+    "source_commit": "b619c57fb9beddf30936ab71789ea969255d1f32",
+    "passed": 1108,
+    "failed": 0,
+    "ignored": 3,
+    "python_tests": 22,
+    "rust_groups": 63,
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--workspace",
+      "--",
+      "--test-threads=4"
+    ]
+  },
+  "public_assets": 9,
+  "production": {
+    "target": "237",
+    "source_commit": "b619c57fb9beddf30936ab71789ea969255d1f32",
+    "schema": 40,
+    "backup_verified": true,
+    "authorization_preserved": true,
+    "protected_configuration_preserved": true,
+    "existing_calls": [
+      "embeddings",
+      "rerank",
+      "MinerU health"
+    ],
+    "internal_models_hidden_and_denied": 5,
+    "key_checks": [
+      "active_key_both_delete_409",
+      "admin_disabled_owner_cannot_enable_403",
+      "all_fixture_key_audit_metadata_has_no_plaintext",
+      "deleted_reveal404_auth401_hidden_history_preserved",
+      "disabled_delete_permanent_revocation_idempotent",
+      "exact_owner_admin_reveal_no_store",
+      "existing_users_keys_unchanged_and_fixtures_inactive_after_cleanup",
+      "four_15_minute_owner_keys_created",
+      "legacy_route_disabled_delete_idempotent_hidden_history_preserved",
+      "metadata_lists_no_secret_nonce_cipher_hash",
+      "owner_and_admin_delete_disabled_key",
+      "revoked_key_viewable_auth401_then_delete_unreadable"
+    ],
+    "integrity": "ok",
+    "fk_errors": 0,
+    "pending": 0,
+    "unsettled": 0,
+    "browser": {
+      "result": "passed",
+      "role": "ordinary user",
+      "disabled_key_delete_visible": true,
+      "enable_remains_blocked": true,
+      "permanent_revoke_confirmation_checked": true,
+      "confirmation_cancelled_original_key_preserved": true
+    }
+  },
+  "evidence_sha256": {
+    "verification-q10": "c624354ef320c56b4d5cc0b55dea1734c3d5053f552147ea84fd32a0a3a9a91f",
+    "assets-q10": "ce278f559eb7233ea05067bf1f24ffce315b6a02ff0a2f7abdbe14c8d4c6b133",
+    "registry-tags-q10": "3c67d8572550498c66c12c964a8bf2d177e050beae0b855f8f718378f5d569b4",
+    "native-runtime-q10": "d5087a0e1050ac7268699c9ca8901ad274d21965203e7279ca225f5e27fddf7d",
+    "container-key-runtime-q10": "fec8c1458fa691a89b83486bf1066f3ef9e734494ab19666c18c4752ffb6bb69",
+    "identity": "bd135b00bb7bd80083d8affdbead61e49ead7f59fbe2f4697af872c5869716ac",
+    "tests": "43dd93f125fb11b55dd71fc1c1bd4aaacdf80b16d53241b9590b1b9cb39d99b6",
+    "ci": "7475c0c78afd9206f3ab38e923facbc65b5099e464dad90242215e05382a9ff6",
+    "publish": "36243331c0089241b144171a7646bb88da762892cece4ef1cc82e6697ec0fd2d",
+    "deployment": "4069c0a403c3cc8faf3df28dd4b468475cb866c9a1247d8377beb75b8790e1f9",
+    "calls-before": "bbcca9011889d5e7ac32801a2656bb3314a6746027f14a5d48bead27e2da15af",
+    "calls-after": "bb088fba4209acbdb009e59d07f68ae90556eee7772aef3100f2b0342f6b0e77",
+    "key-lifecycle": "cc81f34e3d83f8c2878ee9e86966d5aa39bb468cee1400648521fce8ab4d9afe",
+    "final-state": "3175bbb7fcfc64e45b5998c6ebb1004d3fe6d1afb1a2c97a4e7fe84b417c625f"
+  }
+}
