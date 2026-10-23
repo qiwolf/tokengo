@@ -69,3 +69,15 @@ envelope 仅接受 `type`、`metadata` 和可选的 `response_id` / `sequence_nu
 [独立 OpenAI OAuth](openai-oauth.md)使用专门的官方 Responses 来源，具有不同于普通 API Key 的字段限制。特别是官方预览不接受显式输出 token 上限，因此 Claude Messages 的 `max_tokens` 不能直接宣称无损转换到该 OAuth 来源。GPT 模型目录与授权成功均不代替每个实际模型的推理验收。
 
 DeepSeek 独立[Search/Fetch](deepseek-search-fetch.md)是两条 JSON 工具接口，不会自动接管 CLI 的内置搜索工具。向量与重排接口保持原生，不通过对话协议转换。
+
+### Responses 的稳定会话标识与加密 reasoning
+
+`/v1/responses` 按以下优先级识别会话：专用会话头（沿用现有顺序）、顶层 `session_id` / `conversation_id`、`metadata.conversation_id` / `metadata.session_id`、`client_metadata.session_id`。最后一项仅在 Responses 入口参与身份识别。显式 ID 须非空、至多256字节且无控制字符；所有已提供候选均接受类型与边界校验。
+
+`prompt_cache_key` 始终只是缓存路由提示，不用于会话身份或 opaque 产物归属。它沿用至多512字节、无控制字符、允许空白字符串的兼容合同。工具或提示词变化时缓存键可以改变，独立真实会话也可以共用缓存键；两种情况都不会改变真实会话的来源绑定。
+
+Hermes 等客户端使用 `store:false` 时，应在首轮即通过专用会话头或 `client_metadata.session_id` 提供稳定、每会话唯一的真实会话 ID，后续沿用该 ID，完整回放网关实际返回的 `reasoning.encrypted_content` 和工具结果。网关按 API Key、逻辑模型、协议、渠道、上游模型和来源代次隔离绑定，并核对 opaque 产物确由该真实会话绑定签发；不删除 reasoning、不转发到其他来源。
+
+首轮没有真实会话 ID 时可以正常调用，但不能在后续无绑定地回放 opaque history；仅有 `prompt_cache_key` 也不能建立或借用绑定。这类请求返回 HTTP400，保留 `error.type=invalid_request_error`，另加 `error.code=explicit_session_required`。历史会话在升级前没有建立真实会话绑定的，需要新建会话或从不含旧 opaque history 的上下文重新开始；升级不追认旧产物的归属。
+
+已核对 Cyber Hermes `a4973c3f11d9cc92da986cbe150d1e79d094626f` 及官方 `8edc5ea255aaf17b1f1f944bc2dcce52fce06fa8`：其缓存键由逻辑作用域、instructions 和 tools 共同生成，部分 fork 可以继承作用域；普通 custom Responses 不自动发送 `session_id` 请求头。因此 Hermes 对 QLF 的接入还须转发真实的稳定会话 ID。工具或提示词变化后，只要真实会话 ID 不变，仍可沿原绑定回放；新建或旋转会话后，不允许借用旧会话的 opaque 产物。Tokengo 发行包不会自动修改第三方 Hermes 客户端。

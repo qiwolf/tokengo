@@ -122,7 +122,7 @@ async fn forward_native(
     body: axum::body::Bytes, endpoint: EndpointKind,
 ) -> Result<Response, ApiError> {
     let (model,value,stream) = parse_body(&body,endpoint)?;
-    let explicit_session = explicit_session_id(&headers,&value)?;
+    let explicit_session = explicit_session_id(&headers,&value,endpoint)?;
     let client_ip = client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string()));
     gateway::forward(state,ForwardRequest {
         endpoint,model,body:value,stream,client_ip,session_namespace:key.namespace,
@@ -173,7 +173,7 @@ async fn chat_completions(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Chat)?;
-    let explicit_session = explicit_session_id(&headers, &value)?;
+    let explicit_session = explicit_session_id(&headers, &value, EndpointKind::Chat)?;
     let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
@@ -213,7 +213,7 @@ async fn embeddings(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Embeddings)?;
-    let explicit_session = explicit_session_id(&headers, &value)?;
+    let explicit_session = explicit_session_id(&headers, &value, EndpointKind::Embeddings)?;
     let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
@@ -253,7 +253,7 @@ async fn rerank(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let (model, value, stream) = parse_body(&body, EndpointKind::Rerank)?;
-    let explicit_session = explicit_session_id(&headers, &value)?;
+    let explicit_session = explicit_session_id(&headers, &value, EndpointKind::Rerank)?;
     let ip_raw = client_ip(&headers).or_else(|| peer.map(|p|p.0.0.ip().to_string()));
     let ip = ip_raw.clone().unwrap_or_else(|| "未知来源".into());
     // 进来就记一条 debug：平常(只记 info)看不到，开 15 分钟 debug 就能看到每一发；
@@ -470,7 +470,7 @@ async fn models(
 /// Resolve client conversation identity without forwarding arbitrary client headers.
 /// Validate every supplied ID, including lower-priority fields, instead of silently
 /// turning malformed explicit identity into a heuristic content hash.
-fn explicit_session_id(headers: &HeaderMap, body: &Value) -> Result<Option<String>, ApiError> {
+fn explicit_session_id(headers: &HeaderMap, body: &Value, endpoint: EndpointKind) -> Result<Option<String>, ApiError> {
     fn accept(chosen: &mut Option<String>, id: &str) -> Result<(), ApiError> {
         if id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
             return Err(ApiError::bad_request("会话 ID 必须非空、不超过 256 字节且不含控制字符"));
@@ -493,6 +493,23 @@ fn explicit_session_id(headers: &HeaderMap, body: &Value) -> Result<Option<Strin
             if let Some(value) = object.and_then(|object| object.get(field)) {
                 let id = value.as_str().ok_or_else(|| ApiError::bad_request("会话 ID 必须是字符串"))?;
                 accept(&mut chosen, id)?;
+            }
+        }
+    }
+    // Responses clients replay encrypted reasoning with store:false. Only a real
+    // session ID can establish ownership: cache keys may change with instructions
+    // or tools, and unrelated sessions can deliberately share a cache bucket.
+    if endpoint == EndpointKind::Responses {
+        if let Some(value) = body.get("client_metadata").and_then(|metadata| metadata.get("session_id")) {
+            let id = value.as_str().ok_or_else(|| ApiError::bad_request("会话 ID 必须是字符串"))?;
+            accept(&mut chosen, id)?;
+        }
+        if let Some(value) = body.get("prompt_cache_key") {
+            let id = value.as_str().ok_or_else(|| ApiError::bad_request("prompt_cache_key must be a string"))?;
+            // Preserve the cache-hint contract (512 bytes, empty allowed), without
+            // promoting any cache hint into the identity namespace.
+            if id.len() > 512 || id.chars().any(char::is_control) {
+                return Err(ApiError::bad_request("prompt_cache_key must be an advisory string up to 512 bytes"));
             }
         }
     }
@@ -550,6 +567,45 @@ pub fn unauthorized() -> Response {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn responses_cache_key_is_advisory_and_never_resolves_identity() {
+        let headers = HeaderMap::new();
+        let body = json!({"prompt_cache_key":"hermes-conversation"});
+        assert_eq!(explicit_session_id(&headers, &body, EndpointKind::Responses).unwrap(), None);
+        for endpoint in [EndpointKind::Chat, EndpointKind::Messages, EndpointKind::Embeddings, EndpointKind::Rerank] {
+            assert_eq!(explicit_session_id(&headers, &body, endpoint).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn responses_identity_preserves_priority_and_validates_all_candidates() {
+        let mut headers = HeaderMap::new();
+        let mut body = json!({"session_id":"top", "metadata":{"session_id":"metadata"}, "client_metadata":{"session_id":"client"}, "prompt_cache_key":"cache"});
+        headers.insert("x-session-id", "header".parse().unwrap());
+        assert_eq!(explicit_session_id(&headers, &body, EndpointKind::Responses).unwrap().as_deref(), Some("header"));
+        headers.clear();
+        assert_eq!(explicit_session_id(&headers, &body, EndpointKind::Responses).unwrap().as_deref(), Some("top"));
+        body.as_object_mut().unwrap().remove("session_id");
+        assert_eq!(explicit_session_id(&headers, &body, EndpointKind::Responses).unwrap().as_deref(), Some("metadata"));
+        body.as_object_mut().unwrap().remove("metadata");
+        assert_eq!(explicit_session_id(&headers, &body, EndpointKind::Responses).unwrap().as_deref(), Some("client"));
+        for bad in [json!(null), json!(12), json!("bad\nkey"), json!("x".repeat(513))] {
+            body["prompt_cache_key"] = bad;
+            assert!(explicit_session_id(&headers, &body, EndpointKind::Responses).is_err());
+        }
+        for advisory in ["".to_owned(), "  ".to_owned(), "x".repeat(512)] {
+            body["prompt_cache_key"] = json!(advisory);
+            assert_eq!(explicit_session_id(&headers, &body, EndpointKind::Responses).unwrap().as_deref(), Some("client"));
+        }
+        for advisory in ["", "  "] {
+            assert_eq!(explicit_session_id(&headers, &json!({"prompt_cache_key":advisory}), EndpointKind::Responses).unwrap(), None);
+        }
+        assert_eq!(explicit_session_id(&headers, &json!({"prompt_cache_key":"x".repeat(512)}), EndpointKind::Responses).unwrap(), None);
+        body["prompt_cache_key"] = json!("cache");
+        body["client_metadata"]["session_id"] = json!([]);
+        assert!(explicit_session_id(&headers, &body, EndpointKind::Responses).is_err());
+    }
 
     #[test]
     fn body_must_be_json_with_a_model() {

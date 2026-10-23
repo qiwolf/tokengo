@@ -47,6 +47,12 @@ async fn source(
     if responses && v["provider_opaque"] == true {
         value["output"].as_array_mut().unwrap().insert(0,json!({"id":"rs_matrix","type":"reasoning","summary":[],"encrypted_content":"test-opaque-state"}));
     }
+    if responses && v["provider_tool"] == true {
+        value["output"].as_array_mut().unwrap().push(json!({
+            "id":"fc_matrix","type":"function_call","status":"completed",
+            "call_id":"call_matrix","name":"sum","arguments":"{\"a\":1}"
+        }));
+    }
     if v["stream"] == true {
         let data = if responses {
             format!("event: response.created\ndata: {}\n\nevent: response.output_text.delta\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",json!({"type":"response.created","response":{"id":"resp_matrix","object":"response","status":"in_progress"}}),json!({"type":"response.output_text.delta","item_id":"msg_matrix","output_index":0,"content_index":0,"delta":"matrix answer"}),json!({"type":"response.completed","response":value}))
@@ -67,6 +73,7 @@ struct Fixture {
     _source: Http,
     seen: Arc<Source>,
     key: String,
+    channel_id: i64,
     dir: std::path::PathBuf,
 }
 impl Drop for Fixture {
@@ -95,7 +102,7 @@ impl Fixture {
                 .with_state(seen.clone()),
         )
         .await;
-        let key = {
+        let (key, channel_id) = {
             let c = state.conn();
             let (_, key) =
                 db::identity::create_key(&c, 1, "matrix", &Default::default(), None, None).unwrap();
@@ -130,7 +137,7 @@ impl Fixture {
                 },
             )
             .unwrap();
-            key
+            (key, id.0)
         };
         let gateway = serve(app(state.clone())).await;
         Self {
@@ -139,17 +146,25 @@ impl Fixture {
             _source: upstream,
             seen,
             key,
+            channel_id,
             dir,
         }
     }
     async fn call(&self, p: Protocol, body: Value) -> (u16, String) {
-        let r = reqwest::Client::new()
+        self.call_with_key(p, &self.key, body).await
+    }
+    async fn call_with_key(&self, p: Protocol, key: &str, body: Value) -> (u16, String) {
+        self.call_with_headers(p, key, &[], body).await
+    }
+    async fn call_with_headers(&self, p: Protocol, key: &str, headers: &[(&str, &str)], body: Value) -> (u16, String) {
+        let mut request = reqwest::Client::new()
             .post(format!("{}/v1/{}", self.gateway.url, p.path()))
-            .bearer_auth(&self.key)
-            .json(&body)
-            .send()
-            .await
-            .unwrap();
+            .bearer_auth(key)
+            .json(&body);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let r = request.send().await.unwrap();
         (r.status().as_u16(), r.text().await.unwrap())
     }
 }
@@ -308,4 +323,201 @@ async fn native_hosted_tools_are_explicitly_rejected_by_metering_boundary() {
     assert_eq!(code, 400, "{text}");
     assert!(text.contains("separate metering"));
     assert!(f.seen.seen.lock().unwrap().is_empty());
+}
+
+fn prompt_cache_first(stream: bool) -> Value {
+    json!({"model":"matrix","input":[{"role":"user","content":"compute sum"}],
+        "max_output_tokens":16,"stream":stream,"store":false,
+        "prompt_cache_key":"shared-cache-bucket","client_metadata":{"session_id":"real-session-a"},
+        "include":["reasoning.encrypted_content"],
+        "provider_opaque":true,"provider_tool":true,
+        "tools":[{"type":"function","name":"sum","parameters":{"type":"object","properties":{"a":{"type":"integer"}}}}]})
+}
+fn completed_response(text: &str, stream: bool) -> Value {
+    if !stream {
+        return serde_json::from_str(text).unwrap();
+    }
+    text.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .find(|event| event["type"] == "response.completed")
+        .expect("stream must complete before replay")["response"]
+        .clone()
+}
+fn prompt_cache_replay(first: &Value, stream: bool) -> Value {
+    let mut replay = prompt_cache_first(stream);
+    let mut input = vec![json!({"role":"user","content":"compute sum"})];
+    input.extend(first["output"].as_array().unwrap().iter().cloned());
+    input.push(json!({"type":"function_call_output","call_id":"call_matrix","output":"2"}));
+    replay["input"] = json!(input);
+    replay["provider_opaque"] = json!(false);
+    replay["provider_tool"] = json!(false);
+    replay
+}
+async fn prompt_cache_fixture() -> Fixture {
+    let f = Fixture::new(vec![Protocol::Responses], false).await;
+    let mut caps = tokengo_server::protocol_config::load(&f.state.conn(), f.channel_id).unwrap();
+    caps.max_input_tokens = Some(4096);
+    caps.max_output_tokens = Some(64);
+    tokengo_server::protocol_config::save(&f.state.conn(), f.channel_id, &caps).unwrap();
+    f
+}
+
+#[tokio::test]
+async fn responses_real_session_preserves_opaque_tool_history_in_both_transport_modes() {
+    // Both rounds may independently choose buffered JSON or SSE.
+    for first_stream in [false, true] {
+        for second_stream in [false, true] {
+            let f = prompt_cache_fixture().await;
+            let (code, text) = f.call(Protocol::Responses, prompt_cache_first(first_stream)).await;
+            assert_eq!(code, 200, "first stream={first_stream}: {text}");
+            let first = completed_response(&text, first_stream);
+            assert_eq!(first["output"][0]["encrypted_content"], "test-opaque-state");
+            assert_eq!(first["output"][2]["call_id"], "call_matrix");
+            let mut replay = prompt_cache_replay(&first, second_stream);
+            replay["prompt_cache_key"] = json!("cache-after-prefix-change");
+            let (code, text) = f.call(Protocol::Responses, replay.clone()).await;
+            assert_eq!(code, 200, "first stream={first_stream}, second stream={second_stream}: {text}");
+            assert_eq!(completed_response(&text, second_stream)["status"], "completed");
+            let seen = f.seen.seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[1].0, "/v1/responses");
+            assert_eq!(seen[1].1["prompt_cache_key"], "cache-after-prefix-change");
+            assert_eq!(seen[1].1["client_metadata"]["session_id"], "real-session-a");
+            assert_eq!(seen[1].1["input"], replay["input"], "opaque reasoning and tool identities must reach the native source unchanged");
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_real_session_cannot_borrow_another_key_or_shared_cache_conversation_binding() {
+    for stream in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let (code, text) = f.call(Protocol::Responses, prompt_cache_first(stream)).await;
+        assert_eq!(code, 200, "{text}");
+        let replay = prompt_cache_replay(&completed_response(&text, stream), stream);
+        let (_, other_key) = db::identity::create_key(
+            &f.state.conn(), 1, "other-cache-client", &Default::default(), None, None,
+        ).unwrap();
+        let (code, text) = f.call_with_key(Protocol::Responses, &other_key, replay.clone()).await;
+        assert_eq!(code, 400, "another API key must not borrow opaque history: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+        let mut unidentified = replay.clone();
+        unidentified.as_object_mut().unwrap().remove("client_metadata");
+        assert!(unidentified.get("prompt_cache_key").is_some(), "cache hint remains present but cannot establish identity");
+        let (code, text) = f.call(Protocol::Responses, unidentified).await;
+        assert_eq!(code, 400, "opaque replay without an explicit identity must fail: {text}");
+        let error: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(error["error"]["type"], "invalid_request_error");
+        assert_eq!(error["error"]["code"], "explicit_session_required");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+
+        // Establish an independent source pin, without issuing the original opaque artifact.
+        let mut other_first = prompt_cache_first(stream);
+        other_first["client_metadata"]["session_id"] = json!("real-session-b");
+        other_first["provider_opaque"] = json!(false);
+        other_first["provider_tool"] = json!(false);
+        let (code, text) = f.call(Protocol::Responses, other_first).await;
+        assert_eq!(code, 200, "another real session sharing the cache bucket may establish its own pin: {text}");
+        assert_eq!(completed_response(&text, stream)["status"], "completed");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
+        let mut other_conversation = replay.clone();
+        other_conversation["client_metadata"]["session_id"] = json!("real-session-b");
+        let (code, text) = f.call(Protocol::Responses, other_conversation).await;
+        assert_eq!(code, 400, "another real session sharing the cache key must not borrow opaque history: {text}");
+        let error: Value = serde_json::from_str(&text).unwrap();
+        assert!(error["error"]["message"].as_str().unwrap().contains("artifacts not issued"), "{text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
+        // Rejected replays must not damage the original binding.
+        let (code, text) = f.call(Protocol::Responses, replay).await;
+        assert_eq!(code, 200, "original conversation must remain usable: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 3);
+    }
+}
+
+#[tokio::test]
+async fn responses_real_session_rejects_opaque_replay_after_source_generation_changes() {
+    for stream in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let (code, text) = f.call(Protocol::Responses, prompt_cache_first(stream)).await;
+        assert_eq!(code, 200, "{text}");
+        let replay = prompt_cache_replay(&completed_response(&text, stream), stream);
+        db::channels::set_secret(
+            &f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(f.channel_id),
+            "ROTATED-SYNTHETIC-CREDENTIAL",
+        ).unwrap();
+        let (code, text) = f.call(Protocol::Responses, replay).await;
+        assert_eq!(code, 400, "credential generation change must invalidate opaque ownership: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1, "reject before a source attempt");
+    }
+}
+
+#[tokio::test]
+async fn responses_real_session_header_survives_cache_prefix_changes_and_isolates_shared_cache_keys() {
+    for stream in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let owner = [("session_id", "real-conversation-a")];
+        let other = [("session_id", "real-conversation-b")];
+        let mut first_request = prompt_cache_first(stream);
+        first_request["instructions"] = json!("Compute the requested sum.");
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &owner, first_request,
+        ).await;
+        assert_eq!(code, 200, "{text}");
+        let first = completed_response(&text, stream);
+        let mut replay = prompt_cache_replay(&first, stream);
+        replay["prompt_cache_key"] = json!("cache-after-prefix-change");
+        replay["instructions"] = json!("Compute the sum and explain the result concisely.");
+        replay["tools"][0]["description"] = json!("Sum integers; refreshed tool description.");
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &owner, replay.clone(),
+        ).await;
+        assert_eq!(code, 200, "real session header must preserve ownership when the cache prefix changes: {text}");
+        assert_eq!(completed_response(&text, stream)["status"], "completed");
+        {
+            let seen = f.seen.seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert_ne!(seen[0].1["prompt_cache_key"], seen[1].1["prompt_cache_key"]);
+            assert_ne!(seen[0].1["instructions"], seen[1].1["instructions"]);
+            assert_ne!(seen[0].1["tools"], seen[1].1["tools"]);
+            assert_eq!(seen[1].1["input"], replay["input"], "opaque reasoning and tool output must be unchanged");
+        }
+        // A second real session may share the cache bucket, but must establish its own ownership.
+        let mut other_first = replay.clone();
+        other_first["input"] = json!([{"role":"user","content":"a separate computation"}]);
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &other, other_first,
+        ).await;
+        assert_eq!(code, 200, "independent real session must establish its own pin: {text}");
+        assert_eq!(completed_response(&text, stream)["status"], "completed");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 3);
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &other, replay,
+        ).await;
+        assert_eq!(code, 400, "shared cache key cannot override distinct real session ownership: {text}");
+        let error: Value = serde_json::from_str(&text).unwrap();
+        assert!(error["error"]["message"].as_str().unwrap().contains("artifacts not issued"), "{text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 3, "foreign artifacts must fail before the source attempt");
+    }
+}
+
+
+#[tokio::test]
+async fn responses_cache_only_opaque_replay_requires_a_real_session_identity() {
+    for stream in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let mut first_request = prompt_cache_first(stream);
+        first_request.as_object_mut().unwrap().remove("client_metadata");
+        let (code, text) = f.call(Protocol::Responses, first_request).await;
+        assert_eq!(code, 200, "a fresh request without identity can still run: {text}");
+        let first = completed_response(&text, stream);
+        let mut replay = prompt_cache_replay(&first, stream);
+        replay.as_object_mut().unwrap().remove("client_metadata");
+        let (code, text) = f.call(Protocol::Responses, replay).await;
+        assert_eq!(code, 400, "a cache key alone must never establish opaque ownership: {text}");
+        let error: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(error["error"]["type"], "invalid_request_error");
+        assert_eq!(error["error"]["code"], "explicit_session_required");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1, "unowned replay must fail before the source attempt");
+    }
 }

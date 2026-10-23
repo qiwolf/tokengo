@@ -1452,7 +1452,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
         return Err(error);
     }
     if opaque && existing_pin.is_none() {
-        let error=ApiError::bad_request("Opaque reasoning history requires an existing explicit session bound to its original source");
+        let error=ApiError::bad_request("Opaque reasoning history requires an existing explicit session bound to its original source").with_code("explicit_session_required");
         guard.reject(&error);
         return Err(error);
     }
