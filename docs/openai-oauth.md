@@ -31,7 +31,7 @@
 
 Token response的`earliest_refresh_at`按Unix秒解析，内部时间统一毫秒；到期且未到允许刷新时间时fail closed。未过期但到期前60秒会按允许时间刷新。无有效身份、已撤销、刷新失败或不一致绑定都不提供bearer。OAuthCredential不实现Debug/Serialize，管理错误为固定机器码，不复制token endpoint错误正文。
 
-## 当前官方预览边界
+## 当前传输与适配边界
 
 官方HTTP必须stream:true、store:false、完整input数组；不能用previous_response_id恢复远端状态。显式system item不被支持，应由调用方采用instructions/developer，不默默降级优先级。
 

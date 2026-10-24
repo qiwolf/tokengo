@@ -14,6 +14,8 @@ Current stable release: **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/
 
 当前正式版：**[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)** · [版本说明](docs/releases/v0.34.0-qiwolf.15.md) · [发布记录](docs/acceptance/2026-10-25-qiwolf15-release/README.md)。
 
+下一版候选 / Next release candidate: **qiwolf.16** — [本地节点轮询、OAuth与日志修复 / local node rotation, OAuth and logging fixes](docs/releases/v0.34.0-qiwolf.16.md)。
+
 ## Meet TokenGo in 60 seconds · 60 秒认识 TokenGo
 
 https://github.com/user-attachments/assets/82866974-b13c-4f5c-8606-c03348bd94d1

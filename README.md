@@ -14,6 +14,8 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 Current stable release: **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)** · [Release notes](docs/releases/v0.34.0-qiwolf.15.md) · [Publication record](docs/acceptance/2026-10-25-qiwolf15-release/README.md).
 
+下一版候选 / Next release candidate: **qiwolf.16** — [本地节点轮询、OAuth与日志修复 / local node rotation, OAuth and logging fixes](docs/releases/v0.34.0-qiwolf.16.md)。
+
 ## 60 秒认识 TokenGo · Meet TokenGo in 60 seconds
 
 https://github.com/user-attachments/assets/82866974-b13c-4f5c-8606-c03348bd94d1

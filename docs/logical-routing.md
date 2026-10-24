@@ -83,3 +83,7 @@ Successful SSE generation retains the existing idle-timeout behavior; this fix d
 Run `cargo test --locked --workspace` and `cargo check --locked -p tokengo-web --target wasm32-unknown-unknown`. New real HTTP suites cover bounded errors, mappings, route policy, sessions and disabled automatic probes. GitHub Actions runs native tests and WASM check using Rust 1.98.0. There is no automatic production deployment.
 
 Routing controls are available through the authenticated API and the model policy editor. Before using the existing panel to edit a channel, keep its logical mappings intact; the API rejects ambiguous duplicate logical names rather than silently merging them.
+
+## 本地向量节点等权轮询
+
+模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。它与在线Key按用户粘性不同，不影响OAuth/native来源固定。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后需刷新兼容证据。详见[本地节点合同](maintenance/local-vector-balancing.md)。

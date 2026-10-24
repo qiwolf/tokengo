@@ -66,7 +66,7 @@ envelope 仅接受 `type`、`metadata` 和可选的 `response_id` / `sequence_nu
 
 客户端可能默认发送 reasoning、developer 指令、缓存控制、追踪字段、命名空间或定制工具。关闭未使用功能可以避免请求不需要的能力，但不能靠删除实际语义来让测试通过。仅支持裸函数工具的来源不能自动承担 hosted web search、computer、文件或多代理工具。
 
-[独立 OpenAI OAuth](openai-oauth.md)使用专门的官方 Responses 来源，具有不同于普通 API Key 的字段限制。特别是官方预览不接受显式输出 token 上限，因此 Claude Messages 的 `max_tokens` 不能直接宣称无损转换到该 OAuth 来源。GPT 模型目录与授权成功均不代替每个实际模型的推理验收。
+[独立 OpenAI OAuth](openai-oauth.md)使用专门的官方 Responses 来源，具有不同于普通 API Key 的字段限制。已验证的OAuth传输支持 `max_output_tokens`，Chat/Messages转换以及Responses的 `max_tokens` / `max_completion_tokens` 别名均先归一化到该字段，校验整数且至少16以及已核实的来源/计费输出上界；多个上限不同则拒绝。cap包含推理输出，截断以 incomplete/max_output_tokens 或 Chat length返回并保留实际用量。Chat结构化格式映射到Responses text.format，不改变schema或strict；其他字段与不透明状态仍依专门适配边界处理。GPT 模型目录与授权成功均不代替每个实际模型的推理验收。
 
 DeepSeek 独立[Search/Fetch](deepseek-search-fetch.md)是两条 JSON 工具接口，不会自动接管 CLI 的内置搜索工具。向量与重排接口保持原生，不通过对话协议转换。
 

@@ -44,3 +44,7 @@ ReasoningCapabilities字段为`{status,levels,source,reason,default_effort,confi
 - 存在进行中的请求、未结算账本或活跃恢复探测租约时拒绝删除，应待其完成后重试。停用适用于暂时不使用而希望保留完整配置的渠道。
 
 用户删除另采用归档：撤销 Key、移除登录与私有路由，保留用户稳定身份及账务记录。以上是已实现的生命周期规则，不代表所有历史阶段都采用相同删除策略；发布与部署状态见[验收状态](acceptance-status.md)。
+
+## 本地向量节点等权轮询
+
+模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。它与在线Key按用户粘性不同，不影响OAuth/native来源固定。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后需刷新兼容证据。详见[本地节点合同](maintenance/local-vector-balancing.md)。

@@ -62,3 +62,7 @@ Key 轮换、停用与优先顺序在渠道内操作。已有 API Key 默认掩�
 例如上游模型名为 `vendor/chat-large`，本地映射名填写 `my-chat`，客户端便调用 `my-chat`；本地映射名留空时客户端直接调用 `vendor/chat-large`。已有映射名固定显示，保留原授权和历史；需要新名字时另加映射，再按需停用原映射。普通 API 的字段仍为 `model`（本地名）及可选 `upstream`（上游名），保持兼容。
 
 本地现存配置的归并须明确供应方和原来源，先冷备、核对 Key/模型/权限/价格/历史/粘性后事务迁移，最后验证启动幂等；不可通过重建来源或Key来达到看似归并的效果。
+
+## 本地向量节点等权轮询
+
+模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。它与在线Key按用户粘性不同，不影响OAuth/native来源固定。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后需刷新兼容证据。详见[本地节点合同](maintenance/local-vector-balancing.md)。

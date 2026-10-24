@@ -81,7 +81,7 @@ Chat / Responses / Messages 有原生入口及受限文本/客户端函数工具
 
 管理员可在“探针”页通过表单新增、编辑、启停、手动执行与删除诊断，配置目标、输入、状态码、内容/维度断言、超时及周期。支持 Chat、Responses、Messages、Embeddings、已绑定 OpenAI OAuth Responses，以及显式声明的独立 Search / Fetch；只显示目标实际类型。保存不发送请求，启用后等待完整周期再运行。
 
-探针固定请求指定接入，不修改业务 fallback 健康状态；共用来源/Key 并发门及工具账号 QPS。诊断账本记录实际 Token 或请求次数，不扣用户额度；缺价或订阅成本显示未知。OAuth 使用正常刷新链，订阅探针以超时和响应大小约束，不假装支持普通输出 Token 上限。详见[探针配置与计量](custom-probes.md)。
+探针固定请求指定接入，不修改业务 fallback 健康状态；共用来源/Key 并发门及工具账号 QPS。诊断账本记录实际 Token 或请求次数，不扣用户额度；缺价或订阅成本显示未知。OAuth 使用正常刷新链，订阅探针仍以超时和响应大小约束，不把探针配置当作已发送的输出cap；业务推理输出上限见OAuth说明。详见[探针配置与计量](custom-probes.md)。
 
 ### 协议回退与下一阶段
 
@@ -195,3 +195,11 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 完整英文说明、请求示例及通用 systemd 模板见 [README.en.md](guide.en.md)。
 
 向量及重排共享虚拟入口完整保留真实后端的输入规模与扩展参数，兼容探针样本不作为接收上限；详见[模型能力与兼容证据](vector-model-capabilities.md)。
+
+## 本地节点轮询与 OAuth 输出控制（qiwolf.16）
+
+本地向量/重排模型可在路由编辑器选择等权轮询：`local_strategy: "round_robin"`。仅影响获授权的本地候选顺序，游标按入口/owner/provider/目标模型隔离；在线Key和OAuth粘性不改成轮询。配置替换整个策略，修改前读取并保留其他字段；节点身份变化后刷新向量兼容证据。详见[合同](maintenance/local-vector-balancing.md)。
+
+Chat结构化输出使用 `response_format`，转换后的Responses使用 `text.format`。OAuth输出上限为 `max_output_tokens`；Responses也接受 `max_tokens`、`max_completion_tokens` 别名，但同时给出时必须相等。整数至少16且不超过配置的来源与计费上界，包含推理token。截断保留实际usage和length/incomplete原因，费用未知继续未定价。见[OAuth](openai-oauth.md)。
+
+运行时临时debug使用代次保护，旧计时器不会覆盖新的级别；机器运维令牌仍需实时权限与成功持久审计才能修改日志。日志字节预算不是服务的固定内存承诺。
