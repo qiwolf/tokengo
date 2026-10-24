@@ -1,0 +1,210 @@
+[
+  {
+    "name": "default_active_user_names_no_historical",
+    "passed": true
+  },
+  {
+    "name": "only_one_business_panel_rendered",
+    "passed": true
+  },
+  {
+    "name": "save_budget_click_keeps_spent_and_reserved",
+    "passed": true
+  },
+  {
+    "name": "freeze_click",
+    "passed": true
+  },
+  {
+    "name": "remove_limit_and_unfreeze_click",
+    "passed": true
+  },
+  {
+    "name": "budget_header_button_same_line_not_full_width",
+    "passed": true
+  },
+  {
+    "name": "key_scope_names_and_owner",
+    "passed": true
+  },
+  {
+    "name": "historical_budgets_read_only",
+    "passed": true
+  },
+  {
+    "name": "current_prices_only_latest",
+    "passed": true
+  },
+  {
+    "name": "price_history_separate",
+    "passed": true
+  },
+  {
+    "name": "request_prices_separate_from_token",
+    "passed": true
+  },
+  {
+    "name": "passthrough_price_displays_service_name_without_raw_id",
+    "passed": true
+  },
+  {
+    "name": "manage_service_price_click_opens_services",
+    "passed": true
+  },
+  {
+    "name": "return_to_billing_from_service_management",
+    "passed": true
+  },
+  {
+    "name": "settled_ledger_current_reservation_is_zero",
+    "passed": true
+  },
+  {
+    "name": "success_labels_are_human_readable",
+    "passed": true
+  },
+  {
+    "name": "ledger_names_and_history",
+    "passed": true
+  },
+  {
+    "name": "query_click_uses_selected_page_size",
+    "passed": true
+  },
+  {
+    "name": "last_page_has_no_older_page",
+    "passed": true
+  },
+  {
+    "name": "older_page_click_changes_rows",
+    "passed": true
+  },
+  {
+    "name": "previous_page_click_restores_rows",
+    "passed": true
+  },
+  {
+    "name": "latest_page_click_restores_first",
+    "passed": true
+  },
+  {
+    "name": "pagination_preserves_applied_user_filter",
+    "passed": true
+  },
+  {
+    "name": "historical_query_click_filters_before_paging",
+    "passed": true
+  },
+  {
+    "name": "query_no_results_visible",
+    "passed": true
+  },
+  {
+    "name": "reset_filters_click",
+    "passed": true
+  },
+  {
+    "name": "query_failure_visible_preserves_results",
+    "passed": true
+  },
+  {
+    "name": "details_click_opens_identity_snapshot",
+    "passed": true
+  },
+  {
+    "name": "额度管理-no-overflow-1440",
+    "passed": true
+  },
+  {
+    "name": "额度管理-touch-targets-1440",
+    "passed": true
+  },
+  {
+    "name": "价格配置-no-overflow-1440",
+    "passed": true
+  },
+  {
+    "name": "价格配置-touch-targets-1440",
+    "passed": true
+  },
+  {
+    "name": "用量账本-no-overflow-1440",
+    "passed": true
+  },
+  {
+    "name": "用量账本-touch-targets-1440",
+    "passed": true
+  },
+  {
+    "name": "ledger_amount_and_detail_single_line_contained-1440",
+    "passed": true
+  },
+  {
+    "name": "额度管理-no-overflow-900",
+    "passed": true
+  },
+  {
+    "name": "额度管理-touch-targets-900",
+    "passed": true
+  },
+  {
+    "name": "价格配置-no-overflow-900",
+    "passed": true
+  },
+  {
+    "name": "价格配置-touch-targets-900",
+    "passed": true
+  },
+  {
+    "name": "用量账本-no-overflow-900",
+    "passed": true
+  },
+  {
+    "name": "用量账本-touch-targets-900",
+    "passed": true
+  },
+  {
+    "name": "ledger_amount_and_detail_single_line_contained-900",
+    "passed": true
+  },
+  {
+    "name": "ledger_identity_source_span_card-900",
+    "passed": true
+  },
+  {
+    "name": "额度管理-no-overflow-390",
+    "passed": true
+  },
+  {
+    "name": "额度管理-touch-targets-390",
+    "passed": true
+  },
+  {
+    "name": "价格配置-no-overflow-390",
+    "passed": true
+  },
+  {
+    "name": "价格配置-touch-targets-390",
+    "passed": true
+  },
+  {
+    "name": "用量账本-no-overflow-390",
+    "passed": true
+  },
+  {
+    "name": "用量账本-touch-targets-390",
+    "passed": true
+  },
+  {
+    "name": "ledger_identity_source_span_card-390",
+    "passed": true
+  },
+  {
+    "name": "no_passthrough_upstream_calls",
+    "passed": true
+  },
+  {
+    "name": "no_javascript_runtime_errors",
+    "passed": true
+  }
+]

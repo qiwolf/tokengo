@@ -1,0 +1,43 @@
+{
+  "method": "actual administrator Chrome UI, read-only clicks; user signed in manually",
+  "checks": [
+    {
+      "name": "production_query_page_size_10",
+      "passed": true
+    },
+    {
+      "name": "production_older_page_changes_record",
+      "passed": true
+    },
+    {
+      "name": "production_previous_page",
+      "passed": true
+    },
+    {
+      "name": "production_pagination_retains_filter",
+      "passed": true
+    },
+    {
+      "name": "production_latest_page",
+      "passed": true
+    },
+    {
+      "name": "production_empty_query_and_end_button",
+      "passed": true
+    },
+    {
+      "name": "production_passthrough_price_names",
+      "passed": true
+    },
+    {
+      "name": "production_service_price_management_navigation",
+      "passed": true
+    },
+    {
+      "name": "production_default_active_budget_view",
+      "passed": true
+    }
+  ],
+  "budget_changes_in_production": false,
+  "source_manifest_sha256": "eef9c0783fd6cf11e90bbf0d409a4f4583adeabd3ebbae22febb9ebf65bc9869"
+}

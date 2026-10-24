@@ -127,6 +127,7 @@ impl Fixture {
                 model: None,
                 before_id: None,
                 limit: Some(1),
+                ..Default::default()
             },
         )
         .unwrap()

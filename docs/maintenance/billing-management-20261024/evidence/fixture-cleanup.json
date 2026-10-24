@@ -1,0 +1,33 @@
+{
+  "host": "build-test",
+  "observed_utc": "2026-10-24T07:34:14.421943+00:00",
+  "isolated_fixture_only": true,
+  "production_access": false,
+  "pids": [
+    {
+      "pid": 286525,
+      "identity_verified": true
+    },
+    {
+      "pid": 286528,
+      "identity_verified": true
+    }
+  ],
+  "server_and_mock_stopped": true,
+  "fixture_port_closed": true,
+  "private_fixture_removed": true,
+  "removed_contents": [
+    "synthetic database",
+    "temporary panel credentials",
+    "synthetic master key",
+    "fixture server logs"
+  ],
+  "preserved": [
+    "source",
+    "build caches",
+    "verification logs",
+    "screenshots",
+    "delivery artifacts"
+  ],
+  "shared_processes_untouched": true
+}

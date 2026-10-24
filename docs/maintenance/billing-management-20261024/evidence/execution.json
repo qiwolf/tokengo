@@ -1,0 +1,92 @@
+[
+  {
+    "name": "billing-tests",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "tokengo-server",
+      "--lib",
+      "billing"
+    ],
+    "cwd": "/srv/build/tokengo-billing-management-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "60185b949666d3d8bb0777d77b4984743a74767820c76e26e87919911cd6c05c"
+  },
+  {
+    "name": "billing-integration",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "tokengo-server",
+      "--test",
+      "billing",
+      "--test",
+      "request_billing",
+      "--test",
+      "rerank_compat",
+      "--test",
+      "managed_users",
+      "--test",
+      "identity",
+      "--test",
+      "gateway_keys",
+      "--test",
+      "billing_writer"
+    ],
+    "cwd": "/srv/build/tokengo-billing-management-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "60185b949666d3d8bb0777d77b4984743a74767820c76e26e87919911cd6c05c"
+  },
+  {
+    "name": "server-build",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--release",
+      "-p",
+      "tokengo-server"
+    ],
+    "cwd": "/srv/build/tokengo-billing-management-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "60185b949666d3d8bb0777d77b4984743a74767820c76e26e87919911cd6c05c"
+  },
+  {
+    "name": "web-tests",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "tokengo-web"
+    ],
+    "cwd": "/srv/build/tokengo-billing-management-20261024/source",
+    "host": "build-test",
+    "exit_code": 0,
+    "source_manifest_sha256": "eef9c0783fd6cf11e90bbf0d409a4f4583adeabd3ebbae22febb9ebf65bc9869"
+  },
+  {
+    "name": "web-build",
+    "command": [
+      "trunk",
+      "build",
+      "--release",
+      "--locked"
+    ],
+    "cwd": "/srv/build/tokengo-billing-management-20261024/source/crates/web",
+    "host": "build-test",
+    "exit_code": 0,
+    "source_manifest_sha256": "eef9c0783fd6cf11e90bbf0d409a4f4583adeabd3ebbae22febb9ebf65bc9869"
+  }
+]

@@ -175,6 +175,7 @@ pub fn set_budget(
     actor: &str,
 ) -> Result<()> {
     scope_ok(scope, id)?;
+    super::billing_management::require_active_object(conn, scope, id)?;
     if limit.is_some_and(|n| n < 0) {
         return Err(bad("negative budget"));
     }
@@ -579,7 +580,7 @@ pub fn recover(conn: &Connection) -> Result<usize> {
     }
     Ok(n)
 }
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageQuery {
     pub user_id: Option<i64>,
     pub key_id: Option<i64>,
@@ -587,9 +588,16 @@ pub struct UsageQuery {
     pub model: Option<String>,
     pub before_id: Option<i64>,
     pub limit: Option<u32>,
+    pub state: Option<String>,
 }
 pub fn usage(conn: &Connection, q: &UsageQuery) -> Result<Vec<Ledger>> {
-    let sql=format!("{LEDGER_SELECT} WHERE (?1 IS NULL OR user_id=?1) AND (?2 IS NULL OR key_id=?2) AND (?3 IS NULL OR channel_id=?3) AND (?4 IS NULL OR model=?4) AND (?5 IS NULL OR id<?5) ORDER BY id DESC LIMIT ?6");
+    let state = super::billing_management::validated_state(q.state.as_deref(), "all")?;
+    let catalog = if state == "all" { None } else { Some(super::billing_management::objects(conn)?) };
+    let ids = |kind: &str| catalog.as_ref().map(|v| v[kind].as_array().unwrap().iter().filter(|v|v["state"]=="active").filter_map(|v|v["id"].as_i64()).collect::<Vec<_>>()).unwrap_or_default();
+    let users=serde_json::to_string(&ids("users")).map_err(|_|bad("invalid users"))?;
+    let keys=serde_json::to_string(&ids("keys")).map_err(|_|bad("invalid keys"))?;
+    let channels=serde_json::to_string(&ids("channels")).map_err(|_|bad("invalid channels"))?;
+    let sql=format!("{LEDGER_SELECT} WHERE (?1 IS NULL OR user_id=?1) AND (?2 IS NULL OR key_id=?2) AND (?3 IS NULL OR channel_id=?3) AND (?4 IS NULL OR model=?4) AND (?5 IS NULL OR id<?5) AND (?10='all' OR ((user_id IN (SELECT value FROM json_each(?7)) AND key_id IN (SELECT value FROM json_each(?8)) AND channel_id IN (SELECT value FROM json_each(?9))) = (?10='active'))) ORDER BY id DESC LIMIT ?6");
     let mut s = conn.prepare(&sql)?;
     let rows = s
         .query_map(
@@ -599,12 +607,22 @@ pub fn usage(conn: &Connection, q: &UsageQuery) -> Result<Vec<Ledger>> {
                 q.channel_id,
                 q.model.as_deref().map(tokengo_shared::normalize_model_name),
                 q.before_id,
-                q.limit.unwrap_or(50).clamp(1, 200)
+                q.limit.unwrap_or(50).clamp(1, 200),
+                users, keys, channels, state
             ],
             ledger_row,
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+/// Offer a cursor only when another row exists under the exact same filters.
+pub fn usage_next_before(conn: &Connection, q: &UsageQuery, entries: &[Ledger]) -> Result<Option<i64>> {
+    let Some(last) = entries.last() else { return Ok(None); };
+    let mut next_query = q.clone();
+    next_query.before_id = Some(last.id);
+    next_query.limit = Some(1);
+    Ok(if usage(conn, &next_query)?.is_empty() { None } else { Some(last.id) })
 }
 
 /// Compatibility for unbudgeted existing keys. Unknown price is never a zero price.

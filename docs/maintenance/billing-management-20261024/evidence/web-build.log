@@ -1,0 +1,7 @@
+2026-10-24T07:28:04.214347Z  INFO 🚀 Starting trunk 0.21.14
+2026-10-24T07:28:04.217959Z  INFO ⏫ Found an update of trunk: 0.21.14 -> 0.22.0
+2026-10-24T07:28:04.218094Z  INFO 📦 starting build
+   Compiling tokengo-web v0.34.0 (/srv/build/tokengo-billing-management-20261024/source/crates/web)
+    Finished `release` profile [optimized] target(s) in 2m 08s
+2026-10-24T07:30:24.268322Z  INFO applying new distribution
+2026-10-24T07:30:24.270573Z  INFO ✅ success

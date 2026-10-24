@@ -1,0 +1,13 @@
+{
+  "host": "build-test",
+  "command": [
+    "/srv/build/nanomuse-evaluation-20261024-tests/browser-venv/bin/python",
+    "-B",
+    "/srv/build/tokengo-billing-management-20261024/browser.py"
+  ],
+  "cwd": "/srv/build/tokengo-billing-management-20261024",
+  "exit_code": 0,
+  "source_manifest_sha256": "eef9c0783fd6cf11e90bbf0d409a4f4583adeabd3ebbae22febb9ebf65bc9869",
+  "fixture_only": true,
+  "existing_fixture_reused": true
+}

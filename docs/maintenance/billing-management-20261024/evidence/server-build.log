@@ -1,0 +1,17 @@
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-billing-management-20261024/source/crates/server)
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:704:4
+    |
+704 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:751:15
+    |
+751 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 2m 35s

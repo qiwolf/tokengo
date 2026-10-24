@@ -1,0 +1,2 @@
+# Preserve original tool logs, including Cargo trailing blank lines.
+evidence/*.log whitespace=-blank-at-eof

@@ -1,0 +1,25 @@
+{
+  "scope": "local Git archival only; no code changes or production actions",
+  "tested_source_manifest_sha256": "eef9c0783fd6cf11e90bbf0d409a4f4583adeabd3ebbae22febb9ebf65bc9869",
+  "verified_source_files": 209,
+  "source_unchanged_since_acceptance": true,
+  "code_files": {
+    "crates/server/src/db/billing.rs": "27731561fdbfee45adcb13b54f8f89493f56353af4207d2a0149d0398bfb32fa",
+    "crates/server/src/db/mod.rs": "2e16a5b3a938585d9afc7c81b9d312687be5fd29ba9fd44132876f293555e824",
+    "crates/server/src/routes/billing.rs": "42371568cdc6d4431ffc101eefd35fac2a51e4ae6aa55c645436fb3d96134a41",
+    "crates/server/tests/rerank_compat.rs": "171a603bfb30247950d19e7309aab3bf1ee9d8a38ce4fddd3a8391827600aefe",
+    "crates/web/src/pages/billing.rs": "95a38656690e39412208e5e0e37149e02d05a6a4c7de0c07d5350c938d5c0e3a",
+    "crates/web/style.css": "3d38b934518f6842b437a65c77cd14063f006b38597662d21b5f27f0eab8f4a2",
+    "crates/server/src/db/billing_management.rs": "fe8030d0b7c5885d132f6eaa4ef52a5b83d9ad6941a1c4b14ff650b0b784d3a5"
+  },
+  "existing_checks_reused": {
+    "host": "build-test",
+    "web": 127,
+    "billing_unit": 11,
+    "related_integration": 81,
+    "isolated_browser": 52,
+    "production_browser": 9
+  },
+  "no_rebuild_required": "Only records added; all tested sources unchanged",
+  "no_push_or_release": true
+}

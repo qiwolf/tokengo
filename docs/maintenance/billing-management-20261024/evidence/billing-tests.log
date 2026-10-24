@@ -1,0 +1,19 @@
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-billing-management-20261024/source/crates/server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.82s
+     Running unittests src/lib.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/tokengo_server-47be1620330733d0)
+
+running 11 tests
+test db::billing::user_diagnostic_tests::user_diagnostic_unknown_usage_retains_hold_and_restart_recovers ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_budget_is_atomic_user_only_and_freeze_blocks_send ... ok
+test db::billing_management::tests::source_names_disambiguate_credentials_and_disabled_credentials_are_historical ... ok
+test db::billing_management::tests::usage_cursor_requires_a_real_next_row_and_preserves_state_filters ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_unpriced_cannot_bypass_capped_budget ... ok
+test db::billing_management::tests::budget_management_rejects_unknown_objects_and_preserves_money_and_audit ... ok
+test db::billing_management::tests::expired_or_disabled_ancestor_keys_are_historical ... ok
+test db::billing_management::tests::ledger_names_and_state_survive_archival_and_filter_before_pagination ... ok
+test vector_compat::tests::compatibility_source_capacity_busy_rejects_before_billing_and_releases_on_drop ... ok
+test routes::billing::request_pricing_tests::request_pricing_is_admin_only_versioned_and_ledger_preserves_units ... ok
+test gateway::oauth_tests::oauth_nonstream_conversion_native_stream_billing_and_explicit_limit_rejection ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 338 filtered out; finished in 2.30s
+

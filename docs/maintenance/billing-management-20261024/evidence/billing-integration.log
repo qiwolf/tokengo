@@ -1,0 +1,140 @@
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-billing-management-20261024/source/crates/server)
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:704:4
+    |
+704 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:751:15
+    |
+751 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.07s
+     Running tests/billing.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/billing-6c3803526415b72c)
+
+running 18 tests
+test ancestor_budget_is_shared_and_snapshot_survives_parent_deletion ... ok
+test partial_usage_can_prove_overrun_without_claiming_a_complete_provider_cost ... ok
+test isolated_frozen_ancestor_blocks_child_priced_and_free_reservations ... ok
+test removing_a_finite_limit_never_implicitly_unfreezes_after_overrun ... ok
+test idempotent_reservation_settlement_release_and_retention_are_independent ... ok
+test unlimited_overrun_freezes_new_priced_and_zero_cost_attempts ... ok
+test negatives_overflows_and_price_snapshot_tampering_are_rejected ... ok
+test overrun_keeps_provider_cost_visible_caps_debit_and_freezes_future_budgeted_attempts ... ok
+test exact_cost_ceil_and_immutable_price_versions ... ok
+test both_budget_layers_roll_back_atomically_and_lowering_blocks_new_holds ... ok
+test unpriced_ledger_stays_unknown_and_any_finite_ancestor_budget_requires_configuration ... ok
+test real_http_pricing_budgets_audit_and_bounded_usage ... ok
+test billing_http_pricing_exists_and_requires_panel_auth ... ok
+test real_http_self_usage_cannot_read_another_key_and_paginates_without_secrets ... ok
+test two_connections_cannot_overreserve_the_same_budget ... ok
+test restart_conservatively_charges_outstanding_once_without_diagnostic_rows ... ok
+test partial_missing_usage_is_estimated_but_reported_zero_is_zero ... ok
+test unpriced_does_not_bypass_any_frozen_user_key_or_ancestor_allocation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.55s
+
+     Running tests/billing_writer.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/billing_writer-fa7b555db598ef04)
+
+running 9 tests
+test bad_json_is_quarantined_and_never_allows_automatic_unknown_recovery ... ok
+test readonly_sqlite_still_gets_a_durable_known_usage_intent ... ok
+test spool_contains_only_accounting_intent_and_cannot_replace_pending_known_usage ... ok
+test committed_sqlite_with_leftover_intent_replay_does_not_debit_twice ... ok
+test failed_known_settlement_is_durable_and_replayed_before_unknown_recovery ... ok
+test financial_holds_and_replay_use_full_sqlite_durability_before_outbox_deletion ... ok
+test incomplete_atomic_write_is_not_silently_recovered_as_unknown_usage ... ok
+test different_database_spool_is_rejected_instead_of_charging_a_matching_reservation_id ... ok
+test runtime_retry_flushes_known_usage_without_process_restart ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.33s
+
+     Running tests/gateway_keys.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/gateway_keys-f46ed0ea7df27037)
+
+running 7 tests
+test legacy_gateway_delete_preserves_managed_credentials_and_hides_tombstones ... ok
+test concurrent_validation_and_deletion_cannot_refill_a_revoked_cache ... ok
+test async_auth_verifier_cannot_resurrect_a_deleted_key ... ok
+test legacy_gateway_delete_revocation_rolls_back_when_audit_fails ... ok
+test legacy_migration_preserves_hash_and_ciphertext_once_and_never_resurrects ... ok
+test slow_auth_does_not_starve_the_async_runtime ... ok
+test named_keys_routes_revocation_restart_and_settings_compatibility ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.79s
+
+     Running tests/identity.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/identity-144f6d15a99df579)
+
+running 12 tests
+test version_24_database_migrates_existing_keys_without_rekeying ... ok
+test identity_routes_exist_and_require_the_correct_credential_kind ... ok
+test identity_mutation_rolls_back_when_durable_audit_cannot_be_written ... ok
+test credential_cache_is_bound_to_live_hash_and_key_status ... ok
+test child_key_self_service_is_limited_to_its_own_subtree ... ok
+test encrypted_recoverable_secrets_owner_scope_and_child_policy_are_enforced ... ok
+test scoped_admin_vkeys_manage_route_b_without_access_to_legacy_secrets ... ok
+test cached_identity_revalidates_user_policy_role_expiry_and_parent_revocation ... ok
+test child_expiry_and_limits_cannot_escape_parent_and_restart_preserves_ownership ... ok
+test auth_context_policy_version_is_stable_and_tracks_effective_ancestry_and_expiry ... ok
+test legacy_argon_credentials_migrate_to_admin_and_late_verification_cannot_resurrect_them ... ok
+test admin_role_and_both_explicit_capabilities_are_required_and_revalidated ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.08s
+
+     Running tests/managed_users.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/managed_users-db696f054cb6a34e)
+
+running 23 tests
+test busy_hashing_or_revoked_root_cannot_leave_half_created_users ... ok
+test delete_user_requires_csrf_and_rolls_back_unsettled_user ... ok
+test resuming_self_paused_key_enforces_parent_and_active_key_capacity ... ok
+test hash_only_legacy_keys_are_explicitly_unavailable_and_decryption_failure_never_returns_plaintext ... ok
+test concurrent_creation_obeys_active_key_cap_without_deleting_legacy_keys ... ok
+test passthrough_owner_directory_and_user_grants_are_explicit_and_scoped ... ok
+test deleting_revoked_key_rolls_back_when_audit_cannot_be_persisted ... ok
+test created_keys_reveal_exact_secret_from_encrypted_storage_without_exposing_list_or_audit ... ok
+test deleted_revoked_key_hides_from_lists_but_preserves_ancestry_and_financial_history ... ok
+test deleting_disabled_key_rolls_back_revocation_and_tombstone_when_audit_fails ... ok
+test existing_identity_gains_login_without_rewriting_keys_and_root_stays_separate ... ok
+test delete_user_revokes_login_and_keys_retains_history_and_cannot_resurrect ... ok
+test reveal_audit_failure_hides_plaintext_and_encrypted_creation_failure_rolls_back_all_changes ... ok
+test key_delete_requires_inactive_state_ownership_browser_csrf_or_explicit_administrator ... ok
+test disabled_keys_can_be_deleted_by_owner_or_admin_and_permanently_block_children ... ok
+test self_paused_key_can_resume_but_admin_disabled_expired_and_revoked_keys_cannot ... ok
+test key_reveal_requires_owner_browser_csrf_or_administrator_and_does_not_restore_revoked_keys ... ok
+test credential_updates_revoke_sessions_keep_identity_and_legacy_duplicate_links ... ok
+test self_service_budgets_cannot_raise_clear_or_escape_user_or_parent_caps ... ok
+test self_service_catalog_is_authorized_visible_and_contains_no_connection_secrets ... ok
+test service_key_default_inherits_and_legacy_restrictions_remain_editable ... ok
+test unified_creation_is_atomic_and_login_and_self_service_work ... ok
+test self_service_enforces_csrf_scope_and_only_narrows_keys ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.83s
+
+     Running tests/request_billing.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/request_billing-cea4867ec5e9c178)
+
+running 7 tests
+test flat_budget_arithmetic_overflow_rolls_back ... ok
+test flat_settle_idempotent_and_cannot_use_token_settlement ... ok
+test recovery_preserves_unknown_flat_unit ... ok
+test flat_units_not_tokens_and_each_ancestor_budget ... ok
+test empty_failure_knownzero_but_cancel_unknown_not_reportedzero ... ok
+test immutable_request_price_identity_and_frozen_user ... ok
+test durable_request_settlement_replays_known_and_unknown_without_token_aliasing ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+
+     Running tests/rerank_compat.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/rerank_compat-9aa02d748b204519)
+
+running 5 tests
+test rerank_total_tokens_is_reported_input_and_settles_real_ledger ... ok
+test rerank_keeps_existing_null_missing_and_empty_document_refill_contract ... ok
+test rerank_missing_id_gets_fresh_uuid_and_unknown_usage_stays_unknown ... ok
+test rerank_negative_total_tokens_is_rejected_and_never_billed_as_reported_zero ... ok
+test rerank_string_document_id_meta_and_raw_usage_survive_real_http ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.46s
+

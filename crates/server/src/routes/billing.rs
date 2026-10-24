@@ -22,6 +22,7 @@ pub fn router() -> Router<SharedState> {
             get(request_prices).post(create_request_price),
         )
         .route("/api/budgets", get(budgets).put(update_budget))
+        .route("/api/billing/objects", get(objects))
         .route("/api/usage", get(admin_usage))
         .route("/v1/usage", get(self_usage))
 }
@@ -30,6 +31,9 @@ fn mutation_error(e: db::DbError) -> ApiError {
         db::DbError::Other(s) => ApiError::bad_request(s),
         e => e.into(),
     }
+}
+async fn objects(_auth: AdminAuth, State(state): State<SharedState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(db::billing_management::objects(&state.conn())?))
 }
 async fn prices(
     _auth: AdminAuth,
@@ -101,6 +105,7 @@ async fn create_request_price(
 struct BudgetQuery {
     scope: Option<String>,
     scope_id: Option<i64>,
+    state: Option<String>,
 }
 async fn budgets(
     _auth: AdminAuth,
@@ -108,7 +113,7 @@ async fn budgets(
     Query(q): Query<BudgetQuery>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"budgets":billing::budgets(&state.conn(),q.scope.as_deref(),q.scope_id).map_err(mutation_error)?}),
+        json!({"budgets":db::billing_management::budgets(&state.conn(),q.scope.as_deref(),q.scope_id,q.state.as_deref()).map_err(mutation_error)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -116,6 +121,8 @@ async fn budgets(
 struct BudgetUpdate {
     #[serde(deserialize_with = "required_limit")]
     limit_micro: Option<i64>,
+    #[serde(default)]
+    frozen: Option<bool>,
 }
 fn required_limit<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
     Option::<i64>::deserialize(d)
@@ -135,16 +142,17 @@ async fn update_budget(
     let id = q
         .scope_id
         .ok_or_else(|| ApiError::bad_request("scope_id is required"))?;
-    billing::set_budget(
+    db::billing_management::update_budget(
         &state.conn(),
         scope,
         id,
         b.limit_micro,
+        b.frozen,
         &_auth.actor_label(),
     )
     .map_err(mutation_error)?;
     Ok(Json(
-        json!({"budgets":billing::budgets(&state.conn(),Some(scope),Some(id))?}),
+        json!({"budgets":db::billing_management::budgets(&state.conn(),Some(scope),Some(id),Some("all"))?}),
     ))
 }
 async fn admin_usage(
@@ -152,8 +160,10 @@ async fn admin_usage(
     State(state): State<SharedState>,
     Query(q): Query<UsageQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let entries = billing::usage(&state.conn(), &q)?;
-    let next = entries.last().map(|e| e.id);
+    let conn = state.conn();
+    let entries = billing::usage(&conn, &q).map_err(mutation_error)?;
+    let next = billing::usage_next_before(&conn, &q, &entries).map_err(mutation_error)?;
+    let entries=db::billing_management::enrich_entries(&conn,entries)?;
     Ok(Json(json!({"entries":entries,"next_before_id":next})))
 }
 async fn self_usage(
@@ -164,8 +174,8 @@ async fn self_usage(
     q.user_id = Some(key.auth.user_id);
     q.key_id = Some(key.auth.key_id);
     let conn = state.conn();
-    let entries = billing::usage(&conn, &q)?;
-    let next = entries.last().map(|e| e.id);
+    let entries = billing::usage(&conn, &q).map_err(mutation_error)?;
+    let next = billing::usage_next_before(&conn, &q, &entries).map_err(mutation_error)?;
     let mut budgets = billing::budgets(&conn, Some("user"), Some(key.auth.user_id))?;
     budgets.extend(billing::budgets(&conn, Some("key"), Some(key.auth.key_id))?);
     Ok(Json(
@@ -242,6 +252,16 @@ mod request_pricing_tests {
                 .0,
             StatusCode::FORBIDDEN
         );
+        assert_eq!(call(&state,"GET","/api/billing/objects","",Value::Null).await.0,StatusCode::UNAUTHORIZED);
+        assert_eq!(call(&state,"GET","/api/billing/objects",&secret,Value::Null).await.0,StatusCode::FORBIDDEN);
+        let (object_status, objects)=call(&state,"GET","/api/billing/objects",&admin,Value::Null).await;
+        assert_eq!(object_status,StatusCode::OK);
+        assert!(objects["keys"].as_array().unwrap().iter().any(|v|v["name"]=="request-pricing-test"));
+        assert!(!objects.to_string().contains(&secret));
+        let (bad_budget,_)=call(&state,"PUT","/api/budgets?scope=user&scope_id=999999",&admin,json!({"limit_micro":1})).await;
+        assert_eq!(bad_budget,StatusCode::BAD_REQUEST);
+        let (bad_state,_)=call(&state,"GET","/api/usage?state=invalid",&admin,Value::Null).await;
+        assert_eq!(bad_state,StatusCode::BAD_REQUEST);
         let body = json!({"channel_id":1,"model":"web-search","micro_per_call":750});
         let (status, first) =
             call(&state, "POST", "/api/request-pricing", &admin, body.clone()).await;

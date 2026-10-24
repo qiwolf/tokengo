@@ -11,6 +11,7 @@ pub mod operations_tokens;
 pub mod identity;
 pub mod lifecycle;
 pub mod billing;
+pub mod billing_management;
 pub mod faults;
 pub mod catalog;
 pub mod gateway_keys;

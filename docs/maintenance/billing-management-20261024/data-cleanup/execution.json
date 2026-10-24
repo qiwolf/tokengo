@@ -1,0 +1,316 @@
+{
+  "success": true,
+  "executed": true,
+  "actions": [
+    {
+      "archive_test_users": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "tombstone_test_keys": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        69,
+        70,
+        73,
+        75,
+        78,
+        79,
+        80
+      ],
+      "delete_test_providers": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "delete_test_sources": [
+        17,
+        18,
+        19,
+        20,
+        21,
+        22
+      ],
+      "delete_test_budgets": 103
+    }
+  ],
+  "scope": {
+    "test_users": 42,
+    "users_need_archive": 27,
+    "test_keys": 93,
+    "keys_need_tombstone": 63,
+    "budget_rows": 103,
+    "test_budget_spent_micro": 3600,
+    "test_budget_reserved_micro": 0
+  },
+  "read_only_preflight": false,
+  "running_requests": [],
+  "excluded_inflight_ledger_ids": [],
+  "active_before": {
+    "users": [
+      1,
+      31,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49
+    ],
+    "keys": [
+      1,
+      81,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100
+    ]
+  },
+  "shared_virtual_models_before": {
+    "rows": 6,
+    "sha256": "10f6610e0da38dce74cbf0682d4c3ed5c3d42f51f2aba30cef6038200cb86281"
+  },
+  "history_before": {
+    "requests": {
+      "rows": 14201,
+      "sha256": "7e3619b3d772c983697fd1c7022b6dffe2f01e0405b5abe2a6fa0894f0cef4db"
+    },
+    "attempts": {
+      "rows": 13473,
+      "sha256": "82cb2560912929782d93f4fae71a11a5800a96b3ccc54e13f341fd66d6acfa91"
+    },
+    "billing_ledger": {
+      "rows": 13629,
+      "sha256": "de7cd6ff9bec62e4822b875b8efe84a79ee1752f28489ad963a8d835bf33bb6b"
+    },
+    "billing_allocations": {
+      "rows": 26958,
+      "sha256": "1828eb470e823242dc0c66842252f26b17a826cf37558a94d56eaf1783e6cf26"
+    },
+    "billing_prices": {
+      "rows": 14,
+      "sha256": "c1cf21732973b58ca8e637fdecd33305570aa6b1eca2eddc391215efca345784"
+    },
+    "billing_request_prices": {
+      "rows": 16,
+      "sha256": "4595255f93343f368ec1b8d5082e3a955e3bf93cbf2d8756dcaef69346e6cb9a"
+    },
+    "billing_audit": {
+      "rows": 74,
+      "sha256": "a076d852ff6191c326292fa11eedeb14fb7310dffc1067f608a345886897a67c"
+    }
+  },
+  "expected_preserved_prices": {
+    "billing_prices": {
+      "rows": 14,
+      "sha256": "c1cf21732973b58ca8e637fdecd33305570aa6b1eca2eddc391215efca345784"
+    },
+    "billing_request_prices": {
+      "rows": 16,
+      "sha256": "4595255f93343f368ec1b8d5082e3a955e3bf93cbf2d8756dcaef69346e6cb9a"
+    }
+  },
+  "backup": "/var/backups/tokengo/billing-test-cleanup-20261024T070853Z",
+  "rollback": "python3 -B /var/backups/tokengo/billing-test-cleanup-20261024T070853Z/rollback.py /var/backups/tokengo/billing-test-cleanup-20261024T070853Z --execute",
+  "history_after_existing_rows": {
+    "requests": {
+      "rows": 14201,
+      "sha256": "7e3619b3d772c983697fd1c7022b6dffe2f01e0405b5abe2a6fa0894f0cef4db"
+    },
+    "attempts": {
+      "rows": 13473,
+      "sha256": "82cb2560912929782d93f4fae71a11a5800a96b3ccc54e13f341fd66d6acfa91"
+    },
+    "billing_ledger": {
+      "rows": 13629,
+      "sha256": "de7cd6ff9bec62e4822b875b8efe84a79ee1752f28489ad963a8d835bf33bb6b"
+    },
+    "billing_allocations": {
+      "rows": 26958,
+      "sha256": "1828eb470e823242dc0c66842252f26b17a826cf37558a94d56eaf1783e6cf26"
+    },
+    "billing_prices": {
+      "rows": 14,
+      "sha256": "c1cf21732973b58ca8e637fdecd33305570aa6b1eca2eddc391215efca345784"
+    },
+    "billing_request_prices": {
+      "rows": 16,
+      "sha256": "4595255f93343f368ec1b8d5082e3a955e3bf93cbf2d8756dcaef69346e6cb9a"
+    },
+    "billing_audit": {
+      "rows": 74,
+      "sha256": "a076d852ff6191c326292fa11eedeb14fb7310dffc1067f608a345886897a67c"
+    }
+  },
+  "active_after": {
+    "users": [
+      1,
+      31,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49
+    ],
+    "keys": [
+      1,
+      81,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100
+    ]
+  },
+  "shared_virtual_models_after": {
+    "rows": 6,
+    "sha256": "10f6610e0da38dce74cbf0682d4c3ed5c3d42f51f2aba30cef6038200cb86281"
+  },
+  "new_history_rows": {
+    "requests": 0,
+    "attempts": 0,
+    "billing_ledger": 0,
+    "billing_prices": 0,
+    "billing_request_prices": 0,
+    "billing_audit": 1,
+    "billing_allocations": 0
+  },
+  "excluded_inflight_final": [],
+  "final_counts": {
+    "users": 53,
+    "gateway_keys": 115,
+    "billing_budgets": 28,
+    "channels": 33,
+    "provider_channels": 9,
+    "billing_prices": 14,
+    "billing_request_prices": 16
+  },
+  "rollback_tables": [
+    "users",
+    "gateway_keys",
+    "billing_budgets",
+    "settings",
+    "channels",
+    "channel_models",
+    "channel_secrets",
+    "channel_headers",
+    "provider_channels",
+    "provider_connections",
+    "provider_credentials",
+    "source_credentials",
+    "credential_affinity",
+    "user_virtual_models",
+    "user_virtual_targets",
+    "user_virtual_windows",
+    "protocol_sessions",
+    "routing_state",
+    "channel_catalog",
+    "model_type_checks",
+    "registry_associations",
+    "channel_context_overrides",
+    "model_group_channels",
+    "channel_reasoning_catalog",
+    "channel_reasoning_settings",
+    "channel_faults",
+    "model_cooldowns",
+    "channel_capability_checks",
+    "model_vision_checks",
+    "oauth_channel_bindings",
+    "model_kinds"
+  ],
+  "verified_target": {
+    "host": "pve-token",
+    "container": 104,
+    "container_hostname": "tokengo-geren-wangguan"
+  }
+}
