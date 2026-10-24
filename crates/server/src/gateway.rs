@@ -804,7 +804,10 @@ fn load_plan(
                 if !kind_ok {
                     continue;
                 }
-                for channel in model_routes::channels_for(&conn, &route.name)? {
+                let channels=if resolved.shared {
+                    model_routes::provider_channels_for(&conn,&route.name,target.provider_id)?
+                }else{model_routes::channels_for(&conn,&route.name)?};
+                for channel in channels {
                     let provider =
                         crate::db::provider_pool::source_credential(&conn, channel.id.0)?;
                     if !channel.routable()
@@ -1908,9 +1911,13 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 }
                 {
                     let c = state.conn();
+                    let live_channels=match (plan.virtual_route.as_ref().is_some_and(|route|route.shared),target.as_ref()) {
+                        (true,Some(target))=>model_routes::provider_channels_for(&c,name,target.provider_id)?,
+                        (true,None)=>Vec::new(),
+                        (false,_)=>model_routes::channels_for(&c,name)?,
+                    };
                     let enabled =
-                        model_routes::channels_for(&c, name)?
-                            .into_iter()
+                        live_channels.into_iter()
                             .any(|candidate| {
                                 candidate.id == channel.id
                                     && candidate.routable()

@@ -2233,3 +2233,9 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
  .billing-usage td::before { content:attr(data-label); display:block; margin-bottom:5px; color:var(--fg-2); font-size:12px; }
  .billing-usage td:nth-child(1),.billing-usage td:nth-child(2) { grid-column:1/-1; }
 }
+
+.virtual-target-options {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.virtual-target-options h3 {margin:0;}
+.provider-model-mapping > .account-actions,
+.provider-model-mapping > [role="group"] { grid-column:1/-1; margin:0; min-width:0; }
+.provider-model-mapping > [role="group"] > .account-actions { margin:12px 0 0; }

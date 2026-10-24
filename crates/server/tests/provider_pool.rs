@@ -682,3 +682,65 @@ async fn schema_37_defaults_existing_suppliers_to_single_without_rewriting_sourc
     let(s,v)=f.req("PUT",&format!("/api/providers/{p}"),json!({"name":"Back to single","endpoint_mode":"single","base_url":"http://127.0.0.1:8103/v1"})).await;assert_eq!(s,200,"{v}");
     assert_eq!(db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(source)).unwrap().unwrap().base_url,"http://127.0.0.1:8103/v1");
 }
+
+#[tokio::test]
+async fn credential_mapping_remove_readd_preserves_bge_aliases_and_financial_history() {
+    use tokengo_shared::{ChannelId,ModelKind};
+    let f=Fixture::new().await;
+    let(s,v)=f.req("POST","/api/providers",json!({"name":"Mapping lifecycle","base_url":"https://mapping-fixture.test/v1"})).await;
+    assert_eq!(s,200,"{v}");let provider=v["provider"]["id"].as_i64().unwrap();
+    let base=format!("/api/providers/{provider}/credentials");
+    let(s,v)=f.req("POST",&base,json!({"label":"BGE key","key":"synthetic-mapping-key","models":[{"model":"bge-m3","upstream":"BAAI/bge-m3","enabled":true},{"model":"BAAI/bge-m3","upstream":"BAAI/bge-m3","enabled":true}]})).await;
+    assert_eq!(s,200,"{v}");let credential=v["credential"]["id"].as_i64().unwrap();let source=v["source_id"].as_i64().unwrap();let path=format!("{base}/{credential}");
+    let alias="DeepSeek-V4.1-Flash";let upstream="deepseek-ai/DeepSeek-V4.1-Flash";
+    {
+        let c=f.state.conn();
+        for name in ["bge-m3","BAAI/bge-m3"] {db::kinds::set(&c,name,ModelKind::Embeddings).unwrap();}
+        db::catalog::replace(&c,ChannelId(source),&[tokengo_server::upstream::UpstreamModel{id:upstream.into(),kind:Some("chat".into()),..Default::default()}],db::now_ms()).unwrap();
+    }
+    let(s,v)=f.req("PATCH",&path,json!({"models":[{"model":alias,"upstream":upstream,"enabled":true}]})).await;
+    assert_eq!(s,200,"{v}");assert_eq!(v["credential"]["models"].as_array().unwrap().len(),3);
+    let(s,options)=f.req("GET","/api/shared-virtual-models",Value::Null).await;assert_eq!(s,200,"{options}");
+    let option=options["options"].as_array().unwrap().iter().find(|o|o["provider_id"]==provider&&o["logical_model"]==alias).unwrap();
+    assert_eq!(option["kind"],"chat");
+    let snapshot={
+        let c=f.state.conn();let user=db::identity::create_user(&c,"mapping history owner","user",&Default::default()).unwrap();let(key,_)=db::identity::create_key(&c,user.id,"history key",&Default::default(),None,None).unwrap();
+        let request=db::requests::start(&c,"/v1/chat/completions",alias,None,false).unwrap();
+        c.execute("UPDATE requests SET status='ok',channel_id=?2 WHERE id=?1",rusqlite::params![request,source]).unwrap();
+        let ledger=db::billing::reserve_unpriced(&c,user.id,key.id,request,"mapping-history-attempt",source,alias).unwrap();db::billing::settle(&c,ledger,Some(4),Some(1),"ok").unwrap();
+        db::billing::create_price(&c,&db::billing::Price{id:0,channel_id:source,model:alias.into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:4096,max_output_tokens:8},"synthetic mapping fixture").unwrap();
+        (serde_json::to_value(db::billing::usage(&c,&Default::default()).unwrap()).unwrap(),serde_json::to_value(db::billing::list_prices(&c).unwrap()).unwrap(),request)
+    };
+    let(s,v)=f.req("PATCH",&path,json!({"models":[{"model":alias,"enabled":false}]})).await;assert_eq!(s,200,"{v}");
+    let(s,options)=f.req("GET","/api/shared-virtual-models",Value::Null).await;assert_eq!(s,200,"{options}");assert!(!options["options"].as_array().unwrap().iter().any(|o|o["provider_id"]==provider&&o["logical_model"]==alias));
+    let(s,v)=f.req("PATCH",&path,json!({"remove_models":[alias]})).await;assert_eq!(s,200,"{v}");
+    let maps=v["credential"]["models"].as_array().unwrap();assert_eq!(maps.len(),2);assert!(maps.iter().all(|m|m["upstream"]=="BAAI/bge-m3"));
+    {
+        let c=f.state.conn();assert_eq!(serde_json::to_value(db::billing::usage(&c,&Default::default()).unwrap()).unwrap(),snapshot.0);assert_eq!(serde_json::to_value(db::billing::list_prices(&c).unwrap()).unwrap(),snapshot.1);
+        assert_eq!(c.query_row("SELECT status FROM requests WHERE id=?1",[snapshot.2],|r|r.get::<_,String>(0)).unwrap(),"ok");
+        assert_eq!(c.query_row("SELECT count(*) FROM audit_events WHERE action='provider_credential.models.remove' AND target_id=?1",[credential],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
+    let(s,v)=f.req("PATCH",&path,json!({"models":[{"model":alias,"upstream":upstream,"enabled":true}]})).await;assert_eq!(s,200,"{v}");assert_eq!(v["credential"]["models"].as_array().unwrap().len(),3);
+    let(s,v)=f.req("PATCH",&path,json!({"remove_models":[alias],"models":[{"model":"DEEPSEEK_v4.1_FLASH","enabled":true}],"label":"must roll back"})).await;assert_eq!(s,400,"{v}");
+    let(s,v)=f.req("PATCH",&path,json!({"remove_models":["not-configured"]})).await;assert_eq!(s,400,"{v}");
+    let(s,v)=f.req("GET",&base,Value::Null).await;assert_eq!(s,200,"{v}");let current=v["credentials"].as_array().unwrap().iter().find(|k|k["id"]==credential).unwrap();assert_eq!(current["label"],"BGE key");assert_eq!(current["models"].as_array().unwrap().len(),3);
+}
+
+#[tokio::test]
+async fn last_usable_mapping_removal_blocks_references_but_not_another_keys_copy() {
+    let f=Fixture::new().await;
+    let(s,v)=f.req("POST","/api/providers",json!({"name":"Referenced mapping","base_url":"https://reference-fixture.test/v1"})).await;assert_eq!(s,200,"{v}");let provider=v["provider"]["id"].as_i64().unwrap();let base=format!("/api/providers/{provider}/credentials");
+    let(s,v)=f.req("POST",&base,json!({"label":"First key","key":"reference-first-synthetic","models":[{"model":"a","enabled":true}]})).await;assert_eq!(s,200,"{v}");let first=v["credential"]["id"].as_i64().unwrap();let first_source=v["source_id"].as_i64().unwrap();
+    let config=json!({"name":"shared-reference","enabled":true,"mode":"ordered","timezone":"UTC","targets":[{"provider_id":provider,"logical_model":"a","switch_on_429":true,"switch_on_400":false}],"windows":[],"default_positions":[]});
+    let(s,v)=f.req("POST","/api/shared-virtual-models",config.clone()).await;assert_eq!(s,200,"{v}");
+    let owner={let c=f.state.conn();let user=db::identity::create_user(&c,"private mapping owner","user",&Default::default()).unwrap();let mut private:db::user_virtual_routes::Config=serde_json::from_value(config).unwrap();private.name="private-reference".into();db::user_virtual_routes::create(&c,user.id,&private).unwrap();user.id};
+    let(s,v)=f.req("PATCH",&format!("{base}/{first}"),json!({"remove_models":["a"],"label":"must not persist"})).await;assert_eq!(s,409,"{v}");assert_eq!(v["error"]["type"],"credential_model_in_use");let message=v["error"]["message"].as_str().unwrap();assert!(message.contains("shared-reference")&&message.contains("private-reference"));
+    let(s,v)=f.req("POST",&base,json!({"label":"Second key","key":"reference-second-synthetic","models":[{"model":"a","enabled":true}]})).await;assert_eq!(s,200,"{v}");let second=v["credential"]["id"].as_i64().unwrap();let second_source=v["source_id"].as_i64().unwrap();
+    // A different Key is not an authorized replacement for a source-scoped private owner.
+    {let c=f.state.conn();let mut user=db::identity::user(&c,owner).unwrap().unwrap();user.policy.allowed_channels=Some(vec![first_source]);db::identity::update_user(&c,&user).unwrap();}
+    let(s,v)=f.req("PATCH",&format!("{base}/{first}"),json!({"remove_models":["a"]})).await;assert_eq!(s,409,"{v}");assert!(v["error"]["message"].as_str().unwrap().contains("private-reference"));
+    {let c=f.state.conn();let mut user=db::identity::user(&c,owner).unwrap().unwrap();user.policy.allowed_channels=Some(vec![first_source,second_source]);db::identity::update_user(&c,&user).unwrap();}
+    let(s,v)=f.req("PATCH",&format!("{base}/{first}"),json!({"remove_models":["a"]})).await;assert_eq!(s,200,"{v}");assert!(v["credential"]["models"].as_array().unwrap().is_empty());assert_eq!(v["credential"]["label"],"First key");
+    let(s,v)=f.req("PATCH",&format!("{base}/{second}"),json!({"remove_models":["a"]})).await;assert_eq!(s,409,"{v}");
+    let rows=db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(second_source)).unwrap().unwrap();assert_eq!(rows.models.len(),1);
+}

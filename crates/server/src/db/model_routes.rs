@@ -239,6 +239,23 @@ pub fn routes_for(conn: &Connection, name: &str) -> Result<Option<NameRoute>> {
 /// 别名与视觉能力都按「渠道 + 名字」这一行取，不做全局推断 —— 同一个模型名在 A 渠道上
 /// 落到能看图的模型、在 B 渠道上是纯文本，是常事。
 pub fn channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
+    let mut out=configured_channels_for(conn,name)?;
+    super::route_policy::order_channels(&super::route_policy::load(conn,name)?,&mut out);
+    Ok(out)
+}
+
+/// A shared alias explicitly chooses a provider. Its targets are independent of
+/// the ordinary logical model's source allowlist, while global enablement and
+/// concrete provider/credential/source enablement still apply.
+pub fn provider_channels_for(conn:&Connection,name:&str,provider:i64)->Result<Vec<Channel>> {
+    let mut out=Vec::new();
+    for channel in configured_channels_for(conn,name)? {
+        if super::provider_pool::source_credential(conn,channel.id.0)?.is_some_and(|credential|credential.enabled&&credential.provider_id==provider){out.push(channel);}
+    }
+    Ok(out)
+}
+
+fn configured_channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
     let mut out = Vec::new();
     if !enabled(conn,name)? {return Ok(out);}
     for l in channels::for_model(conn,name)? {
@@ -264,7 +281,6 @@ pub fn channels_for(conn: &Connection, name: &str) -> Result<Vec<Channel>> {
             headers: l.headers,
         });
     }
-    super::route_policy::order_channels(&super::route_policy::load(conn, name)?, &mut out);
     Ok(out)
 }
 

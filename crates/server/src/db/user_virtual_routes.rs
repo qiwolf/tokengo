@@ -220,12 +220,15 @@ pub fn allowed_sources(
     if !auth.permits_model(&t.logical_model) || super::model_access::internal_only(c, &t.logical_model)? {
         return Ok(vec![]);
     }
-    allowed_sources_shared(c, auth, t)
+    allowed_sources_from(c, auth, t, model_routes::channels_for(c, &t.logical_model)?)
 }
 /// Internal delegation skips only the target-name grant, preserving source and cost policy.
 pub fn allowed_sources_shared(c: &Connection, auth: &identity::AuthContext, t: &Target) -> Result<Vec<i64>, VirtualError> {
+    allowed_sources_from(c,auth,t,model_routes::provider_channels_for(c,&t.logical_model,t.provider_id)?)
+}
+fn allowed_sources_from(c:&Connection,auth:&identity::AuthContext,t:&Target,channels:Vec<tokengo_shared::Channel>)->Result<Vec<i64>,VirtualError>{
     let mut ids = Vec::new();
-    for ch in model_routes::channels_for(c, &t.logical_model)? {
+    for ch in channels {
         if !ch.routable()
             || super::provider_channels::membership(c, ch.id.0)?
                 .is_none_or(|(p, _, enabled)| p != t.provider_id || !enabled)

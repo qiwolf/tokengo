@@ -1,0 +1,154 @@
+[
+  {
+    "name": "disabled_model_initially_absent_from_shared_options",
+    "passed": true
+  },
+  {
+    "name": "stored_mappings_have_explicit_remove_controls",
+    "passed": true
+  },
+  {
+    "name": "remove_confirmation_visible_with_preserved_history",
+    "passed": true
+  },
+  {
+    "name": "cancel_confirmation_keeps_row",
+    "passed": true
+  },
+  {
+    "name": "cancel_editor_discards_unsaved_removal",
+    "passed": true
+  },
+  {
+    "name": "readding_disabled_upstream_reenables_with_feedback",
+    "passed": true
+  },
+  {
+    "name": "model_save_http_6",
+    "passed": true
+  },
+  {
+    "name": "enabled_mapping_is_immediately_shared_candidate",
+    "passed": true
+  },
+  {
+    "name": "refresh_candidates_keeps_unsaved_name_and_target",
+    "passed": true
+  },
+  {
+    "name": "ordinary_route_whitelist_is_old_provider_only",
+    "passed": true
+  },
+  {
+    "name": "create_shared_via_ui_despite_ordinary_source_whitelist",
+    "passed": true
+  },
+  {
+    "name": "ordinary_call_keeps_legacy_source",
+    "passed": true
+  },
+  {
+    "name": "shared_call_reaches_explicit_primary_source",
+    "passed": true
+  },
+  {
+    "name": "shared_selection_does_not_rewrite_ordinary_policy",
+    "passed": true
+  },
+  {
+    "name": "explicit_shared_provider_keeps_user_source_authorization",
+    "passed": true
+  },
+  {
+    "name": "model_save_http_15",
+    "passed": true
+  },
+  {
+    "name": "saved_remove_disappears_from_credential_and_shared_options",
+    "passed": true
+  },
+  {
+    "name": "model_save_http_17",
+    "passed": true
+  },
+  {
+    "name": "readd_same_upstream_with_new_alias_is_selectable",
+    "passed": true
+  },
+  {
+    "name": "model_save_http_19",
+    "passed": true
+  },
+  {
+    "name": "dependency_error_is_visible_and_draft_preserved",
+    "passed": true
+  },
+  {
+    "name": "model_save_http_21",
+    "passed": true
+  },
+  {
+    "name": "removal_scoped_to_current_key_when_other_key_supplies_target",
+    "passed": true
+  },
+  {
+    "name": "model_save_http_23",
+    "passed": true
+  },
+  {
+    "name": "explicit_same_upstream_alias_preserves_existing_mapping",
+    "passed": true
+  },
+  {
+    "name": "model_editor_no_page_or_control_overflow_1440",
+    "passed": true
+  },
+  {
+    "name": "model_editor_buttons_touch_targets_1440",
+    "passed": true
+  },
+  {
+    "name": "shared_editor_no_overflow_1440",
+    "passed": true
+  },
+  {
+    "name": "shared_editor_touch_targets_1440",
+    "passed": true
+  },
+  {
+    "name": "model_editor_no_page_or_control_overflow_900",
+    "passed": true
+  },
+  {
+    "name": "model_editor_buttons_touch_targets_900",
+    "passed": true
+  },
+  {
+    "name": "shared_editor_no_overflow_900",
+    "passed": true
+  },
+  {
+    "name": "shared_editor_touch_targets_900",
+    "passed": true
+  },
+  {
+    "name": "model_editor_no_page_or_control_overflow_390",
+    "passed": true
+  },
+  {
+    "name": "model_editor_buttons_touch_targets_390",
+    "passed": true
+  },
+  {
+    "name": "shared_editor_no_overflow_390",
+    "passed": true
+  },
+  {
+    "name": "shared_editor_touch_targets_390",
+    "passed": true
+  },
+  {
+    "name": "no_javascript_errors",
+    "passed": true
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "level": "derived from observed production query and source trace",
+  "observed_utc": "2026-10-24T08:49:25.877355+00:00",
+  "source_evidence_sha256": "de5af9e3cc70942359e4067c207115db84b74d9a3b753e615f738a300b365fc7",
+  "mapping_enabled": true,
+  "source_provider_and_key_enabled": true,
+  "logical_name_collides_after_normalization": true,
+  "ordinary_route_allowlist_excludes_new_source": true,
+  "no_blocking_fault": true,
+  "root_cause": "shared candidates reuse ordinary logical-model source allowlist",
+  "fix_boundary": "explicit shared provider selection independent of ordinary source ordering; normal/private routing and source/cost grants retained",
+  "production_changes_this_task": false
+}

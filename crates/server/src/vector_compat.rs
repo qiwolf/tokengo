@@ -96,7 +96,10 @@ fn snapshot(
             return Err(unverified("目标无已授权可用来源，请检查渠道权限"));
         }
         let mut target_facts = Vec::new();
-        for channel in db::model_routes::channels_for(c, &target.logical_model)? {
+        let channels=if user==0 {
+            db::model_routes::provider_channels_for(c,&target.logical_model,target.provider_id)?
+        }else{db::model_routes::channels_for(c,&target.logical_model)?};
+        for channel in channels {
             if !ids.contains(&channel.id.0) {
                 continue;
             }

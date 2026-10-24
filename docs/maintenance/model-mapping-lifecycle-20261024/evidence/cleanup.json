@@ -1,0 +1,15 @@
+{
+  "host": "build-test",
+  "isolated_server_stopped": true,
+  "server_port_closed": true,
+  "mock_port_closed": true,
+  "private_fixture_deleted": true,
+  "removed": [
+    "synthetic credentials",
+    "synthetic gateway key",
+    "fixture DB and WAL",
+    "fixture master key",
+    "private logs"
+  ],
+  "production_access": false
+}

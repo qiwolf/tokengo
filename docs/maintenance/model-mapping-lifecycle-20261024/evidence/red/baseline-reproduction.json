@@ -1,0 +1,16 @@
+{
+  "host": "build-test",
+  "baseline_binary_sha256": "571c7924afcc567a505c6ba89242dc01402d33c420142737e24fbcea1fbe47c4",
+  "isolated": true,
+  "primary_enabled": true,
+  "ordinary_whitelist": [
+    2
+  ],
+  "expected_shared_candidate": true,
+  "observed_shared_candidate": false,
+  "candidate_bug_reproduced": true,
+  "remove_status": 422,
+  "remove_error_type": "non_json_validation_error",
+  "remove_bug_reproduced": true,
+  "production_access": false
+}

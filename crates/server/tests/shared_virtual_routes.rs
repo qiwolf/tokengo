@@ -657,3 +657,36 @@ async fn targeted_shared_lookup_does_not_trust_an_index_pointing_to_another_name
     assert!(db::shared_virtual_routes::resolve(&c,&auth,"another-name",db::now_ms()).unwrap().is_none());
     assert_eq!(db::shared_virtual_routes::resolve(&c,&auth,"shared-model",db::now_ms()).unwrap().unwrap().id,id);
 }
+
+#[tokio::test]
+async fn explicit_shared_providers_ignore_direct_allowlists_without_expanding_private_or_caller_grants() {
+    for kind in [ModelKind::Chat,ModelKind::Embeddings,ModelKind::Rerank] {
+        let f=Fixture::new(kind).await;
+        {
+            let c=f.state.conn();let mut private=f.config.clone();private.name="private-retains-direct-policy".into();private.targets.truncate(1);vr::create(&c,f.user,&private).unwrap();
+            for name in ["bottom-0","bottom-1"] {db::route_policy::save(&c,name,&db::route_policy::RoutePolicy{channel_ids:Some(vec![]),..Default::default()}).unwrap();}
+        }
+        let before={let c=f.state.conn();["bottom-0","bottom-1"].map(|name|db::route_policy::load(&c,name).unwrap())};
+        let(status,options)=f.admin("GET","/api/shared-virtual-models",Value::Null).await;assert_eq!(status,StatusCode::OK,"{options}");
+        for target in &f.config.targets {assert!(options["options"].as_array().unwrap().iter().any(|o|o["provider_id"]==target.provider_id&&o["logical_model"]==target.logical_model),"explicit provider missing: {options}");}
+        f.clear();assert!(!f.call("bottom-0").await.0.is_success());assert!(!f.call("private-retains-direct-policy").await.0.is_success());assert_eq!(f.count(),0);
+        f.publish().await;f.allow_alias_only();f.clear();
+        let(status,body)=f.call("shared-model").await;assert_eq!(status,StatusCode::OK,"{kind:?}: {body}");assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),0);f.flush().await;
+        {
+            let c=f.state.conn();let after=["bottom-0","bottom-1"].map(|name|db::route_policy::load(&c,name).unwrap());assert_eq!(before,after);
+            assert!(db::model_routes::channels_for(&c,"bottom-0").unwrap().is_empty());
+            assert_eq!(db::model_routes::provider_channels_for(&c,"bottom-0",f.config.targets[0].provider_id).unwrap().len(),1);
+            let mut user=db::identity::user(&c,f.user).unwrap().unwrap();user.policy.allowed_channels=Some(vec![]);db::identity::update_user(&c,&user).unwrap();
+        }
+        f.clear();assert!(!f.call("shared-model").await.0.is_success());assert_eq!(f.count(),0);
+        {
+            let c=f.state.conn();let mut user=db::identity::user(&c,f.user).unwrap().unwrap();user.policy.allowed_channels=Some(f.sources.iter().map(|s|s.0).collect());user.policy.allow_paid=false;db::identity::update_user(&c,&user).unwrap();
+        }
+        assert!(!f.call("shared-model").await.0.is_success());assert_eq!(f.count(),0);
+        {
+            let c=f.state.conn();c.execute("UPDATE provider_credentials SET enabled=0",[]).unwrap();assert!(db::model_routes::provider_channels_for(&c,"bottom-0",f.config.targets[0].provider_id).unwrap().is_empty());
+            c.execute("UPDATE provider_credentials SET enabled=1",[]).unwrap();c.execute("UPDATE provider_channels SET canonical_state='conflict'",[]).unwrap();assert!(db::model_routes::provider_channels_for(&c,"bottom-0",f.config.targets[0].provider_id).unwrap().is_empty());
+            c.execute("UPDATE provider_channels SET canonical_state='canonical'",[]).unwrap();db::model_routes::set_enabled(&c,"bottom-0",false).unwrap();assert!(db::model_routes::provider_channels_for(&c,"bottom-0",f.config.targets[0].provider_id).unwrap().is_empty());
+        }
+    }
+}

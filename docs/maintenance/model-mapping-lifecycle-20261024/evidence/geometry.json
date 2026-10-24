@@ -1,0 +1,722 @@
+[
+  {
+    "width": 1440,
+    "document": 1440,
+    "dialogLeft": 240,
+    "dialogRight": 1200,
+    "controls": [
+      {
+        "tag": "BUTTON",
+        "name": "关闭",
+        "width": 62,
+        "height": 48,
+        "left": 1113,
+        "right": 1175
+      },
+      {
+        "tag": "BUTTON",
+        "name": "返回 Key 列表",
+        "width": 121.90625,
+        "height": 48,
+        "left": 265,
+        "right": 386.90625
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 910,
+        "height": 48,
+        "left": 265,
+        "right": 1175
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 265,
+        "right": 662
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 678,
+        "right": 1075
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 1091,
+        "right": 1111
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 265,
+        "right": 397
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 409,
+        "right": 499
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 265,
+        "right": 662
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 678,
+        "right": 1075
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 1091,
+        "right": 1111
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 265,
+        "right": 397
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 409,
+        "right": 499
+      },
+      {
+        "tag": "BUTTON",
+        "name": "确认移除映射",
+        "width": 118,
+        "height": 48,
+        "left": 265,
+        "right": 383
+      },
+      {
+        "tag": "BUTTON",
+        "name": "保留映射",
+        "width": 90,
+        "height": 48,
+        "left": 395,
+        "right": 485
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 265,
+        "right": 662
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 678,
+        "right": 1075
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 1091,
+        "right": 1111
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 265,
+        "right": 397
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 409,
+        "right": 499
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 265,
+        "right": 662
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 397,
+        "height": 48,
+        "left": 678,
+        "right": 1075
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 1091,
+        "right": 1111
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 265,
+        "right": 397
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 409,
+        "right": 499
+      },
+      {
+        "tag": "BUTTON",
+        "name": "取消",
+        "width": 62,
+        "height": 48,
+        "left": 265,
+        "right": 327
+      },
+      {
+        "tag": "BUTTON",
+        "name": "保存模型配置",
+        "width": 118,
+        "height": 48,
+        "left": 339,
+        "right": 457
+      }
+    ]
+  },
+  {
+    "width": 1440,
+    "document": 1440,
+    "left": 336,
+    "right": 1104,
+    "buttons": [
+      48,
+      48,
+      48,
+      48,
+      48,
+      48,
+      48,
+      48
+    ]
+  },
+  {
+    "width": 900,
+    "document": 900,
+    "dialogLeft": 16,
+    "dialogRight": 884,
+    "controls": [
+      {
+        "tag": "BUTTON",
+        "name": "关闭",
+        "width": 62,
+        "height": 48,
+        "left": 797,
+        "right": 859
+      },
+      {
+        "tag": "BUTTON",
+        "name": "返回 Key 列表",
+        "width": 121.90625,
+        "height": 48,
+        "left": 41,
+        "right": 162.90625
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 818,
+        "height": 48,
+        "left": 41,
+        "right": 859
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 41,
+        "right": 392
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 408,
+        "right": 759
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 775,
+        "right": 795
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 41,
+        "right": 173
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 185,
+        "right": 275
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 41,
+        "right": 392
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 408,
+        "right": 759
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 775,
+        "right": 795
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 41,
+        "right": 173
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 185,
+        "right": 275
+      },
+      {
+        "tag": "BUTTON",
+        "name": "确认移除映射",
+        "width": 118,
+        "height": 48,
+        "left": 41,
+        "right": 159
+      },
+      {
+        "tag": "BUTTON",
+        "name": "保留映射",
+        "width": 90,
+        "height": 48,
+        "left": 171,
+        "right": 261
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 41,
+        "right": 392
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 408,
+        "right": 759
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 775,
+        "right": 795
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 41,
+        "right": 173
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 185,
+        "right": 275
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 41,
+        "right": 392
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 351,
+        "height": 48,
+        "left": 408,
+        "right": 759
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 775,
+        "right": 795
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 41,
+        "right": 173
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 185,
+        "right": 275
+      },
+      {
+        "tag": "BUTTON",
+        "name": "取消",
+        "width": 62,
+        "height": 48,
+        "left": 41,
+        "right": 103
+      },
+      {
+        "tag": "BUTTON",
+        "name": "保存模型配置",
+        "width": 118,
+        "height": 48,
+        "left": 115,
+        "right": 233
+      }
+    ]
+  },
+  {
+    "width": 900,
+    "document": 900,
+    "left": 66,
+    "right": 834,
+    "buttons": [
+      48,
+      48,
+      48,
+      48,
+      48,
+      48,
+      48,
+      48
+    ]
+  },
+  {
+    "width": 390,
+    "document": 390,
+    "dialogLeft": 8,
+    "dialogRight": 382,
+    "controls": [
+      {
+        "tag": "BUTTON",
+        "name": "关闭",
+        "width": 62,
+        "height": 48,
+        "left": 303,
+        "right": 365
+      },
+      {
+        "tag": "BUTTON",
+        "name": "返回 Key 列表",
+        "width": 121.90625,
+        "height": 48,
+        "left": 25,
+        "right": 146.90625
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 25,
+        "right": 45
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 25,
+        "right": 157
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 169,
+        "right": 259
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 25,
+        "right": 45
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 25,
+        "right": 157
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 169,
+        "right": 259
+      },
+      {
+        "tag": "BUTTON",
+        "name": "确认移除映射",
+        "width": 118,
+        "height": 48,
+        "left": 25,
+        "right": 143
+      },
+      {
+        "tag": "BUTTON",
+        "name": "保留映射",
+        "width": 90,
+        "height": 48,
+        "left": 155,
+        "right": 245
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 25,
+        "right": 45
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 25,
+        "right": 157
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 169,
+        "right": 259
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "text",
+        "width": 340,
+        "height": 48,
+        "left": 25,
+        "right": 365
+      },
+      {
+        "tag": "INPUT",
+        "name": "checkbox",
+        "width": 20,
+        "height": 20,
+        "left": 25,
+        "right": 45
+      },
+      {
+        "tag": "BUTTON",
+        "name": "添加同上游映射",
+        "width": 132,
+        "height": 48,
+        "left": 25,
+        "right": 157
+      },
+      {
+        "tag": "BUTTON",
+        "name": "移除映射",
+        "width": 90,
+        "height": 48,
+        "left": 169,
+        "right": 259
+      },
+      {
+        "tag": "BUTTON",
+        "name": "取消",
+        "width": 62,
+        "height": 48,
+        "left": 25,
+        "right": 87
+      },
+      {
+        "tag": "BUTTON",
+        "name": "保存模型配置",
+        "width": 118,
+        "height": 48,
+        "left": 99,
+        "right": 217
+      }
+    ]
+  },
+  {
+    "width": 390,
+    "document": 390,
+    "left": 8,
+    "right": 382,
+    "buttons": [
+      48,
+      48,
+      48,
+      48,
+      48,
+      48,
+      48,
+      48
+    ]
+  }
+]

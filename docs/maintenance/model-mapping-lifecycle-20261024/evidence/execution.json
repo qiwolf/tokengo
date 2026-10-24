@@ -1,0 +1,88 @@
+[
+  {
+    "name": "server-unit",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "tokengo-server",
+      "--lib"
+    ],
+    "cwd": "/srv/build/tokengo-model-mapping-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "af57d1b358d049f968989812b0bedf784b74b045db2231c909fd78cafd6df905"
+  },
+  {
+    "name": "mapping-integration",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "tokengo-server",
+      "--test",
+      "provider_pool",
+      "--test",
+      "provider_channels",
+      "--test",
+      "shared_virtual_routes",
+      "--test",
+      "user_virtual_routes"
+    ],
+    "cwd": "/srv/build/tokengo-model-mapping-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "af57d1b358d049f968989812b0bedf784b74b045db2231c909fd78cafd6df905"
+  },
+  {
+    "name": "web-tests",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "tokengo-web"
+    ],
+    "cwd": "/srv/build/tokengo-model-mapping-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "af57d1b358d049f968989812b0bedf784b74b045db2231c909fd78cafd6df905"
+  },
+  {
+    "name": "server-build",
+    "host": "build-test",
+    "command": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--release",
+      "-p",
+      "tokengo-server"
+    ],
+    "cwd": "/srv/build/tokengo-model-mapping-20261024/source",
+    "exit_code": 0,
+    "source_manifest_sha256": "af57d1b358d049f968989812b0bedf784b74b045db2231c909fd78cafd6df905"
+  },
+  {
+    "name": "web-build",
+    "command": [
+      "trunk",
+      "build",
+      "--release",
+      "--locked"
+    ],
+    "cwd": "/srv/build/tokengo-model-mapping-20261024/source/crates/web",
+    "host": "build-test",
+    "exit_code": 0,
+    "only_changed_files": [
+      "crates/web/style.css"
+    ],
+    "source_manifest_sha256": "4eacaad02f933276ba47af2cf68f0646f01417a6c7f68d395d6d348ad4214bfe"
+  }
+]

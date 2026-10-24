@@ -1,0 +1,115 @@
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-model-mapping-20261024/source/crates/server)
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:707:4
+    |
+707 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:754:15
+    |
+754 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.94s
+     Running tests/provider_channels.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/provider_channels-2be1ebf7179a941e)
+
+running 24 tests
+test migration_33_preserves_existing_connections_models_and_secrets ... ok
+test legacy_editor_omission_does_not_reenable_and_explicit_mapping_switch_preserves_generation ... ok
+test metadata_request_cannot_assign_old_identity_capabilities_after_secret_change ... ok
+test presentation_changes_roll_back_if_audit_storage_fails ... ok
+test connection_delete_cleans_explicit_grants_without_broadening_and_retains_ledger ... ok
+test managed_non_auth_headers_keep_authentication_and_reject_auth_bypass_atomically ... ok
+test managed_non_auth_headers_reject_cross_provider_credential_ownership ... ok
+test managed_non_auth_headers_preserve_anonymous_and_oauth_authentication_boundaries ... ok
+test managed_non_auth_headers_duplicate_identity_rolls_back_entire_key ... ok
+test catalog_purpose_is_display_only_and_optional_updates_preserve_or_clear_it ... ok
+test presentation_endpoints_reject_invalid_missing_unprivileged_and_csrf_requests ... ok
+test managed_non_auth_headers_sync_all_key_sources_and_preserve_models_and_history ... ok
+test deleting_credential_carrier_keeps_shared_key_and_remaining_mapping ... ok
+test grouping_is_explicit_unique_validated_root_and_csrf_only ... ok
+test deleting_scheduled_only_target_disables_alias_without_falling_through_to_default ... ok
+test enabled_model_parent_and_visibility_filter_real_forward_and_public_list ... ok
+test pulled_reasoning_metadata_maps_exact_model_and_configures_only_explicit_defaults ... ok
+test provider_delete_cascades_config_preserves_history_and_other_provider ... ok
+test shared_provider_never_broadens_existing_connection_acl ... ok
+test provider_membership_atomic_model_switch_and_restart_preserve_identity ... ok
+test provider_delete_requires_root_and_browser_csrf ... ok
+test presentation_rename_preserves_all_runtime_identity_and_api_names ... ok
+test reasoning_defaults_reach_real_chat_and_explicit_invalid_null_and_other_alias_remain_distinct ... ok
+test deletion_busy_and_invalid_config_roll_back_every_change ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.05s
+
+     Running tests/provider_pool.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/provider_pool-2957543ced939403)
+
+running 16 tests
+test canonical_urls_preserve_base_paths_and_reject_secret_or_query_urls ... ok
+test planning_does_not_set_affinity_and_cas_cannot_overwrite_a_newer_choice ... ok
+test migration_splits_endpoints_preserves_source_identity_and_is_idempotent ... ok
+test local_endpoints_preserve_identity_restart_and_isolate_key_rotation ... ok
+test tools_credentials_require_explicit_scope_and_preserve_independent_capabilities ... ok
+test first_oauth_credential_has_responses_and_verified_bounds_without_a_template ... ok
+test local_endpoint_validation_and_single_supplier_guard ... ok
+test disabling_the_only_credential_removes_provider_routable_model_counts ... ok
+test different_url_assignment_is_conflict_and_atomic ... ok
+test credential_crud_preserves_sources_and_rotates_generation_only_for_identity_changes ... ok
+test moving_a_carrier_then_rotating_never_changes_the_old_pool_secret ... ok
+test missing_secrets_and_different_auth_headers_never_collapse_credentials ... ok
+test last_usable_mapping_removal_blocks_references_but_not_another_keys_copy ... ok
+test credential_mapping_remove_readd_preserves_bge_aliases_and_financial_history ... ok
+test schema_37_defaults_existing_suppliers_to_single_without_rewriting_sources ... ok
+test local_two_ports_route_only_the_declared_model_and_upstream_mapping ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.09s
+
+     Running tests/shared_virtual_routes.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/shared_virtual_routes-1cdb567f2c3c4fb3)
+
+running 19 tests
+test targeted_shared_lookup_does_not_trust_an_index_pointing_to_another_name ... ok
+test queued_single_target_shared_chat_rejects_changed_model_kind_before_outbound ... ok
+test root_can_list_shared_virtual_models_over_http ... ok
+test internal_models_cannot_be_called_directly_or_through_auto_and_private_alias ... ok
+test shared_route_root_crud_is_versioned_and_not_available_to_ordinary_users ... ok
+test incompatible_shared_vectors_are_rejected_before_publishing ... ok
+test shared_disable_and_global_bottom_disable_take_effect_without_deleting_routes ... ok
+test targeted_shared_lookup_preserves_legacy_names_and_rejects_duplicate_conflicts ... ok
+test targeted_shared_lookup_rechecks_revocation_policy_source_and_version ... ok
+test stateless_messages_and_responses_use_shared_fallback_and_respect_internal_boundary ... ok
+test shared_alias_preserves_key_ancestor_channel_and_paid_constraints ... ok
+test shared_chat_explicit_400_and_429_switches_still_control_fallback ... ok
+test admin_compatibility_probe_does_not_borrow_callers_budget ... ok
+test successful_certificate_timestamp_refresh_does_not_reject_queued_requests ... ok
+test shared_standalone_tools_require_explicit_capabilities_and_preserve_request_billing ... ok
+test in_flight_shared_route_rechecks_caller_key_acl_budget_and_admin_version ... ok
+test shared_alias_only_acl_lists_and_calls_all_supported_kinds_with_caller_billing ... ok
+test explicit_shared_providers_ignore_direct_allowlists_without_expanding_private_or_caller_grants ... ok
+test targeted_shared_lookup_ignores_unrelated_payloads_for_every_model_kind ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.45s
+
+     Running tests/user_virtual_routes.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/user_virtual_routes-9470b3871598121e)
+
+running 16 tests
+test time_windows_are_half_open_weekly_and_timezone_explicit ... ok
+test private_name_and_id_queries_use_existing_point_indexes ... ok
+test private_names_owner_acl_version_and_soft_delete_are_enforced ... ok
+test paid_permission_follows_real_target_price_not_the_alias ... ok
+test private_point_reads_preserve_time_windows_and_recycle_bin_without_sibling_hydration ... ok
+test live_time_credential_and_user_revocation_stop_new_attempts ... ok
+test aliases_never_authorize_real_models_or_sources ... ok
+test legacy_private_name_index_resolves_without_hydrating_siblings_and_keeps_live_guards ... ok
+test explicit_order_and_window_default_order_are_preserved ... ok
+test recursion_auto_global_names_and_malformed_shapes_are_rejected ... ok
+test same_version_concurrent_edits_have_one_winner ... ok
+test earlier_legacy_private_name_keeps_precedence_over_a_later_canonical_index ... ok
+test private_request_lookup_reads_only_selected_owned_route_and_rechecks_authorization ... ok
+test private_index_hit_must_match_real_name_before_it_can_own_an_alias ... ok
+test later_standard_name_collision_fails_closed_and_unknown_kind_cannot_mix ... ok
+test browser_api_is_owner_scoped_csrf_typed_and_versioned ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s

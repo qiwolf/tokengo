@@ -1,0 +1,152 @@
+   Compiling tokengo-web v0.34.0 (/srv/build/tokengo-model-mapping-20261024/source/crates/web)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s
+     Running unittests src/lib.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/tokengo_web-850c788a0a96a974)
+
+running 133 tests
+test account_api::tests::credentials_validate_bytes_without_rejecting_legacy_login ... ok
+test account_api::tests::optional_setup_display_name_omits_blank_values_for_server_default ... ok
+test admin_api::tests::monetary_inputs_keep_integer_precision_and_reject_overflow ... ok
+test account_api::tests::roles_are_explicit_and_unknown_roles_rejected ... ok
+test account_api::tests::setup_keeps_one_time_gateway_key_separate_from_account ... ok
+test account_api::tests::request_units_never_look_like_token_zero ... ok
+test api::tests::a_slash_in_a_model_name_is_escaped_before_it_goes_into_the_url ... ok
+test admin_api::tests::protocol_editor_rejects_invalid_declarations_and_null_boolean ... ok
+test admin_api::tests::billing_units_keep_request_counts_separate_from_tokens_and_unknown ... ok
+test fmt::tests::ago_handles_both_directions ... ok
+test admin_api::tests::unknown_ledger_cost_is_not_zero ... ok
+test fmt::tests::context_lengths_read_as_a_short_badge ... ok
+test fmt::tests::durations_read_like_a_person_wrote_them ... ok
+test fmt::tests::epochs_and_month_boundaries_line_up ... ok
+test fmt::tests::percentages_never_lie_about_zero ... ok
+test fmt::tests::thousands_separators ... ok
+test fmt::tests::timestamps_are_shown_in_cst ... ok
+test fmt::tests::token_headlines_are_compact_but_small_counts_stay_exact ... ok
+test model::tests::reprobe_minutes_round_trips ... ok
+test model::tests::context_metadata_is_optional_and_never_inferred ... ok
+test model::tests::gateway_key_list_and_created_metadata_parse_without_plaintext ... ok
+test model::tests::shared_catalog_and_internal_access_have_safe_legacy_defaults ... ok
+test pages::billing::price_source_tests::diagnostic_identity_does_not_invent_a_user_or_zero_cost ... ok
+test pages::billing::price_source_tests::ordinary_usage_keeps_its_real_user ... ok
+test model::tests::real_server_json_parses ... ok
+test model::tests::unknown_status_does_not_panic ... ok
+test pages::billing::price_source_tests::provider_id_cannot_be_used_as_source_id ... ok
+test pages::channels::tests::bulk_ticking_never_double_adds ... ok
+test pages::billing::price_source_tests::settled_ledger_never_looks_like_an_outstanding_hold ... ok
+test pages::billing::price_source_tests::passthrough_prices_use_service_catalog_without_llm_source_options ... ok
+test pages::channels::tests::duplicate_client_names_are_caught_before_saving ... ok
+test pages::billing::price_source_tests::source_label_preserves_provider_key_and_endpoint ... ok
+test model::tests::the_model_routes_json_from_the_server_parses ... ok
+test pages::channels::tests::disable_and_reenable_preserve_mapping_configuration ... ok
+test pages::channels::tests::filter_is_case_insensitive_and_limited ... ok
+test pages::channels::tests::ticking_a_name_is_the_mapping_itself ... ok
+test pages::channels::tests::saving_trims_and_drops_blank_rows_honestly ... ok
+test pages::channels::tests::protocol_controls_preserve_flags_and_native_order ... ok
+test pages::channels::tests::protocol_controls_use_existing_audio_and_empty_protocol_validation ... ok
+test pages::channels::tests::unticking_removes_it_and_reports_what_would_be_lost ... ok
+test pages::custom_probes::tests::defaults_are_disabled_and_optional_conditions_are_null ... ok
+test pages::custom_probes::tests::disabled_existing_orphan_can_be_saved_but_never_enabled ... ok
+test pages::custom_probes::tests::invalid_numbers_targets_and_empty_inputs_are_rejected ... ok
+test pages::custom_probes::tests::oauth_source_options_distinguish_mapped_models_without_internal_ids ... ok
+test pages::custom_probes::tests::oauth_and_tool_types_follow_target_metadata_instead_of_apikey_defaults ... ok
+test pages::custom_probes::tests::embedding_and_native_protocol_fields_follow_selected_type ... ok
+test pages::custom_probes::tests::old_saved_probes_gain_safe_tool_defaults_and_keep_optional_values ... ok
+test pages::custom_probes::tests::result_cost_never_treats_unknown_or_subscription_as_free ... ok
+test pages::custom_probes::tests::read_and_save_preserve_version_and_millisecond_precision ... ok
+test pages::key_manager::tests::disabled_keys_are_deletable_even_when_owner_cannot_enable_them ... ok
+test pages::key_manager::tests::failed_copy_keeps_actionable_manual_delivery_message ... ok
+test pages::custom_probes::tests::tool_controls_create_typed_payloads_without_generation_fields ... ok
+test pages::key_manager::tests::revoked_or_missing_keys_cannot_be_toggled ... ok
+test pages::key_manager::tests::ordinary_users_only_resume_keys_the_server_allows ... ok
+test pages::key_manager::tests::status_changes_use_the_role_scoped_endpoint ... ok
+test pages::key_manager::tests::new_personal_key_inherits_parent_without_offering_hidden_names_as_own_history ... ok
+test pages::key_manager::tests::enabling_and_disabling_only_patch_enabled ... ok
+test pages::model_reasoning::tests::manual_confirmation_deduplicates_only_explicit_values ... ok
+test pages::logs::tests::every_level_filter_gets_an_honest_label ... ok
+test pages::models::tests::a_name_whose_channels_are_all_off_is_not_routed ... ok
+test pages::models::tests::auto_picks_nothing_when_it_is_not_available ... ok
+test pages::models::tests::auto_picks_the_first_candidate_of_that_kind ... ok
+test pages::model_reasoning::tests::boolean_support_never_invents_effort_levels ... ok
+test pages::models::tests::catalog_purpose_changes_directory_without_changing_route_type_or_chain ... ok
+test pages::models::tests::context_badges_keep_unknowns_and_claims_honest ... ok
+test pages::models::tests::declared_and_measured_kinds_have_distinct_labels ... ok
+test pages::models::tests::enabled_summary_excludes_hidden_and_unroutable_but_filters_restore_them ... ok
+test pages::models::tests::every_tab_has_its_own_title_and_colour ... ok
+test pages::models::tests::internal_access_filter_is_independent_from_compatibility_hiding ... ok
+test pages::models::tests::kinds_land_in_the_right_tab ... ok
+test pages::models::tests::provider_sources_are_explicit_and_deduplicated ... ok
+test pages::models::tests::rows_come_from_the_server_as_they_are ... ok
+test pages::models::tests::presentation_filter_preserves_identity_and_matches_any_explicit_supplier ... ok
+test pages::models::tests::tab_counts_match_the_rows ... ok
+test pages::models::tests::walking_a_backup_channel_is_visible ... ok
+test pages::overview::tests::actual_model_never_presents_auto_as_executed_model ... ok
+test pages::overview::tests::kind_success_rate_uses_requests_as_the_denominator ... ok
+test pages::passthrough::tests::key_ids_are_explicit_and_invalid_entries_are_not_silently_dropped ... ok
+test pages::passthrough::tests::probe_rejects_informational_status_and_unsupported_methods ... ok
+test pages::passthrough::tests::path_grants_are_exact_explicit_and_default_to_deny ... ok
+test pages::policy_editor::tests::authorization_catalog_includes_enabled_shared_names_but_excludes_internal_targets ... ok
+test pages::policy_editor::tests::authorization_catalog_uses_real_visibility_not_model_suffixes ... ok
+test pages::policy_editor::tests::disabled_and_unrouted_models_are_not_new_authorization_choices ... ok
+test pages::passthrough::tests::saved_secrets_are_preserved_without_reconstructing_a_value ... ok
+test pages::policy_editor::tests::money_zero_is_not_unlimited ... ok
+test pages::policy_editor::tests::editing_other_fields_preserves_null_empty_and_hidden_acl ... ok
+test pages::policy_editor::tests::revoking_last_legacy_grant_keeps_explicit_deny_and_catalog_failure_never_widens ... ok
+test pages::policy_editor::tests::historical_hidden_and_unknown_grants_are_separate_and_lossless ... ok
+test pages::policy_editor::tests::self_service_inherits_limits_without_widening_or_erasing_empty_acl ... ok
+test pages::policy_editor::tests::unknown_fields_and_invalid_limits_cannot_be_saved ... ok
+test pages::policy_editor::tests::services_preserve_legacy_null_explicit_deny_and_key_inheritance ... ok
+test pages::policy_editor::tests::service_options_never_offer_disabled_or_missing_entries_as_new_grants ... ok
+test pages::provider_channels::tests::main_counts_match_visible_table_and_separate_compatibility_aliases ... ok
+test pages::provider_channels::tests::partial_enable_is_not_all_enabled ... ok
+test pages::provider_channels::tests::grouping_is_explicit_not_inferred_from_host_or_model ... ok
+test pages::provider_keys::tests::credential_payload_drops_response_metadata_and_blank_rotation ... ok
+test pages::provider_keys::tests::deselect_uses_stable_origin_after_mapping_edits ... ok
+test pages::policy_editor::tests::service_sources_are_selectable_without_granting_or_materializing_inheritance ... ok
+test pages::provider_keys::tests::explicit_local_mapping_keeps_upstream_name ... ok
+test pages::provider_keys::tests::equivalent_alias_spelling_is_not_both_removed_and_updated ... ok
+test pages::provider_keys::tests::directory_selection_restores_availability_without_renaming_existing ... ok
+test pages::provider_keys::tests::manual_entry_trims_and_deduplicates_without_sending_picker_metadata ... ok
+test pages::provider_keys::tests::new_api_credential_requires_secret ... ok
+test pages::provider_keys::tests::key_metadata_patch_never_contains_model_removals ... ok
+test pages::provider_keys::tests::removal_then_readding_same_name_never_emits_delete_and_update_together ... ok
+test pages::provider_keys::tests::empty_and_duplicate_local_mappings_are_rejected ... ok
+test pages::provider_keys::tests::separate_views_write_only_their_own_fields ... ok
+test pages::provider_keys::tests::restoring_disabled_model_and_adding_existing_model_both_give_feedback ... ok
+test pages::route_policy::tests::adding_key_keeps_provider_keys_together_without_rewriting_others ... ok
+test pages::provider_keys::tests::upstream_name_is_used_when_mapping_is_blank ... ok
+test pages::route_policy::tests::inheritance_is_omission_not_false_or_zero ... ok
+test pages::provider_keys::tests::one_upstream_can_have_another_alias_without_changing_saved_alias ... ok
+test pages::provider_keys::tests::saved_removal_is_an_explicit_patch_and_leaves_unmodified_mappings_out ... ok
+test pages::route_policy::tests::provider_view_does_not_change_legacy_interleaved_order ... ok
+test pages::route_policy::tests::invalid_input_never_creates_an_api_payload ... ok
+test pages::tests::every_page_has_a_unique_slug_and_a_title ... ok
+test pages::tests::ordinary_accounts_cannot_mount_administrator_pages ... ok
+test pages::route_policy::tests::moving_provider_moves_all_selected_keys_preserving_other_groups ... ok
+test pages::users::tests::cancelling_reloads_saved_snapshot_and_forgets_password ... ok
+test pages::users::tests::credentials_delivery_requires_successful_saved_identity_and_never_existing_edit ... ok
+test pages::users::tests::cross_section_save_keeps_identity_acl_limits_and_zero_budget ... ok
+test pages::users::tests::historical_user_has_no_invented_login ... ok
+test pages::route_policy::tests::roundtrip_keeps_order_and_all_timeout_overrides ... ok
+test pages::users::tests::historical_user_edit_does_not_silently_create_login_or_grants ... ok
+test pages::users::tests::saved_login_uses_account_username_instead_of_display_name ... ok
+test pages::users::tests::generated_password_is_24_ascii_bytes_with_all_required_classes ... ok
+test pages::users::tests::secure_random_failure_never_falls_back_to_predictable_password ... ok
+test pages::virtual_models::tests::midnight_windows_split_and_shift_weekday ... ok
+test pages::virtual_models::tests::shared_submission_strips_administrator_metadata_and_keeps_revision ... ok
+test pages::virtual_models::tests::switching_to_ordered_ignores_unfinished_hidden_windows ... ok
+test pages::virtual_models::tests::reenabling_preserves_full_scheduled_config_and_revision ... ok
+test pages::virtual_models::tests::moving_targets_keeps_window_identity_but_uses_new_order ... ok
+test provider_api::label_tests::imported_storage_labels_are_not_public_names ... ok
+
+test result: ok. 133 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (/srv/build/tokengo-release8-20261023/source/target/debug/deps/tokengo_web-82292e82b12c5ae9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tokengo_web
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

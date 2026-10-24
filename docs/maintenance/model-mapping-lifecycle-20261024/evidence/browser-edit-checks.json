@@ -1,0 +1,10 @@
+[
+  {
+    "name": "edit_refresh_preserves_draft_name_and_selected_target",
+    "passed": true
+  },
+  {
+    "name": "edit_cancel_preserves_saved_shared_name",
+    "passed": true
+  }
+]

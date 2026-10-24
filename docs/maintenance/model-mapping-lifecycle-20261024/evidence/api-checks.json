@@ -1,0 +1,38 @@
+[
+  {
+    "name": "remove_persisted_mapping_api",
+    "passed": true
+  },
+  {
+    "name": "history_and_prices_preserved_after_remove",
+    "passed": true
+  },
+  {
+    "name": "readd_same_upstream_new_alias_api",
+    "passed": true
+  },
+  {
+    "name": "reject_remove_and_upsert_same_alias",
+    "passed": true
+  },
+  {
+    "name": "reject_unknown_removal",
+    "passed": true
+  },
+  {
+    "name": "shared_dependency_blocks_last_credential",
+    "passed": true
+  },
+  {
+    "name": "other_credential_preserves_referenced_target",
+    "passed": true
+  },
+  {
+    "name": "other_key_mapping_unchanged",
+    "passed": true
+  },
+  {
+    "name": "shared_option_survives_single_key_remove",
+    "passed": true
+  }
+]

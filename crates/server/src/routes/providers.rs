@@ -621,6 +621,7 @@ struct CredentialPatch {
     max_concurrent: Option<u32>,
     key: Option<String>,
     models: Option<Vec<CredentialModel>>,
+    remove_models: Option<Vec<String>>,
 }
 async fn credentials_update(
     _root: ManagementAuth,
@@ -672,12 +673,27 @@ async fn credentials_update(
             }
         }
     }
+    let mut removed_names=Vec::new();
+    if let Some(removals)=&body.remove_models {
+        if removals.len()>256{return Err(ApiError::bad_request("最多移除256个模型映射"));}
+        for raw in removals {
+            let name=model(raw)?;
+            if removed_names.iter().any(|old:&String|same_model_name(old,&name)){return Err(ApiError::bad_request("移除的模型映射不能重复"));}
+            if !original.models.iter().any(|old|same_model_name(&old.model,&name)){return Err(ApiError::bad_request(format!("当前Key没有模型映射“{name}”，请刷新后重试")));}
+            if body.models.as_ref().is_some_and(|models|models.iter().any(|m|same_model_name(&m.model,&name))){return Err(ApiError::bad_request(format!("模型映射“{name}”不能同时移除和更新，请保留一种操作")));}
+            removed_names.push(name);
+        }
+    }
     if let Some(url)=&body.base_url {
         if !pool::local(&c,provider)? { return Err(ApiError::bad_request("普通供应商请在渠道设置修改唯一API URL")); }
         pool::canonical_url(url).map_err(|e|ApiError::bad_request(e.to_string()))?;
     }
-    let names=if body.base_url.is_some() {original.models.iter().map(|m|m.model.clone()).collect::<Vec<_>>()}else{vec![]};
+    let mut names=if body.base_url.is_some() {original.models.iter().map(|m|m.model.clone()).collect::<Vec<_>>()}else{vec![]};
+    names.extend(removed_names.iter().cloned());
+    if let Some(models)=&body.models{names.extend(models.iter().map(|m|m.model.clone()));}
+    names.sort();names.dedup();
     db::in_tx(&c, |c| {
+        let removal=db::provider_model_lifecycle::RemovalGuard::apply(c,provider,id,&original.source_ids,&removed_names)?;
         if let Some(url)=&body.base_url { pool::update_local_url(c,&s.secrets,provider,id,url)?; }
         if let Some(key) = &body.key {
             pool::rotate_secret(c, &s.secrets, id, key)?;
@@ -736,8 +752,12 @@ async fn credentials_update(
             }
         }
         c.execute("UPDATE provider_credentials SET label=COALESCE(?2,label),enabled=COALESCE(?3,enabled),priority=COALESCE(?4,priority),max_concurrent=COALESCE(?5,max_concurrent) WHERE id=?1",rusqlite::params![id,body.label,body.enabled,body.priority,body.max_concurrent])?;
+        removal.validate_and_audit(c,super::operations::actor_id())?;
         reset(c,&names)
-    }).map_err(|e|ApiError::bad_request(e.to_string()))?;
+    }).map_err(|e|match e {
+        db::DbError::Other(message) if message.starts_with("credential_model_in_use:")=>ApiError::new(axum::http::StatusCode::CONFLICT,"credential_model_in_use",message.trim_start_matches("credential_model_in_use: ")),
+        error=>ApiError::bad_request(error.to_string()),
+    })?;
     let row = pool::credentials(&c, provider)?
         .into_iter()
         .find(|k| k.id == id)

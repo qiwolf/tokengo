@@ -55,7 +55,8 @@ async fn list(root: RootGrant, State(s): State<SharedState>,Query(query):Query<L
     valid(&root, &c)?;
     let auth = vr::owner_auth(&c, 0).map_err(api)?;
     let mut options = Vec::new();
-    for route in db::model_routes::servable(&c)? {
+    for route in db::model_routes::list(&c)? {
+        if !route.enabled {continue;}
         let mut seen = std::collections::HashSet::new();
         for source in &route.declared_by {
             if let Some((id, name, _)) = db::provider_channels::membership(&c, source.0)? {

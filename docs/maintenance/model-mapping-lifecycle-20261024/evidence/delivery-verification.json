@@ -1,0 +1,16 @@
+{
+  "host": "build-test",
+  "base_head": "04ec7e7e2266d2d1827be8ba8c3e7fb9c92628ab",
+  "final_manifest_sha256": "4eacaad02f933276ba47af2cf68f0646f01417a6c7f68d395d6d348ad4214bfe",
+  "local_source_files_verified": 210,
+  "mismatches": [],
+  "diff_check_exit": 0,
+  "artifacts": {
+    "tokengo-server": "049f5f06b9fecccf1325d662bb0aa25d25f4da3ca8ccd1969178ebf606ae50c0",
+    "web-dist.tar.gz": "68289b0821009b0a7da454b85ba66f4243c3630e52961123d5037e24cb169fb6",
+    "changes.patch": "e77daf3984c862a07310358ffa1a607bdf9801f9fbc74220b40d4d8fbd5a3dd7"
+  },
+  "committed_this_batch": false,
+  "pushed": false,
+  "deployed": false
+}

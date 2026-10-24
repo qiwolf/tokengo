@@ -6,6 +6,7 @@
 pub mod passthrough;
 pub mod provider_channels;
 pub mod provider_pool;
+pub mod provider_model_lifecycle;
 pub mod accounts;
 pub mod operations_tokens;
 pub mod identity;

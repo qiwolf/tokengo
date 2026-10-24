@@ -1,0 +1,54 @@
+{
+  "before": {
+    "requests": {
+      "rows": 1,
+      "sha256": "8a490f1817a5a9404f0b775382cc6d7ad81c97851b8122ac5f406fa820750b98"
+    },
+    "attempts": {
+      "rows": 1,
+      "sha256": "13caa3b6e484795b2cc015467e31496c72b3386d02f11085223ae355387029aa"
+    },
+    "billing_ledger": {
+      "rows": 1,
+      "sha256": "9731adbaed291538718de9e8086c4a11094a7f127c83a859659d6f4fbcc80d3b"
+    },
+    "billing_allocations": {
+      "rows": 2,
+      "sha256": "cffd9b18cdca0b1b443a79d1c1450798c89af12ea92a9f1ad702d48cd4e9f316"
+    },
+    "billing_prices": {
+      "rows": 3,
+      "sha256": "7514086975e0064618f544c1644a6f5101ce1ddd561e4b1679ab4051a65f67ae"
+    },
+    "billing_request_prices": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  },
+  "after": {
+    "requests": {
+      "rows": 1,
+      "sha256": "8a490f1817a5a9404f0b775382cc6d7ad81c97851b8122ac5f406fa820750b98"
+    },
+    "attempts": {
+      "rows": 1,
+      "sha256": "13caa3b6e484795b2cc015467e31496c72b3386d02f11085223ae355387029aa"
+    },
+    "billing_ledger": {
+      "rows": 1,
+      "sha256": "9731adbaed291538718de9e8086c4a11094a7f127c83a859659d6f4fbcc80d3b"
+    },
+    "billing_allocations": {
+      "rows": 2,
+      "sha256": "cffd9b18cdca0b1b443a79d1c1450798c89af12ea92a9f1ad702d48cd4e9f316"
+    },
+    "billing_prices": {
+      "rows": 3,
+      "sha256": "7514086975e0064618f544c1644a6f5101ce1ddd561e4b1679ab4051a65f67ae"
+    },
+    "billing_request_prices": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  }
+}
