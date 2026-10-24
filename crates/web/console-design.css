@@ -300,4 +300,13 @@ p {text-wrap:pretty;}
 }
 
 /* A text input without an explicit type still shares the control focus treatment. */
-.console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select):focus {border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft);}
+.console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea):focus {border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft);}
+
+/* Shared simple modal forms: separate fields, hints and the final action. */
+.console-content .module-dialog-body > .account-form {display:flex;flex-direction:column;gap:8px;}
+.console-content .module-dialog-body > .account-form > label:not(:first-child) {margin-top:8px;}
+.console-content .module-dialog-body > .account-form > p {margin:0;}
+.console-content .module-dialog-body > .account-form > button {align-self:flex-start;margin-top:8px;}
+/* Preserve validation feedback above the normal and focused control rules. */
+.console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea)[aria-invalid]:not([aria-invalid="false"]) {border-color:var(--bad);}
+.console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea)[aria-invalid]:not([aria-invalid="false"]):focus {box-shadow:0 0 0 3px var(--bad-soft);}
