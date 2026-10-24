@@ -74,7 +74,8 @@ p {text-wrap:pretty;}
 .console-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 .console-content select {
   min-height:32px;height:32px;padding:4px 12px;font-size:12px;line-height:22px;
-  border-color:var(--control-border);border-radius:6px;background-color:var(--surface);
+  border:1px solid var(--control-border);border-radius:6px;background-color:var(--surface);
+  width:100%;box-sizing:border-box;font-family:inherit;color:var(--fg);
 }
 .console-content .account-field textarea,.console-content textarea {font-size:12px;line-height:20px;min-height:80px;padding:8px 12px;border-color:var(--control-border);}
 .console-content input[readonly] {background:var(--surface-2)!important;color:var(--fg-2);border-color:var(--line)!important;}
@@ -297,3 +298,6 @@ p {text-wrap:pretty;}
  .console-layout .settings-section-link {width:auto;flex:0 0 auto;min-height:44px;padding:8px 12px;white-space:nowrap;}
  .console-layout .settings-section-link span {display:none;}
 }
+
+/* A text input without an explicit type still shares the control focus treatment. */
+.console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select):focus {border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft);}
