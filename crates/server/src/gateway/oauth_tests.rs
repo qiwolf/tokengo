@@ -212,7 +212,7 @@ async fn oauth_nonstream_conversion_native_stream_billing_and_explicit_limit_rej
     crate::billing_writer::replay(&f.state.conn(), &f.state.cfg.db_path).unwrap();
     let count:i64=f.state.conn().query_row("SELECT count(*) FROM billing_ledger WHERE channel_id=?1 AND price_id IS NULL AND debit_micro IS NULL AND input_tokens=7 AND output_tokens=3 AND input_bound>0 AND output_bound=32768 AND status='unpriced'",[f.channel],|r|r.get(0)).unwrap();
     assert_eq!(count, 3);
-    for field in ["max_tokens", "temperature"] {
+    for field in ["temperature"] {
         let mut body = json!({"model":"gpt-test","input":"hello"});
         body[field] = json!(32);
         assert_eq!(
@@ -360,4 +360,28 @@ async fn oauth_explicit_cap_uses_cap_for_tpm_admission_instead_of_full_ceiling()
     let _=response.bytes().await.unwrap();
     assert_eq!(f.send("responses",json!({"model":"gpt-test","input":"Count numbers"})).await.status(),StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(f.seen.seen.lock().unwrap().len(),1);
+}
+
+#[tokio::test]
+async fn oauth_responses_accepts_output_cap_aliases_without_weakening_conflict_or_ceiling_checks() {
+    let f=Fixture::new().await;
+    for limits in [json!({"max_tokens":32}),json!({"max_completion_tokens":32}),json!({"max_tokens":32,"max_output_tokens":32,"max_completion_tokens":32})] {
+        let mut body=json!({"model":"gpt-test","input":"Count numbers"});
+        body.as_object_mut().unwrap().extend(limits.as_object().unwrap().clone());
+        let response=f.send("responses",body).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let reply:Value=response.json().await.unwrap();
+        assert_eq!(reply["usage"]["output_tokens"],32);
+        let seen=f.seen.seen.lock().unwrap();
+        let body=&seen.last().unwrap().1;
+        assert_eq!(body["max_output_tokens"],32);
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+    for limits in [json!({"max_tokens":15}),json!({"max_completion_tokens":32769}),json!({"max_tokens":16,"max_output_tokens":32}),json!({"max_tokens":16,"max_completion_tokens":32}),json!({"max_tokens":"32"}),json!({"max_tokens":null})] {
+        let mut body=json!({"model":"gpt-test","input":"Count numbers"});
+        body.as_object_mut().unwrap().extend(limits.as_object().unwrap().clone());
+        assert_eq!(f.send("responses",body).await.status(),StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(f.seen.seen.lock().unwrap().len(),3);
 }

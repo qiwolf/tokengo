@@ -562,6 +562,30 @@ fn choices_count(body:&Value)->Result<i64,ApiError> {
             .ok_or_else(||ApiError::bad_request("n must be an integer between 1 and 128")),
     }
 }
+/// Responses clients sometimes send Chat cap names. Normalize only these
+/// explicit aliases, preserving every other field and rejecting ambiguity.
+fn normalize_responses_output_caps(body: &mut Value) -> Result<(), ApiError> {
+    if body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() {
+        return Ok(());
+    }
+    let mut cap = None;
+    for field in ["max_output_tokens", "max_completion_tokens", "max_tokens"] {
+        if let Some(value) = body.get(field) {
+            let value = value.as_i64().filter(|n| *n > 0)
+                .ok_or_else(|| ApiError::bad_request("Output token limit must be a positive integer"))?;
+            if cap.is_some_and(|old| old != value) {
+                return Err(ApiError::bad_request("Conflicting output token limits"));
+            }
+            cap = Some(value);
+        }
+    }
+    let map = body.as_object_mut().ok_or_else(|| ApiError::bad_request("Expected request object"))?;
+    map.remove("max_tokens");
+    map.remove("max_completion_tokens");
+    map.insert("max_output_tokens".into(), Value::from(cap.unwrap()));
+    Ok(())
+}
+
 fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
     if !endpoint.is_generation() {return Ok(0);}
     let wrong_cap=match endpoint {
@@ -1050,7 +1074,7 @@ fn load_auto_plan(
 }
 
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
-pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
+pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
     if let Some(kind) = req.endpoint.tool_kind() {
         if req.stream || model_routes::is_auto(&req.model) {
@@ -1270,6 +1294,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state, request_id, req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
+    if req.endpoint == EndpointKind::Responses {
+        normalize_responses_output_caps(&mut req.body).map_err(|error| {
+            guard.reject(&error);
+            error
+        })?;
+    }
 
     let mut admitted_input = None;
     if let Some(auth) = &req.auth {

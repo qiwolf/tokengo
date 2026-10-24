@@ -182,6 +182,25 @@ impl Default for ResponsesCollector {
         }
     }
 }
+/// A capped OAuth response can issue a new opaque reasoning ciphertext in its
+/// authoritative terminal snapshot. Keep that entire terminal item unchanged;
+/// never infer plaintext equivalence or merge values from the earlier event.
+fn reissued_terminal_reasoning(response: &Value, prior: &Value, terminal: &Value) -> bool {
+    if response["status"] != "incomplete"
+        || response["incomplete_details"]["reason"] != "max_output_tokens"
+        || response.get("error").is_some_and(|v| !v.is_null())
+        || prior["type"] != "reasoning"
+        || !prior["id"].as_str().is_some_and(|id| !id.is_empty() && id.len()<=512 && !id.chars().any(char::is_control))
+        || !prior["encrypted_content"].as_str().is_some_and(|v| !v.is_empty())
+        || !terminal["encrypted_content"].as_str().is_some_and(|v| !v.is_empty())
+    {
+        return false;
+    }
+    let mut comparison = prior.clone();
+    comparison["encrypted_content"] = terminal["encrypted_content"].clone();
+    comparison == *terminal
+}
+
 impl ResponsesCollector {
     fn frames(&mut self, frames: Vec<Frame>) -> Result<(), String> {
         for frame in frames {
@@ -239,7 +258,9 @@ impl ResponsesCollector {
                 Value::Array(std::mem::take(&mut self.items).into_values().collect());
         } else {
             for (index, item) in &self.items {
-                if output.get(*index as usize) != Some(item) {
+                if output.get(*index as usize) != Some(item)
+                    && !output.get(*index as usize).is_some_and(|final_item| reissued_terminal_reasoning(&result,item,final_item))
+                {
                     return Err("Conflicting Responses terminal item".into());
                 }
             }
@@ -285,6 +306,43 @@ mod tests {
         let mut c = ResponsesCollector::default();
         c.feed(&completed(items.clone())).unwrap();
         assert_eq!(c.finish().unwrap()["output"], items);
+    }
+    #[test]
+    fn capped_reasoning_terminal_retains_final_ciphertext_without_relaxing_other_conflicts() {
+        let prior=json!({"type":"reasoning","id":"rs_same","summary":[],"encrypted_content":"synthetic-item-cipher"});
+        let final_item=json!({"type":"reasoning","id":"rs_same","summary":[],"encrypted_content":"synthetic-terminal-cipher"});
+        let collect=|item:Value,status:&str,reason:&str| {
+            let mut collector=ResponsesCollector::default();
+            collector.feed(&frame(json!({"type":"response.output_item.done","output_index":0,"item":prior})))?;
+            collector.feed(&frame(json!({"type":if status=="incomplete" {"response.incomplete"} else {"response.completed"},"response":{"object":"response","status":status,"incomplete_details":{"reason":reason},"output":[item],"usage":{"input_tokens":25,"output_tokens":16}}})))?;
+            collector.finish()
+        };
+        let result:Value=collect(final_item.clone(),"incomplete","max_output_tokens").unwrap();
+        assert_eq!(result["output"][0],final_item);
+        assert_eq!(result["usage"]["output_tokens"],16);
+        let c=crate::db::open_in_memory().unwrap();
+        let pin=crate::protocol_sessions::Pin{channel:31,generation:1,upstream_model:"model".into(),protocol:Protocol::Responses};
+        let mut issued=crate::protocol_sessions::ArtifactCollector::default();
+        issued.value(&result);
+        issued.persist(&c,"owner-session",&pin).unwrap();
+        let replay=json!({"input":result["output"]});
+        assert!(crate::protocol_sessions::verify_artifacts(&c,"owner-session",&pin,&replay).unwrap());
+        assert!(!crate::protocol_sessions::verify_artifacts(&c,"owner-session",&pin,&json!({"input":[prior]})).unwrap());
+        assert!(!crate::protocol_sessions::verify_artifacts(&c,"foreign-session",&pin,&replay).unwrap());
+        assert!(!crate::protocol_sessions::verify_artifacts(&c,"owner-session",&crate::protocol_sessions::Pin{generation:2,..pin},&replay).unwrap());
+        let mut empty_prior=prior.clone();empty_prior["id"]=json!("");
+        let mut empty_final=final_item.clone();empty_final["id"]=json!("");
+        assert!(!reissued_terminal_reasoning(&result,&empty_prior,&empty_final));
+        let mut empty_cipher=final_item.clone();empty_cipher["encrypted_content"]=json!("");
+        assert!(collect(empty_cipher,"incomplete","max_output_tokens").is_err());
+        for (key,value) in [("id",json!("rs_other")),("summary",json!([{"type":"summary_text","text":"changed"}])),("type",json!("message")),("encrypted_content",Value::Null)] {
+            let mut changed=final_item.clone();changed[key]=value;
+            assert!(collect(changed,"incomplete","max_output_tokens").is_err(),"{key}");
+        }
+        let mut changed=final_item.clone();changed["unknown"]=json!(true);
+        assert!(collect(changed,"incomplete","max_output_tokens").is_err());
+        assert!(collect(final_item.clone(),"completed","").is_err());
+        assert!(collect(final_item,"incomplete","content_filter").is_err());
     }
     #[test]
     fn incomplete_failed_missing_terminal_conflicts_and_gaps_fail_closed() {
