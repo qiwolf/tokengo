@@ -137,6 +137,8 @@ struct Candidate {
     binding_generation: i64,
     credential: Option<crate::db::provider_pool::CredentialRef>,
     target: Option<crate::db::user_virtual_routes::ResolvedTarget>,
+    /// Stateless local embedding/rerank nodes may rotate without changing user Key identity.
+    local_balanced: bool,
 }
 
 /// 这次请求要试的候选链（已按顺序排好）+ 各自的密钥。
@@ -155,6 +157,16 @@ struct Plan {
 }
 
 impl Plan {
+    /// Public entrypoints have independent turns. Private names are owner-scoped,
+    /// while a shared entrypoint intentionally shares its rotation across callers.
+    fn local_balance_scope(&self) -> String {
+        let name = tokengo_shared::normalize_model_name(&self.route);
+        match &self.virtual_route {
+            Some(route) if route.shared => format!("shared:{}:{name}", route.id),
+            Some(route) => format!("private:{}:{}:{name}", route.user_id, route.id),
+            None => format!("direct:{name}"),
+        }
+    }
     fn vector_contract(&self) -> Option<&crate::vector_compat::Contract> {
         self.virtual_route.as_ref().and_then(|route| route.compatibility.as_ref())
     }
@@ -213,6 +225,7 @@ fn order_pool_entries(
     auth: &crate::db::identity::AuthContext,
     endpoint: EndpointKind,
 ) -> Result<(), ApiError> {
+    let balance_scope = plan.local_balance_scope();
     let c = state.conn();
     let mut eligible = Vec::new();
     for entry in std::mem::take(&mut plan.entries) {
@@ -251,7 +264,7 @@ fn order_pool_entries(
         .into_iter()
         .map(Some)
         .collect();
-    for ((_, provider, _), indices) in groups {
+    for ((_, provider, name), indices) in groups {
         let ids: Vec<i64> = indices
             .iter()
             .map(|index| entries[*index].as_ref().unwrap().channel.id.0)
@@ -261,13 +274,22 @@ fn order_pool_entries(
             .filter_map(|index| entries[*index].as_ref().unwrap().credential.as_ref())
             .map(|credential| (credential.id, state.credential_load(credential.id)))
             .collect();
-        let ordered = crate::db::provider_pool::order_for_user_with_load(
-            &c,
-            auth.user_id,
-            provider,
-            &ids,
-            &loads,
-        )?;
+        let balanced = matches!(endpoint, EndpointKind::Embeddings | EndpointKind::Rerank)
+            && crate::db::provider_pool::local(&c, provider)?
+            && crate::db::route_policy::load(&c, &name)?.local_strategy.as_deref() == Some("round_robin");
+        let ordered = if balanced {
+            let mut ordered = ids;
+            let offset = state.next_local_vector_node(&balance_scope, provider, &name, ordered.len());
+            ordered.rotate_left(offset);
+            for index in &indices {
+                entries[*index].as_mut().unwrap().local_balanced = true;
+            }
+            ordered
+        } else {
+            crate::db::provider_pool::order_for_user_with_load(
+                &c, auth.user_id, provider, &ids, &loads,
+            )?
+        };
         let mut available: HashMap<i64, Candidate> = indices
             .iter()
             .map(|index| {
@@ -367,7 +389,7 @@ fn advance_explicit_route(
                 })
             }) {
                 let next_credential = next.credential.as_ref().unwrap();
-                if let Some(token) = control.tokens.get(&credential.provider_id) {
+                if let Some(token) = control.tokens.get(&credential.provider_id).filter(|_| !entry.local_balanced) {
                     if token.credential_id == credential.id
                         && !crate::db::provider_pool::switch_affinity(
                             &state.conn(),
@@ -387,7 +409,9 @@ fn advance_explicit_route(
                         control.tokens.insert(credential.provider_id, token);
                     }
                 }
-                control.selected.insert(group, next_credential.id);
+                if !entry.local_balanced {
+                    control.selected.insert(group, next_credential.id);
+                }
                 return Ok(true);
             }
         }
@@ -463,6 +487,7 @@ fn push_entry(
         binding_generation,
         credential,
         target: None,
+        local_balanced: false,
     });
     Ok(())
 }
@@ -1200,10 +1225,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         order_pool_entries(&state, &mut plan, auth, req.endpoint)?;
     }
     let pooled = req.auth.is_some() && plan.entries.iter().any(|entry| entry.credential.is_some());
+    let local_balanced = plan.entries.iter().any(|entry| entry.local_balanced);
     // 顺序：
     // · 普通模型名 → 问状态机（首选 / 回切 / 上一条走的谁），带图时再按能看图筛一遍；
     // · `auto` → 现场算出来的那条链就是顺序（不读也不写状态机）。
-    let mut order: Vec<usize> = if plan.auto || plan.virtual_route.is_some() {
+    let mut order: Vec<usize> = if plan.auto || plan.virtual_route.is_some() || local_balanced {
         (0..plan.entries.len())
             .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
             .collect()
@@ -1253,7 +1279,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     // · `auto` 每一发都是现场挑的，没有「首选/回切」可言；让它去写状态，
     //   那个名字下的账就没人解释得清了。
     // 渠道自身的健康照旧由每分钟探活和普通请求看着。
-    let touch_state = !wants_vision && !plan.auto && plan.virtual_route.is_none();
+    let touch_state = !wants_vision && !plan.auto && plan.virtual_route.is_none() && !local_balanced;
 
     let request_id = {
         let conn = state.conn();
@@ -1506,6 +1532,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     // 所有渠道都满，才在门口排队等一个名额，等到再重跑一遍。排队有预算上限，不会挂死。
     let mut last_policy_error: Option<ApiError> = None;
     let mut pre_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
+    let mut pre_credential_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     let mut pool_control = PoolControl::default();
     let mut active_target = plan
         .entries
@@ -1515,6 +1542,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     'pass: loop {
         let mut tried_any = false;
         let mut busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
+        let mut credential_busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
+        let mut local_busy = false;
 
         'channels: for entry_idx in order.iter().copied() {
             let Some(Candidate {
@@ -1525,6 +1554,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 binding_generation,
                 credential,
                 target,
+                local_balanced: balanced_node,
             }) = plan.entries.get(entry_idx)
             else {
                 continue;
@@ -1588,10 +1618,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             }
             if pooled {
                 if let Some(credential) = credential {
-                    let group = pool_group(target.as_ref(), credential, name);
-                    let selected = pool_control.selected.entry(group).or_insert(credential.id);
-                    if *selected != credential.id {
-                        continue;
+                    if !balanced_node {
+                        let group = pool_group(target.as_ref(), credential, name);
+                        let selected = pool_control.selected.entry(group).or_insert(credential.id);
+                        if *selected != credential.id {
+                            continue;
+                        }
                     }
                     if pool_control.seen.contains(&(
                         target.as_ref().map(|target| target.position),
@@ -1668,7 +1700,17 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     Some(sem) => match sem.clone().try_acquire_owned() {
                         Ok(p) => Some(p),
                         Err(_) => {
-                            if pooled && credential.is_some() {
+                            if *balanced_node {
+                                // A waiter may have reserved this credential before the source
+                                // gate became busy. Never hold credential -> wait for channel:
+                                // ordinary aliases acquire them in the opposite order.
+                                if let Some(credential) = credential {
+                                    pre_credential_permits.remove(&credential.id);
+                                }
+                                local_busy = true;
+                                busy.push((channel.id.0, sem));
+                                continue 'channels;
+                            } else if pooled && credential.is_some() {
                                 let left = cfg
                                     .request_budget_ms
                                     .saturating_sub((now_ms() - started_ms).max(0) as u64);
@@ -1695,9 +1737,21 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             };
             let credential_permit = if pooled {
                 if let Some(credential) = credential {
-                    match state.credential_gate(credential.id, credential.max_concurrent) {
+                    match pre_credential_permits.remove(&credential.id) {
+                        Some(permit) => Some(permit),
+                        None => match state.credential_gate(credential.id, credential.max_concurrent) {
                         None => None,
                         Some(gate) => {
+                            if *balanced_node {
+                                match gate.clone().try_acquire_owned() {
+                                    Ok(permit) => Some(permit),
+                                    Err(_) => {
+                                        local_busy = true;
+                                        credential_busy.push((credential.id, gate));
+                                        continue 'channels;
+                                    }
+                                }
+                            } else {
                             let left = cfg
                                 .request_budget_ms
                                 .saturating_sub((now_ms() - started_ms).max(0) as u64);
@@ -1714,6 +1768,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                     return Err(error);
                                 }
                             }
+                            }
+                        }
                         }
                     }
                 } else {
@@ -2039,7 +2095,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         guard.reject(&error);
                         return Err(error);
                     }
-                    if pooled {
+                    if pooled && !balanced_node {
                         if let Some(credential) = credential {
                             if existing_pin.is_none() {
                                 let live_affinity = crate::db::provider_pool::affinity_token(
@@ -2825,7 +2881,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 last_http = Some(err);
                                 continue 'channels;
                             }
-                            if plan.automatic_target_failover() {
+                            if plan.automatic_target_failover() || *balanced_node {
                                 guard.usage = serde_json::from_slice::<Value>(&err.body)
                                     .map(|value| Usage::read(&value)).unwrap_or_default();
                                 guard.settle_billing("explicit_route_stop");
@@ -3189,7 +3245,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 last_http = Some(err);
                                 continue 'channels;
                             }
-                            if plan.automatic_target_failover() {
+                            if plan.automatic_target_failover() || *balanced_node {
                                 guard.usage = serde_json::from_slice::<Value>(&err.body)
                                     .map(|value| Usage::read(&value)).unwrap_or_default();
                                 guard.settle_billing("explicit_route_stop");
@@ -3328,20 +3384,38 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             }
         }
 
-        if tried_any || busy.is_empty() {
+        if (tried_any && !local_busy) || (busy.is_empty() && credential_busy.is_empty()) {
             break 'pass;
         }
         // 所有渠道都到并发上限了：在门口排队等一个名额，等到再重跑一遍。
         // 预算用「这次请求的剩余重试预算」，排到超时就按「上游太忙」如实回，不挂死。
-        let (id, sem) = busy.remove(0);
         let left = cfg.request_budget_ms as i64 - (now_ms() - started_ms);
         if left <= 0 {
             last_fault = Some("所有渠道都到并发上限了，排队的预算也用完了".to_string());
             break 'pass;
         }
-        match tokio::time::timeout(Duration::from_millis(left as u64), sem.acquire_owned()).await {
-            Ok(Ok(p)) => {
-                pre_permits.insert(id, p);
+        let wait = async move {
+            if local_busy {
+                // All local nodes were busy: whichever node frees capacity first may serve.
+                // Dropping the other futures releases any racing gate reservation.
+                let waits = busy.into_iter().map(|(id, gate)| (false, id, gate))
+                    .chain(credential_busy.into_iter().map(|(id, gate)| (true, id, gate)))
+                    .map(|(credential, id, gate)| Box::pin(async move {
+                        (credential, id, gate.acquire_owned().await)
+                    })).collect::<Vec<_>>();
+                futures_util::future::select_all(waits).await.0
+            } else {
+                let (id, gate) = busy.remove(0);
+                (false, id, gate.acquire_owned().await)
+            }
+        };
+        match tokio::time::timeout(Duration::from_millis(left as u64), wait).await {
+            Ok((waiting_credential, id, Ok(p))) => {
+                if waiting_credential {
+                    pre_credential_permits.insert(id, p);
+                } else {
+                    pre_permits.insert(id, p);
+                }
             }
             _ => {
                 last_fault = Some("所有渠道都到并发上限了，排队等到超时".to_string());

@@ -8,6 +8,10 @@ use tokengo_shared::{normalize_model_name, Channel, ChannelId};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutePolicy {
+    /// Optional node balancing for explicitly local embedding/rerank providers.
+    /// Other endpoint kinds and ordinary credential pools retain their identity rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_strategy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_ids: Option<Vec<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -27,6 +31,11 @@ pub struct RoutePolicy {
 }
 impl RoutePolicy {
     pub fn validate_timeouts(&self) -> std::result::Result<(), &'static str> {
+        if self.local_strategy.as_deref().is_some_and(|strategy| {
+            !matches!(strategy, "ordered" | "round_robin")
+        }) {
+            return Err("local_strategy must be ordered or round_robin");
+        }
         if [
             self.attempt_timeout_ms,
             self.nonstream_timeout_ms,
