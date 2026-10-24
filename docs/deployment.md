@@ -1,6 +1,8 @@
 # Linux x86_64 私有站部署与回滚
 
-当前正式版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](releases/v0.34.0-qiwolf.14.md)和[发行收据](acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
+本轮准备发布 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，统一控制台布局、系统设置分组和关键操作弹窗，修正输入框、聚焦及错误状态样式。Cargo **0.34.0**、schema **40** 保持不变，没有新增数据库迁移或业务接口变更。界面在隔离环境完成 284 项有效检查，既有部署实例的前端更新已由用户复核通过；这些结果不替代本次公开发行提交的构建、CI、下载资产与镜像验收。发行提交、公开资产和镜像摘要以发布完成后的版本说明及 Release 页面为准。见[本版说明](releases/v0.34.0-qiwolf.15.md)。
+
+上一公开版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](releases/v0.34.0-qiwolf.14.md)和[发行收据](acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 
