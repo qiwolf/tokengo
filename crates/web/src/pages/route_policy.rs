@@ -13,6 +13,7 @@ struct PolicyDraft {
     reprobe: String,
     probe: String,
     auto: String,
+    local_strategy: String,
     attempt: String,
     nonstream: String,
     budget: String,
@@ -21,7 +22,7 @@ impl PolicyDraft {
     fn read(v: &Value) -> Self {
         let number = |key: &str| v[key].as_u64().map(|n|n.to_string()).unwrap_or_default();
         let boolean = |key: &str| v[key].as_bool().map(|b|b.to_string()).unwrap_or_default();
-        Self { ordered:v["channel_ids"].is_array(), targets:v["channel_ids"].as_array().map(|a|a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default(), retry:number("retry_times"),reprobe:number("reprobe_interval_ms"),probe:boolean("probe_enabled"),auto:boolean("include_in_auto"),attempt:number("attempt_timeout_ms"),nonstream:number("nonstream_timeout_ms"),budget:number("request_budget_ms") }
+        Self { ordered:v["channel_ids"].is_array(), targets:v["channel_ids"].as_array().map(|a|a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default(), retry:number("retry_times"),reprobe:number("reprobe_interval_ms"),probe:boolean("probe_enabled"),auto:boolean("include_in_auto"),local_strategy:match v.get("local_strategy"){None|Some(Value::Null)=>String::new(),Some(Value::String(value))=>value.clone(),_=>"__invalid__".into()},attempt:number("attempt_timeout_ms"),nonstream:number("nonstream_timeout_ms"),budget:number("request_budget_ms") }
     }
     fn payload(&self) -> Result<Value,String> {
         let mut result=json!({});
@@ -37,6 +38,11 @@ impl PolicyDraft {
             result[key]=json!(n);
         }
         for (key,raw) in [("probe_enabled",&self.probe),("include_in_auto",&self.auto)] {match raw.as_str(){""=>{},"true"=>result[key]=json!(true),"false"=>result[key]=json!(false),_=>return Err("请选择有效的启停选项".into())}}
+        match self.local_strategy.as_str() {
+            "" => {},
+            "ordered" | "round_robin" => result["local_strategy"] = json!(self.local_strategy),
+            _ => return Err("请选择有效的本地节点分配方式".into()),
+        }
         Ok(result)
     }
 }
@@ -142,7 +148,7 @@ pub fn RoutePolicy(ctx: Ctx, open: RwSignal<bool>, #[prop(optional)] saving: Opt
     view!{<section class="admin-section route-policy-form"><p class="muted small">"为指定的本地模型选择服务商顺序、可用 Key 范围、重试与超时。只使用该模型已接入且勾选的 Key。"</p>
     <fieldset disabled=move||busy.get()><label for="routing-model">"选择本地模型"<select id="routing-model" prop:value=model on:change=move|e|load(event_target_value(&e))><option value="">"请选择模型"</option>{move||routes.get().into_iter().filter(|r|r.name!="auto").map(|r|view!{<option value=r.name.clone()>{r.name.clone()}</option>}).collect_view()}</select></label>
     <Show when=move||loaded.get().is_some()><h3>"服务商顺序与 Key 范围"</h3><label class="pick"><input type="checkbox" prop:checked=move||draft.get().ordered on:change=move|e|{let checked=event_target_checked(&e);draft.update(|d|{d.ordered=checked;if checked && d.targets.is_empty(){let name=loaded.get_untracked().unwrap_or_default();d.targets=routes.get_untracked().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();}});}/>"单独设置此模型的服务商顺序与 Key 范围"</label>
-    <p class="muted small">"未勾选时继承全局设置。勾选后可调整服务商整组的先后顺序，并选择组内可用 Key。同一服务商内部按渠道设置的 Key 策略、优先级及用户粘性选择，不按这里的 Key 展示顺序调用。已停用的渠道或 Key 不会参与请求。"</p>
+    <p class="muted small">"未勾选时继承全局设置。勾选后可调整服务商整组的先后顺序，并选择组内可用 Key。未启用下方本地等权轮询时，同一服务商内部按渠道设置的 Key 策略、优先级及用户粘性选择，不按这里的 Key 展示顺序调用。已停用的渠道或 Key 不会参与请求。"</p>
     <Show when=move||draft.get().ordered>{move||{
         let name=loaded.get().unwrap_or_default();let ids=routes.get().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();
         let available:Vec<_>=channels.get().into_iter().filter(|c|ids.contains(&c.id)).collect();
@@ -161,6 +167,9 @@ pub fn RoutePolicy(ctx: Ctx, open: RwSignal<bool>, #[prop(optional)] saving: Opt
             }).collect_view()}</tbody></table></div></fieldset>}
         }).collect_view()}</div>}
     }}</Show>
+    <h3>"本地节点分配"</h3>
+    <label for="routing-local-strategy">"分配方式"<select id="routing-local-strategy" aria-describedby="routing-local-strategy-help" prop:value=move||draft.get().local_strategy on:change=move|e|draft.update(|d|d.local_strategy=event_target_value(&e))><option value="">"继承现有策略"</option><option value="ordered">"按现有 Key 策略"</option><option value="round_robin">"等权轮询"</option></select></label>
+    <p id="routing-local-strategy-help" class="muted small">"等权轮询只对本地服务中的同名向量与重排节点生效，在可用节点间依次分配请求；节点失败时自动尝试其他可用节点。在线服务、OAuth 与会话粘性保持原策略。"</p>
     <h3>"重试与恢复"</h3><div class="form-grid">
     <NumberOverride id="routing-retry" label="每个目标重试次数（0–2）" value=Signal::derive(move||draft.get().retry) set=Callback::new(move|v|draft.update(|d|d.retry=v)) max=2/>
     <NumberOverride id="routing-reprobe" label="回切检查间隔（毫秒，0–86400000）" value=Signal::derive(move||draft.get().reprobe) set=Callback::new(move|v|draft.update(|d|d.reprobe=v)) max=86_400_000/>
@@ -180,6 +189,20 @@ mod tests {
     #[test] fn inheritance_is_omission_not_false_or_zero(){let d=PolicyDraft::default();assert_eq!(d.payload().unwrap(),json!({}));let mut d=d;d.retry="0".into();d.reprobe="0".into();d.probe="false".into();d.auto="false".into();assert_eq!(d.payload().unwrap(),json!({"retry_times":0,"reprobe_interval_ms":0,"probe_enabled":false,"include_in_auto":false}));}
     #[test] fn roundtrip_keeps_order_and_all_timeout_overrides(){let v=json!({"channel_ids":[8,2],"retry_times":2,"reprobe_interval_ms":12345,"probe_enabled":true,"include_in_auto":false,"attempt_timeout_ms":1,"nonstream_timeout_ms":75000,"request_budget_ms":3600000});assert_eq!(PolicyDraft::read(&v).payload().unwrap(),v);}
     #[test] fn invalid_input_never_creates_an_api_payload(){for v in [json!({"channel_ids":[]}),json!({"channel_ids":[2,2]}),json!({"retry_times":3}),json!({"reprobe_interval_ms":86400001}),json!({"attempt_timeout_ms":0}),json!({"request_budget_ms":3600001})]{assert!(PolicyDraft::read(&v).payload().is_err(),"{v}");}let mut d=PolicyDraft::default();d.retry="0.5".into();assert!(d.payload().is_err());}
+    #[test]
+    fn local_strategy_roundtrips_without_losing_explicit_ordered() {
+        for strategy in ["ordered", "round_robin"] {
+            let value = json!({"local_strategy": strategy});
+            assert_eq!(PolicyDraft::read(&value).payload().unwrap(), value);
+        }
+        assert_eq!(PolicyDraft::read(&json!({"local_strategy": null})).payload().unwrap(), json!({}));
+    }
+    #[test]
+    fn invalid_local_strategy_never_creates_an_api_payload() {
+        for strategy in [json!("random"), json!("ROUND_ROBIN"), json!(1), json!(false)] {
+            assert!(PolicyDraft::read(&json!({"local_strategy": strategy})).payload().is_err());
+        }
+    }
     fn sources()->Vec<Channel>{vec![Channel{id:1,provider_id:Some(10),..Default::default()},Channel{id:2,provider_id:Some(10),..Default::default()},Channel{id:3,provider_id:Some(20),..Default::default()},Channel{id:4,provider_id:None,..Default::default()},Channel{id:5,provider_id:None,..Default::default()}]}
     #[test] fn provider_view_does_not_change_legacy_interleaved_order(){let ids=vec![1,3,2,4,5];assert_eq!(selected_groups(&ids,&sources()),vec![vec![1,2],vec![3],vec![4],vec![5]]);assert_eq!(ids,vec![1,3,2,4,5]);}
     #[test] fn moving_provider_moves_all_selected_keys_preserving_other_groups(){let mut ids=vec![1,3,2,4,5];move_provider_group(&mut ids,&sources(),3,true);assert_eq!(ids,vec![3,1,2,4,5]);move_provider_group(&mut ids,&sources(),4,false);assert_eq!(ids,vec![3,1,2,5,4]);let before=ids.clone();move_provider_group(&mut ids,&sources(),3,true);assert_eq!(ids,before);}
