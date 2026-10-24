@@ -1,0 +1,363 @@
+{
+  "overview": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pageH": 1080,
+    "source": "real isolated TokenGo console; fictional fixture data",
+    "elements": [
+      {
+        "selector": "console-sidebar",
+        "x": 0,
+        "y": 0,
+        "w": 208,
+        "h": 1080
+      },
+      {
+        "selector": "console-content",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 983
+      },
+      {
+        "selector": "page-head",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 50
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    ]
+  },
+  "channels": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pageH": 1080,
+    "source": "real isolated TokenGo console; fictional fixture data",
+    "elements": [
+      {
+        "selector": "console-sidebar",
+        "x": 0,
+        "y": 0,
+        "w": 208,
+        "h": 1080
+      },
+      {
+        "selector": "console-content",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 510
+      },
+      {
+        "selector": "page-head",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 50
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "provider-key-modal console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "provider-key-modal console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "provider-key-modal console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    ]
+  },
+  "models": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pageH": 1080,
+    "source": "real isolated TokenGo console; fictional fixture data",
+    "elements": [
+      {
+        "selector": "console-sidebar",
+        "x": 0,
+        "y": 0,
+        "w": 208,
+        "h": 1080
+      },
+      {
+        "selector": "console-content",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 807
+      },
+      {
+        "selector": "page-head",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 50
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    ]
+  },
+  "users": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pageH": 1080,
+    "source": "real isolated TokenGo console; fictional fixture data",
+    "elements": [
+      {
+        "selector": "console-sidebar",
+        "x": 0,
+        "y": 0,
+        "w": 208,
+        "h": 1080
+      },
+      {
+        "selector": "console-content",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 543
+      },
+      {
+        "selector": "page-head",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 50
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    ]
+  },
+  "billing": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pageH": 1080,
+    "source": "real isolated TokenGo console; fictional fixture data",
+    "elements": [
+      {
+        "selector": "console-sidebar",
+        "x": 0,
+        "y": 0,
+        "w": 208,
+        "h": 1080
+      },
+      {
+        "selector": "console-content",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 593.390625
+      },
+      {
+        "selector": "page-head",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 50
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    ]
+  },
+  "shared-models": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pageH": 1080,
+    "source": "real isolated TokenGo console; fictional fixture data",
+    "elements": [
+      {
+        "selector": "console-sidebar",
+        "x": 0,
+        "y": 0,
+        "w": 208,
+        "h": 1080
+      },
+      {
+        "selector": "console-content",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 246
+      },
+      {
+        "selector": "page-head",
+        "x": 296,
+        "y": 80,
+        "w": 1536,
+        "h": 50
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      {
+        "selector": "module-dialog console-content",
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    ]
+  }
+}
