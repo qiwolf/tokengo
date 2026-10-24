@@ -1,0 +1,17 @@
+{
+  "tag": "v0.34.0-qiwolf.15",
+  "source_commit": "c3ecd31250f061f781970b45217cf31743f41e7d",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15",
+  "main_ci": "https://github.com/qiwolf/tokengo/actions/runs/40109365222",
+  "release_workflow": "https://github.com/qiwolf/tokengo/actions/runs/40109975693",
+  "native_asset": "tokengo-c3ecd31250f0-linux-x86_64.tar.gz",
+  "native_sha256": "ad98027d2df25f468a31679c724983073b093f645487fb545acf601ad9e59aa6",
+  "immutable_image": "ghcr.io/qiwolf/tokengo@sha256:63b9b32289cf1482867f74889cf6e914aa0ddbb06934e74beeef211eedc67083",
+  "assets": 9,
+  "rust_passed": 1182,
+  "rust_failed": 0,
+  "rust_ignored": 3,
+  "ui_browser_checks": 284,
+  "local_native_container_verification": "passed",
+  "production_upgrade_in_this_publication": false
+}
