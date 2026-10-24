@@ -1,0 +1,129 @@
+{
+  "result": "passed",
+  "source_commit": "1386fa2d410ece30e1a24009e21fa9a1979cdd01",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14",
+  "assets": 9,
+  "host": "build-test Linux x86_64",
+  "anonymous_downloads": true,
+  "anonymous_registry": true,
+  "offline_archive_two_tags": true,
+  "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+  "smoke_restart_recreation": true,
+  "native_runtime": true,
+  "recoverable_key_runtime": true,
+  "container_key_runtime": true,
+  "production_access": false,
+  "tag": "v0.34.0-qiwolf.14",
+  "published_at": "2026-10-24T11:59:16Z",
+  "native_asset": "tokengo-1386fa2d410e-linux-x86_64.tar.gz",
+  "native_sha256": "0b2cfcaccd9b762a75baff0cf9ab734bc21bb0ea0f17817e2a5166a231426e05",
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:2cf6dea643149c511785fda0ebc0c399032b2a763c8507eea73430e0b17c5264",
+  "main_ci": "https://github.com/qiwolf/tokengo/actions/runs/40090424619",
+  "release_ci": "https://github.com/qiwolf/tokengo/actions/runs/40091159611",
+  "main_ci_result": "success",
+  "release_ci_result": "success",
+  "build_test": {
+    "tested_commit": "e63bb506ebd181cf7a7494880164934c7c853751",
+    "release_commit": "1386fa2d410ece30e1a24009e21fa9a1979cdd01",
+    "application_build_and_test_sources_identical": true,
+    "workspace_passed": 1182,
+    "failed": 0,
+    "workspace_ignored": 3,
+    "python_tests": 22,
+    "native_wasm_exact_release_commit": true,
+    "native_container_lifecycle_passed": true,
+    "baseline_package_lifecycle_skipped": true,
+    "final_artifacts_retrieved": true,
+    "executing_host": "build-test",
+    "no_production_access_in_release_acceptance": true,
+    "ignored_tests": [
+      {
+        "name": "tests::signal_child",
+        "reason": "subprocess helper invoked by process_sigterm_drains_real_http_request"
+      },
+      {
+        "name": "real_registry_fetch",
+        "reason": "external registry access; ignored by test declaration"
+      },
+      {
+        "name": "real_cloud_to_gpu_embedding_and_rerank_fallback",
+        "reason": "requires explicit real-source credentials and bounded synthetic upstream calls"
+      }
+    ]
+  },
+  "github_asset_digest_checks": [
+    {
+      "name": "compose.yaml",
+      "size": 797,
+      "sha256": "c2ff524fec80226466772a7407bebadcf4425739cff36512156bb5709f4dc097",
+      "github_digest_matches": true
+    },
+    {
+      "name": "container-deployment.md",
+      "size": 12613,
+      "sha256": "5f4780e46e9fbb81409647cd54acdf071208d19d6f643c2a47ef1dcb1a6db1fa",
+      "github_digest_matches": true
+    },
+    {
+      "name": "container.env.example",
+      "size": 316,
+      "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+      "github_digest_matches": true
+    },
+    {
+      "name": "image-manifest.json",
+      "size": 199,
+      "sha256": "ddd35e296ed1b32a59ec1c2e32ffdb58d0c5ab0f514847deb0d6de37c8180e50",
+      "github_digest_matches": true
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "size": 564,
+      "sha256": "27c0cd08b74dfd05d26484f5ab2e27fc42251ae7987d0089c8d7b95280cd422a",
+      "github_digest_matches": true
+    },
+    {
+      "name": "registry-image.txt",
+      "size": 95,
+      "sha256": "cc98cea87b3fb6977d3599f724a3a9ed34f9a53aa4cb405d3cc8ad047eb2cee2",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-1386fa2d410e-linux-x86_64.tar.gz",
+      "size": 7923786,
+      "sha256": "0b2cfcaccd9b762a75baff0cf9ab734bc21bb0ea0f17817e2a5166a231426e05",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-1386fa2d410e-linux-x86_64.tar.gz.sha256",
+      "size": 107,
+      "sha256": "70468820e04e8c0cc239669346b3038d154e9368e954d8d36355e870df0effbc",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-1386fa2d410ece30e1a24009e21fa9a1979cdd01-linux-amd64.tar.gz",
+      "size": 40055802,
+      "sha256": "c55e233f8b7c276ea9e1983169615610c145a71b0f65a563f39689efce2ff113",
+      "github_digest_matches": true
+    }
+  ],
+  "registry_tags": {
+    "v0.34.0-qiwolf.14": "sha256:2cf6dea643149c511785fda0ebc0c399032b2a763c8507eea73430e0b17c5264",
+    "sha-1386fa2d410ece30e1a24009e21fa9a1979cdd01": "sha256:2cf6dea643149c511785fda0ebc0c399032b2a763c8507eea73430e0b17c5264",
+    "latest": "sha256:2cf6dea643149c511785fda0ebc0c399032b2a763c8507eea73430e0b17c5264"
+  },
+  "fixture_cleanup": {
+    "temporary_runtime_directories_remaining": 0,
+    "test_containers_remaining": 0,
+    "test_volumes_remaining": 0,
+    "test_native_processes_remaining": 0,
+    "canonical_and_local_aliases_removed": true
+  },
+  "production_upgrade_performed": false,
+  "download_retry": {
+    "first_attempt_seconds": 180,
+    "retry_limit_seconds": 600,
+    "reason": "Transport too slow for the final 40MB offline image; all complete files verified by size and official digest; unchanged validation standards",
+    "product_failure": false
+  }
+}

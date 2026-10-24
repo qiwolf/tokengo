@@ -9,6 +9,8 @@
 - 修复共享模型候选与执行来源不一致；管理员显式共享目标使用供应方有效来源，普通/私有白名单和实时授权边界保留；刷新候选不丢编辑草稿。
 - 237 共享入口真实调用 DeepSeek 返回 200，23+8=31 Tokens，单请求/尝试/账本一致并完成结算；按用户确认保持未定价，金额字段为 null，不表述为 0 元或金额扣费已验。临时配置已归档撤销，历史逐行守恒。Cargo0.34.0/schema40不变，发行状态及验证边界见[本版说明](docs/releases/v0.34.0-qiwolf.14.md)。
 
+发行源码 `1386fa2d410ece30e1a24009e21fa9a1979cdd01`，[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40090424619)及[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40091159611)成功，9资产已发布。build-test完整1182/0/3、Python22及最终SHA native/WASM和原生/容器运行通过；公开9资产匿名校验、实际GHCR拉取及原生/容器独立验收通过，见[发行收据](docs/acceptance/2026-10-24-qiwolf14-release/README.md)。本次公开发行未再次升级237。
+
 ## v0.34.0-qiwolf.13 — 2026-10-24（北京时间）
 
 - Chat→Responses 转换兼容仅含 effort 的 reasoning 对象，保留标准 reasoning_effort 和客户端显式优先级；冲突或无法无损转换的属性明确拒绝。

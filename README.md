@@ -1,6 +1,6 @@
 # tokengo
 
-本版发行标识 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，Cargo0.34.0/schema40。包含账务管理、上游模型映射移除与重新添加、共享模型候选及执行一致性修复。237 已完成独立真实推理和用量账本验收，模型按用户确认保持未定价；临时配置已清理，历史账目保留。见[版本说明](docs/releases/v0.34.0-qiwolf.14.md)。公开资产是否已发布、精确源码、校验和及镜像 digest 以该 tag 的 GitHub Release 和 manifest 为准；公开产物独立验收收据完成后补入 main 和 Release 页面，不把生产私有构建哈希当作公开产物值，也不表示下载包已包含后补收据。
+当前正式版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](docs/releases/v0.34.0-qiwolf.14.md)和[发行收据](docs/acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](docs/maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
 
 历史公开版 [qiwolf.11](docs/releases/v0.34.0-qiwolf.11.md) 的既有收据保留。
 
