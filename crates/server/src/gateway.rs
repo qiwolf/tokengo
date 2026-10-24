@@ -701,16 +701,21 @@ fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option
     Ok((input,output))
 }
 
-/// Subscription preview cannot enforce an output cap. Reserve the full verified
-/// provider output ceiling and keep unknown monetary prices unknown.
+/// Reserve an explicit enforced cap, or the full verified provider ceiling when
+/// omitted. Unknown monetary prices remain unknown.
 fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (max_input,max_output)=context.filter(|(i,o)|*i>0&&*o>0).ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"source_limits_required","ChatGPT plan requests require verified full provider context and output bounds"))?;
     let (mut input,_)=admission_bound(body,EndpointKind::Responses)?;
+    let output=if body.get("max_output_tokens").is_some() {
+        let cap=output_bound(body,EndpointKind::Responses)?;
+        if cap<16 {return Err(ApiError::bad_request("ChatGPT plan max_output_tokens must be at least 16"));}
+        cap
+    } else {max_output};
     if crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses,body) || crate::protocol::has_image(crate::protocol::Protocol::Responses,body) {input=max_input;}
-    if input>max_input || price.is_some_and(|p|input>p.max_input_tokens||max_output>p.max_output_tokens) {
+    if input>max_input || output>max_output || price.is_some_and(|p|input>p.max_input_tokens||output>p.max_output_tokens) {
         return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","ChatGPT plan request exceeds configured source or billing token bounds"));
     }
-    Ok((input,max_output))
+    Ok((input,output))
 }
 fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),ApiError> {
     fn unsupported_media(v:&Value,allow_audio:bool)->bool {
@@ -1263,7 +1268,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 error
             })?;
         // Predict the per-source default without borrowing mutable price caps.
-        // OAuth keeps its full binding ceiling; a missing OAuth bound never uses generic caps.
+        // OAuth uses an explicit cap, or its full binding ceiling when omitted.
         let default_output = req.endpoint.is_generation()
             && ["max_tokens", "max_completion_tokens", "max_output_tokens"]
                 .iter()
@@ -1287,7 +1292,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 .map_err(crate::db::DbError::from)?;
             let candidate_output = if !req.endpoint.is_generation() {
                 0
-            } else if has_oauth {
+            } else if has_oauth && default_output {
                 oauth_bound.map(|v| v.1).unwrap_or(output)
             } else if default_output {
                 4096.min(
@@ -4734,6 +4739,23 @@ mod tests {
         }
         let body=serde_json::json!({"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"function","name":"sum","parameters":{"type":"object"}}]}]});assert!(validate_native_cost_and_state(EndpointKind::Responses,&body).is_ok());
         assert!(validate_native_cost_and_state(EndpointKind::Responses,&serde_json::json!({"input":[{"type":"tool_search_output","tools":[]}]})).is_err());
+    }
+    #[test]
+    fn subscription_caps_keep_model_price_and_opaque_input_bounds() {
+        let mut body=json!({"model":"m","input":"hello","max_output_tokens":16});
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,16);
+        body["max_output_tokens"]=json!(32768);
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,32768);
+        body["max_output_tokens"]=json!(32769);
+        assert!(subscription_bound(&body,None,Some((131072,32768))).is_err());
+        body.as_object_mut().unwrap().remove("max_output_tokens");
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,32768);
+        body["max_output_tokens"]=json!(16);
+        body["input"]=json!([{"type":"reasoning","encrypted_content":"opaque"}]);
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap(),(131072,16));
+        let price=crate::db::billing::Price{id:1,channel_id:1,model:"m".into(),input_micro_per_million:0,output_micro_per_million:1,max_input_tokens:131072,max_output_tokens:15};
+        assert!(subscription_bound(&body,Some(&price),Some((131072,32768))).is_err());
+        assert!(subscription_bound(&body,None,None).is_err());
     }
     #[test]
     fn subscription_context_bounds_do_not_invent_a_token_price() {

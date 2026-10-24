@@ -7,7 +7,7 @@ use super::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// Public ChatGPT-plan preview. Unsupported limits are rejected, never silently stripped.
+/// Public ChatGPT-plan transport. Validated output caps are preserved; unknown controls fail closed.
 pub fn prepare_request(
     body: &mut Value,
     effort: Option<&str>,
@@ -19,10 +19,14 @@ pub fn prepare_request(
     if map.get("store").is_some_and(|v| v != false) {
         return Err("ChatGPT plan requests require store=false".into());
     }
+    if let Some(cap) = map.get("max_output_tokens") {
+        if !cap.as_i64().is_some_and(|n| n >= 16) {
+            return Err("ChatGPT plan max_output_tokens must be an integer of at least 16; no upstream request was sent".into());
+        }
+    }
     for field in [
         "background",
         "conversation",
-        "max_output_tokens",
         "max_tokens",
         "max_completion_tokens",
         "max_tool_calls",
@@ -199,7 +203,7 @@ impl ResponsesCollector {
                 if self.items.insert(index, item.clone()).is_some() {
                     return Err("Duplicate finalized Responses item".into());
                 }
-            } else if kind == "response.completed" {
+            } else if matches!(kind, "response.completed" | "response.incomplete") {
                 if self.terminal.is_some() {
                     return Err("Duplicate Responses completion".into());
                 }
@@ -222,7 +226,7 @@ impl ResponsesCollector {
         let mut result = self
             .terminal
             .take()
-            .ok_or("Responses stream has no completed response")?;
+            .ok_or("Responses stream has no terminal response")?;
         let output = result
             .get("output")
             .and_then(Value::as_array)
@@ -287,6 +291,8 @@ mod tests {
         for v in [
             json!({"type":"response.failed","response":{"status":"failed"}}),
             json!({"type":"response.incomplete","response":{"status":"incomplete"}}),
+            json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}}),
+            json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"error":{"code":"provider_error"}}}),
         ] {
             assert!(ResponsesCollector::default().feed(&frame(v)).is_err());
         }
@@ -315,6 +321,18 @@ mod tests {
         assert!(c.feed(ping).is_err());
     }
     #[test]
+    fn oauth_output_cap_is_preserved_and_validated() {
+        for cap in [json!(16),json!(32),json!(64000)] {
+            let mut body=json!({"input":"hello","max_output_tokens":cap});
+            prepare_request(&mut body,None,None).unwrap();
+            assert_eq!(body["max_output_tokens"],cap);
+        }
+        for cap in [json!(15),json!(0),json!(-1),json!("32"),json!(32.5),Value::Null] {
+            let mut body=json!({"input":"hello","max_output_tokens":cap});
+            assert!(prepare_request(&mut body,None,None).is_err());
+        }
+    }
+    #[test]
     fn oauth_transport_rejects_unsupported_limits_and_respects_native_fields_and_explicit_dials() {
         let mut v = json!({"input":"hello","stream":false,"reasoning":{"effort":"high"},"service_tier":"default","include":["reasoning.encrypted_content"]});
         prepare_request(&mut v, Some("low"), Some("priority")).unwrap();
@@ -337,7 +355,7 @@ mod tests {
             assert!(prepare_request(&mut v, Some("low"), None).is_err());
         }
         for field in [
-            "max_output_tokens",
+            "max_tokens",
             "temperature",
             "top_p",
             "metadata",

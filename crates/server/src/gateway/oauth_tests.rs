@@ -30,12 +30,15 @@ async fn source(
     source.seen.lock().unwrap().push((headers, body.clone()));
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
-    assert!(body.get("max_output_tokens").is_none());
-    let item = json!({"id":"msg_synthetic","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OAuth reply","annotations":[]}]});
+    let cap = body.get("max_output_tokens").and_then(Value::as_i64);
+    let limited = cap.is_some();
+    let status = if limited { "incomplete" } else { "completed" };
+    let output_tokens = cap.unwrap_or(3);
+    let item = json!({"id":"msg_synthetic","type":"message","status":status,"phase":"final_answer","role":"assistant","content":[{"type":"output_text","text":"OAuth reply","annotations":[]}]});
     let bytes = format!(
         "data: {}\n\ndata: {}\n\n",
         json!({"type":"response.output_item.done","output_index":0,"item":item}),
-        json!({"type":"response.completed","response":{"id":"resp_synthetic","object":"response","status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3}}})
+        json!({"type":if limited {"response.incomplete"} else {"response.completed"},"response":{"id":"resp_synthetic","object":"response","status":status,"completed_at":if limited {Value::Null} else {json!(1)},"text":{"format":body.get("text").and_then(|v|v.get("format")).cloned().unwrap_or(json!({"type":"text"})),"verbosity":"medium"},"incomplete_details":if limited {json!({"reason":"max_output_tokens"})} else {Value::Null},"output":if limited {json!([item])} else {json!([])},"usage":{"input_tokens":7,"output_tokens":output_tokens}}})
     );
     let stream = futures_util::stream::unfold(Some(bytes), |chunk| async move {
         match chunk {
@@ -209,7 +212,7 @@ async fn oauth_nonstream_conversion_native_stream_billing_and_explicit_limit_rej
     crate::billing_writer::replay(&f.state.conn(), &f.state.cfg.db_path).unwrap();
     let count:i64=f.state.conn().query_row("SELECT count(*) FROM billing_ledger WHERE channel_id=?1 AND price_id IS NULL AND debit_micro IS NULL AND input_tokens=7 AND output_tokens=3 AND input_bound>0 AND output_bound=32768 AND status='unpriced'",[f.channel],|r|r.get(0)).unwrap();
     assert_eq!(count, 3);
-    for field in ["max_output_tokens", "temperature"] {
+    for field in ["max_tokens", "temperature"] {
         let mut body = json!({"model":"gpt-test","input":"hello"});
         body[field] = json!(32);
         assert_eq!(
@@ -257,4 +260,104 @@ async fn oauth_mapping_defaults_and_provider_default_supersede_legacy_binding_wi
     {let c=f.state.conn();crate::reasoning_capabilities::configure(&c,f.channel,"gpt-test",Some(&levels),None).unwrap();}
     let response=f.send("responses",json!({"model":"gpt-test","input":"hello"})).await;assert_eq!(response.status(),StatusCode::OK);let _=response.bytes().await.unwrap();
     let seen=f.seen.seen.lock().unwrap();assert_eq!(seen.len(),3);assert_eq!(seen[0].1["reasoning"]["effort"],"high");assert_eq!(seen[1].1["reasoning"]["effort"],"low");assert!(seen[2].1.get("reasoning").is_none(),"explicit provider default must not resurrect old low binding");
+}
+
+#[tokio::test]
+async fn oauth_chat_schema_reaches_source_and_invalid_output_caps_do_not() {
+    let f = Fixture::new().await;
+    let schema = json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false});
+    let body = json!({"model":"gpt-test","messages":[{"role":"user","content":"Return JSON"}],"response_format":{"type":"json_schema","json_schema":{"name":"extract","strict":true,"schema":schema}}});
+    let response = f.send("chat/completions", body.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let reply:Value = response.json().await.unwrap();
+    assert_eq!(reply["choices"][0]["message"]["content"], "OAuth reply");
+    {
+        let seen = f.seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].1["text"]["format"], json!({"type":"json_schema","name":"extract","strict":true,"schema":schema}));
+        assert!(seen[0].1.get("response_format").is_none());
+    }
+    for field in ["max_tokens", "max_completion_tokens"] {
+        let mut capped = body.clone();
+        capped[field] = json!(15);
+        assert_eq!(f.send("chat/completions", capped).await.status(), StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn oauth_caps_preserve_truncation_usage_and_subscription_ledger() {
+    let f = Fixture::new().await;
+    for (path, field) in [("responses", "max_output_tokens"), ("chat/completions", "max_tokens"), ("chat/completions", "max_completion_tokens")] {
+        for cap in [16, 32] {
+            let mut body = if path == "responses" {json!({"model":"gpt-test","input":"Count numbers"})} else {json!({"model":"gpt-test","messages":[{"role":"user","content":"Count numbers"}]})};
+            body[field] = json!(cap);
+            let response = f.send(path, body).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let reply:Value = response.json().await.unwrap();
+            if path == "responses" {
+                assert_eq!(reply["status"], "incomplete");
+                assert_eq!(reply["incomplete_details"]["reason"], "max_output_tokens");
+                assert_eq!(reply["usage"]["input_tokens"], 7);
+                assert_eq!(reply["usage"]["output_tokens"], cap);
+            } else {
+                assert_eq!(reply["choices"][0]["finish_reason"], "length");
+                assert_eq!(reply["usage"]["prompt_tokens"], 7);
+                assert_eq!(reply["usage"]["completion_tokens"], cap);
+            }
+            let seen = f.seen.seen.lock().unwrap();
+            assert_eq!(seen.last().unwrap().1["max_output_tokens"], cap);
+            assert!(seen.last().unwrap().1.get("max_tokens").is_none());
+            assert!(seen.last().unwrap().1.get("max_completion_tokens").is_none());
+        }
+    }
+    f.state.drain_writes();
+    crate::billing_writer::replay(&f.state.conn(), &f.state.cfg.db_path).unwrap();
+    let c = f.state.conn();
+    let count:i64=c.query_row("SELECT count(*) FROM billing_ledger WHERE channel_id=?1 AND price_id IS NULL AND debit_micro IS NULL AND input_tokens=7 AND output_tokens=output_bound AND output_bound IN (16,32) AND status='unpriced' AND settled_ms IS NOT NULL",[f.channel],|r|r.get(0)).unwrap();
+    assert_eq!(count, 6);
+    let reserved:i64=c.query_row("SELECT coalesce(sum(reserved_micro),0) FROM billing_budgets",[],|r|r.get(0)).unwrap();
+    assert_eq!(reserved, 0);
+}
+
+#[tokio::test]
+async fn oauth_caps_reject_below_minimum_above_model_ceiling_and_bad_types_before_source() {
+    let f = Fixture::new().await;
+    for cap in [json!(0), json!(15), json!(32769), json!(-1), json!(16.5), json!("32"), Value::Null] {
+        let reply = f.send("responses", json!({"model":"gpt-test","input":"hello","max_output_tokens":cap})).await;
+        assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "{cap}");
+    }
+    assert!(f.seen.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn oauth_cap_stream_keeps_length_usage_and_priced_settlement() {
+    let f = Fixture::new().await;
+    crate::db::billing::create_price(&f.state.conn(),&crate::db::billing::Price{id:0,channel_id:f.channel,model:"gpt-test".into(),input_micro_per_million:0,output_micro_per_million:1_000_000,max_input_tokens:16384,max_output_tokens:32768},"cap fixture").unwrap();
+    let response=f.send("chat/completions",json!({"model":"gpt-test","messages":[{"role":"user","content":"Count numbers"}],"max_completion_tokens":16,"stream":true,"stream_options":{"include_usage":true}})).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let wire=response.text().await.unwrap();
+    let events:Vec<Value>=wire.lines().filter_map(|s|s.strip_prefix("data: ")).filter_map(|s|serde_json::from_str(s).ok()).collect();
+    assert!(events.iter().any(|e|e["choices"][0]["finish_reason"]=="length"));
+    assert!(events.iter().any(|e|e["usage"]["completion_tokens"]==16));
+    f.state.drain_writes();
+    crate::billing_writer::replay(&f.state.conn(),&f.state.cfg.db_path).unwrap();
+    let c=f.state.conn();
+    let row:(i64,i64,i64,i64)=c.query_row("SELECT output_bound,output_tokens,debit_micro,overrun FROM billing_ledger WHERE channel_id=?1",[f.channel],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+    assert_eq!(row,(16,16,16,0));
+    assert_eq!(c.query_row("SELECT coalesce(sum(reserved_micro),0) FROM billing_budgets",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+}
+
+#[tokio::test]
+async fn oauth_explicit_cap_uses_cap_for_tpm_admission_instead_of_full_ceiling() {
+    let f=Fixture::new().await;
+    let auth=f.state.authenticate_context(f.key.clone()).await.unwrap();
+    let mut key=crate::db::identity::key(&f.state.conn(),auth.key_id).unwrap().unwrap();
+    key.policy.tpm=Some(1000);
+    crate::db::identity::update_key(&f.state.conn(),&key).unwrap();
+    let response=f.send("responses",json!({"model":"gpt-test","input":"Count numbers","max_output_tokens":32})).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let _=response.bytes().await.unwrap();
+    assert_eq!(f.send("responses",json!({"model":"gpt-test","input":"Count numbers"})).await.status(),StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(f.seen.seen.lock().unwrap().len(),1);
 }

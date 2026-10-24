@@ -7,11 +7,38 @@ fn observed_zero_tools() -> Value {
     json!({"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}})
 }
 
+fn supported_text_echo(value: &Value) -> bool {
+    if super::fields(value, &["format", "verbosity"]).is_err()
+        || !["low", "medium", "high"].iter().any(|level| value["verbosity"] == *level)
+    {
+        return false;
+    }
+    let format = &value["format"];
+    let chat = if format["type"] == "json_schema" {
+        if super::fields(format, &["type", "name", "description", "schema", "strict"]).is_err() {
+            return false;
+        }
+        let mut schema = format.clone();
+        let Some(map) = schema.as_object_mut() else { return false; };
+        map.remove("type");
+        // Responses may echo an absent description as null. Preserve the original
+        // metadata; only the validation projection omits that empty optional value.
+        if map.get("description").is_some_and(Value::is_null) { map.remove("description"); }
+        json!({"type":"json_schema", "json_schema":schema})
+    } else {
+        format.clone()
+    };
+    super::request::chat_response_format(&chat).is_ok()
+}
+
 /// Convert only the observed inert OAuth metadata, preserving it outside Chat semantics.
 pub fn convert_oauth_buffered_response(client: Protocol, body: &Value) -> Result<Value, String> {
     if client != Protocol::Chat {
         return convert_response(Protocol::Responses, client, body);
     }
+    let output_limited = body["status"] == "incomplete"
+        && body["incomplete_details"]["reason"] == "max_output_tokens"
+        && body.get("error").is_none_or(Value::is_null);
     let mut normalized = body.clone();
     let object = normalized
         .as_object_mut()
@@ -33,13 +60,13 @@ pub fn convert_oauth_buffered_response(client: Protocol, body: &Value) -> Result
         };
         let accepted = match key {
             "access_programs" => *value == json!({"cyber":"standard"}),
-            "completed_at" => value.as_u64().is_some(),
+            "completed_at" => value.as_u64().is_some() || (output_limited && value.is_null()),
             "frequency_penalty" | "presence_penalty" => value.as_f64() == Some(0.0),
             "moderation" => value.is_null(),
             "top_logprobs" => value.as_u64() == Some(0),
             "tool_usage" => *value == observed_zero_tools(),
             "reasoning" => ["low", "medium", "high"].iter().any(|effort| *value == json!({"context":"all_turns","effort":effort,"mode":"standard","summary":null})),
-            "text" => ["low", "medium", "high"].iter().any(|verbosity| *value == json!({"format":{"type":"text"},"verbosity":verbosity})),
+            "text" => supported_text_echo(value),
             _ => unreachable!(),
         };
         if !accepted {
@@ -56,10 +83,10 @@ pub fn convert_oauth_buffered_response(client: Protocol, body: &Value) -> Result
     if let Some(items) = object.get_mut("output").and_then(Value::as_array_mut) {
         for (index, item) in items.iter_mut().enumerate() {
             if let Some(phase) = item.get("phase") {
-                if !completed
+                if !(completed || output_limited)
                     || item["type"] != "message"
                     || item["role"] != "assistant"
-                    || item["status"] != "completed"
+                    || !(item["status"] == "completed" || (output_limited && item["status"] == "incomplete"))
                     || phase != "final_answer"
                 {
                     return Err("Unsupported OAuth output message phase".into());

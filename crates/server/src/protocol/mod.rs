@@ -52,6 +52,64 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
+    fn chat_response_format_maps_to_responses_without_changing_schema() {
+        let schema = json!({"type":"object","properties":{"label":{"type":"string","enum":["中文","ok"]}},"required":["label"],"additionalProperties":false,"$defs":{"nested":{"type":"integer"}}});
+        for strict in [None, Some(json!(false)), Some(json!(true)), Some(Value::Null)] {
+            let mut format = json!({"type":"json_schema","json_schema":{"name":"hs_extract","description":"HS extraction","schema":schema}});
+            if let Some(strict) = strict { format["json_schema"]["strict"] = strict; }
+            let body = json!({"model":"m","messages":[{"role":"user","content":"Extract JSON"}],"response_format":format});
+            let converted = convert_request(Protocol::Chat, Protocol::Responses, &body).unwrap();
+            let mut expected = format["json_schema"].clone();
+            expected["type"] = json!("json_schema");
+            assert_eq!(converted["text"]["format"], expected);
+            assert!(converted.get("response_format").is_none());
+            assert_eq!(body["response_format"], format);
+        }
+    }
+    #[test]
+    fn chat_response_format_maps_text_and_json_object() {
+        for kind in ["text", "json_object"] {
+            let body = json!({"model":"m","messages":[{"role":"user","content":"JSON please"}],"response_format":{"type":kind}});
+            let converted = convert_request(Protocol::Chat, Protocol::Responses, &body).unwrap();
+            assert_eq!(converted["text"], json!({"format":{"type":kind}}));
+        }
+    }
+    #[test]
+    fn chat_response_format_validates_schema_name_boundaries() {
+        for (name, valid) in [
+            ("a".repeat(64), true),
+            ("A0_-".into(), true),
+            (String::new(), false),
+            ("a".repeat(65), false),
+            ("has space".into(), false),
+            ("中文".into(), false),
+        ] {
+            let body = json!({"model":"m","messages":[{"role":"user","content":"JSON"}],"response_format":{"type":"json_schema","json_schema":{"name":name,"schema":{}}}});
+            assert_eq!(convert_request(Protocol::Chat, Protocol::Responses, &body).is_ok(), valid, "{name}");
+        }
+    }
+    #[test]
+    fn chat_response_format_rejects_lossy_or_malformed_conversion() {
+        for format in [
+            json!(null), json!({"type":"unknown"}),
+            json!({"type":"json_object","schema":{}}),
+            json!({"type":"json_schema"}),
+            json!({"type":"json_schema","json_schema":{"name":"x"}}),
+            json!({"type":"json_schema","json_schema":{"name":7,"schema":{}}}),
+            json!({"type":"json_schema","json_schema":{"name":"x","schema":[],"strict":true}}),
+            json!({"type":"json_schema","json_schema":{"name":"x","schema":{},"strict":"true"}}),
+            json!({"type":"json_schema","json_schema":{"name":"x","schema":{},"description":7}}),
+            json!({"type":"json_schema","json_schema":{"name":"x","schema":{},"future_control":true}}),
+        ] {
+            let body = json!({"model":"m","messages":[{"role":"user","content":"hi"}],"response_format":format});
+            assert!(convert_request(Protocol::Chat, Protocol::Responses, &body).is_err(), "{format}");
+            // Native traffic must still preserve provider-specific payloads.
+            assert_eq!(convert_request(Protocol::Chat, Protocol::Chat, &body).unwrap(), body);
+        }
+        let body = json!({"model":"m","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{}}}});
+        assert!(convert_request(Protocol::Chat, Protocol::Messages, &body).is_err());
+    }
+    #[test]
     fn native_keeps_opaque_fields() {
         let v = json!({"model":"m","thinking":{"signature":"opaque"},"unknown":[1]});
         for p in [Protocol::Chat, Protocol::Responses, Protocol::Messages] {
