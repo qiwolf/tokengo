@@ -1,0 +1,14 @@
+{
+  "url": "http://192.168.240.237/readyz",
+  "status": 200,
+  "body": {
+    "checks": {
+      "database": "ok",
+      "gateway_key_set": true,
+      "panel_password_set": true,
+      "routing_models_tracked": 39
+    },
+    "status": "ok"
+  },
+  "confidence": "observed"
+}

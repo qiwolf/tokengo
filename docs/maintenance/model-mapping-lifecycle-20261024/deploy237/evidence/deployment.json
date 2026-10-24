@@ -1,0 +1,17 @@
+{
+  "executed": true,
+  "previous": "/opt/tokengo/releases/billing-eef9c0783fd6cf11",
+  "target": "/opt/tokengo/releases/model-mapping-be166dfcfb2f",
+  "source_manifest_sha256": "4eacaad02f933276ba47af2cf68f0646f01417a6c7f68d395d6d348ad4214bfe",
+  "public_release": false,
+  "source_commit": "be166dfcfb2fff59b22fbde69b6c27e7ec3c0587",
+  "previous_server_sha256": "571c7924afcc567a505c6ba89242dc01402d33c420142737e24fbcea1fbe47c4",
+  "backup": "/var/backups/tokengo/20261024T103145Z-19161683",
+  "business_and_schema_unchanged": true,
+  "running_server_sha256": "049f5f06b9fecccf1325d662bb0aa25d25f4da3ca8ccd1969178ebf606ae50c0",
+  "runtime_config_unchanged": true,
+  "served_assets_verified": true,
+  "graceful_ingress_restored": true,
+  "no_forced_request_termination": true,
+  "rollback": "restore previous current symlink and restart tokengo; retain current live database"
+}

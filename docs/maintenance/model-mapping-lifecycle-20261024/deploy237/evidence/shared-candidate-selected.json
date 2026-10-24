@@ -1,0 +1,14 @@
+{
+  "target": "http://192.168.240.237/ui/#shared-models",
+  "source_commit": "be166dfcfb2fff59b22fbde69b6c27e7ec3c0587",
+  "candidate": {
+    "optionCount": 40,
+    "selectedIndex": 14,
+    "text": "SiliconFlow · DeepSeek-V4.1-Flash",
+    "value": "13"
+  },
+  "selection_verified": true,
+  "draft_name_empty": true,
+  "saved": false,
+  "inference_sent": false
+}

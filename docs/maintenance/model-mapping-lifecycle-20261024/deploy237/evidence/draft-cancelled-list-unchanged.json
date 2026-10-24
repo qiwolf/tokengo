@@ -1,0 +1,14 @@
+{
+  "before_count": 3,
+  "after_count": 3,
+  "identical": true,
+  "names": [
+    "bge-m3-fallback",
+    "bge-reranker-v2-m3-fallback",
+    "deepseek-4.1-flash-fallback"
+  ],
+  "open_dialogs": 0,
+  "manual_refresh_verified": true,
+  "cancelled_without_save": true,
+  "inference_sent": false
+}

@@ -1,0 +1,10 @@
+{
+  "target": "http://192.168.240.237/ui/#overview",
+  "browser": "existing Chrome user tab",
+  "tab_id": "1004984623",
+  "administrator_logged_in": true,
+  "visible_identity": "qiwolf / 管理员",
+  "refreshed_before_deploy_notification": false,
+  "production_configuration_changed": false,
+  "planned_scope": "After deployment notification, refresh and select SiliconFlow DeepSeek-V4.1-Flash in shared model draft; cancel draft without saving or inference"
+}

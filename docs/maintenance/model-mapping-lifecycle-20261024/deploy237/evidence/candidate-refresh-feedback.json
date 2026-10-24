@@ -1,0 +1,13 @@
+{
+  "manual_refresh_clicked": true,
+  "status": [
+    "可选模型已更新，共 39 个目标。",
+    ""
+  ],
+  "selected": {
+    "text": "SiliconFlow · DeepSeek-V4.1-Flash",
+    "value": "13"
+  },
+  "saved": false,
+  "inference_sent": false
+}

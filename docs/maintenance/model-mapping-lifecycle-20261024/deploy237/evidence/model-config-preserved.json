@@ -1,0 +1,15 @@
+{
+  "confidence": "derived",
+  "inputs": [
+    "../../evidence/live-mapping-state.json",
+    "live-mapping-state.json"
+  ],
+  "model": "DeepSeek-V4.1-Flash",
+  "provider": "SiliconFlow",
+  "provider_id": 2,
+  "credential_id": 6,
+  "source_id": 2,
+  "ordinary_route_policy_unchanged": true,
+  "mapping_still_enabled": true,
+  "production_model_config_modified_by_task": false
+}

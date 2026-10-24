@@ -1,0 +1,20 @@
+{
+  "confidence": "observed",
+  "files": {
+    "237更新与验收.md": "f86e67dc905592568fc32349c4eba279553ef38e383cffad1aca9e28d74dd4b5",
+    "evidence/browser-preflight.json": "ac78ba20791877e9b1beae78fc591e2b63005203f66f5a1286fa7e16d5256650",
+    "evidence/candidate-refresh-feedback.json": "6c795e052518c624182a15d5454c340cf64f174756e10768c0cf99d294716b1b",
+    "evidence/deployment.json": "1322e98d727c506edf0296f35a6ba92180e47f6382fb1c2376aed272c4b33f30",
+    "evidence/draft-cancelled-list-unchanged.json": "0e1f3bac3c98158da58bd210eb47c13fef8346c5f83c07b2e6b9e54c145d511f",
+    "evidence/external-readyz.json": "f2e42ec4d32f9c4004f078fa1a0028644bcf1f1185a95f48b31520ff0603a9ef",
+    "evidence/live-mapping-state.json": "16bbf240565f1418ca7989132bbec417481ad734322a5361b16928a87dc595c5",
+    "evidence/model-config-preserved.json": "a39fc89f355cdd62d7ebf2dd467e08ba4d2f780d961dc47c65e9605d56d7ed88",
+    "evidence/shared-candidate-selected.json": "a18bdce02e55941adf37940fdec2d091d9fcaeb2eb1b6295fe42c609bec1d0f7",
+    "evidence/shared-list-after-cancel.png": "275eb4dd8f455136c8844734d309240b021a2f236a2e349301849661dc7fdb45",
+    "evidence/siliconflow-deepseek-selected-with-actions.png": "ff81eb92ffc6eb9807c5a527664724e94a88caf593c5401f1d710ae4a897c297",
+    "remote-deploy.py": "f5a84eea753ee9f1e136e86e3b790b9ec8797ae9ae2320987443e29a5906107a"
+  },
+  "source_commit": "be166dfcfb2fff59b22fbde69b6c27e7ec3c0587",
+  "pushed": false,
+  "github_release_published": false
+}
