@@ -310,3 +310,33 @@ p {text-wrap:pretty;}
 /* Preserve validation feedback above the normal and focused control rules. */
 .console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea)[aria-invalid]:not([aria-invalid="false"]) {border-color:var(--bad);}
 .console-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea)[aria-invalid]:not([aria-invalid="false"]):focus {box-shadow:0 0 0 3px var(--bad-soft);}
+
+/* Model filters are groups, not alternating loose labels and controls. */
+.console-layout .console-content .model-observatory .model-controls {grid-template-columns:minmax(288px,384px) minmax(160px,1fr) auto;grid-template-areas:"filters search sort";align-items:end;gap:8px;}
+.model-filter-fields {grid-area:filters;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0;}
+.model-filter-field {display:flex;flex-direction:column;gap:4px;min-width:0;}
+.console-content .model-filter-field > label {margin:0;font-size:12px;line-height:18px;}
+.console-layout .console-content .model-observatory .model-controls select {width:100%;min-width:0;min-height:32px;height:32px;font-size:12px;}
+.console-layout .console-content .model-observatory .model-controls > input {grid-area:search;grid-column:auto;min-height:32px;height:32px;font-size:12px;}
+.model-sort-controls {grid-area:sort;display:flex;align-items:center;gap:4px;}
+.console-layout .console-content .model-observatory .model-sort-controls > button {display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:32px;height:32px;white-space:nowrap;padding:4px 8px;}
+.model-kind-icon {display:none;width:16px;height:16px;flex:0 0 16px;}
+.model-sort-icon {width:16px;height:16px;flex:0 0 16px;}
+@media(max-width:1100px) {
+ .console-layout .console-content .model-observatory .model-controls {grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"filters filters" "search sort";}
+}
+@media(max-width:768px) {
+ .console-layout .console-content .model-observatory .kind-tabs {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;margin-bottom:0;}
+ .console-layout .console-content .model-observatory .kind-tab {display:flex;flex-direction:column;justify-content:center;align-items:center;gap:0;min-width:0;min-height:44px;height:44px;padding:4px 2px;line-height:14px;border-radius:6px;}
+ .model-kind-icon {display:block;}
+ .model-kind-title,.model-sort-label {display:none;}
+ .console-content .kind-tab .tab-n {margin:0;font-size:12px;line-height:14px;font-variant-numeric:tabular-nums;}
+ .console-layout .console-content .model-observatory .model-controls {gap:8px;}
+ .console-layout .console-content .model-observatory .model-controls select {min-height:44px;height:44px;font-size:16px;padding-left:8px;}
+ .console-layout .console-content .model-observatory .model-controls > input {min-height:44px;height:44px;font-size:16px;padding-left:8px;}
+ .console-layout .console-content .model-observatory .model-sort-controls > button {width:44px;min-width:44px;min-height:44px;height:44px;padding:8px;}
+}
+@media(max-width:351px) {
+ .console-layout .console-content .model-observatory .kind-tabs {grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;}
+ .console-layout .console-content .model-observatory .kind-tab {flex-direction:row;gap:4px;}
+}
