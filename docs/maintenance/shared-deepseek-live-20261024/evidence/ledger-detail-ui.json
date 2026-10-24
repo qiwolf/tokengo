@@ -1,0 +1,93 @@
+{
+  "attempt_id": "15582:0",
+  "auth_snapshot": {
+    "ancestor_key_ids": [],
+    "expires_at": 1792841160175,
+    "key_id": 117,
+    "key_policy": {
+      "admin_access": false,
+      "allow_paid": true,
+      "allowed_channels": [
+        2
+      ],
+      "allowed_models": [
+        "qa-deepseek-shared-20261024-1w3xy"
+      ],
+      "allowed_services": [],
+      "max_concurrent": 1,
+      "rpm": 2,
+      "tpm": null
+    },
+    "policy_version": "44618d8f1fdcad9e829ba7732f522a62c6cc6d4b47ffc92e6c4a2cee38804093",
+    "role": "user",
+    "user_id": 54,
+    "user_policy": {
+      "admin_access": false,
+      "allow_paid": true,
+      "allowed_channels": [
+        2
+      ],
+      "allowed_models": [
+        "qa-deepseek-shared-20261024-1w3xy"
+      ],
+      "allowed_services": [],
+      "max_concurrent": 1,
+      "rpm": 2,
+      "tpm": null
+    }
+  },
+  "billing_unit": "token",
+  "channel_id": 2,
+  "channel_name": "SiliconFlow · bge-m3 / 配置 1 · Key · SiliconFlow · 向量 · BGE-M3（兼容入口）",
+  "channel_state": "active",
+  "channel_status_label": "有效",
+  "created_ms": 1792840560216,
+  "debit_micro": null,
+  "id": 15033,
+  "input_bound": 477,
+  "input_tokens": 23,
+  "key_id": 117,
+  "key_name": "验收临时Key DeepSeek 20261024T111559Z",
+  "key_state": "historical",
+  "key_status_label": "已撤销",
+  "model": "deepseek v4.1 flash",
+  "observed_cost_micro": null,
+  "outcome": "success",
+  "output_bound": 64,
+  "output_tokens": 8,
+  "overrun": false,
+  "price_id": null,
+  "price_snapshot": null,
+  "record_state": "historical",
+  "request_id": 15582,
+  "request_price_id": null,
+  "request_price_snapshot": null,
+  "request_units": null,
+  "reserved_micro": 0,
+  "settled_ms": 1792840560863,
+  "source_snapshot": {
+    "binding_generation": 8,
+    "channel_id": 2,
+    "channel_name": "SiliconFlow · 向量 · BGE-M3（兼容入口）",
+    "client_protocol": "chat",
+    "config_revision": 1,
+    "credential_id": 6,
+    "credential_revision": 1,
+    "oauth_account_id": null,
+    "oauth_credential_revision": null,
+    "origin": "https://api.siliconflow.cn",
+    "provider_id": 2,
+    "target_position": 1,
+    "upstream_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "upstream_protocol": "chat",
+    "virtual_model_id": 9,
+    "virtual_model_scope": "shared",
+    "virtual_model_version": 1
+  },
+  "status": "unpriced",
+  "usage_certainty": "unpriced",
+  "user_id": 54,
+  "user_name": "验收临时用户 DeepSeek 20261024T111559Z",
+  "user_state": "historical",
+  "user_status_label": "已停用"
+}

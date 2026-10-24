@@ -1,6 +1,6 @@
 # tokengo
 
-当前正式版 **[v0.34.0-qiwolf.13](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.13)**，发行源码`825285e12997`，Cargo0.34.0/schema40。修复Chat→Responses拒绝effort对象的兼容缺口，保留显式档位、来源能力校验与实时授权。本轮完整Rust1166/Python22项、native/WASM及9个公开资产和原生/容器验收通过。237已冷备升级；既有Key的普通/流式推理、原生Responses、向量/重排回退、授权与Key功能通过。见[版本说明](docs/releases/v0.34.0-qiwolf.13.md)、[公开发行收据](docs/acceptance/2026-10-24-qiwolf13-release/README.md)与[独立升级收据](docs/acceptance/2026-10-24-qiwolf13-upgrade237/README.md)。标签/下载资产文档为构建快照，后补收据维护在main和Release页面。
+本版发行标识 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，Cargo0.34.0/schema40。包含账务管理、上游模型映射移除与重新添加、共享模型候选及执行一致性修复。237 已完成独立真实推理和用量账本验收，模型按用户确认保持未定价；临时配置已清理，历史账目保留。见[版本说明](docs/releases/v0.34.0-qiwolf.14.md)。公开资产是否已发布、精确源码、校验和及镜像 digest 以该 tag 的 GitHub Release 和 manifest 为准；公开产物独立验收收据完成后补入 main 和 Release 页面，不把生产私有构建哈希当作公开产物值，也不表示下载包已包含后补收据。
 
 历史公开版 [qiwolf.11](docs/releases/v0.34.0-qiwolf.11.md) 的既有收据保留。
 

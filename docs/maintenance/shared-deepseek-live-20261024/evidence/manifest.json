@@ -1,0 +1,11 @@
+{
+  "README.md": "77e3fa49f445e10831aa6b7c09e4e86cf1626d10ca2d33b9baee7fde5e2f128d",
+  "evidence/final-cleanup-history.json": "e2828b067001b988392dc5dcd9272f4f4e2ebc6489977af3e3f56c9e32ac97ff",
+  "evidence/ledger-detail-ui.json": "75122df25bd82724883c0c58d16871aa32a831e456f77b3e1fcf42b39ee4e3a5",
+  "evidence/ledger-detail-ui.png": "a9988cfb868244eb33a29da5e198e590d2b3ebbd335e7c35bb93923742579d2a",
+  "evidence/ledger-filtered-history.png": "c22f9324b34161ac6e7223bb511830f5ee8583027672736f669f5fa070acfa79",
+  "evidence/ledger-ui.json": "adfc7d8d6d097a11e8aec4f9c865f2ec3a5def9555ba809f6440e8b49e1647ff",
+  "evidence/live-call-receipt.json": "ddbeb7d34bdb0a009f71caed5a9b4b97d4fbb4a7c77b899cc8da86119347bb14",
+  "evidence/shared-active-after-cleanup.png": "92303e15d3e1cc9c9458d65c9d7947ed38c6d9dcfc111d41bbaa6b7a251a3785",
+  "evidence/shared-cleanup.json": "c41c862fce9762b213e08fe703053818264b00dbf0cc02af702152e634bb19c0"
+}

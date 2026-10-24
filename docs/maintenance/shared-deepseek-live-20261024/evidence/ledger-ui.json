@@ -1,0 +1,22 @@
+{
+  "filters": [
+    {
+      "id": "usage-user",
+      "text": "验收临时用户 DeepSeek 20261024T111559Z（已停用）",
+      "value": "54"
+    },
+    {
+      "id": "usage-key",
+      "text": "验收临时用户 DeepSeek 20261024T111559Z · 验收临时Key DeepSeek 20261024T111559Z（已撤销）",
+      "value": "117"
+    }
+  ],
+  "row": "验收临时用户 DeepSeek 20261024T111559Z · 验收临时Key DeepSeek 20261024T111559Z\n关联历史对象\n\tSiliconFlow · bge-m3 / 配置 1 · Key · SiliconFlow · 向量 · BGE-M3（兼容入口）\ndeepseek v4.1 flash\n\t成功 · 未定价\n未定价\n\t输入 23 / 输出 8 token\t未知\t未知\t$0\t查看详情",
+  "rows": 1,
+  "contains_unpriced": true,
+  "contains_unknown_amount": true,
+  "input_tokens": 23,
+  "output_tokens": 8,
+  "user_inactive": true,
+  "key_revoked": true
+}

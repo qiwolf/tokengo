@@ -1,0 +1,127 @@
+{
+  "confidence": "observed",
+  "execution": "237 real upstream through shared virtual model",
+  "application_source_commit": "be166dfcfb2fff59b22fbde69b6c27e7ec3c0587",
+  "pricing_choice": "user explicitly retained unpriced",
+  "response": {
+    "http_status": 200,
+    "body": {
+      "id": "01a16d9fc777baa084568e98217f0e14",
+      "object": "chat.completion",
+      "created": 1792840550,
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "DEEPSEEK_SHARED_OK"
+          },
+          "finish_reason": "stop",
+          "logprobs": null
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 8,
+        "total_tokens": 31,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 23
+      },
+      "system_fingerprint": ""
+    }
+  },
+  "request": {
+    "id": 15582,
+    "model": "qa-deepseek-shared-20261024-1w3xy",
+    "status": "ok",
+    "http_status": 200,
+    "channel_id": 2,
+    "input_tokens": 23,
+    "output_tokens": 8,
+    "user_id": 54,
+    "key_id": 117,
+    "usage_source": "upstream"
+  },
+  "attempt": {
+    "id": 14847,
+    "request_id": 15582,
+    "channel_id": 2,
+    "outcome": "success",
+    "http_status": 200,
+    "upstream_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "user_id": 54,
+    "key_id": 117
+  },
+  "ledger": {
+    "id": 15033,
+    "request_id": 15582,
+    "user_id": 54,
+    "key_id": 117,
+    "channel_id": 2,
+    "model": "deepseek v4.1 flash",
+    "price_id": null,
+    "price_snapshot": null,
+    "reserved_micro": 0,
+    "debit_micro": null,
+    "observed_cost_micro": null,
+    "input_tokens": 23,
+    "output_tokens": 8,
+    "usage_certainty": "unpriced",
+    "status": "unpriced",
+    "outcome": "success",
+    "settled_ms": 1792840560863
+  },
+  "source_snapshot": {
+    "channel_id": 2,
+    "credential_id": 6,
+    "provider_id": 2,
+    "upstream_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "virtual_model_id": 9,
+    "virtual_model_scope": "shared",
+    "virtual_model_version": 1
+  },
+  "checks": [
+    {
+      "name": "real_http200_nonempty_content",
+      "passed": true
+    },
+    {
+      "name": "upstream_reports_token_usage",
+      "passed": true
+    },
+    {
+      "name": "one_request_one_attempt_one_ledger",
+      "passed": true
+    },
+    {
+      "name": "shared_request_and_new_source_linked",
+      "passed": true
+    },
+    {
+      "name": "all_usage_agrees",
+      "passed": true
+    },
+    {
+      "name": "unpriced_unknown_cost_not_zero",
+      "passed": true
+    },
+    {
+      "name": "settled_without_pending_hold",
+      "passed": true
+    }
+  ],
+  "inference_calls_sent": 1,
+  "identity_cleanup": {
+    "key_revoked": true,
+    "user_disabled": true,
+    "temporary_management_session_removed": true,
+    "history_retained": true
+  }
+}

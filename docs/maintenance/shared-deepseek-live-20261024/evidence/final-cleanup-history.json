@@ -1,0 +1,82 @@
+{
+  "identity_configuration_hidden": true,
+  "management_session_removed": true,
+  "user": [
+    {
+      "id": 54,
+      "name": "验收临时用户 DeepSeek 20261024T111559Z",
+      "enabled": 0
+    }
+  ],
+  "key": [
+    {
+      "id": 117,
+      "user_id": 54,
+      "enabled": 0,
+      "revoked_at": 1792840560902,
+      "cipher_bytes": 84
+    }
+  ],
+  "shared": [
+    {
+      "id": 9,
+      "name": "qa-deepseek-shared-20261024-1w3xy",
+      "enabled": 0,
+      "normalized_name": "\u0001tokengo-trash:0:9"
+    }
+  ],
+  "request_retained": [
+    {
+      "id": 15582,
+      "model": "qa-deepseek-shared-20261024-1w3xy",
+      "status": "ok",
+      "http_status": 200,
+      "channel_id": 2,
+      "input_tokens": 23,
+      "output_tokens": 8,
+      "user_id": 54,
+      "key_id": 117
+    }
+  ],
+  "ledger_retained": [
+    {
+      "id": 15033,
+      "request_id": 15582,
+      "status": "unpriced",
+      "usage_certainty": "unpriced",
+      "debit_micro": null,
+      "observed_cost_micro": null,
+      "settled_ms": 1792840560863,
+      "input_tokens": 23,
+      "output_tokens": 8
+    }
+  ],
+  "no_test_configuration_active": true,
+  "historical_rows_unchanged": {
+    "requests": {
+      "preexisting_rows": 15581,
+      "missing_or_changed": 0
+    },
+    "attempts": {
+      "preexisting_rows": 14846,
+      "missing_or_changed": 0
+    },
+    "billing_ledger": {
+      "preexisting_rows": 15032,
+      "missing_or_changed": 0
+    },
+    "billing_allocations": {
+      "preexisting_rows": 29704,
+      "missing_or_changed": 0
+    },
+    "billing_prices": {
+      "preexisting_rows": 14,
+      "missing_or_changed": 0
+    },
+    "billing_request_prices": {
+      "preexisting_rows": 16,
+      "missing_or_changed": 0
+    }
+  },
+  "success": true
+}

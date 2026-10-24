@@ -1,0 +1,13 @@
+{
+  "shared_id": 9,
+  "name": "qa-deepseek-shared-20261024-1w3xy",
+  "soft_deleted_via_ui": true,
+  "trash_row": "qa-deepseek-shared-20261024-1w3xy\t按顺序 · 1 个目标 · 已删除\n\n策略已停用，不执行自动续验\n\n\t恢复",
+  "active_names": [
+    "bge-m3-fallback",
+    "bge-reranker-v2-m3-fallback",
+    "deepseek-4.1-flash-fallback"
+  ],
+  "permanent_delete": false,
+  "history_preserved": true
+}
