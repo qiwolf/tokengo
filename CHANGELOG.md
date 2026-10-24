@@ -2,12 +2,12 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## v0.34.0-qiwolf.16 — 2026-10-25（候选）
+## v0.34.0-qiwolf.16 — 2026-10-25（北京时间）
 
 - 本地向量/重排按请求轮询及入口隔离游标，保留已有权限、Key粘性与故障切换边界。
 - OAuth结构化输出、输出上限与Responses别名，截断/密文终态保真和准确用量预占结算。
 - 运行日志字节边界、代次计时器与机器权限/审计修复；接口限定的rerank用量识别。
-- Cargo0.34.0/schema40不变。发布与精确提交验收待完成，见[版本说明](docs/releases/v0.34.0-qiwolf.16.md)和[发行记录](docs/acceptance/2026-10-25-qiwolf16-release/README.md)。
+- Cargo0.34.0/schema40不变。本版已公开发行，精确提交`2702757fe472`的main CI和发布流程成功；9个公开资产与GHCR镜像已独立验收。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md)与[发行收据](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md)。
 
 ## v0.34.0-qiwolf.15 — 2026-10-25（北京时间）
 

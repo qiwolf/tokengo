@@ -1,1 +1,142 @@
-{"status":"pending","tag":"v0.34.0-qiwolf.16","source_commit":null,"published":false}
+{
+  "status": "passed",
+  "published": true,
+  "tag": "v0.34.0-qiwolf.16",
+  "repository": "qiwolf/tokengo",
+  "source_commit": "2702757fe4728a814fe135f0c102155c908abfae",
+  "source_url": "https://github.com/qiwolf/tokengo/commit/2702757fe4728a814fe135f0c102155c908abfae",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16",
+  "accepted_date_asia_shanghai": "2026-10-25",
+  "cargo_version": "0.34.0",
+  "schema": 40,
+  "platform": "linux/amd64",
+  "main_ci": {
+    "status": "completed",
+    "conclusion": "success",
+    "source_commit": "2702757fe4728a814fe135f0c102155c908abfae",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40122964321"
+  },
+  "release_workflow": {
+    "status": "completed",
+    "conclusion": "success",
+    "source_commit": "2702757fe4728a814fe135f0c102155c908abfae",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40124162546"
+  },
+  "local_merged_source_tests": {
+    "rust": {
+      "passed": 1239,
+      "failed": 0,
+      "ignored": 3
+    },
+    "ignored_test_names": [
+      "tests::signal_child",
+      "real_registry_fetch",
+      "real_cloud_to_gpu_embedding_and_rerank_fallback"
+    ],
+    "python_suites": {
+      "mineru-contracts": 13,
+      "deploy-contracts": 6,
+      "container-contracts": 3
+    },
+    "scope_note": "Build-test merged-source counts; exact public-source main CI independently passed. Overlapping reruns are not added."
+  },
+  "public_assets": [
+    {
+      "name": "compose.yaml",
+      "bytes": 797,
+      "sha256": "e69259eaec7dd8a7b173d510bdb2a361f2bf2f9297dcd0ac75cd4ca96d9a17da",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/compose.yaml"
+    },
+    {
+      "name": "container-deployment.md",
+      "bytes": 13548,
+      "sha256": "50745c3f6a95a9c5f292dac2fa465bb119d9e4783aedd644434a13db05d9c204",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/container-deployment.md"
+    },
+    {
+      "name": "container.env.example",
+      "bytes": 316,
+      "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/container.env.example"
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "bytes": 564,
+      "sha256": "1e0deb3c17a77978647ce0fd8960b37298f2a8f1c3db7ab70363b8baf2a6eeec",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/image-SHA256SUMS"
+    },
+    {
+      "name": "image-manifest.json",
+      "bytes": 199,
+      "sha256": "3a7ac343d3a6f592de9ff9e89f7777c251033949c5bef4b90987b0a649709d7c",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/image-manifest.json"
+    },
+    {
+      "name": "registry-image.txt",
+      "bytes": 95,
+      "sha256": "d028fa26cd23c4352423fb28a953601672fba2f63c0da03eaf951d439dd1ab17",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/registry-image.txt"
+    },
+    {
+      "name": "tokengo-2702757fe472-linux-x86_64.tar.gz",
+      "bytes": 20115708,
+      "sha256": "234ffb528449541673a39e6a9f9d2a7502fbeedf9f026ea5085451608c8b9289",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/tokengo-2702757fe472-linux-x86_64.tar.gz"
+    },
+    {
+      "name": "tokengo-2702757fe472-linux-x86_64.tar.gz.sha256",
+      "bytes": 107,
+      "sha256": "06c4b4cef17eb4f81ea73f28103e5e40dcf1134d5427ec637992e23b8b555d5b",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/tokengo-2702757fe472-linux-x86_64.tar.gz.sha256"
+    },
+    {
+      "name": "tokengo-2702757fe4728a814fe135f0c102155c908abfae-linux-amd64.tar.gz",
+      "bytes": 40101616,
+      "sha256": "95363ef1452074c45a26d8f1b2be39c9b068ed472bb5cebf168d16ba4d8e67cb",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/tokengo-2702757fe4728a814fe135f0c102155c908abfae-linux-amd64.tar.gz"
+    }
+  ],
+  "native_package": {
+    "name": "tokengo-2702757fe472-linux-x86_64.tar.gz",
+    "bytes": 20115708,
+    "sha256": "234ffb528449541673a39e6a9f9d2a7502fbeedf9f026ea5085451608c8b9289",
+    "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/tokengo-2702757fe472-linux-x86_64.tar.gz"
+  },
+  "offline_image": {
+    "name": "tokengo-2702757fe4728a814fe135f0c102155c908abfae-linux-amd64.tar.gz",
+    "bytes": 40101616,
+    "sha256": "95363ef1452074c45a26d8f1b2be39c9b068ed472bb5cebf168d16ba4d8e67cb",
+    "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.16/tokengo-2702757fe4728a814fe135f0c102155c908abfae-linux-amd64.tar.gz"
+  },
+  "registry": {
+    "image": "ghcr.io/qiwolf/tokengo@sha256:3fff02def303b61ee2623ca856eacd2fd42aca13c8b2a00b278c383c610d18ca",
+    "config_digest": "sha256:649c73495d174defc7e04c4f867b0fd32c8f301fbd9349c8b39a7dbf33a89327",
+    "verified_tags": {
+      "v0.34.0-qiwolf.16": "sha256:3fff02def303b61ee2623ca856eacd2fd42aca13c8b2a00b278c383c610d18ca",
+      "sha-2702757fe4728a814fe135f0c102155c908abfae": "sha256:3fff02def303b61ee2623ca856eacd2fd42aca13c8b2a00b278c383c610d18ca",
+      "latest": "sha256:3fff02def303b61ee2623ca856eacd2fd42aca13c8b2a00b278c383c610d18ca"
+    },
+    "anonymous": true
+  },
+  "public_acceptance": {
+    "anonymous_downloads": true,
+    "anonymous_registry": true,
+    "offline_archive_two_tags": true,
+    "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+    "smoke_restart_recreation": true,
+    "native_runtime": true,
+    "recoverable_key_runtime": true,
+    "container_key_runtime": true,
+    "production_access": false
+  },
+  "cleanup_audit": {
+    "status": "passed",
+    "production_access": false
+  },
+  "snapshot_policy": "Tag and packaged documentation remain the original build snapshot; post-publication receipts are updated on main and the Release page. No tag is moved.",
+  "boundaries": [
+    "No new production migration is implied by public artifact acceptance.",
+    "Earlier private-provider probes do not establish all model/account/client compatibility.",
+    "No HS full pipeline or 32k/64k-length output stress acceptance is claimed."
+  ]
+}

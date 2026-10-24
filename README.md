@@ -10,11 +10,9 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)** · [版本说明](docs/releases/v0.34.0-qiwolf.15.md) · [发布记录](docs/acceptance/2026-10-25-qiwolf15-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)** · [版本说明](docs/releases/v0.34.0-qiwolf.16.md) · [发布记录](docs/acceptance/2026-10-25-qiwolf16-release/README.md)。
 
-Current stable release: **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)** · [Release notes](docs/releases/v0.34.0-qiwolf.15.md) · [Publication record](docs/acceptance/2026-10-25-qiwolf15-release/README.md).
-
-下一版候选 / Next release candidate: **qiwolf.16** — [本地节点轮询、OAuth与日志修复 / local node rotation, OAuth and logging fixes](docs/releases/v0.34.0-qiwolf.16.md)。
+Current stable release: **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)** · [Release notes](docs/releases/v0.34.0-qiwolf.16.md) · [Publication record](docs/acceptance/2026-10-25-qiwolf16-release/README.md).
 
 ## 60 秒认识 TokenGo · Meet TokenGo in 60 seconds
 
