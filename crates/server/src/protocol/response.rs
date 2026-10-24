@@ -414,7 +414,9 @@ pub fn validate_response(protocol: Protocol, body: &Value) -> Result<(), String>
         }
         Protocol::Responses => {
             body["object"] == "response"
-                && body["status"] == "completed"
+                && (body["status"] == "completed"
+                    || (body["status"] == "incomplete"
+                        && body["incomplete_details"]["reason"] == "max_output_tokens"))
                 && body
                     .get("output")
                     .and_then(Value::as_array)

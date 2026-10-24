@@ -324,16 +324,18 @@ impl Observer {
                 self.meaningful |= v["response"]["output"]
                     .as_array()
                     .is_some_and(|a| a.iter().any(payload));
-                if matches!(event, "error" | "response.failed" | "response.incomplete")
-                    || matches!(
-                        v["response"]["status"].as_str(),
-                        Some("failed" | "incomplete")
-                    )
+                let output_limited = event == "response.incomplete"
+                    && v["response"]["status"] == "incomplete"
+                    && v["response"]["incomplete_details"]["reason"] == "max_output_tokens"
+                    && v["response"].get("error").is_none_or(Value::is_null);
+                if matches!(event, "error" | "response.failed")
+                    || ((event == "response.incomplete" || v["response"]["status"] == "incomplete") && !output_limited)
+                    || v["response"]["status"] == "failed"
                     || v.get("error").is_some_and(|e| !e.is_null())
                 {
                     return Err(format!("Upstream Responses stream {event}"));
                 }
-                if event == "response.completed" || v["response"]["status"] == "completed" {
+                if event == "response.completed" || v["response"]["status"] == "completed" || output_limited {
                     self.done = true;
                 }
             }
@@ -1208,6 +1210,11 @@ impl Transcoder {
                         }
                     }
                     "response.completed" => self.response_snapshot(&v["response"], out)?,
+                    "response.incomplete" => {
+                        // Observer accepts only a terminal max_output_tokens truncation.
+                        self.stop = "length".into();
+                        self.response_snapshot(&v["response"], out)?;
+                    }
                     "response.created" | "response.in_progress" | "ping" => {}
                     "" => return Err("Responses stream has no event type".into()),
                     _ => return Err(format!("Unsupported Responses conversion event {event}")),

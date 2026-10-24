@@ -4253,3 +4253,6 @@ async fn nonstream_json_can_complete_after_thirty_seconds() {
 
 #[path = "support/pool_virtual_cases.rs"]
 mod pool_virtual_cases;
+
+#[path = "support/rerank_usage_cases.rs"]
+mod rerank_usage_cases;

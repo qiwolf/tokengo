@@ -1169,3 +1169,6 @@ async fn browser_token_list_without_write_csrf_header_and_mutation_csrf_enforcem
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[path = "support/logging_permissions.rs"]
+mod logging_permissions;

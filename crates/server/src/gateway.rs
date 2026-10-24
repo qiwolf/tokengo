@@ -537,6 +537,30 @@ fn choices_count(body:&Value)->Result<i64,ApiError> {
             .ok_or_else(||ApiError::bad_request("n must be an integer between 1 and 128")),
     }
 }
+/// Responses clients sometimes send Chat cap names. Normalize only these
+/// explicit aliases, preserving every other field and rejecting ambiguity.
+fn normalize_responses_output_caps(body: &mut Value) -> Result<(), ApiError> {
+    if body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() {
+        return Ok(());
+    }
+    let mut cap = None;
+    for field in ["max_output_tokens", "max_completion_tokens", "max_tokens"] {
+        if let Some(value) = body.get(field) {
+            let value = value.as_i64().filter(|n| *n > 0)
+                .ok_or_else(|| ApiError::bad_request("Output token limit must be a positive integer"))?;
+            if cap.is_some_and(|old| old != value) {
+                return Err(ApiError::bad_request("Conflicting output token limits"));
+            }
+            cap = Some(value);
+        }
+    }
+    let map = body.as_object_mut().ok_or_else(|| ApiError::bad_request("Expected request object"))?;
+    map.remove("max_tokens");
+    map.remove("max_completion_tokens");
+    map.insert("max_output_tokens".into(), Value::from(cap.unwrap()));
+    Ok(())
+}
+
 fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
     if !endpoint.is_generation() {return Ok(0);}
     let wrong_cap=match endpoint {
@@ -687,16 +711,21 @@ fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option
     Ok((input,output))
 }
 
-/// Subscription preview cannot enforce an output cap. Reserve the full verified
-/// provider output ceiling and keep unknown monetary prices unknown.
+/// Reserve an explicit enforced cap, or the full verified provider ceiling when
+/// omitted. Unknown monetary prices remain unknown.
 fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (max_input,max_output)=context.filter(|(i,o)|*i>0&&*o>0).ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"source_limits_required","ChatGPT plan requests require verified full provider context and output bounds"))?;
     let (mut input,_)=admission_bound(body,EndpointKind::Responses)?;
+    let output=if body.get("max_output_tokens").is_some() {
+        let cap=output_bound(body,EndpointKind::Responses)?;
+        if cap<16 {return Err(ApiError::bad_request("ChatGPT plan max_output_tokens must be at least 16"));}
+        cap
+    } else {max_output};
     if crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses,body) || crate::protocol::has_image(crate::protocol::Protocol::Responses,body) {input=max_input;}
-    if input>max_input || price.is_some_and(|p|input>p.max_input_tokens||max_output>p.max_output_tokens) {
+    if input>max_input || output>max_output || price.is_some_and(|p|input>p.max_input_tokens||output>p.max_output_tokens) {
         return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","ChatGPT plan request exceeds configured source or billing token bounds"));
     }
-    Ok((input,max_output))
+    Ok((input,output))
 }
 fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),ApiError> {
     fn unsupported_media(v:&Value,allow_audio:bool)->bool {
@@ -1020,7 +1049,7 @@ fn load_auto_plan(
 }
 
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
-pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response, ApiError> {
+pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
     if let Some(kind) = req.endpoint.tool_kind() {
         if req.stream || model_routes::is_auto(&req.model) {
@@ -1239,6 +1268,12 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state, request_id, req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
+    if req.endpoint == EndpointKind::Responses {
+        normalize_responses_output_caps(&mut req.body).map_err(|error| {
+            guard.reject(&error);
+            error
+        })?;
+    }
 
     let mut admitted_input = None;
     if let Some(auth) = &req.auth {
@@ -1248,7 +1283,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 error
             })?;
         // Predict the per-source default without borrowing mutable price caps.
-        // OAuth keeps its full binding ceiling; a missing OAuth bound never uses generic caps.
+        // OAuth uses an explicit cap, or its full binding ceiling when omitted.
         let default_output = req.endpoint.is_generation()
             && ["max_tokens", "max_completion_tokens", "max_output_tokens"]
                 .iter()
@@ -1272,7 +1307,7 @@ pub async fn forward(state: SharedState, req: ForwardRequest) -> Result<Response
                 .map_err(crate::db::DbError::from)?;
             let candidate_output = if !req.endpoint.is_generation() {
                 0
-            } else if has_oauth {
+            } else if has_oauth && default_output {
                 oauth_bound.map(|v| v.1).unwrap_or(output)
             } else if default_output {
                 4096.min(
@@ -3607,6 +3642,37 @@ impl Usage {
 }
 pub fn usage_from_value(v: &Value) -> (i64,i64) { let u=Usage::read(v); (u.input.unwrap_or(0),u.output.unwrap_or(0)) }
 
+/// Only call for a validated rerank result, before local response normalization.
+/// Other endpoints may use `tokens` for payload data rather than a usage meter.
+fn rerank_usage(v: &Value) -> Usage {
+    let mut usage = Usage::read(v);
+    let payload = v.get("response").or_else(|| v.get("message"))
+        .filter(|v| v.is_object()).unwrap_or(v);
+    // A valid standard input that became unknown denotes cache-addition overflow,
+    // not an absent meter. A smaller fallback must not turn it into a known charge.
+    let input_overflowed = usage.input.is_none()
+        && ["prompt_tokens", "input_tokens"].into_iter().any(|field| {
+            payload.get("usage").and_then(|u| u.get(field))
+                .and_then(Value::as_i64).is_some_and(|n| n >= 0)
+        });
+    // Preserve the existing rerank total-only input meter before new fallbacks.
+    usage.input = usage.input.or_else(|| v.get("usage").and_then(|u| u.get("total_tokens"))
+        .and_then(Value::as_i64).filter(|n| *n >= 0));
+    let fallback = |field: &str| {
+        payload.get("tokens").and_then(|u| u.get(field))
+            .and_then(Value::as_i64).filter(|n| *n >= 0)
+            .or_else(|| payload.get("meta").and_then(|m| m.get("tokens"))
+                .and_then(|u| u.get(field)).and_then(Value::as_i64).filter(|n| *n >= 0))
+    };
+    // Valid usage fields, including zero and existing cached-input accounting,
+    // win independently; never infer an unreported input from a request size.
+    if !input_overflowed {
+        usage.input = usage.input.or_else(|| fallback("input_tokens"));
+    }
+    usage.output = usage.output.or_else(|| fallback("output_tokens"));
+    usage
+}
+
 /// 非流式：整段读下来再回给客户端（顺带把 token 账记上）。
 ///
 /// `unwrap_envelope`：这条渠道勾了「响应解包」时，先把外面那层壳剥掉再回客户端与记账
@@ -3793,6 +3859,7 @@ async fn buffer_rerank_passthrough(
     if let Err(note) = crate::upstream::validate_response(&parsed, "rerank") {
         let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
     }
+    let reported_usage = rerank_usage(&parsed);
     if let Some(results) = parsed.get_mut("results").and_then(|r| r.as_array_mut()) {
         for r in results.iter_mut() {
             let idx = r.get("index").and_then(|x| x.as_u64()).map(|x| x as usize);
@@ -3821,12 +3888,8 @@ async fn buffer_rerank_passthrough(
     if let Err(note) = crate::upstream::normalize_rerank_response(&mut parsed) {
         let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
     }
-    // Rerank has no generated tokens: an explicit total-only meter is input.
-    // This fallback is endpoint-specific; Chat total_tokens includes output too.
-    if usage.input.is_none() {
-        usage.input = parsed.get("usage").and_then(|u| u.get("total_tokens"))
-            .and_then(Value::as_i64).filter(|n| *n >= 0);
-    }
+    usage = reported_usage;
+    // Rerank has no generated tokens when an input-only meter is reported.
     if usage.input.is_some() && usage.output.is_none() { usage.output = Some(0); }
     let out_bytes = serde_json::to_vec(&parsed).unwrap_or_else(|_| bytes.to_vec());
     let (input, output) = (usage.input.unwrap_or(0), usage.output.unwrap_or(0));
@@ -4671,6 +4734,23 @@ mod tests {
         }
         let body=serde_json::json!({"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"function","name":"sum","parameters":{"type":"object"}}]}]});assert!(validate_native_cost_and_state(EndpointKind::Responses,&body).is_ok());
         assert!(validate_native_cost_and_state(EndpointKind::Responses,&serde_json::json!({"input":[{"type":"tool_search_output","tools":[]}]})).is_err());
+    }
+    #[test]
+    fn subscription_caps_keep_model_price_and_opaque_input_bounds() {
+        let mut body=json!({"model":"m","input":"hello","max_output_tokens":16});
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,16);
+        body["max_output_tokens"]=json!(32768);
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,32768);
+        body["max_output_tokens"]=json!(32769);
+        assert!(subscription_bound(&body,None,Some((131072,32768))).is_err());
+        body.as_object_mut().unwrap().remove("max_output_tokens");
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,32768);
+        body["max_output_tokens"]=json!(16);
+        body["input"]=json!([{"type":"reasoning","encrypted_content":"opaque"}]);
+        assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap(),(131072,16));
+        let price=crate::db::billing::Price{id:1,channel_id:1,model:"m".into(),input_micro_per_million:0,output_micro_per_million:1,max_input_tokens:131072,max_output_tokens:15};
+        assert!(subscription_bound(&body,Some(&price),Some((131072,32768))).is_err());
+        assert!(subscription_bound(&body,None,None).is_err());
     }
     #[test]
     fn subscription_context_bounds_do_not_invent_a_token_price() {

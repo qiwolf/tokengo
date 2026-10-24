@@ -7,7 +7,7 @@ use super::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// Public ChatGPT-plan preview. Unsupported limits are rejected, never silently stripped.
+/// Public ChatGPT-plan transport. Validated output caps are preserved; unknown controls fail closed.
 pub fn prepare_request(
     body: &mut Value,
     effort: Option<&str>,
@@ -19,10 +19,14 @@ pub fn prepare_request(
     if map.get("store").is_some_and(|v| v != false) {
         return Err("ChatGPT plan requests require store=false".into());
     }
+    if let Some(cap) = map.get("max_output_tokens") {
+        if !cap.as_i64().is_some_and(|n| n >= 16) {
+            return Err("ChatGPT plan max_output_tokens must be an integer of at least 16; no upstream request was sent".into());
+        }
+    }
     for field in [
         "background",
         "conversation",
-        "max_output_tokens",
         "max_tokens",
         "max_completion_tokens",
         "max_tool_calls",
@@ -178,6 +182,25 @@ impl Default for ResponsesCollector {
         }
     }
 }
+/// A capped OAuth response can issue a new opaque reasoning ciphertext in its
+/// authoritative terminal snapshot. Keep that entire terminal item unchanged;
+/// never infer plaintext equivalence or merge values from the earlier event.
+fn reissued_terminal_reasoning(response: &Value, prior: &Value, terminal: &Value) -> bool {
+    if response["status"] != "incomplete"
+        || response["incomplete_details"]["reason"] != "max_output_tokens"
+        || response.get("error").is_some_and(|v| !v.is_null())
+        || prior["type"] != "reasoning"
+        || !prior["id"].as_str().is_some_and(|id| !id.is_empty() && id.len()<=512 && !id.chars().any(char::is_control))
+        || !prior["encrypted_content"].as_str().is_some_and(|v| !v.is_empty())
+        || !terminal["encrypted_content"].as_str().is_some_and(|v| !v.is_empty())
+    {
+        return false;
+    }
+    let mut comparison = prior.clone();
+    comparison["encrypted_content"] = terminal["encrypted_content"].clone();
+    comparison == *terminal
+}
+
 impl ResponsesCollector {
     fn frames(&mut self, frames: Vec<Frame>) -> Result<(), String> {
         for frame in frames {
@@ -199,7 +222,7 @@ impl ResponsesCollector {
                 if self.items.insert(index, item.clone()).is_some() {
                     return Err("Duplicate finalized Responses item".into());
                 }
-            } else if kind == "response.completed" {
+            } else if matches!(kind, "response.completed" | "response.incomplete") {
                 if self.terminal.is_some() {
                     return Err("Duplicate Responses completion".into());
                 }
@@ -222,7 +245,7 @@ impl ResponsesCollector {
         let mut result = self
             .terminal
             .take()
-            .ok_or("Responses stream has no completed response")?;
+            .ok_or("Responses stream has no terminal response")?;
         let output = result
             .get("output")
             .and_then(Value::as_array)
@@ -235,7 +258,9 @@ impl ResponsesCollector {
                 Value::Array(std::mem::take(&mut self.items).into_values().collect());
         } else {
             for (index, item) in &self.items {
-                if output.get(*index as usize) != Some(item) {
+                if output.get(*index as usize) != Some(item)
+                    && !output.get(*index as usize).is_some_and(|final_item| reissued_terminal_reasoning(&result,item,final_item))
+                {
                     return Err("Conflicting Responses terminal item".into());
                 }
             }
@@ -283,10 +308,49 @@ mod tests {
         assert_eq!(c.finish().unwrap()["output"], items);
     }
     #[test]
+    fn capped_reasoning_terminal_retains_final_ciphertext_without_relaxing_other_conflicts() {
+        let prior=json!({"type":"reasoning","id":"rs_same","summary":[],"encrypted_content":"synthetic-item-cipher"});
+        let final_item=json!({"type":"reasoning","id":"rs_same","summary":[],"encrypted_content":"synthetic-terminal-cipher"});
+        let collect=|item:Value,status:&str,reason:&str| {
+            let mut collector=ResponsesCollector::default();
+            collector.feed(&frame(json!({"type":"response.output_item.done","output_index":0,"item":prior})))?;
+            collector.feed(&frame(json!({"type":if status=="incomplete" {"response.incomplete"} else {"response.completed"},"response":{"object":"response","status":status,"incomplete_details":{"reason":reason},"output":[item],"usage":{"input_tokens":25,"output_tokens":16}}})))?;
+            collector.finish()
+        };
+        let result:Value=collect(final_item.clone(),"incomplete","max_output_tokens").unwrap();
+        assert_eq!(result["output"][0],final_item);
+        assert_eq!(result["usage"]["output_tokens"],16);
+        let c=crate::db::open_in_memory().unwrap();
+        let pin=crate::protocol_sessions::Pin{channel:31,generation:1,upstream_model:"model".into(),protocol:Protocol::Responses};
+        let mut issued=crate::protocol_sessions::ArtifactCollector::default();
+        issued.value(&result);
+        issued.persist(&c,"owner-session",&pin).unwrap();
+        let replay=json!({"input":result["output"]});
+        assert!(crate::protocol_sessions::verify_artifacts(&c,"owner-session",&pin,&replay).unwrap());
+        assert!(!crate::protocol_sessions::verify_artifacts(&c,"owner-session",&pin,&json!({"input":[prior]})).unwrap());
+        assert!(!crate::protocol_sessions::verify_artifacts(&c,"foreign-session",&pin,&replay).unwrap());
+        assert!(!crate::protocol_sessions::verify_artifacts(&c,"owner-session",&crate::protocol_sessions::Pin{generation:2,..pin},&replay).unwrap());
+        let mut empty_prior=prior.clone();empty_prior["id"]=json!("");
+        let mut empty_final=final_item.clone();empty_final["id"]=json!("");
+        assert!(!reissued_terminal_reasoning(&result,&empty_prior,&empty_final));
+        let mut empty_cipher=final_item.clone();empty_cipher["encrypted_content"]=json!("");
+        assert!(collect(empty_cipher,"incomplete","max_output_tokens").is_err());
+        for (key,value) in [("id",json!("rs_other")),("summary",json!([{"type":"summary_text","text":"changed"}])),("type",json!("message")),("encrypted_content",Value::Null)] {
+            let mut changed=final_item.clone();changed[key]=value;
+            assert!(collect(changed,"incomplete","max_output_tokens").is_err(),"{key}");
+        }
+        let mut changed=final_item.clone();changed["unknown"]=json!(true);
+        assert!(collect(changed,"incomplete","max_output_tokens").is_err());
+        assert!(collect(final_item.clone(),"completed","").is_err());
+        assert!(collect(final_item,"incomplete","content_filter").is_err());
+    }
+    #[test]
     fn incomplete_failed_missing_terminal_conflicts_and_gaps_fail_closed() {
         for v in [
             json!({"type":"response.failed","response":{"status":"failed"}}),
             json!({"type":"response.incomplete","response":{"status":"incomplete"}}),
+            json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}}),
+            json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"error":{"code":"provider_error"}}}),
         ] {
             assert!(ResponsesCollector::default().feed(&frame(v)).is_err());
         }
@@ -315,6 +379,18 @@ mod tests {
         assert!(c.feed(ping).is_err());
     }
     #[test]
+    fn oauth_output_cap_is_preserved_and_validated() {
+        for cap in [json!(16),json!(32),json!(64000)] {
+            let mut body=json!({"input":"hello","max_output_tokens":cap});
+            prepare_request(&mut body,None,None).unwrap();
+            assert_eq!(body["max_output_tokens"],cap);
+        }
+        for cap in [json!(15),json!(0),json!(-1),json!("32"),json!(32.5),Value::Null] {
+            let mut body=json!({"input":"hello","max_output_tokens":cap});
+            assert!(prepare_request(&mut body,None,None).is_err());
+        }
+    }
+    #[test]
     fn oauth_transport_rejects_unsupported_limits_and_respects_native_fields_and_explicit_dials() {
         let mut v = json!({"input":"hello","stream":false,"reasoning":{"effort":"high"},"service_tier":"default","include":["reasoning.encrypted_content"]});
         prepare_request(&mut v, Some("low"), Some("priority")).unwrap();
@@ -337,7 +413,7 @@ mod tests {
             assert!(prepare_request(&mut v, Some("low"), None).is_err());
         }
         for field in [
-            "max_output_tokens",
+            "max_tokens",
             "temperature",
             "top_p",
             "metadata",

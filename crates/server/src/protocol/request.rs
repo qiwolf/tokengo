@@ -556,10 +556,52 @@ fn chat_reasoning_effort_alias(body: &Value) -> Result<Option<Value>, String> {
     Ok(Some(normalized))
 }
 
+/// Chat nests schema controls under json_schema; Responses flattens them into
+/// text.format. Preserve the schema and optional strict value verbatim.
+pub(super) fn chat_response_format(format: &Value) -> Result<Value, String> {
+    match string(format, "type")?.as_str() {
+        "text" | "json_object" => {
+            fields(format, &["type"])?;
+            Ok(format.clone())
+        }
+        "json_schema" => {
+            fields(format, &["type", "json_schema"])?;
+            let schema = format.get("json_schema").ok_or("Expected json_schema object")?;
+            fields(schema, &["name", "description", "schema", "strict"])?;
+            let name = string(schema, "name")?;
+            if name.is_empty() || name.len() > 64
+                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                return Err("JSON schema name must be 1..64 ASCII letters, digits, underscores or dashes".into());
+            }
+            object(schema.get("schema").ok_or("Expected JSON schema object")?)?;
+            if schema.get("description").is_some_and(|v| !v.is_string()) {
+                return Err("JSON schema description must be a string".into());
+            }
+            if schema.get("strict").is_some_and(|v| !v.is_null() && !v.is_boolean()) {
+                return Err("JSON schema strict must be boolean or null".into());
+            }
+            let mut converted = schema.clone();
+            converted["type"] = json!("json_schema");
+            Ok(converted)
+        }
+        _ => Err("Unsupported response_format type in Chat-to-Responses conversion".into()),
+    }
+}
+
 pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Value, String> {
     if from == to {
         return Ok(body.clone());
     }
+    let format = if from == Protocol::Chat {
+        match body.get("response_format") {
+            Some(value) if to == Protocol::Responses => Some(chat_response_format(value)?),
+            Some(_) => return Err("response_format conversion requires a Responses target".into()),
+            None => None,
+        }
+    } else {
+        None
+    };
     let alias = if from == Protocol::Chat && to == Protocol::Responses {
         chat_reasoning_effort_alias(body)?
     } else {
@@ -586,6 +628,7 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "n",
                 "reasoning_effort",
                 "service_tier",
+                "response_format",
             ],
             Protocol::Responses => &[
                 "model",
@@ -651,6 +694,9 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
     let messages = decode_messages(from, body)?;
     let mut result = json!({"model":string(body,"model")?});
     encode_messages(to, &messages, &mut result)?;
+    if let Some(format) = format {
+        result["text"] = json!({"format":format});
+    }
     if to == Protocol::Responses {
         result["store"] = json!(false);
     }

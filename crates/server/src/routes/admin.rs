@@ -1816,19 +1816,11 @@ async fn logs_level_set(
         crate::db::operations_tokens::audit(&_mutation_guard, "operations_token", id, "operations.logs.level", "runtime", None, None, true)?;
     }
     let ctl = state.log_control();
-    ctl.set_level(&body.level)
+    let revert = body.minutes.filter(|m| *m > 0).map(|m| {
+        (m, now_ms() + i64::from(m) * 60_000)
+    });
+    let generation = ctl.configure(&body.level, revert.map(|(_, at)| at))
         .map_err(ApiError::bad_request)?;
-    let revert = match body.minutes.filter(|m| *m > 0) {
-        Some(m) => {
-            let at = now_ms() + i64::from(m) * 60_000;
-            ctl.set_revert_at(Some(at));
-            Some((m, at))
-        }
-        None => {
-            ctl.clear_revert();
-            None
-        }
-    };
     tracing::info!("日志级别改成「{}」（{}）", body.level,
         match revert { Some((m, _)) => format!("{m} 分钟后自动收回"), None => "长期生效".into() });
     if let Some((m, _)) = revert {
@@ -1836,11 +1828,10 @@ async fn logs_level_set(
         let ctl2 = ctl.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(u64::from(m) * 60)).await;
-            if let Err(e) = ctl2.set_level("info") {
-                tracing::warn!("自动收回日志级别失败：{e}");
-            } else {
-                ctl2.clear_revert();
-                tracing::info!("限时到期，日志级别已自动收回 info");
+            match ctl2.expire(generation) {
+                Ok(true) => tracing::info!("限时到期，日志级别已自动收回 info"),
+                Ok(false) => {},
+                Err(e) => tracing::warn!("自动收回日志级别失败：{e}"),
             }
         });
     }

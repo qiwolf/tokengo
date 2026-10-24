@@ -35,7 +35,11 @@ Token response的`earliest_refresh_at`按Unix秒解析，内部时间统一毫�
 
 官方HTTP必须stream:true、store:false、完整input数组；不能用previous_response_id恢复远端状态。显式system item不被支持，应由调用方采用instructions/developer，不默默降级优先级。
 
-预览不接受max_output_tokens、temperature、top_p、background、conversation、max_tool_calls、metadata、moderation、multi_agent、prompt、prompt_cache_retention、safety_identifier、top_logprobs、truncation、user等字段。网关应明确拒绝不可表示字段，不能为通过请求静默丢掉输出cap。此OAuth来源无法通过max_output_tokens强制限制输出；独立max_input_tokens/max_output_tokens配置必须是已核实的完整provider上下文/输出上界，用于本地admission与财务保守预占，不能假装是已发送并被provider执行的cap，不能因此虚构零价格。订阅成本未知仍保持未定价。
+Responses 入口将 max_tokens/max_completion_tokens 明确兼容为 max_output_tokens；同时提供多个上限时必须相等，否则拒绝。它们都表示包含推理在内的输出 token 上限，别名只在入口归一化，不将错误协议字段发送给上游。Chat 入口继续使用原有转换。当前 TokenGo OAuth 适配器在发出请求前拒绝 temperature、top_p、background、conversation、max_tool_calls、metadata、moderation、multi_agent、prompt、prompt_cache_retention、safety_identifier、top_logprobs、truncation、user 等字段，不能为通过请求静默丢掉输出 cap。这是当前适配策略，不应据此断言所有字段都被实时上游拒绝。
+
+2026-10-25 对现有 GPT-6 Luna OAuth 账号的隔离直连探测已确认：max_output_tokens=16/32 会在该 token 数截断，终态为 incomplete、原因 max_output_tokens；32000/64000 被接受；1 返回最低值 16 的参数错误。本次仅核实该账号/模型/接口，不代表所有 OAuth 模型均已覆盖；网关现已支持 max_output_tokens，并校验整数且至少16、不超过绑定的已核实输出上界及计费上界。Chat 的 max_tokens/max_completion_tokens 经转换后应用相同校验，不静默裁剪。显式 cap 用于本地 admission 与账务预占；省略 cap 仍按绑定的完整输出上界保守预占。opaque/视觉输入继续使用完整输入上界；订阅成本未知仍保持未定价。max_output_tokens 截断终态在原生 Responses 中保留 incomplete 和实际 usage，转换到 Chat 时返回 finish_reason=length；其他 incomplete 或错误仍拒绝。
+
+Chat→Responses 转换支持 response_format 的 text、json_object 与 json_schema，映射到 text.format；json_schema 的 name、description、schema 与显式 strict 值保留，省略值不补写。schema 内容不改写，未知格式控制字段或不能转换到目标协议的格式显式拒绝。Chat 原生透传继续保留原请求；原生 Responses 使用 text.format。模型是否接受具体 schema 仍由实际来源决定。
 
 函数/custom工具按官方要求组织namespace或additional_tools；不支持音频/视频、Files upload/transcription、image generation、file search、Code Interpreter、native computer、hosted MCP/connectors、tool_search等。原生Responses实现不代表完整Chat或Messages客户端能力；具体转换与CLI验收必须分别进行。
 
@@ -49,3 +53,6 @@ Token response的`earliest_refresh_at`按Unix秒解析，内部时间统一毫�
 
 
 订阅传输会将顶层裸 function/custom 工具原样移到首个 developer `additional_tools` 输入项，保留名称、schema、调用和返回 ID；已有 namespace 不改。此适配遵循[官方 additional_tools 结构](https://developers.openai.com/api/docs/guides/tools-tool-search)。显式 API 不支持字段在发出请求前拒绝；非流式客户端的完整响应从有界 SSE 收集器重建，保留终端空 output 前的 finalized items。OAuth 与独立按次工具禁止旧的无账务自动探活/视觉测试，模型目录走账号专用管理接口，业务推理走正常 VKey 链路；管理员可通过独立[自定义探针](custom-probes.md)执行 OAuth Responses 系统诊断，走正常认证刷新与有界SSE收集，单独记录Token和未知订阅成本，不扣用户额度。
+
+
+输出 cap 截断时，已观测到同一 reasoning item 的 finalized 事件和最终 output 给出不同 encrypted_content。仅当 item ID、类型和其他所有字段一致且终态明确为 max_output_tokens 时，缓冲器采用最终响应完整原项；不解密、不认定密文等价、不拼接状态。返回和会话归属记录仍使用最终来源原值，其他字段冲突继续拒绝。

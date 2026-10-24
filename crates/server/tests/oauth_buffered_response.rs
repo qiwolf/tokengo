@@ -83,7 +83,7 @@ fn non_observed_control_or_meter_values_are_rejected() {
         ("/reasoning/summary", json!("auto")),
         ("/reasoning/effort", json!("unknown")),
         ("/text/verbosity", json!("unknown")),
-        ("/text/format/type", json!("json_object")),
+        ("/text/format/type", json!("unknown_format")),
         ("/output/0/phase", json!("commentary")),
         ("/output/0/phase", Value::Null),
         ("/output/0/status", json!("in_progress")),
@@ -117,5 +117,39 @@ fn supported_generation_dials_are_echoes_without_fabricated_reasoning() {
                 body["text"]
             );
         }
+    }
+}
+
+#[test]
+fn cap_truncation_retains_phase_usage_and_length_finish() {
+    let mut body=observed_snapshot();
+    body["status"]=json!("incomplete");
+    body["incomplete_details"]=json!({"reason":"max_output_tokens"});
+    body["completed_at"]=Value::Null;
+    body["output"][0]["status"]=json!("incomplete");
+    body["usage"]["output_tokens"]=json!(16);
+    let chat=convert_oauth_buffered_response(Protocol::Chat,&body).unwrap();
+    assert_eq!(chat["choices"][0]["finish_reason"],"length");
+    assert_eq!(chat["usage"]["completion_tokens"],16);
+    assert_eq!(chat["provider_metadata"]["openai_responses"]["completed_at"],Value::Null);
+    assert_eq!(chat["provider_metadata"]["openai_responses"]["output_message_phases"][0]["phase"],"final_answer");
+    body["incomplete_details"]["reason"]=json!("content_filter");
+    assert!(convert_oauth_buffered_response(Protocol::Chat,&body).is_err());
+}
+
+#[test]
+fn structured_output_echo_is_preserved_without_rejecting_chat_result() {
+    for format in [
+        json!({"type":"json_object"}),
+        json!({"type":"json_schema","name":"extract","description":null,"strict":true,"schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}),
+    ] {
+        let mut body=observed_snapshot();
+        body["text"]["format"]=format.clone();
+        body["output"][0]["content"][0]["text"]=json!("{\"ok\":true}");
+        let chat=convert_oauth_buffered_response(Protocol::Chat,&body).unwrap();
+        assert_eq!(chat["choices"][0]["message"]["content"],"{\"ok\":true}");
+        assert_eq!(chat["provider_metadata"]["openai_responses"]["text"]["format"],format);
+        body["text"]["format"]["unrecognized_control"]=json!(true);
+        assert!(convert_oauth_buffered_response(Protocol::Chat,&body).is_err());
     }
 }
