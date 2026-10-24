@@ -93,8 +93,8 @@ pub struct AppState {
     pub auth_slots: Arc<tokio::sync::Semaphore>,
     pub model_loads: Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
-    /// Request-scoped local vector node rotation, independent from user/Key affinity.
-    local_vector_sequences: Mutex<HashMap<(i64, String), u64>>,
+    /// Entrypoint + provider + target model rotation, independent from Key affinity.
+    local_vector_sequences: Mutex<HashMap<(String, i64, String), u64>>,
     pub db: Mutex<Connection>,
     pub routing: Mutex<RoutingRouter>,
     pub secrets: SecretBox,
@@ -591,9 +591,9 @@ impl AppState {
             .unwrap_or(0)
     }
 
-    pub(crate) fn next_local_vector_node(&self, provider: i64, model: &str, nodes: usize) -> usize {
+    pub(crate) fn next_local_vector_node(&self, entrypoint: &str, provider: i64, model: &str, nodes: usize) -> usize {
         let mut sequences = self.local_vector_sequences.lock().unwrap_or_else(|e| e.into_inner());
-        let cursor = sequences.entry((provider, tokengo_shared::normalize_model_name(model))).or_default();
+        let cursor = sequences.entry((entrypoint.to_owned(), provider, tokengo_shared::normalize_model_name(model))).or_default();
         let offset = (*cursor % nodes.max(1) as u64) as usize;
         *cursor = cursor.wrapping_add(1);
         offset

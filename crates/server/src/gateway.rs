@@ -157,6 +157,16 @@ struct Plan {
 }
 
 impl Plan {
+    /// Public entrypoints have independent turns. Private names are owner-scoped,
+    /// while a shared entrypoint intentionally shares its rotation across callers.
+    fn local_balance_scope(&self) -> String {
+        let name = tokengo_shared::normalize_model_name(&self.route);
+        match &self.virtual_route {
+            Some(route) if route.shared => format!("shared:{}:{name}", route.id),
+            Some(route) => format!("private:{}:{}:{name}", route.user_id, route.id),
+            None => format!("direct:{name}"),
+        }
+    }
     fn vector_contract(&self) -> Option<&crate::vector_compat::Contract> {
         self.virtual_route.as_ref().and_then(|route| route.compatibility.as_ref())
     }
@@ -215,6 +225,7 @@ fn order_pool_entries(
     auth: &crate::db::identity::AuthContext,
     endpoint: EndpointKind,
 ) -> Result<(), ApiError> {
+    let balance_scope = plan.local_balance_scope();
     let c = state.conn();
     let mut eligible = Vec::new();
     for entry in std::mem::take(&mut plan.entries) {
@@ -268,7 +279,7 @@ fn order_pool_entries(
             && crate::db::route_policy::load(&c, &name)?.local_strategy.as_deref() == Some("round_robin");
         let ordered = if balanced {
             let mut ordered = ids;
-            let offset = state.next_local_vector_node(provider, &name, ordered.len());
+            let offset = state.next_local_vector_node(&balance_scope, provider, &name, ordered.len());
             ordered.rotate_left(offset);
             for index in &indices {
                 entries[*index].as_mut().unwrap().local_balanced = true;

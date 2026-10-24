@@ -126,3 +126,40 @@ async fn balanced_and_ordinary_aliases_do_not_invert_channel_and_credential_gate
  let (balanced,legacy)=tokio::time::timeout(std::time::Duration::from_millis(900),async{tokio::join!(balanced,legacy)}).await.expect("mixed aliases must not form credential/channel wait cycle");
  assert_eq!(balanced.unwrap().0,StatusCode::OK);assert_eq!(legacy.unwrap().0,StatusCode::OK);
 }
+#[tokio::test]
+async fn cloud_primary_shared_planning_does_not_consume_direct_model_rotation(){
+ let f=Fixture::new(ModelKind::Embeddings).await;
+ f.policy(json!({"local_strategy":"round_robin","retry_times":0,"channel_ids":[f.ids[0].0,f.ids[1].0]})).await;
+ let cloud=Node::new().await;
+ let (config,actor)={
+  let c=f.state.conn();c.execute("INSERT INTO provider_channels(name,enabled,created_ms,endpoint_mode,canonical_state,base_url) VALUES('cloud',1,0,'single','canonical',?1)",[&cloud.base]).unwrap();let provider=c.last_insert_rowid();
+  let id=db::channels::create(&c,&db::channels::NewChannel{name:"cloud-bge".into(),base_url:cloud.base.clone(),enabled:true,unwrap_envelope:false,max_concurrent:0}).unwrap();db::channels::set_secret(&c,&f.state.secrets,id,"synthetic-cloud-key").unwrap();db::channels::set_models(&c,id,&[db::channels::ModelMapping::new("bge",Some("exact-model".into()),false)]).unwrap();db::provider_channels::set_membership(&c,id.0,Some(provider)).unwrap();db::provider_pool::adopt_source(&c,&f.state.secrets,id.0,provider).unwrap();
+  db::sessions::set_panel_password(&c,"synthetic-local-vector-root").unwrap();let root=db::accounts::root(&c).unwrap().unwrap();
+  (db::user_virtual_routes::Config{name:"cloud-primary-shared".into(),enabled:true,mode:"ordered".into(),timezone:"UTC".into(),targets:vec![db::user_virtual_routes::Target{provider_id:provider,logical_model:"bge".into(),switch_on_429:true,switch_on_400:false},db::user_virtual_routes::Target{provider_id:f.provider,logical_model:"bge".into(),switch_on_429:true,switch_on_400:false}],windows:vec![],default_positions:vec![]},root.account.id)
+ };
+ tokengo_server::vector_compat::verify_shared(&f.state,&config,actor).await.unwrap();
+ db::shared_virtual_routes::create(&f.state.conn(),&config,actor).unwrap();
+ cloud.state.seen.lock().unwrap().clear();for node in &f.nodes{node.state.seen.lock().unwrap().clear();}
+ for _ in 0..6 {
+  let(s,b)=f.call().await;assert_eq!(s,StatusCode::OK,"direct: {b}");
+  let mut body=f.body();body["model"]=json!("cloud-primary-shared");let(s,b)=f.request("POST","/v1/embeddings",&f.key,body).await;assert_eq!(s,StatusCode::OK,"shared: {b}");
+ }
+ assert_eq!(cloud.count(),6,"shared calls should succeed on cloud without using locals");
+ assert_eq!((f.nodes[0].count(),f.nodes[1].count()),(3,3),"unused fallback plans must not consume direct model turns");
+}
+#[tokio::test]
+async fn direct_and_shared_entrypoints_each_keep_their_own_rotation(){
+ let f=Fixture::new(ModelKind::Embeddings).await;f.policy(json!({"local_strategy":"round_robin","retry_times":0})).await;
+ {let c=f.state.conn();db::sessions::set_panel_password(&c,"synthetic-local-vector-root").unwrap();let root=db::accounts::root(&c).unwrap().unwrap();db::shared_virtual_routes::create(&c,&db::user_virtual_routes::Config{name:"shared-bge".into(),enabled:true,mode:"ordered".into(),timezone:"UTC".into(),targets:vec![db::user_virtual_routes::Target{provider_id:f.provider,logical_model:"bge".into(),switch_on_429:true,switch_on_400:false}],windows:vec![],default_positions:vec![]},root.account.id).unwrap();}
+ for _ in 0..4 {for (name,marker) in [("bge","direct"),("shared-bge","shared")]{let(s,b)=f.request("POST","/v1/embeddings",&f.key,json!({"model":name,"input":marker})).await;assert_eq!(s,StatusCode::OK,"{b}");}}
+ for node in &f.nodes {let seen=node.state.seen.lock().unwrap();for marker in ["direct","shared"]{assert_eq!(seen.iter().filter(|b|b["input"]==marker).count(),2,"entry {marker} must rotate independently");}}
+ f.no_affinity();
+}
+#[tokio::test]
+async fn private_aliases_with_the_same_name_have_owner_scoped_rotations(){
+ let f=Fixture::new(ModelKind::Embeddings).await;f.policy(json!({"local_strategy":"round_robin","retry_times":0})).await;
+ let second_key={let c=f.state.conn();let second=db::identity::create_user(&c,"second-vector-caller","user",&Default::default()).unwrap().id;let(_,key)=db::identity::create_key(&c,second,"second-private-key",&Default::default(),None,None).unwrap();for owner in [f.user,second]{db::user_virtual_routes::create(&c,owner,&db::user_virtual_routes::Config{name:"my-bge".into(),enabled:true,mode:"ordered".into(),timezone:"UTC".into(),targets:vec![db::user_virtual_routes::Target{provider_id:f.provider,logical_model:"bge".into(),switch_on_429:true,switch_on_400:false}],windows:vec![],default_positions:vec![]}).unwrap();}key};
+ for _ in 0..4 {for(key,marker)in [(&f.key,"first-owner"),(&second_key,"second-owner")]{let(s,b)=f.request("POST","/v1/embeddings",key,json!({"model":"my-bge","input":marker})).await;assert_eq!(s,StatusCode::OK,"{b}");}}
+ for node in &f.nodes{let seen=node.state.seen.lock().unwrap();for marker in ["first-owner","second-owner"]{assert_eq!(seen.iter().filter(|b|b["input"]==marker).count(),2,"same private name must not share turns across owners");}}
+ f.no_affinity();
+}
