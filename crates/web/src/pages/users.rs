@@ -1,7 +1,7 @@
 use super::{
     PageHead,
     key_manager::KeyManager,
-    policy_editor::{self as policy, PolicyEditor},
+    policy_editor::{self as policy, BudgetUsage, PolicyEditor},
 };
 use crate::{Ctx, Page, account_api, admin_api as api};
 use leptos::prelude::*;
@@ -366,7 +366,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             <Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><crate::account_ui::PasswordField id="user-password" label="设置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/><Show when=move||selected.get().is_none()><div class="user-password-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{match generate_password(){Ok(generated)=>{password.set(generated);error.set(String::new());},Err(message)=>error.set(message)}}>"重新生成密码"</button></div></Show><p id="user-help" class="account-help">{move||if selected.get().is_none(){"默认生成24位安全随机密码，可修改或重新生成；若浏览器无法生成，请手动设置。保存成功后自动复制登录信息；复制失败可再次点击复制。"}else if open_login.get(){"请输入至少12字节的初始密码。"}else{"密码留空不修改；设置新密码将退出此用户现有登录会话。登录账号创建后不可在此修改。"}}</p></Show>
         </Show>
         <Show when=move||section.get()==UserSection::Access><h3>"模型与透传服务授权"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-access" admin=true show_limits=false/></Show>
-        <Show when=move||section.get()==UserSection::Limits><h3>"限流与额度"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-limits" admin=true show_access=false/><label class="account-field user-budget-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><p class="account-help">"按实际用量与模型价格累计费用。留空不限，0 表示无付费额度；此处是累计金额，不是月度套餐或 Token 余额。"</p></Show>
+        <Show when=move||section.get()==UserSection::Limits><h3>"限流与额度"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-limits" admin=true show_access=false/><div class="workspace-budget-grid"><label class="account-field user-budget-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><BudgetUsage budget=Signal::derive(move||selected.get().map(|u|u["budget"].clone()).unwrap_or(Value::Null))/></div><p class="account-help">"按实际用量与模型价格累计费用。留空不限，0 表示无付费额度；此处是累计金额，不是月度套餐或 Token 余额。"</p></Show>
         </div>
         <Show when=move||!error.get().is_empty()><p id="user-error" class="banner bad" role="alert">{move||error.get()}</p></Show><Show when=move||!notice.get().is_empty()><p class="banner good" role="status">{move||notice.get()}</p></Show>
         <footer class="user-workspace-footer"><span>"保存会同时应用基本资料、授权和额度。"</span><div class="user-actions"><button type="button" class="ghost" on:click=move |_|editing.set(false)>"取消"</button><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button></div></footer>

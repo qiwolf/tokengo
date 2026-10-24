@@ -86,15 +86,15 @@ impl Page {
     /// 顶栏与菜单上显示的名字。**两个字的短名，手机上排得下。**
     pub fn title(self) -> &'static str {
         match self {
-            Page::Overview => "总览",
-            Page::Channels => "渠道",
-            Page::Models => "模型",
+            Page::Overview => "运行总览",
+            Page::Channels => "供应商与接入",
+            Page::Models => "模型与路由",
             Page::SharedModels => "共享虚拟模型",
             Page::Services => "透传服务",
             Page::Probes => "探针",
-            Page::Users => "用户",
-            Page::Billing => "账务",
-            Page::Settings => "设置",
+            Page::Users => "用户与 Key",
+            Page::Billing => "用量与账务",
+            Page::Settings => "系统设置",
             Page::Strategies=>"调用策略",Page::Accounts=>"用户",Page::Portal=>"我的空间",Page::Account=>"账号安全",
         }
     }
@@ -153,11 +153,11 @@ pub fn PageHead(
 ) -> impl IntoView {
     view! {
         <div class="page-head">
-            <div class="page-title-row">
+            <div class="page-head-text">
                 <h1>{title}</h1>
-                {children.map(|c| view! { <div class="page-head-actions">{c()}</div> })}
+                <p class="muted small">{desc}</p>
             </div>
-            <p class="muted small">{desc}</p>
+            {children.map(|c| view! { <div class="page-head-actions">{c()}</div> })}
         </div>
     }
 }
@@ -217,6 +217,6 @@ mod tests {
         // 总览 · 渠道 · 模型 · 用户 · 账务 · 设置
         assert_eq!(Page::ALL.len(), 9);
         assert!(!Page::ALL.contains(&Page::Accounts));
-        assert_eq!(Page::Users.title(), "用户");
+        assert_eq!(Page::Users.title(), "用户与 Key");
     }
 }

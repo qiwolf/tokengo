@@ -1,5 +1,5 @@
 /* Focused user management; scoped so other modules keep their own layout. */
-.users-page .users-toolbar { display:flex; align-items:flex-end; gap:24px; flex-wrap:wrap; margin-bottom:16px; }
+.users-page .users-toolbar { display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
 .users-page .users-toolbar > .account-field { width:384px; max-width:100%; margin:0; }
 .users-page .users-toolbar > .account-check { min-height:40px; margin:0; }
 .users-page .user-actions, .users-page .users-row-actions { display:flex; align-items:center; gap:8px; margin:0; flex-wrap:wrap; }
@@ -14,7 +14,7 @@
 .users-page .module-dialog:has(.user-workspace) > .module-dialog-body { padding:0; }
 .user-workspace .user-identity { display:flex; gap:12px; align-items:center; padding:16px 24px; background:var(--bg-soft); }
 .user-workspace .user-identity > div { flex:1; min-width:0; }
-.user-workspace .user-identity h3 { margin:0; font-size:18px; overflow-wrap:anywhere; }
+.user-workspace .user-identity h3 { margin:0; font-size:14px; overflow-wrap:anywhere; }
 .user-workspace .user-identity p { margin:4px 0 0; font-size:12px; color:var(--fg-2); overflow-wrap:anywhere; }
 .user-workspace .user-workspace-nav { display:flex; gap:8px; padding:12px 24px; border-bottom:1px solid var(--line); overflow-x:auto; }
 .user-workspace .user-workspace-nav button { flex:1 0 auto; white-space:nowrap; }
@@ -56,7 +56,7 @@
 .user-workspace .user-workspace-footer { position:sticky; bottom:0; z-index:2; }
 .user-workspace .user-key-editor { padding:24px; }
 .user-workspace .user-key-editor-head { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--line); }
-.user-workspace .user-key-editor-head h3 { margin:0; font-size:18px; }
+.user-workspace .user-key-editor-head h3 { margin:0; font-size:14px; }
 .user-workspace .user-key-editor > h3 { font-size:16px; }
 .user-workspace .user-key-editor .account-form { max-width:none; }
 @media(max-width:640px) { .user-workspace .user-key-editor { padding:16px; } .user-workspace .user-key-editor-head { flex-wrap:wrap; } }

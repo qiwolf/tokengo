@@ -1,4 +1,4 @@
-use super::policy_editor::{self as policy, PolicyEditor};
+use super::policy_editor::{self as policy, BudgetUsage, PolicyEditor};
 use crate::{Ctx, admin_api as api, fmt};
 use leptos::prelude::*;
 use serde_json::{Value, json};
@@ -32,9 +32,9 @@ fn new_key_policy(base: Value, personal: bool) -> Value {
 fn KeyEditorSurface(open: RwSignal<bool>, busy: RwSignal<bool>, embedded: bool, children: ChildrenFn) -> impl IntoView {
     let children = StoredValue::new(children);
     if embedded {
-        view!{<Show when=move||open.get()><div class="user-key-editor"><header class="user-key-editor-head"><h3>"API Key 设置"</h3><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|open.set(false)>"返回 API Key 列表"</button></header>{move||children.with_value(|render| render())}</div></Show>}.into_any()
+        view!{<Show when=move||open.get()><div class="user-key-editor workspace-key-task"><header class="user-key-editor-head"><h3>"API Key 设置"</h3><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|open.set(false)>"返回 API Key 列表"</button></header>{move||children.with_value(|render| render())}</div></Show>}.into_any()
     } else {
-        view!{<super::ModuleDialog open=open busy=busy title="API Key 设置".to_string()>{children.with_value(|render| render())}</super::ModuleDialog>}.into_any()
+        view!{<super::ModuleDialog open=open busy=busy title="API Key 设置".to_string()><div class="workspace-key-task">{children.with_value(|render| render())}</div></super::ModuleDialog>}.into_any()
     }
 }
 #[component]
@@ -459,20 +459,25 @@ pub fn KeyManager(
     <button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{secret.set(None);copy_note.set(String::new());editor_open.set(false);}>"已保存，关闭并清除"</button></div></section></Show>
     <Show when=move||secret.get().is_none()>
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
-    <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
-    <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label>
-    <PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal/>
-    <div class="policy-limits"><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p>
-    <div class="account-actions"><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></div></fieldset><div class="account-actions"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></form>
+    <form class="account-form workspace-key-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
+    <section class="workspace-form-section"><h3>"凭据设置"</h3><div class="workspace-field-grid">    <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label></div></section>
+    <section class="workspace-form-section"><h3>"权限范围"</h3><p class="account-help">"Key 的权限只能缩小所属用户的授权范围。"</p><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal show_limits=false/></section>
+    <section class="workspace-form-section workspace-key-limits"><h3>"限流与消费上限"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key-limits"}else{"admin-key-limits"} admin=!personal show_access=false show_validation=false/>
+    <div class="workspace-budget-grid"><label class="account-field"><span>"累计消费上限（USD）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><BudgetUsage budget=Signal::derive(move||selected.get().map(|k|k["budget"].clone()).unwrap_or(Value::Null))/></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p></section>
+    <p class="workspace-preservation-note">"编辑元数据和权限不会更换此 Key，已有调用凭据和历史保留。"</p>
+    </fieldset><footer class="workspace-key-footer"><fieldset class="account-actions workspace-key-actions" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></fieldset><div class="account-actions workspace-key-cancel"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></footer></form>
     </Show>
     <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p>
     </KeyEditorSurface>
     <super::ModuleDialog open=reveal_open busy=busy title="显示 API Key".to_string()>
+    <div class="key-reveal-task">
+    <div class="key-reveal-scroll">
     <h3>{move||reveal_name.get()}</h3>
-    <Show when=move||busy.get()&&revealed_key.get().is_empty()><p role="status">"正在读取 Key…"</p></Show>
-    <Show when=move||!revealed_key.get().is_empty()><label class="account-field"><span>"完整 API Key"</span><textarea readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||revealed_key.get()/></label><p class="account-help">"关闭后清除本页明文，需要时可再次显示。撤销的 Key 即使能查看，也不能再调用。"</p><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let value=revealed_key.get_untracked();if value.is_empty(){return;}busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&value).await;reveal_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button></Show>
-    <p role="alert">{move||reveal_error.get()}</p><p role="status">{move||reveal_note.get()}</p>
-    <button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|reveal_open.set(false)>"关闭并隐藏"</button>
+    <Show when=move||!revealed_key.get().is_empty()><label class="account-field"><span>"完整 API Key"</span><textarea readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||revealed_key.get()/></label><p class="account-help">"关闭后清除本页明文，需要时可再次显示。撤销的 Key 即使能查看，也不能再调用。"</p></Show>
+    <div class="key-reveal-feedback"><p role="status">{move||if busy.get()&&revealed_key.get().is_empty(){"正在读取 Key…"}else{""}}</p><p role="alert">{move||reveal_error.get()}</p><p role="status">{move||reveal_note.get()}</p></div>
+    </div>
+    <footer class="key-reveal-footer"><Show when=move||!revealed_key.get().is_empty()><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let value=revealed_key.get_untracked();if value.is_empty(){return;}busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&value).await;reveal_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button></Show><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|reveal_open.set(false)>"关闭并隐藏"</button></footer>
+    </div>
     </super::ModuleDialog>
     <super::ModuleDialog open=delete_open busy=busy title="删除 API Key".to_string()>
     <p>{move||format!("确定删除“{}”？",delete_target.get().map(|k|api::text(&k,"name")).unwrap_or_default())}</p>

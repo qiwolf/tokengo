@@ -1,0 +1,299 @@
+/* Approved compact console, 2026-10-24. Presentation only; values use semantic roles.
+   Keep after legacy styles while individual workspaces own their local layout. */
+:root {
+  --bg:hsl(218,25%,9%); --bg-soft:hsl(218,23%,12%); --surface:hsl(218,23%,12%);
+  --surface-2:hsl(220,25%,17%); --surface-3:hsl(220,22%,22%);
+  --fg:hsl(217,30%,92%); --fg-2:hsl(216,19%,71%); --fg-3:hsl(216,15%,65%);
+  --line:hsl(218,22%,22%); --line-strong:hsl(216,18%,46%); --control-border:hsl(216,18%,52%);
+  --accent:hsl(223,91%,77%); --accent-soft:hsl(218,37%,23%); --accent-ink:hsl(220,48%,12%);
+  --btn-solid:hsl(224,71%,48%); --btn-solid-ink:hsl(0,0%,100%);
+  --radius:8px; --radius-md:8px; --radius-sm:6px; --bar:32px;
+  --shadow-2:0 16px 48px hsla(220,40%,3%,.35); --sidebar-size:208px;
+}
+html[data-theme="light"] {
+  --bg:hsl(220,23%,98%); --bg-soft:hsl(0,0%,100%); --surface:hsl(0,0%,100%);
+  --surface-2:hsl(218,26%,96%); --surface-3:hsl(218,25%,92%);
+  --fg:hsl(220,22%,16%); --fg-2:hsl(218,11%,42%); --fg-3:hsl(218,12%,44%);
+  --line:hsl(220,24%,92%); --line-strong:hsl(218,18%,70%); --control-border:hsl(218,18%,58%);
+  --accent:hsl(224,71%,48%); --accent-soft:hsl(224,100%,96%); --accent-ink:hsl(0,0%,100%);
+  --btn-solid:hsl(224,71%,48%); --btn-solid-ink:hsl(0,0%,100%);
+  --ok:hsl(153,55%,28%); --ok-soft:hsl(145,40%,95%);
+  --warn:hsl(35,69%,32%); --warn-soft:hsl(39,70%,96%);
+  --bad:hsl(358,48%,43%); --bad-soft:hsl(358,70%,97%);
+  --shadow-2:0 16px 48px hsla(217,38%,15%,.15);
+}
+body {font-family:Arial,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.5;}
+h1,h2,h3 {letter-spacing:normal;text-wrap:balance;}
+p {text-wrap:pretty;}
+.console-layout {grid-template-columns:var(--sidebar-size) minmax(0,1fr);grid-template-rows:56px 1fr;grid-template-areas:"sidebar header" "sidebar main";font-size:14px;line-height:1.5;}
+.console-header {height:56px;padding:0 24px;gap:12px;background:var(--surface);}
+.console-breadcrumb {display:flex;align-items:center;gap:12px;font-size:12px;color:var(--fg-2);}
+.console-header-page {border:0;padding:0;font-size:12px;color:var(--fg);}
+.console-header .console-theme {height:32px;min-height:32px;font-size:12px;padding:0 12px;border:1px solid var(--line);background:var(--surface);}
+.console-sidebar {top:0;height:100dvh;padding:0 12px max(16px,env(safe-area-inset-bottom));background:var(--surface);}
+.console-sidebar .console-brand {height:56px;min-height:56px;flex-shrink:0;width:100%;gap:8px;padding:0 8px;justify-content:flex-start;white-space:nowrap;}
+.console-brand::before {content:"t";display:grid;place-items:center;width:28px;height:28px;flex:0 0 28px;border-radius:8px;color:var(--surface);background:var(--fg);font-size:18px;font-weight:600;}
+.console-brand strong {font-size:16px;}
+.console-brand span {display:none;}
+.console-workspace {display:flex;align-items:center;gap:8px;padding:8px;margin:16px 4px 24px;border:1px solid var(--line);border-radius:6px;font-size:12px;}
+.console-workspace-mark {display:grid;place-items:center;width:24px;height:24px;border-radius:4px;color:var(--fg-2);background:var(--surface-2);}
+.console-nav-caption {font-size:12px;font-weight:400;padding:0 12px;margin:0 0 8px;color:var(--fg-2);}
+.console-nav-caption.console-nav-group {margin:24px 0 8px;}
+.console-sidebar nav {gap:2px;}
+.console-sidebar .console-nav-item {display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:36px;height:auto;padding:8px 12px;font-size:14px;line-height:20px;border-radius:6px;}
+.console-nav-icon {width:16px;height:16px;flex:0 0 16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.console-account {padding-top:16px;margin-top:auto;}
+.console-account-label {padding:0 8px;font-size:12px;}
+.console-account-label strong {font-size:12px;}
+.console-account>p {padding:4px 8px 12px;}
+.console-version {padding:12px 8px 0;font-size:11px;border-top:1px solid var(--line);margin-top:12px;}
+.console-main {padding:24px;}
+.console-content {max-width:1536px;min-width:0;}
+.console-content .page {gap:16px;}
+.console-content .page-head {flex-direction:row;align-items:center;gap:16px;margin:0 0 8px;padding:0;border:0;}
+.console-content .page-head h1 {font-size:20px;line-height:28px;font-weight:600;}
+.console-content .page-head-text {flex:1;gap:4px;min-width:0;}
+.console-content .page-head-text p {font-size:12px;line-height:18px;color:var(--fg-2);}
+.console-content .page-head-actions {gap:8px;width:auto;flex-shrink:0;}
+.console-layout .console-content button {
+  min-height:32px;height:auto;max-width:100%;padding:4px 12px;
+  font-size:12px;line-height:22px;border-radius:6px;white-space:normal;
+}
+.console-layout .console-content button.primary {background:var(--btn-solid);border-color:transparent;color:var(--btn-solid-ink);font-weight:500;}
+.console-layout .console-content button.ghost:not(.primary),
+.console-layout .console-content button.chip {background:var(--surface);border:1px solid var(--line);color:var(--fg);box-shadow:none;}
+.console-layout .console-content button.ghost.danger {color:var(--bad);border-color:var(--line);background:none;}
+.console-layout .console-content button.ghost:hover:not(:disabled) {background:var(--surface-2);border-color:var(--line-strong);}
+.console-layout .console-content button[aria-pressed="true"]:not(.password-toggle) {border-color:var(--accent);color:var(--accent);background:var(--accent-soft);box-shadow:none;}
+.console-layout .console-content :is(td,.chan-actions) button {min-height:28px;padding:2px 8px;font-size:12px;line-height:22px;}
+.console-layout .console-content .icon-btn {width:32px;height:32px;min-height:32px;padding:0;}
+.console-content .account-field {gap:8px;margin-bottom:16px;}
+.console-content .account-field :is(label,span) {font-size:12px;}
+.console-content .account-field input:not([type="checkbox"]):not([type="radio"]),
+.console-content .account-field select,
+.console-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.console-content select {
+  min-height:32px;height:32px;padding:4px 12px;font-size:12px;line-height:22px;
+  border-color:var(--control-border);border-radius:6px;background-color:var(--surface);
+}
+.console-content .account-field textarea,.console-content textarea {font-size:12px;line-height:20px;min-height:80px;padding:8px 12px;border-color:var(--control-border);}
+.console-content input[readonly] {background:var(--surface-2)!important;color:var(--fg-2);border-color:var(--line)!important;}
+.console-content .account-field select,.console-content select {padding-right:32px;}
+.console-content .account-field .password-control input {padding-right:56px;}
+.console-layout .console-content .password-control .password-toggle {min-height:32px;height:32px;padding:0 8px;right:4px;top:0;width:44px;line-height:20px;background:transparent;border:0;}
+.console-content .pick,.console-content .kind-pick,.console-content .account-check {min-height:32px;gap:8px;margin:0;padding:4px 0;font-size:12px;line-height:20px;align-items:center;font-weight:400;}
+.console-content input[type="checkbox"],.console-content input[type="radio"] {width:14px;min-width:14px;height:14px;min-height:14px;flex:0 0 14px;padding:0;accent-color:var(--accent);}
+.console-content .account-help {font-size:12px;line-height:1.7;margin-bottom:12px;}
+.console-content .account-actions {margin-top:16px;gap:8px;}
+.console-content .card-head .account-actions {margin:0;}
+.console-content .card {border-color:var(--line);border-radius:8px;}
+.console-content .card-head {flex-direction:row;align-items:center;flex-wrap:wrap;gap:8px;padding:16px;}
+.console-content .card-head h2 {font-size:14px;line-height:20px;font-weight:600;}
+.console-content .card-head p {font-size:12px;line-height:18px;}
+.console-content .card-body {padding:0 16px 16px;}
+.console-content .card-body.flush {padding:0;}
+.console-content .panel {padding:16px;gap:12px;}
+.console-content .table-wrap {border-color:var(--line);border-radius:8px;}
+.console-content th {font-size:12px;font-weight:400;line-height:18px;background:var(--surface-2);padding:8px 16px;border-color:var(--line);}
+.console-content td {font-size:12px;line-height:20px;padding:12px 16px;border-color:var(--line);}
+.console-content :is(td,th):first-child {padding-left:16px;}
+.console-content :is(td,th):last-child {padding-right:16px;}
+.console-content td strong {font-size:14px;font-weight:500;}
+.console-content .tag {font-size:12px;padding:2px 8px;border-radius:4px;line-height:18px;}
+.console-content td .tag {min-width:0;font-size:11px;}
+.console-content .empty {padding:24px 16px;border-radius:8px;font-size:12px;}
+.console-content .banner {border-radius:6px;font-size:12px;padding:12px;}
+.console-content .toolbar,.console-content .actions {gap:8px;}
+/* Native dialogs retain existing focus/escape behavior. Only header/body/footer geometry changes. */
+.console-content .module-dialog,.console-content.module-dialog,
+.console-content .provider-key-modal,.console-content.provider-key-modal {border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow-2);max-height:calc(100dvh - 64px);}
+.console-content .module-dialog::backdrop,.console-content.module-dialog::backdrop,
+.console-content .provider-key-modal::backdrop,.console-content.provider-key-modal::backdrop {background:hsla(217,32%,15%,.36);backdrop-filter:none;}
+.console-content .module-dialog-header,.console-content .provider-key-modal-head {padding:20px 24px;gap:16px;background:var(--surface);}
+.console-content .module-dialog-header h2,.console-content .provider-key-modal-head h2 {font-size:18px;line-height:24px;}
+.console-content .module-dialog-body {padding:24px;}
+.console-content .module-dialog-actions {gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
+.console-content details>summary {min-height:32px;padding:8px 12px;font-size:12px;border-color:var(--line);background:var(--surface-2);}
+.console-content .policy-options {border-color:var(--line);}
+.console-content .policy-editor {gap:12px;margin-block:16px;}
+.console-content .policy-editor details {padding:12px;border-color:var(--line);}
+.console-content .policy-editor summary {min-height:32px;}
+/* Overview: one compact metric strip and stable, aligned request records. */
+.console-content .overview-dashboard {gap:16px;}
+.console-content .overview-summary {background:var(--surface);border-radius:8px;}
+.console-content .overview-metrics .stat {flex-direction:column;align-items:flex-start;gap:8px;padding:16px 24px;}
+.console-content .overview-metrics .stat-title {font-size:12px;color:var(--fg-2);}
+.console-content .overview-metrics .stat-value {font-size:24px;line-height:28px;letter-spacing:normal;text-align:left;}
+.console-content .overview-summary>.overview-stat-details {display:flex;justify-content:flex-end;padding:4px 16px;background:var(--surface);}
+.console-layout .console-content .overview-summary>.overview-stat-details>button {border:0;background:transparent;color:var(--accent);font-size:12px;padding:0 4px;min-height:28px;}
+.console-content .overview-tabs {display:flex;gap:24px;border-bottom:1px solid var(--line);overflow-x:auto;}
+.console-layout .console-content .overview-tabs>button {border:0;border-radius:0;border-bottom:2px solid transparent;background:none;color:var(--fg-2);padding:4px 0 12px;white-space:nowrap;}
+.console-layout .console-content .overview-tabs>button.active {color:var(--accent);border-bottom-color:var(--accent);box-shadow:none;}
+.console-content .recent-list {display:block;padding:0;}
+.console-content .recent-call {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:16px;padding:12px 16px;border:0;border-bottom:1px solid var(--line);border-radius:0;}
+.console-content .recent-call:last-child {border-bottom:0;}
+.console-content .recent-main {display:grid;grid-template-columns:80px minmax(0,1fr) 64px;align-items:center;gap:12px;min-width:0;}
+.console-content .recent-model {font-size:14px;font-weight:500;overflow-wrap:anywhere;}
+.console-content .recent-duration {font-size:12px;white-space:nowrap;}
+.console-content .recent-meta {display:flex;align-items:center;justify-content:flex-end;gap:12px;min-width:0;font-size:12px;color:var(--fg-2);}
+.console-content .recent-channel {min-width:0;flex:1;overflow-wrap:anywhere;}
+.console-layout .console-content .recent-meta>button {border:0;background:transparent;color:var(--accent);padding:0 4px;min-height:28px;white-space:nowrap;}
+.console-content .metric-list {gap:0;padding:0;grid-template-columns:repeat(2,minmax(0,1fr));}
+.console-content .metric-card {padding:16px;border-radius:0;border:0;border-bottom:1px solid var(--line);}
+.console-content .metric-card:nth-child(odd) {border-right:1px solid var(--line);}
+.console-content .metric-head {align-items:center;}
+.console-content .metric-head b {font-size:14px;font-weight:500;}
+.console-layout .console-content .metric-head button {min-height:28px;border:0;background:none;color:var(--accent);padding:0 4px;}
+.console-content .metric-primary {font-size:12px;margin-top:8px;}
+.console-content .metric-secondary {font-size:12px;margin-top:4px;}
+.console-content .overview-window {align-self:flex-start;display:inline-flex;width:auto;background:var(--surface-2);border:1px solid var(--line);padding:2px;border-radius:6px;gap:2px;}
+.console-layout .console-content .overview-window>.chip {min-height:28px;height:28px;width:auto;padding:0 12px;font-size:12px;border:0;background:none;border-radius:4px;white-space:nowrap;}
+.console-layout .console-content .overview-window>.chip.active {background:var(--surface);color:var(--fg);box-shadow:0 1px 3px hsla(220,20%,10%,.06);}
+/* Billing: navigation is a tab strip; filters form a compact toolbar. */
+.console-content .billing-nav {display:flex;gap:24px;margin:0;border-bottom:1px solid var(--line);}
+.console-layout .console-content .billing-nav>button {height:40px;min-height:40px;flex-direction:row;align-items:center;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:0 0 12px;gap:0;color:var(--fg-2);}
+.console-content .billing-nav>button strong {font-size:14px;font-weight:400;}
+.console-content .billing-nav>button span {display:none;}
+.console-layout .console-content .billing-nav>button.active {border-bottom-color:var(--accent);color:var(--accent);box-shadow:none;}
+.console-content .billing-nav>button.active strong {font-weight:600;}
+.console-content .billing-subnav {gap:8px;}
+.console-layout .console-content .billing-subnav>button {min-height:32px;}
+.console-content .billing-page .card-body {padding:0 16px 16px;}
+.console-content .billing-field {gap:8px;font-size:12px;}
+.console-content .billing-field label {font-size:12px;}
+.console-content .billing-field input,.console-content .billing-field select {min-height:32px;}
+.console-content .billing-filters {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;}
+.console-content .billing-filter {padding:12px;background:var(--surface-2);border-color:var(--line);}
+.console-content .billing-filter-actions {margin-top:12px;gap:8px;}
+.console-content .billing-query-status:empty {display:none;}
+.console-content .billing-query-status {font-size:12px;min-height:0;margin:12px 0;}
+.console-content .billing-help {margin:0 0 16px;font-size:12px;}
+.console-content .billing-help summary {min-height:32px;text-decoration:none;}
+.console-content .billing-page td small {font-size:11px;margin-top:4px;}
+.console-content .billing-pagination {margin-top:16px;padding-top:12px;gap:12px;font-size:12px;}
+.console-content .portal-summary {gap:0;margin-bottom:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+.console-content .portal-summary section {border:0;border-right:1px solid var(--line);border-radius:0;padding:16px 24px;}
+.console-content .portal-summary section:last-child {border:0;}
+.console-content .portal-page>.card {margin-bottom:0;}
+/* Secondary modules use the same controls without changing their interaction contracts. */
+.console-content .custom-probes {padding:16px;}
+.console-layout .console-content .custom-probe-actions button {min-height:32px;height:auto;font-size:12px;padding:4px 12px;}
+.console-content .custom-probe-head {gap:16px;}
+.console-content .custom-probe-head h2 {font-size:14px;}
+.console-content .custom-probe-head p {font-size:12px;}
+.console-content .services-page .passthrough-routes .card-body>.panel {padding:16px;}
+.console-content .route-policy-form h3 {font-size:14px;margin:16px 0 12px;}
+.console-content .route-policy-form .form-grid>label {font-size:12px;}
+@media(max-width:1100px) {
+  .console-main {padding:16px;}
+  .console-content .recent-call {grid-template-columns:minmax(0,1fr);gap:8px;}
+  .console-content .recent-meta {justify-content:flex-start;}
+}
+@media(max-width:768px) {
+  .console-layout {grid-template-columns:minmax(0,1fr);grid-template-rows:56px auto 1fr;grid-template-areas:"header" "sidebar" "main";}
+  .console-header {height:56px;padding:0 16px;gap:8px;}
+  .console-breadcrumb {gap:8px;}
+  .console-header-page {display:block;}
+  .console-header .console-theme,.console-header .console-menu-toggle {min-height:44px;height:44px;padding:0 8px;font-size:12px;}
+  .console-header .console-theme {border:0;background:none;}
+  .console-sidebar {position:static;top:auto;height:auto;padding:12px 16px;}
+  .console-sidebar .console-brand,.console-workspace {display:none;}
+  .console-sidebar nav {grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;}
+  .console-sidebar .console-nav-group {grid-column:1/-1;margin:12px 0 4px;}
+  .console-sidebar .console-nav-item {min-height:44px;padding:10px 12px;font-size:14px;}
+  .console-account {padding-top:12px;}
+  .console-main {padding:16px;}
+  .console-content .page-head {margin-bottom:0;align-items:flex-start;gap:12px;}
+  .console-content .page-head h1 {font-size:18px;line-height:24px;}
+  .console-layout .console-content button {min-height:44px;padding:8px 12px;font-size:12px;line-height:26px;}
+  .console-layout .console-content :is(td,.chan-actions) button {min-height:44px;padding:8px;line-height:26px;}
+  .console-content .account-field input:not([type="checkbox"]):not([type="radio"]),.console-content .account-field select,
+  .console-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),.console-content select {min-height:44px;height:44px;font-size:16px;padding:8px 12px;line-height:26px;}
+  .console-content .account-field textarea,.console-content textarea {font-size:16px;}
+  .console-content .pick,.console-content .kind-pick,.console-content .account-check {min-height:44px;}
+  .console-layout .console-content .password-control .password-toggle {min-height:44px;height:44px;}
+  .console-content .card-head {padding:16px;}
+  .console-content .module-dialog,.console-content.module-dialog,.console-content .provider-key-modal,.console-content.provider-key-modal {max-height:calc(100dvh - 24px);max-width:calc(100% - 16px);border-radius:8px;}
+  .console-content .module-dialog-header,.console-content .provider-key-modal-head {padding:16px;}
+  .console-content .module-dialog-header h2,.console-content .provider-key-modal-head h2 {font-size:16px;}
+  .console-content .module-dialog-body {padding:16px;}
+  .console-content .overview-metrics {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .console-content .overview-metrics .stat {padding:16px;}
+  .console-content .overview-metrics .stat:nth-child(2) {border-right:0;}
+  .console-content .overview-metrics .stat:nth-child(-n+2) {border-bottom:1px solid var(--line);}
+  .console-content .overview-tabs {gap:16px;}
+  .console-layout .console-content .overview-tabs>button {min-height:44px;padding:8px 0;}
+  .console-layout .console-content .overview-window>.chip {height:40px;min-height:40px;padding:0 12px;}
+  .console-content .recent-call {grid-template-columns:minmax(0,1fr);padding:16px;}
+  .console-content .recent-main {grid-template-columns:72px minmax(0,1fr) 56px;gap:8px;}
+  .console-content .recent-meta {flex-wrap:wrap;gap:8px;}
+  .console-layout .console-content .recent-meta>button {min-height:44px;}
+  .console-content .metric-list {grid-template-columns:minmax(0,1fr);}
+  .console-content .metric-card:nth-child(odd) {border-right:0;}
+  .console-layout .console-content .metric-head button {min-height:44px;}
+  .console-content .billing-filters {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .console-layout .console-content .billing-nav>button,.console-layout .console-content .billing-subnav>button {min-height:44px;}
+  .console-content .portal-summary {grid-template-columns:1fr;}
+  .console-content .portal-summary section {padding:16px;border:0;border-bottom:1px solid var(--line);}
+  .console-layout .console-content .custom-probe-actions button {min-height:44px;}
+}
+@media(max-width:480px) {
+  .console-content .billing-filters {grid-template-columns:minmax(0,1fr);}
+  .console-content .overview-stat-details dl {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .console-content .billing-nav {gap:20px;}
+  .console-content .billing-nav>button strong {font-size:12px;}
+}
+@media(prefers-reduced-motion:reduce) { .console-layout * {animation:none!important;transition:none!important;} }
+/* Feedback pass: keep price actions intrinsic and give probe tools/empty state clear groups. */
+.console-layout .console-content .billing-price-table {table-layout:auto;width:100%;}
+.console-layout .console-content .billing-price-table :is(th,td) {vertical-align:middle;}
+.console-layout .console-content .billing-price-table :is(th,td):first-child {width:auto;min-width:128px;white-space:normal;overflow-wrap:anywhere;}
+.console-layout .console-content .billing-price-table :is(th,td):last-child {width:1%;min-width:112px;white-space:nowrap;}
+.console-layout .console-content .billing-price-table td:last-child>button {white-space:nowrap;min-width:88px;word-break:normal;overflow-wrap:normal;max-width:none;}
+.console-layout .console-content .billing-price-table td[data-label="价格"],
+.console-layout .console-content .billing-price-table td[data-label="token 上限"],
+.console-layout .console-content .billing-price-table td[data-label="USD / 次"] {white-space:nowrap;}
+.console-content .billing-price-model {display:block;margin-bottom:4px;}
+.console-content .billing-price-source {display:block;font-size:12px;line-height:18px;color:var(--fg-2);}
+.console-content .billing-price-version {margin-top:8px;font-size:11px;}
+.console-content .billing-price-version::before {display:none;}
+.console-content .billing-page .card-body>.muted.small {margin:0 0 16px;line-height:1.7;}
+.console-layout .console-content .custom-probe-head {display:flex;flex-direction:row;align-items:flex-start;gap:24px;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+.console-layout .console-content .custom-probe-head>div:first-child {flex:1;min-width:0;}
+.console-layout .console-content .custom-probe-head .custom-probe-actions {flex:0 0 auto;display:flex;flex-wrap:nowrap;gap:8px;margin:0;}
+.console-layout .console-content .custom-probe-head p {margin:8px 0 0;font-size:12px;line-height:1.7;}
+.console-layout .console-content .custom-probe-head h2 {font-size:14px;line-height:20px;}
+.console-layout .console-content .custom-probe-table-wrap {margin-top:16px;border:1px solid var(--line);border-radius:8px;}
+.console-layout .console-content .custom-probe-table-wrap:not(:has(tbody tr)) {display:none;}
+.console-layout .console-content .custom-probe-empty {margin:0;padding:32px 16px;text-align:center;line-height:1.7;border:1px dashed var(--line);border-radius:8px;font-size:12px;}
+.console-layout .console-content .custom-probes>p[role="status"]:empty {display:none;}
+.console-layout .console-content .custom-probe-table th {font-size:12px;}
+.console-layout .console-content .custom-probe-table td {font-size:12px;}
+.console-layout .console-content .custom-probe-table td:last-child .custom-probe-actions {gap:8px;}
+@media(max-width:768px) {
+ .console-layout .console-content .billing-price-table {min-width:640px;}
+ .console-layout .console-content .custom-probe-head {flex-direction:column;gap:16px;}
+ .console-layout .console-content .custom-probe-head .custom-probe-actions {flex:0 0 auto;}
+ .console-layout .console-content .custom-probe-empty {padding:24px 16px;}
+}
+/* Long six-decimal prices may wrap within their column; actions never surrender width. */
+.console-layout .console-content .billing-price-table td[data-label="价格"] {white-space:normal;min-width:96px;overflow-wrap:normal;word-break:normal;}
+
+/* Settings: one focused group at a time; keep editors mounted across navigation. */
+.console-layout .settings-workspace {display:grid;grid-template-columns:192px minmax(0,1fr);gap:24px;align-items:start;}
+.console-layout .settings-sections {display:flex;flex-direction:column;gap:4px;padding:0 16px 0 0;border-right:1px solid var(--line);}
+.console-layout .settings-section-link {display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;width:100%;padding:12px;text-align:left;white-space:normal;height:auto;background:transparent;border:1px solid transparent;box-shadow:none;}
+.console-layout .settings-section-link strong {font-size:14px;font-weight:600;}
+.console-layout .settings-section-link span {font-size:12px;color:var(--fg-2);font-weight:400;}
+.console-layout .settings-section-link[aria-pressed="true"] {background:var(--accent-soft);color:var(--accent);border-color:var(--line);}
+.console-layout .settings-section-link:focus-visible {outline:2px solid var(--accent);outline-offset:2px;}
+.console-layout .settings-panels {min-width:0;}
+.console-layout .settings-group {display:flex;flex-direction:column;gap:16px;min-width:0;}
+.console-layout .settings-group[hidden] {display:none!important;}
+.console-layout .settings-group > .card {margin:0;min-width:0;}
+@media(max-width:1100px) {
+ .console-layout .settings-workspace {grid-template-columns:minmax(0,1fr);gap:16px;}
+ .console-layout .settings-sections {flex-direction:row;overflow-x:auto;padding:0 0 8px;border-right:0;border-bottom:1px solid var(--line);}
+ .console-layout .settings-section-link {width:auto;flex:0 0 auto;min-height:44px;padding:8px 12px;white-space:nowrap;}
+ .console-layout .settings-section-link span {display:none;}
+}

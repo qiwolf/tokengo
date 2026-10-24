@@ -165,14 +165,17 @@ fn GatewayKeys(ctx: Ctx) -> impl IntoView {
                         });
                     };
                     view! {
-                        <article class="panel" style="margin-top:12px;overflow-wrap:anywhere" data-key-id=id>
-                            <div class="toolbar">
-                                <strong>{row.name}</strong>
-                                <code>{row.hint.unwrap_or_else(|| "（无提示）".into())}</code>
-                                <span class="muted small">{format!("创建于 {}", fmt::ts(row.created_at_ms))}</span>
-                                <span class="spacer"></span>
-                                <button type="button" class="ghost" on:click=copy disabled=move || busy.get()>"复制"</button>
-                                <button type="button" class="ghost danger" on:click=delete disabled=move || busy.get()>"删除"</button>
+                        <article class="panel gateway-key-row" style="margin-top:12px;overflow-wrap:anywhere" data-key-id=id>
+                            <div class="gateway-key-record">
+                                <div class="gateway-key-identity">
+                                    <strong class="gateway-key-name" title=row.name.clone()>{row.name.clone()}</strong>
+                                    <code>{row.hint.unwrap_or_else(|| "（无提示）".into())}</code>
+                                    <span class="muted small gateway-key-created">{format!("创建于 {}", fmt::ts(row.created_at_ms))}</span>
+                                </div>
+                                <div class="gateway-key-actions">
+                                    <button type="button" class="ghost" on:click=copy disabled=move || busy.get()>"复制"</button>
+                                    <button type="button" class="ghost danger" on:click=delete disabled=move || busy.get()>"删除"</button>
+                                </div>
                             </div>
                             {move || manual.get().filter(|(key_id, _)| *key_id == id).map(|(_, key)| view! {
                                 <div class="banner" style="margin-top:8px">
@@ -257,6 +260,7 @@ fn RequestTimeouts(ctx: Ctx) -> impl IntoView {
 
 #[component]
 pub fn Settings(ctx: Ctx) -> impl IntoView {
+    let section = RwSignal::new(0usize);
     let logs_open=RwSignal::new(false);
     let maintenance_open=RwSignal::new(false);
     let info = RwSignal::new(crate::model::SettingsResp::default());
@@ -341,7 +345,7 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
     view! {
         <div class="page">
             <PageHead
-                title="设置"
+                title="系统设置"
                 desc="网关密钥、运行参数与维护。"
             ><button type="button" class="ghost" on:click=move |_| reload()>"刷新"</button></PageHead>
             <div class="toolbar">
@@ -352,10 +356,17 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
 
             {move || err.get().map(|e| view! { <div class="banner bad">{e}</div> })}
 
-            <GatewayKeys ctx=ctx />
-            <super::operations_tokens::OperationsTokens ctx=ctx />
-            <RequestTimeouts ctx=ctx />
-
+            <div class="settings-workspace">
+                <nav class="settings-sections" aria-label="设置分组">
+                    <button type="button" class="settings-section-link" aria-pressed=move||if section.get()==0 {"true"} else {"false"} aria-controls="settings-group-0" on:click=move |_|section.set(0)><strong>"接入与密钥"</strong><span>"客户端地址与网关密钥"</span></button>
+                    <button type="button" class="settings-section-link" aria-pressed=move||if section.get()==1 {"true"} else {"false"} aria-controls="settings-group-1" on:click=move |_|section.set(1)><strong>"请求参数"</strong><span>"响应等待与请求预算"</span></button>
+                    <button type="button" class="settings-section-link" aria-pressed=move||if section.get()==2 {"true"} else {"false"} aria-controls="settings-group-2" on:click=move |_|section.set(2)><strong>"运维凭据"</strong><span>"自动化工具的独立凭据"</span></button>
+                    <button type="button" class="settings-section-link" aria-pressed=move||if section.get()==3 {"true"} else {"false"} aria-controls="settings-group-3" on:click=move |_|section.set(3)><strong>"账号安全"</strong><span>"登录账号与密码"</span></button>
+                    <button type="button" class="settings-section-link" aria-pressed=move||if section.get()==4 {"true"} else {"false"} aria-controls="settings-group-4" on:click=move |_|section.set(4)><strong>"维护与日志"</strong><span>"账目保留与运行诊断"</span></button>
+                </nav>
+                <div class="settings-panels">
+                    <div id="settings-group-0" class="settings-group" role="region" aria-label="接入与密钥" hidden=move||section.get()!=0>
+<GatewayKeys ctx=ctx />
             <section class="card">
                 <header class="card-head">
             <h2>"接入信息"</h2>
@@ -382,6 +393,20 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
             </section>
 
+
+                    </div>
+                    <div id="settings-group-1" class="settings-group" role="region" aria-label="请求参数" hidden=move||section.get()!=1>
+<RequestTimeouts ctx=ctx />
+                    </div>
+                    <div id="settings-group-2" class="settings-group" role="region" aria-label="运维凭据" hidden=move||section.get()!=2>
+<super::operations_tokens::OperationsTokens ctx=ctx />
+                    </div>
+                    <div id="settings-group-3" class="settings-group" role="region" aria-label="账号安全" hidden=move||section.get()!=3>
+            <section class="card"><header class="card-head"><h2>"账号安全"</h2></header><div class="card-body"><p class="muted">"登录账号与 API 密钥独立。管理员可修改自己的登录账号和密码。"</p><button type="button" class="ghost" on:click=move |_|ctx.go(crate::Page::Account)>"管理登录账号与密码"</button></div></section>
+
+
+                    </div>
+                    <div id="settings-group-4" class="settings-group" role="region" aria-label="维护与日志" hidden=move||section.get()!=4>
             <section class="card">
                 <header class="card-head">
             <h2>"账目清理"</h2><button type="button" class="ghost" disabled=move||!maint_loaded.get()||maint_busy.get() on:click=move |_|{days.set(maint.get_untracked().retention_days);maintenance_open.set(true);}>"管理账目保留"</button>
@@ -425,9 +450,11 @@ pub fn Settings(ctx: Ctx) -> impl IntoView {
                 </div>
             </super::ModuleDialog></section>
 
-            <section class="card"><header class="card-head"><h2>"账号安全"</h2></header><div class="card-body"><p class="muted">"登录账号与 API 密钥独立。管理员可修改自己的登录账号和密码。"</p><button type="button" class="ghost" on:click=move |_|ctx.go(crate::Page::Account)>"管理登录账号与密码"</button></div></section>
-
         <section class="card"><header class="card-head"><h2>"运行日志"</h2><button type="button" class="ghost" on:click=move |_|logs_open.set(true)>"查看运行日志"</button></header><p class="card-body muted small">"按级别筛选运行记录，查看诊断信息。"</p></section>
+
+                    </div>
+                </div>
+            </div>
         <super::ModuleDialog open=logs_open title="运行日志".to_string()><Show when=move ||logs_open.get()><crate::pages::logs::Logs ctx=ctx /></Show></super::ModuleDialog>
         </div>
     }

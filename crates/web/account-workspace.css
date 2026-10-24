@@ -1,0 +1,233 @@
+/* Account task surfaces. Scope/specificity deliberately outrank the lazy users.css. */
+.console-layout .console-content .module-dialog:has(.user-workspace) {
+  width: min(800px, calc(100% - 32px));
+}
+.console-layout .console-content .module-dialog:has(.user-workspace) > .module-dialog-body { padding: 0; }
+.console-layout .console-content .module-dialog:has(.workspace-key-task):not(:has(.user-workspace)) {
+  width: min(720px, calc(100% - 32px));
+}
+/* Only account editors reserve a task viewport; confirmation dialogs stay content-sized.
+   ModuleDialog's real body is the scroll container, so the sticky action footer remains reachable. */
+.console-layout .console-content .module-dialog:has(.user-workspace),
+.console-layout .console-content .module-dialog:has(.workspace-key-task) {
+  height: 720px; max-height: calc(100dvh - 32px); overflow: hidden;
+}
+.console-layout .console-content .module-dialog:has(.user-workspace)[open],
+.console-layout .console-content .module-dialog:has(.workspace-key-task)[open] { display: flex; flex-direction: column; }
+.console-layout .console-content .module-dialog:is(:has(.user-workspace), :has(.workspace-key-task)) > .module-dialog-header {
+  flex: 0 0 auto;
+}
+.console-layout .console-content .module-dialog:is(:has(.user-workspace), :has(.workspace-key-task)) > .module-dialog-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
+.console-layout .console-content .user-workspace .user-identity {
+  padding: 16px 24px; gap: 12px; background: var(--surface);
+}
+.console-layout .console-content .user-workspace .user-identity h3 { font-size: 14px; line-height: 20px; }
+.console-layout .console-content .user-workspace .user-identity p { font-size: 12px; margin-top: 4px; }
+.console-layout .console-content .user-workspace .user-workspace-nav {
+  display: flex; gap: 24px; padding: 0; margin: 0 24px;
+  border-bottom: 1px solid var(--line); overflow-x: auto;
+}
+.console-layout .console-content .user-workspace .user-workspace-nav button {
+  flex: 0 0 auto; min-width: 0; min-height: 40px; height: 40px;
+  padding: 0 0 12px; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; background: transparent; color: var(--fg-2);
+  box-shadow: none; font-size: 12px; white-space: nowrap;
+}
+.console-layout .console-content .user-workspace .user-workspace-nav button[aria-pressed="true"] {
+  color: var(--accent); border-bottom-color: var(--accent); background: transparent; box-shadow: none;
+}
+.console-layout .console-content .user-workspace .user-workspace-panel { padding: 24px; min-height: 0; }
+.console-layout .console-content .user-workspace .user-workspace-panel > h3 {
+  font-size: 14px; line-height: 20px; margin: 0 0 16px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-field {
+  gap: 8px; margin-bottom: 16px; color: var(--fg); font-size: 12px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-field > :is(span, label) {
+  font-size: 12px; font-weight: 500;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-field :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+  min-height: 32px; height: 32px; padding: 0 12px; line-height: 20px; font-size: 12px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-field select {
+  padding-right: 32px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-field input[readonly] {
+  border-color: var(--line); background: var(--surface-2); color: var(--fg-2);
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .password-control input { padding-right: 56px; }
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .password-control .password-toggle {
+  min-height: 32px; height: 32px; padding: 0 8px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-editor {
+  gap: 12px; margin: 0;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-editor > .account-field { margin-bottom: 0; }
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-limits {
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-check {
+  min-height: 32px; gap: 8px; padding: 0; margin: 0; font-size: 12px; line-height: 20px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) input:is([type="checkbox"], [type="radio"]) {
+  width: 14px; height: 14px; min-width: 14px; max-width: 14px; min-height: 14px; flex-basis: 14px;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 256px;
+  padding: 12px; margin: 0; gap: 8px 16px; border: 1px solid var(--line); background: var(--surface);
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-editor > details {
+  padding: 0; margin: 4px 0 0; border: 0;
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-editor > details > summary {
+  min-height: 32px; padding: 4px 0; border: 0; background: transparent; font-size: 12px; color: var(--fg-2);
+}
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-editor > details[open] > summary { margin-bottom: 12px; }
+.console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-help {
+  margin: 0; font-size: 12px; line-height: 1.7;
+}
+.console-layout .console-content .workspace-field-grid,
+.console-layout .console-content .workspace-budget-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start;
+}
+.console-layout .console-content .workspace-budget-grid { margin: 16px 0; }
+.console-layout .console-content .workspace-budget-grid > .account-field {
+  width: 100%; max-width: none; margin: 0;
+}
+.console-layout .console-content .workspace-budget-usage {
+  box-sizing: border-box; min-width: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.console-layout .console-content .workspace-budget-label {
+  font-size: 12px; line-height: 18px; color: var(--fg); font-weight: 500;
+}
+.console-layout .console-content .workspace-budget-tags {
+  min-height: 32px; display: grid; grid-template-rows: repeat(2, 16px); align-content: center;
+}
+.console-layout .console-content .workspace-budget-tag {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  font-size: 12px; line-height: 16px; color: var(--fg-2);
+}
+.console-layout .console-content .workspace-budget-tag strong {
+  font-size: 12px; line-height: 16px; font-weight: 500; color: var(--fg);
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.console-layout .console-content .user-workspace .user-workspace-footer {
+  position: sticky; bottom: 0; z-index: 2; padding: 16px 24px; background: var(--surface); gap: 16px;
+}
+.console-layout .console-content .user-workspace .user-workspace-footer > span { font-size: 11px; }
+.console-layout .console-content .user-workspace .user-key-editor { padding: 0 24px; }
+.console-layout .console-content .user-workspace .user-key-editor-head { margin: 0; padding: 16px 0; }
+.console-layout .console-content .user-workspace .user-key-editor-head h3 { font-size: 14px; }
+.console-layout .console-content .workspace-key-task > h3 { font-size: 14px; margin: 16px 0; }
+.console-layout .console-content .workspace-key-form { max-width: none; margin: 0; }
+.console-layout .console-content .workspace-key-form > fieldset {
+  padding: 0; margin: 0; border: 0; min-width: 0;
+}
+.console-layout .console-content .workspace-form-section {
+  padding: 0 0 16px; margin: 0 0 16px; border-bottom: 1px solid var(--line);
+}
+.console-layout .console-content .workspace-form-section > h3 { font-size: 14px; margin: 0 0 12px; }
+.console-layout .console-content .workspace-form-section > .account-help { margin-bottom: 12px; }
+.console-layout .console-content .workspace-field-grid > .account-field { margin: 0; }
+.console-layout .console-content .workspace-key-limits .policy-limits > .account-field { margin: 0; }
+.console-layout .console-content .workspace-preservation-note {
+  border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+  margin-bottom: 16px; background: var(--surface-2); color: var(--fg-2); font-size: 12px; line-height: 1.7;
+}
+.console-layout .console-content .workspace-key-footer {
+  position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: space-between;
+  align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); background: var(--surface);
+}
+.console-layout .console-content .workspace-key-footer > :is(fieldset, div) {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; border: 0;
+}
+.console-layout .console-content .workspace-key-actions { flex-direction: row-reverse; }
+.console-layout .console-content .workspace-key-cancel { order: -1; }
+.console-layout .console-content .workspace-key-task .one-time-key { padding-block: 16px; }
+.console-layout .console-content .workspace-key-task > p:empty { display: none; }
+
+/* A stable reveal surface: feedback and manual selection never resize the dialog. */
+.console-layout .console-content .module-dialog:has(> .module-dialog-body > .key-reveal-task) {
+  width: min(560px, calc(100% - 32px)); height: 420px;
+  max-height: calc(100dvh - 32px); overflow: hidden;
+}
+.console-layout .console-content .module-dialog:has(> .module-dialog-body > .key-reveal-task)[open] { display: flex; flex-direction: column; }
+.console-layout .console-content .module-dialog:has(> .module-dialog-body > .key-reveal-task) > .module-dialog-header { flex: 0 0 auto; }
+.console-layout .console-content .module-dialog:has(> .module-dialog-body > .key-reveal-task) > .module-dialog-body {
+  padding: 0; flex: 1 1 auto; min-height: 0; overflow: hidden;
+}
+.console-layout .console-content .key-reveal-task { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.console-layout .console-content .key-reveal-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px;
+}
+.console-layout .console-content .key-reveal-scroll > h3 { margin: 0 0 16px; font-size: 14px; }
+.console-layout .console-content .key-reveal-scroll .account-field { margin: 0 0 12px; font-size: 12px; }
+.console-layout .console-content .key-reveal-scroll textarea {
+  min-height: 80px; height: 80px; max-height: 80px; resize: none; overflow: auto;
+  font-size: 12px; line-height: 20px; padding: 8px 12px;
+}
+.console-layout .console-content .key-reveal-scroll .account-help { margin: 0; font-size: 12px; line-height: 20px; }
+.console-layout .console-content .key-reveal-feedback {
+  box-sizing: border-box; height: 80px; min-height: 80px; overflow: auto; margin-top: 12px;
+}
+.console-layout .console-content .key-reveal-feedback > p {
+  margin: 0; font-size: 12px; line-height: 20px; overflow-wrap: anywhere;
+}
+.console-layout .console-content .key-reveal-feedback > [role="alert"] { color: var(--bad); }
+.console-layout .console-content .key-reveal-footer {
+  display: flex; flex: 0 0 64px; box-sizing: border-box; align-items: center; justify-content: flex-end;
+  gap: 8px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--surface);
+}
+.console-layout .console-content .key-reveal-footer > button { flex: 0 0 auto; margin: 0; }
+
+@media (max-width: 768px) {
+  .console-layout .console-content .module-dialog:has(.user-workspace),
+  .console-layout .console-content .module-dialog:has(.workspace-key-task):not(:has(.user-workspace)) { width: calc(100% - 16px); }
+  .console-layout .console-content .user-workspace .user-identity { padding: 16px; flex-wrap: wrap; }
+  .console-layout .console-content .user-workspace .user-workspace-nav { margin: 0 16px; gap: 20px; }
+  .console-layout .console-content .user-workspace .user-workspace-nav button { min-height: 44px; height: 44px; }
+  .console-layout .console-content .user-workspace .user-workspace-panel { padding: 16px; }
+  .console-layout .console-content .workspace-field-grid,
+  .console-layout .console-content .workspace-budget-grid,
+  .console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-limits,
+  .console-layout .console-content :is(.user-workspace, .workspace-key-task) .policy-options { grid-template-columns: minmax(0, 1fr); }
+  .console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-field :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+    min-height: 44px; height: 44px; font-size: 16px;
+  }
+  .console-layout .console-content :is(.user-workspace, .workspace-key-task) .password-control .password-toggle { min-height: 44px; height: 44px; }
+  .console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-check { min-height: 44px; }
+  .console-layout .console-content .user-workspace .user-workspace-footer { padding: 12px 16px; }
+  .console-layout .console-content .user-workspace .user-key-editor { padding: 0 16px; }
+  .console-layout .console-content .workspace-key-footer { padding: 12px 0; flex-wrap: wrap; }
+  .console-layout .console-content .workspace-budget-tags { min-height: 44px; grid-template-rows: repeat(2, 20px); }
+  .console-layout .console-content .workspace-budget-tag,
+  .console-layout .console-content .workspace-budget-tag strong { line-height: 20px; }
+  .console-layout .console-content .module-dialog:has(> .module-dialog-body > .key-reveal-task) {
+    width: calc(100% - 16px); height: 440px; max-height: calc(100dvh - 24px);
+  }
+  .console-layout .console-content .key-reveal-scroll { padding: 16px; }
+  .console-layout .console-content .key-reveal-scroll textarea { font-size: 16px; }
+  .console-layout .console-content .key-reveal-footer { flex-basis: 68px; padding: 12px 16px; }
+}
+/* Saved amounts are lightweight labels, aligned with the adjacent form control. */
+.console-layout .console-content .workspace-budget-tags {display:flex;flex-wrap:wrap;align-items:center;gap:8px;grid-template-rows:none;}
+.console-layout .console-content .workspace-budget-tag {min-height:24px;max-width:100%;padding:2px 8px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2);line-height:18px;gap:6px;}
+.console-layout .console-content .workspace-budget-tag strong {line-height:18px;}
+/* Fill the stable account task frame so its action bar sits at the frame edge. */
+.console-layout .console-content .module-dialog-body>.user-workspace {min-height:100%;display:flex;flex-direction:column;}
+.console-layout .console-content .user-workspace>.user-workspace-form {flex:1;display:flex;flex-direction:column;}
+.console-layout .console-content .user-workspace-form>fieldset {flex:1;display:flex;flex-direction:column;}
+.console-layout .console-content .user-workspace-form .user-workspace-panel {flex:1;}
+
+/* Keep the gateway-key name and submit action separate at every viewport. */
+.console-layout .account-form:has(> #gateway-key-name) {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end;}
+.console-layout .account-form:has(> #gateway-key-name) > label {grid-column:1 / -1;}
+.console-layout .account-form > #gateway-key-name {width:100%;min-width:0;}
+.console-layout .account-form:has(> #gateway-key-name) > .banner {grid-column:1 / -1;}
+@media(max-width:480px) {
+ .console-layout .account-form:has(> #gateway-key-name) {grid-template-columns:minmax(0,1fr);}
+ .console-layout .account-form:has(> #gateway-key-name) > button {justify-self:end;}
+}

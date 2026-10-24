@@ -162,6 +162,19 @@ pub fn expiry_input(ms: Option<i64>) -> String {
     .unwrap_or_default()
 }
 pub fn budget_label(b:&Value)->String{if b.is_null(){return "未设累计消费上限".into()}format!("上限 {} · 已用 {} · 预占 {} USD{}",b["limit_micro"].as_i64().map(money_input).unwrap_or_else(||"不限".into()),b["spent_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),b["reserved_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),if b["frozen"]==true{" · 已冻结"}else{""})}
+/// Read-only amounts from the selected object's saved budget, never from its limit draft.
+#[component]
+pub fn BudgetUsage(budget: Signal<Value>) -> impl IntoView {
+    view! {
+        <div class="workspace-budget-usage" aria-label="已保存的消费用量">
+            <span class="workspace-budget-label">"消费用量"</span>
+            <div class="workspace-budget-tags">
+                <span class="workspace-budget-tag"><span>"已使用"</span><strong>{move||budget.get()["spent_micro"].as_i64().map(|n|format!("{} USD",money_input(n))).unwrap_or_else(||"未知".into())}</strong></span>
+                <span class="workspace-budget-tag"><span>"在途预占"</span><strong>{move||budget.get()["reserved_micro"].as_i64().map(|n|format!("{} USD",money_input(n))).unwrap_or_else(||"未知".into())}</strong></span>
+            </div>
+        </div>
+    }
+}
 #[component]
 pub fn PolicyEditor(
     policy: RwSignal<Value>,
@@ -172,10 +185,11 @@ pub fn PolicyEditor(
     #[prop(default = false)] admin: bool,
     #[prop(default = true)] show_access: bool,
     #[prop(default = true)] show_limits: bool,
+    #[prop(default = true)] show_validation: bool,
 ) -> impl IntoView {
     let search = RwSignal::new(String::new());
     view! {<div class="policy-editor">
-    <Show when=move||validate(&policy.get()).is_err()><p class="banner bad" role="alert">{move||validate(&policy.get()).err().unwrap_or_default()}</p></Show>
+    <Show when=move||show_validation&&validate(&policy.get()).is_err()><p class="banner bad" role="alert">{move||validate(&policy.get()).err().unwrap_or_default()}</p></Show>
     <Show when=move||show_access><div class="account-field"><label for=format!("{prefix}-models")>"模型授权"</label><select id=format!("{prefix}-models") prop:value=move||mode(&policy.get(),"allowed_models") on:change=move|e|set_mode(policy,"allowed_models",&event_target_value(&e))><option value="all">{if admin{"所有当前及未来模型"}else{"继承用户的模型权限"}}</option><option value="selected">"仅勾选的模型（未选即禁止）"</option></select></div>
     <Show when=move||!policy.get()["allowed_models"].is_null()>
     <label class="account-field"><span>"搜索可见模型"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label>

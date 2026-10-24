@@ -1,0 +1,271 @@
+/* Approved compact provider/model workspace. Presentation only: retain the native
+   dialogs, actions, search/filter/sort, credential handling and mapping drafts. */
+.console-content .provider-list {
+  display:block; border:1px solid var(--line); border-radius:8px;
+  background:var(--surface); overflow:hidden;
+}
+.console-content .provider-list:empty { display:none; }
+.console-content .provider-list > .provider-card {
+  display:grid; grid-template-columns:minmax(0,1fr) auto auto auto auto auto;
+  gap:8px; align-items:center; margin:0; padding:16px;
+  border:0; border-radius:0; border-bottom:1px solid var(--line); overflow:visible;
+}
+.console-content .provider-list > .provider-card:last-child { border-bottom:0; }
+/* The heading and Key trigger share one grid. Independent nested grids cannot
+   reserve competing action widths when the sidebar reduces the content area. */
+.console-content .provider-card > .provider-heading,
+.console-content .provider-card > .provider-key-pool { display:contents; }
+.console-content .provider-card > .provider-heading > .provider-record-identity { grid-column:1; grid-row:1; }
+.console-content .provider-card > .provider-heading > .tag { grid-column:2; grid-row:1; }
+.console-content .provider-card > .provider-heading > button:nth-of-type(1) { grid-column:3; grid-row:1; }
+.console-content .provider-card > .provider-key-pool > button { grid-column:4; grid-row:1; }
+.console-content .provider-card > .provider-heading > button:nth-of-type(2) { grid-column:5; grid-row:1; }
+.console-content .provider-card > .provider-heading > button:nth-of-type(3) { grid-column:6; grid-row:1; }
+.console-content .provider-record-identity { min-width:0; }
+.console-content .provider-record-identity h2 { font-size:14px; margin:0 0 4px; line-height:20px; }
+.console-content .provider-record-identity p { font-size:12px; line-height:18px; margin:0; }
+.console-content .provider-record-identity .provider-url { overflow-wrap:anywhere; }
+
+.console-content .provider-card > .card-body:not(.provider-key-pool) { grid-column:1 / -1; }
+.console-layout .console-content .provider-heading > button,
+.console-layout .console-content .provider-key-pool > button {
+  min-height:32px; height:32px; padding:0 8px; font-size:12px;
+  line-height:18px; white-space:nowrap; background:transparent;
+  border-color:transparent; color:var(--accent);
+}
+.console-layout .console-content .provider-heading > button.danger { color:var(--bad); }
+.console-layout .console-content .provider-heading > button:hover,
+.console-layout .console-content .provider-key-pool > button:hover { background:var(--surface-2); }
+.console-content .provider-heading > .tag { font-size:11px; padding:2px 6px; justify-self:start; }
+.console-content .provider-filter { margin:0; }
+.console-content .provider-ungrouped { margin-top:0; }
+.console-content .provider-ungrouped > .card-head { flex-direction:row; align-items:center; padding:12px 16px; }
+.console-content .provider-ungrouped > .card-head h2 { flex:1; }
+.console-content .provider-create, .console-content .provider-edit {
+  display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:0;
+}
+.console-content .provider-create .account-field,
+.console-content .provider-edit .account-field { min-width:0; margin:0; }
+.console-content .provider-create > button { justify-self:start; }
+.console-content .provider-edit > .provider-switch-rules,
+.console-content .provider-edit > .provider-edit-actions { grid-column:1 / -1; margin:0; }
+/* The list columns remain stable even for long external call names. */
+.console-content .model-record-head {
+  display:grid; grid-template-columns:minmax(220px,1.4fr) minmax(160px,1fr) 140px 104px;
+  gap:16px; padding:10px 16px; border:1px solid var(--line);
+  border-bottom:0; border-radius:8px 8px 0 0; color:var(--fg-2);
+  background:var(--surface-2); font-size:12px;
+}
+.console-content .score-model-list {
+  display:block; border:1px solid var(--line); border-radius:0 0 8px 8px;
+  background:var(--surface); overflow:hidden;
+}
+.console-content .score-model-list > .score-model,
+.console-content .score-model-list > .score-model.score-model-ordering {
+  display:grid; grid-template-columns:minmax(220px,1.4fr) minmax(160px,1fr) 140px 104px;
+  grid-template-rows:auto; gap:12px 16px; height:auto; min-height:96px;
+  padding:16px; border:0; border-bottom:1px solid var(--line); border-radius:0;
+  align-items:center; background:transparent;
+}
+.console-content .score-model-list > .score-model:last-child { border-bottom:0; }
+.console-content .score-model > header, .console-content .score-model > .model-status-row { display:contents; }
+.console-content .model-record-identity { grid-column:1; grid-row:1; min-width:0; }
+.console-content .score-model > header h2 {
+  display:block; height:auto; margin:0 0 4px; overflow-wrap:anywhere;
+  font-size:14px; line-height:20px; -webkit-line-clamp:unset;
+}
+.console-content .score-model .model-record-identity > p { font-size:12px; line-height:18px; }
+.console-content .score-model > header .model-badges {
+  display:flex; flex-wrap:wrap; gap:4px; height:auto; max-height:none;
+  overflow:visible; margin-top:8px;
+}
+.console-content .score-model > header .model-badges .tag {
+  min-height:18px; font-size:11px; line-height:16px; padding:0 6px;
+}
+.console-content .score-model > .model-status-row > .model-cooling {
+  grid-column:2; grid-row:1; min-width:0; font-size:12px;
+}
+.console-content .score-model > .model-status-row .model-supplier-summary {
+  display:block; max-height:none; font-size:12px; line-height:18px;
+  -webkit-line-clamp:unset; overflow-wrap:anywhere;
+}
+.console-content .score-model .model-card-actions { grid-column:3; grid-row:1; align-items:flex-start; }
+.console-content .score-model > .model-status-row > button { grid-column:4; grid-row:1; justify-self:start; }
+.console-layout .console-content .score-model > header .model-toggle,
+.console-layout .console-content .score-model > .model-status-row > button,
+.console-layout .console-content .score-model > .policy-controls > button {
+  width:auto; min-height:32px; height:32px; padding:0 8px; font-size:12px; line-height:18px;
+}
+.console-layout .console-content .score-model > .model-status-row > button {
+  color:var(--accent); border-color:transparent; background:transparent;
+}
+.console-content .score-model > .policy-controls { grid-column:1 / -1; margin:0; }
+.console-layout .console-content .model-controls {
+  display:grid; grid-template-columns:auto minmax(128px,.7fr) auto minmax(144px,1fr) minmax(180px,1.6fr) auto auto;
+  gap:8px; align-items:center;
+}
+.console-layout .console-content .model-controls label { font-size:12px; }
+.console-layout .console-content .model-controls input { min-width:0; width:100%; font-size:12px; }
+.console-layout .console-content .model-controls select { min-width:0; max-width:100%; }
+/* Keep a real modal for focus trapping and Escape, positioned as a detail panel. */
+.console-content .score-model > dialog.model-detail-drawer {
+  position:fixed; inset:0 0 0 auto; margin:0; width:432px;
+  max-width:calc(100vw - 16px); height:100dvh; max-height:100dvh;
+  border:0; border-left:1px solid var(--line); border-radius:0;
+  background:var(--surface); box-shadow:-8px 0 32px hsl(222 24% 9% / .14);
+}
+.console-content .model-detail-drawer .model-detail-grid { grid-template-columns:minmax(0,1fr); gap:20px; padding:16px; }
+.console-content .model-detail-drawer .model-detail-grid > section + section { border-top:1px solid var(--line); padding-top:16px; }
+.console-content .model-detail-drawer .compact-model-dialog-head { padding:16px; }
+.console-content .model-detail-drawer .compact-model-dialog-head h2 { font-size:16px; }
+.console-content .model-detail-drawer .model-telemetry { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.console-content .model-detail-drawer .model-detail-grid .account-field { margin-bottom:12px; }
+/* One credential workspace; models and credentials keep their separate views. */
+.console-content dialog.provider-key-modal {
+  width:min(1000px,calc(100vw - 48px)); max-width:calc(100vw - 48px);
+  max-height:calc(100dvh - 64px); border:1px solid var(--line);
+  background:var(--surface); border-radius:12px;
+}
+.console-content dialog.provider-key-modal::backdrop { background:hsl(222 24% 9% / .36); }
+.console-content .provider-key-modal-head { padding:20px 24px; border-color:var(--line); }
+.console-content .provider-key-modal-head h2 { font-size:18px; line-height:24px; }
+.console-content .provider-key-modal-body { padding:20px 24px 0; }
+.console-content .provider-key-modal .provider-key-editor.account-form { margin-top:16px; }
+.console-content .provider-key-editor .account-field { margin-bottom:16px; }
+.console-content .provider-key-editor .provider-key-priority { margin-bottom:16px; }
+.console-content .provider-key-original { background:var(--surface-2); border-color:var(--line); padding:12px; }
+.console-content .provider-key-editor .account-help { margin-bottom:12px; }
+.console-content .provider-key-editor h3 { font-size:14px; margin-bottom:12px; }
+.console-content .provider-key-editor fieldset > .provider-editor-footer {
+  position:sticky; bottom:0; z-index:2; margin:20px -24px 0;
+  padding:16px 24px; justify-content:flex-end; border-top:1px solid var(--line);
+  background:var(--surface); box-shadow:0 -8px 12px hsl(222 24% 9% / .03);
+}
+.console-content .provider-model-mapping {
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) 80px 144px;
+  align-items:start; gap:12px 16px; margin:0; padding:16px;
+  border:1px solid var(--line); border-radius:0; margin-bottom:-1px;
+  background:var(--surface); min-width:0;
+}
+.console-content .provider-model-mapping:last-of-type { border-bottom:1px solid var(--line); }
+.console-content .provider-model-mapping > .account-field { margin:0; min-width:0; }
+.console-content .provider-model-mapping > .account-check { grid-column:auto; margin-top:24px; align-self:start; }
+.console-content .provider-model-mapping > .account-actions {
+  margin:20px 0 0; display:flex; flex-direction:column; align-items:flex-end; gap:4px;
+}
+.console-layout .console-content .provider-model-mapping > .account-actions > button { min-height:28px; height:28px; font-size:11px; padding:0 4px; }
+.console-content .provider-model-mapping > p,
+.console-content .provider-model-mapping > [role="group"] { grid-column:1 / -1; font-size:12px; margin:0; }
+.console-content .provider-model-mapping > [role="group"] { padding:12px; border-left:2px solid var(--bad); background:var(--bad-soft); }
+.console-content .provider-model-mapping input[readonly] { background:var(--surface-2); color:var(--fg-2); border-color:var(--line); }
+.console-content .upstream-model-picker { margin:16px 0; }
+.console-content .upstream-model-options { padding:12px; background:var(--surface); border-color:var(--line); }
+.console-content .upstream-model-options-head { padding:0 0 8px; margin-bottom:8px; border-bottom:1px solid var(--line); font-size:12px; }
+.console-content .upstream-model-choice-list { max-height:256px; padding:0; }
+.console-content .upstream-model-choice-list .account-check { padding:8px 12px; margin:0; border-bottom:1px solid var(--line); }
+@media(max-width:1200px) and (min-width:769px) {
+  .console-layout .console-content .model-controls { grid-template-columns:auto minmax(100px,1fr) auto minmax(120px,1fr); }
+  .console-layout .console-content .model-controls input { grid-column:1 / 3; }
+  .console-layout .console-content .model-controls button { min-width:0; }
+}
+@media(max-width:900px) {
+  .console-content .model-record-head { display:none; }
+  .console-content .score-model-list { border-radius:8px; }
+  .console-content .score-model-list > .score-model,
+  .console-content .score-model-list > .score-model.score-model-ordering {
+    grid-template-columns:minmax(0,1fr) 120px; gap:12px;
+  }
+  .console-content .model-record-identity { grid-column:1; grid-row:1 / 3; }
+  .console-content .score-model .model-card-actions { grid-column:2; grid-row:1; align-items:flex-end; }
+  .console-content .score-model > .model-status-row > .model-cooling { grid-column:1; grid-row:3; }
+  .console-content .score-model > .model-status-row > button { grid-column:2; grid-row:3; justify-self:end; }
+}
+@media(max-width:768px) {
+  .console-content .provider-create, .console-content .provider-edit { grid-template-columns:minmax(0,1fr); }
+  .console-layout .console-content .model-controls { grid-template-columns:auto minmax(0,1fr); }
+  .console-layout .console-content .model-controls input { grid-column:1 / -1; }
+  .console-layout .console-content .model-controls button { width:100%; }
+  .console-content .provider-model-mapping { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .console-content .provider-model-mapping > .account-check { margin-top:0; }
+  .console-content .provider-model-mapping > .account-actions { margin:0; }
+  .console-content .provider-key-editor fieldset > .provider-editor-footer { margin-inline:-16px; padding-inline:16px; }
+  .console-content .provider-key-modal-head,.console-content .provider-key-modal-body { padding-inline:16px; }
+  .console-content dialog.provider-key-modal { width:calc(100vw - 16px); max-width:calc(100vw - 16px); max-height:calc(100dvh - 24px); }
+}
+@media(max-width:768px) {
+  .console-layout .console-content .provider-heading > button,
+  .console-layout .console-content .provider-key-pool > button,
+  .console-layout .console-content .score-model > header .model-toggle,
+  .console-layout .console-content .score-model > .model-status-row > button,
+  .console-layout .console-content .score-model > .policy-controls > button { min-height:44px; height:auto; }
+  .console-content .provider-model-mapping { grid-template-columns:minmax(0,1fr); }
+  .console-content .provider-model-mapping > .account-check { grid-column:1; }
+  .console-content .provider-model-mapping > .account-actions { flex-direction:row; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+  .console-layout .console-content .provider-model-mapping > .account-actions > button { min-height:44px; height:auto; }
+  .console-content .score-model > dialog.model-detail-drawer { width:calc(100vw - 16px); height:calc(100dvh - 16px); max-height:calc(100dvh - 16px); inset:8px 8px 8px auto; border-radius:8px; border:1px solid var(--line); }
+}
+
+.console-layout .console-content .model-controls>input,.console-layout .console-content .model-controls>select{height:32px;min-height:32px;font-size:12px;padding:4px 12px}.console-layout .console-content .model-controls>button{height:32px;min-height:32px;font-size:12px}.console-content .model-record-head+.score-model-list{margin-top:-16px}
+@media(max-width:768px){.console-layout .console-content .model-controls>input,.console-layout .console-content .model-controls>select{height:44px;min-height:44px;font-size:16px}.console-layout .console-content .model-controls>button{height:44px;min-height:44px}}
+/* Mapping actions occupy their record column; legacy full-width actions are for other forms. */
+@media(min-width:769px) {
+  .console-content .provider-model-mapping>.account-actions {grid-column:4;grid-row:1;}
+  .console-content .provider-model-mapping>.account-check {grid-column:3;grid-row:1;min-height:32px;}
+}
+
+/* Keep every supplier action in one predictable group at narrow desktop widths. */
+@media(max-width:1200px) {
+  .console-content .provider-list > .provider-card {
+    grid-template-columns:repeat(4,max-content) minmax(0,1fr);
+    gap:12px 8px;
+  }
+  .console-content .provider-card > .provider-heading > .provider-record-identity { grid-column:1 / 5; grid-row:1; }
+  .console-content .provider-card > .provider-heading > .tag { grid-column:5; grid-row:1; justify-self:end; }
+  .console-content .provider-card > .provider-heading > button:nth-of-type(1) { grid-column:1; grid-row:2; }
+  .console-content .provider-card > .provider-key-pool > button { grid-column:2; grid-row:2; }
+  .console-content .provider-card > .provider-heading > button:nth-of-type(2) { grid-column:3; grid-row:2; }
+  .console-content .provider-card > .provider-heading > button:nth-of-type(3) { grid-column:4; grid-row:2; }
+}
+@media(max-width:480px) {
+  .console-content .provider-list > .provider-card { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .console-content .provider-card > .provider-heading > .provider-record-identity { grid-column:1 / -1; grid-row:1; }
+  .console-content .provider-card > .provider-heading > .tag { grid-column:1 / -1; grid-row:2; justify-self:start; }
+  .console-content .provider-card > .provider-heading > button:nth-of-type(1) { grid-column:1; grid-row:3; }
+  .console-content .provider-card > .provider-key-pool > button { grid-column:2; grid-row:3; }
+  .console-content .provider-card > .provider-heading > button:nth-of-type(2) { grid-column:1; grid-row:4; }
+  .console-content .provider-card > .provider-heading > button:nth-of-type(3) { grid-column:2; grid-row:4; }
+}
+/* Settings gateway Key metadata is elastic; its two actions are one fixed group. */
+.console-content .gateway-keys .gateway-key-row { min-width:0; padding:12px 16px; }
+.console-content .gateway-keys .gateway-key-record {
+  display:grid; grid-template-columns:minmax(0,1fr) auto;
+  align-items:center; gap:12px 16px; min-width:0;
+}
+.console-content .gateway-keys .gateway-key-identity {
+  display:grid; grid-template-columns:minmax(0,1fr) auto;
+  align-items:baseline; gap:4px 12px; min-width:0;
+}
+.console-content .gateway-keys .gateway-key-name {
+  display:block; min-width:0; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; font-size:14px; font-weight:600;
+}
+.console-content .gateway-keys .gateway-key-identity code {
+  min-width:0; max-width:100%; overflow-wrap:anywhere; font-size:12px;
+}
+.console-content .gateway-keys .gateway-key-created {
+  grid-column:1 / -1; font-size:12px; overflow-wrap:anywhere;
+}
+.console-content .gateway-keys .gateway-key-actions {
+  display:flex; flex-wrap:nowrap; align-items:center; gap:8px;
+}
+.console-layout .console-content .gateway-keys .gateway-key-actions > button {
+  flex:0 0 auto; white-space:nowrap; width:auto; min-width:48px;
+}
+@media(max-width:900px) {
+  .console-content .gateway-keys .gateway-key-identity { grid-template-columns:minmax(0,1fr); }
+  .console-content .gateway-keys .gateway-key-created { grid-column:1; }
+}
+@media(max-width:480px) {
+  .console-content .gateway-keys .gateway-key-record { grid-template-columns:minmax(0,1fr); gap:12px; }
+  .console-content .gateway-keys .gateway-key-actions { justify-self:end; }
+}

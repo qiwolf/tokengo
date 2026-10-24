@@ -263,6 +263,22 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// Decorative navigation glyphs keep labels compact without changing route behavior.
+#[component]
+fn NavIcon(page: Page) -> impl IntoView {
+    let path = match page {
+        Page::Overview => "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        Page::Channels => "m12 3 9 5-9 5-9-5 9-5 M3 8v9l9 5 9-5V8 M12 13v9",
+        Page::Models | Page::SharedModels | Page::Strategies => "M5 3v7l7 5 7-5V3 M12 15v6 M3 3h4 M17 3h4 M10 21h4",
+        Page::Users | Page::Accounts => "M3 21v-3a6 6 0 0 1 12 0v3 M16 5a3 3 0 0 1 0 6 M18 15a5 5 0 0 1 3 5 M12 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+        Page::Billing => "M4 3v17h17 M8 15l4-5 4 2 5-7",
+        Page::Services => "M4 7h16 M4 17h16 M8 3v8 M16 13v8",
+        Page::Probes => "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3 M8 12l3 3 5-6",
+        _ => "M4 7h16 M4 17h16 M9 4v6 M15 14v6",
+    };
+    view! {<svg class="console-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d=path/></svg>}
+}
+
 /// Root and user share the visual shell; user routes never mount administrator pages.
 #[component]
 fn Shell(ctx: Ctx) -> impl IntoView {
@@ -270,8 +286,8 @@ fn Shell(ctx: Ctx) -> impl IntoView {
     let logout=move |_| {if busy.get_untracked(){return;}busy.set(true);logout_error.set(String::new());leptos::task::spawn_local(async move{match account_api::logout().await {Ok(())=>{ctx.account.set(None);api::clear_token();ctx.nav_open.set(false);ctx.phase.set(Phase::Login);},Err(e)=>{ctx.note_err(&e);logout_error.set(format!("退出未完成，请重试：{}",e.message));}}busy.set(false);});};
     view! {<div class="console-layout" on:keydown=move|ev|{if ev.key()=="Escape"{ctx.nav_open.set(false);if let Some(el)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id("console-menu")).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()){let _=el.focus();}}}>
         <a class="skip-link" href="#console-main" on:click=move|ev|{ev.prevent_default();if let Some(el)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id("console-main")).and_then(|e|e.dyn_into::<web_sys::HtmlElement>().ok()){let _=el.focus();}}>"跳到主内容"</a>
-        <header class="console-header"><button type="button" class="console-brand" on:click=move|_|ctx.go(if ctx.is_root(){Page::Overview}else{Page::Portal})><strong>"Token-Go"</strong><span>"私有网关"</span></button><span class="console-header-page">{move||ctx.page.get().title()}</span><span class="spacer"></span><button type="button" class="ghost console-theme" on:click=move|_|ctx.toggle_theme()>{move||if ctx.theme.get().is_light(){"切换深色"}else{"切换浅色"}}</button><button id="console-menu" type="button" class="ghost console-menu-toggle" aria-controls="console-nav" aria-expanded=move||ctx.nav_open.get().to_string() on:click=move|_|ctx.nav_open.update(|v|*v=!*v)>"菜单"</button></header>
-        <aside id="console-nav" class="console-sidebar" class:is-open=move||ctx.nav_open.get()><div class="console-nav-caption">{move||if ctx.is_root(){"网关管理"}else{"个人空间"}}</div><nav aria-label="主导航">{move||{let pages=if ctx.is_root(){Page::ALL.to_vec()}else{vec![Page::Portal,Page::Strategies]};pages.into_iter().map(|p|view!{<button type="button" class="console-nav-item" class:active=move||ctx.page.get()==p aria-current=move||if ctx.page.get()==p{Some("page")}else{None} on:click=move|_|ctx.go(p)>{p.title()}</button>}).collect_view()}}</nav>
+        <header class="console-header"><span class="console-breadcrumb">"控制台"<span aria-hidden="true">"/"</span></span><span class="console-header-page">{move||ctx.page.get().title()}</span><span class="spacer"></span><button type="button" class="ghost console-theme" on:click=move|_|ctx.toggle_theme()>{move||if ctx.theme.get().is_light(){"切换深色"}else{"切换浅色"}}</button><button id="console-menu" type="button" class="ghost console-menu-toggle" aria-controls="console-nav" aria-expanded=move||ctx.nav_open.get().to_string() on:click=move|_|ctx.nav_open.update(|v|*v=!*v)>"菜单"</button></header>
+        <aside id="console-nav" class="console-sidebar" class:is-open=move||ctx.nav_open.get()><button type="button" class="console-brand" on:click=move|_|ctx.go(if ctx.is_root(){Page::Overview}else{Page::Portal})><strong>"Token-Go"</strong><span>"私有网关"</span></button><div class="console-workspace"><span class="console-workspace-mark" aria-hidden="true">"Q"</span><span>"私有网关"</span></div><div class="console-nav-caption">{move||if ctx.is_root(){"网关管理"}else{"个人空间"}}</div><nav aria-label="主导航">{move||{let pages=if ctx.is_root(){vec![Page::Overview,Page::Channels,Page::Models,Page::Users,Page::Billing,Page::SharedModels,Page::Services,Page::Probes,Page::Settings]}else{vec![Page::Portal,Page::Strategies]};pages.into_iter().map(|p|view!{<Show when=move||p==Page::SharedModels><div class="console-nav-caption console-nav-group">"系统管理"</div></Show><button type="button" class="console-nav-item" class:active=move||ctx.page.get()==p aria-current=move||if ctx.page.get()==p{Some("page")}else{None} on:click=move|_|ctx.go(p)><NavIcon page=p/><span>{p.title()}</span></button>}).collect_view()}}</nav>
         <div class="console-account"><div class="console-account-label"><strong>{move||ctx.account.get().map(|a|a.label()).unwrap_or_default()}</strong><span>{move||if ctx.is_root(){"管理员"}else{"普通账号"}}</span></div><p class="muted small">{move||ctx.account.get().map(|a|a.username).unwrap_or_default()}</p><button type="button" class="console-nav-item" class:active=move||ctx.page.get()==Page::Account on:click=move|_|ctx.go(Page::Account)>"账号安全"</button><button type="button" class="console-nav-item" disabled=move||busy.get() on:click=logout>{move||if busy.get(){"正在退出…"}else{"退出登录"}}</button><span class="console-version">"v"{tokengo_shared::VERSION}</span></div></aside>
         <main id="console-main" class="console-main" tabindex="-1"><div class="console-content"><Show when=move||!logout_error.get().is_empty()><div class="banner bad" role="alert">{move||logout_error.get()}</div></Show>
         {move||if ctx.page.get()==Page::Account {view!{<account_ui::Profile ctx=ctx/>}.into_any()}else if ctx.page.get()==Page::Strategies {view!{<pages::virtual_models::VirtualModels ctx=ctx/>}.into_any()}else if !ctx.is_root(){view!{<pages::portal::Portal ctx=ctx/>}.into_any()}else{match ctx.page.get(){

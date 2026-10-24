@@ -143,7 +143,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     view! {
         <div class="page">
             <PageHead
-                title="总览"
+                title="运行总览"
                 desc="最近这段时间的请求、各条渠道的表现，以及客户端能打的模型名。"
             >
                 <button class="ghost" disabled=move || busy.get() on:click=move |_| reload()>
