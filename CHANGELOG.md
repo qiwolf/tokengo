@@ -2,14 +2,14 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## v0.34.0-qiwolf.18 — 2026-10-25（北京时间，准备发布）
+## v0.34.0-qiwolf.18 — 2026-10-25（北京时间）
 
 - “新建渠道”直接进入已审核的两行家族Logo、更多、API/OAuth、模型和参数流程；取消未保存草稿不建空渠道，提交不确定时防重复，不级联删除可能已保存的凭据。
 - Kimi、MiniMax中国/Global、Copilot默认公开client ID可发起device授权；Copilot仅接账号目录明确支持Chat的模型，MiniMax公共目录不冒充账号权益。令牌、取消、轮询和刷新保护保留。
 - 按供应方/认证/协议/模型匹配参数与`none`，保留显式字段、上界、预算和无损转换约束；新增家族/渠道/来源HTTP(S)代理与明确直连。
 - 修复已知输出上限在省略默认值生成前未生效的问题；默认值收窄后重算账务预留边界，客户端显式上限仍保留或拒绝，不自动缩小。
 - Cargo0.34.0不变；schema40→41新增加密设备授权表及索引，新装和升级均由源码迁移。不会分发生产账号、密钥或私有数据库配置。
-- 实现基线build-test定向469+145+73项通过，四条真实device发起/轮询/取消通过；真实用户令牌与真实模型验收仍待完成。精确发行CI与公开资产结果尚待登记，见[版本说明](docs/releases/v0.34.0-qiwolf.18.md)和[发行收据](docs/acceptance/2026-10-25-qiwolf18-release/README.md)。
+- 本版已公开发行，精确源码`1b672c8d34ca`的[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40181428585)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40182556647)成功；完整工作区Rust1345通过/0失败/3忽略，Python各组分别记录，9个公开资产和GHCR及原生/容器验收通过。真实用户OAuth与模型验收边界保留，见[版本说明](docs/releases/v0.34.0-qiwolf.18.md)和[发行收据](docs/acceptance/2026-10-25-qiwolf18-release/README.md)。
 
 ## v0.34.0-qiwolf.17 — 2026-10-25（北京时间）
 

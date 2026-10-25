@@ -1,19 +1,25 @@
 {
-  "status": "preparing",
-  "published": false,
+  "status": "passed",
+  "published": true,
   "tag": "v0.34.0-qiwolf.18",
   "repository": "qiwolf/tokengo",
-  "source_commit": null,
+  "source_commit": "1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
   "implementation_baseline": "e281c510d54322879b3c7cda28f83ad83e92d11f",
   "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18",
   "cargo_version": "0.34.0",
   "schema": 41,
   "platform": "linux/amd64",
   "main_ci": {
-    "status": "pending"
+    "status": "completed",
+    "conclusion": "success",
+    "source_commit": "1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40181428585"
   },
   "release_workflow": {
-    "status": "pending"
+    "status": "completed",
+    "conclusion": "success",
+    "source_commit": "1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40182556647"
   },
   "implementation_validation": {
     "host": "build-test",
@@ -27,7 +33,86 @@
     "real_upstream_inference": false
   },
   "public_artifact_acceptance": {
-    "status": "pending"
+    "status": "passed",
+    "host": "build-test",
+    "source_commit": "1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
+    "assets": [
+      {
+        "name": "compose.yaml",
+        "bytes": 797,
+        "sha256": "2c718f4b4b87629920fbda2ef322b14fc67877cff3067f71af958d1c6c260e80",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/compose.yaml"
+      },
+      {
+        "name": "container-deployment.md",
+        "bytes": 15317,
+        "sha256": "0b244bfccf77a36ef7a5160b9386dc7909dfd81e21905d3e06929ed5bb094ff7",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/container-deployment.md"
+      },
+      {
+        "name": "container.env.example",
+        "bytes": 316,
+        "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/container.env.example"
+      },
+      {
+        "name": "image-SHA256SUMS",
+        "bytes": 564,
+        "sha256": "d4e153fc2e5603e15b0f637930f2d9c6f348014b5bfec8905bd70d86b597282a",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/image-SHA256SUMS"
+      },
+      {
+        "name": "image-manifest.json",
+        "bytes": 199,
+        "sha256": "fd2270070c990e9abba42f44181600c847fa40f8b9a25c7d99616f539ba701c5",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/image-manifest.json"
+      },
+      {
+        "name": "registry-image.txt",
+        "bytes": 95,
+        "sha256": "302b0eb06b366dadd07cd754573849eb3a66147a581290d2500aec66086ce2dd",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/registry-image.txt"
+      },
+      {
+        "name": "tokengo-1b672c8d34ca-linux-x86_64.tar.gz",
+        "bytes": 20486932,
+        "sha256": "e3cfbac6e45ceabfe7d379540dd37fa015ee4940e03a076c6e7fc928f1e4e0ff",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/tokengo-1b672c8d34ca-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "tokengo-1b672c8d34ca-linux-x86_64.tar.gz.sha256",
+        "bytes": 107,
+        "sha256": "7d77f7346235e839bacd657474ad0892f69849ca756555b457afadf487a878e6",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/tokengo-1b672c8d34ca-linux-x86_64.tar.gz.sha256"
+      },
+      {
+        "name": "tokengo-1b672c8d34cab98003ad4e6b45d9de4a4bee0e45-linux-amd64.tar.gz",
+        "bytes": 40406855,
+        "sha256": "decdca9292407bc2c1d6ae3e7cd3a12231dd881f670354f03b69f97966fdf76f",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.18/tokengo-1b672c8d34cab98003ad4e6b45d9de4a4bee0e45-linux-amd64.tar.gz"
+      }
+    ],
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:0d51c6733ca40cc08a297944e6d498723f1990e9734d850a50c80f6e0c4aa766",
+    "registry_config_digest": "sha256:56c839a079a98ef1a4f9388d7f6a154022aacccbb9c7c2f6d9cab0be51e9990d",
+    "checks": {
+      "anonymous_downloads": true,
+      "anonymous_registry": true,
+      "offline_archive_two_tags": true,
+      "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+      "smoke_restart_recreation": true,
+      "native_runtime": true,
+      "recoverable_key_runtime": true,
+      "container_key_runtime": true,
+      "production_access": false,
+      "created_release": false
+    },
+    "independent_cleanup": {
+      "temporary_runtime_directories_remaining": 0,
+      "test_containers_remaining": 0,
+      "test_volumes_remaining": 0,
+      "test_native_processes_remaining": 0
+    },
+    "independent_audit_sha256": "6d3ca6efa7ce256c5ae3b2bd2ae40d6f7a0262c685f754b9a45af98c5868a931"
   },
   "database_portability_audit": {
     "status": "passed",
@@ -39,5 +124,99 @@
     "sql_files_reviewed": 50,
     "new_or_changed_records_classified": 8,
     "limits": "No raw production database or credentials are distributed; review covers recorded artifacts, not all unrecorded historical operations."
+  },
+  "source_url": "https://github.com/qiwolf/tokengo/commit/1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
+  "accepted_date_asia_shanghai": "2026-10-25",
+  "local_merged_source_tests": {
+    "host": "build-test",
+    "source_commit": "1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
+    "rust": {
+      "passed": 1345,
+      "failed": 0,
+      "ignored": 3
+    },
+    "ignored_test_names": [
+      "tests::signal_child",
+      "real_registry_fetch",
+      "real_cloud_to_gpu_embedding_and_rerank_fallback"
+    ],
+    "python_suites": [
+      {
+        "name": "python-container",
+        "passed": 3,
+        "exit_code": 0,
+        "command": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "deploy/container",
+          "-p",
+          "test_*.py",
+          "-v"
+        ],
+        "log_sha256": "d5139676afbd20f0c282c4515783e1191f2d6af2e009e946105a2e4f8bef8a64"
+      },
+      {
+        "name": "python-deploy",
+        "passed": 6,
+        "exit_code": 0,
+        "command": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "deploy",
+          "-p",
+          "test_*.py",
+          "-v"
+        ],
+        "log_sha256": "0c0f40d16f3b844d720d6c89cf9816220ba48616e306ed2c1e21f47ccb340940"
+      },
+      {
+        "name": "python-mineru",
+        "passed": 13,
+        "exit_code": 0,
+        "command": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "scripts/tests",
+          "-p",
+          "test_*.py",
+          "-v"
+        ],
+        "log_sha256": "07f2b2a77b797e612d98c48cac4aaec4c0b9f2cee59c1c5cfaeb6249466e4743"
+      }
+    ],
+    "python_counts_not_added_to_rust": true,
+    "targeted_687_not_added": true,
+    "source_inputs_checked": 247,
+    "workspace_log_sha256": "5708233a8d388deeb8fdf64d0c47c61ea99adc661493c40708163f2fcc11d1b0"
+  },
+  "private_instance_public_package_alignment": {
+    "source_commit": "1b672c8d34cab98003ad4e6b45d9de4a4bee0e45",
+    "release_tag": "v0.34.0-qiwolf.18",
+    "schema_before": 41,
+    "schema_after": 41,
+    "tables_before": 60,
+    "tables_after": 60,
+    "previous_business_data_preserved": true,
+    "protected_files_and_env_preserved": true,
+    "running_server_sha256": "eb4d654c533d3190771ea3b677e27b8f84a2ba8d961fde24d37b26ecf3b9739c",
+    "served_assets_verified": true,
+    "ingress_restored": true,
+    "user_acceptance_pending": true,
+    "independent_http": {
+      "checked_at": "2026-10-25T10:15:11.364245+00:00",
+      "readyz": 200,
+      "web_assets_verified": 24,
+      "unauthenticated_oauth_providers": 401,
+      "result": "passed"
+    }
   }
 }

@@ -1,11 +1,10 @@
 # 功能与验收状态
 
-<!-- qiwolf18-publication-status -->
-正在准备 **v0.34.0-qiwolf.18**：完整新建入口、默认公开客户端device OAuth、分层HTTP(S)代理和参数合同，Cargo0.34.0/schema41。实现基线`e281c51`的build-test定向469项server lib、145项Web、73项关键集成通过，并完成四条真实设备授权的开始/轮询pending/取消及密文清除；没有真实用户授权完成、令牌刷新或真实模型调用。本轮正式发行的精确SHA、CI与公开资产验收尚待完成，见[版本说明](releases/v0.34.0-qiwolf.18.md)及[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。下方qiwolf.17仍为当前已完成公开验收的版本，完成qiwolf.18发行后更新。
+当前正式版 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)**，发行源码`1b672c8d34ca`，Cargo0.34.0/schema41。完整新建渠道、公开客户端设备OAuth、参数合同与分层HTTP(S)代理已随同一源码发行；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40181428585)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40182556647)成功，9个公开资产及GHCR、配套原生/容器与Key生命周期独立验收通过。build-test完整工作区Rust **1345通过、0失败、3忽略**；Python分别python-container 3项、python-deploy 6项、python-mineru 13项，不与历史定向687项或重复覆盖累加。真实用户授权完成、令牌刷新和真实模型调用仍须逐账号验收。见[版本说明](releases/v0.34.0-qiwolf.18.md)及[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。标签快照不移动，后补结果维护于main与Release页面。
 
-当前正式版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
+上一公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 
-上一公开版 **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)**，发行源码`2702757fe472`，Cargo0.34.0/schema40。包含本地向量/重排轮询、OAuth结构化输出、输出上限与别名、截断终态、日志和重排计量修复。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40122964321)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40124162546)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1239通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
+历史公开版 **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)**，发行源码`2702757fe472`，Cargo0.34.0/schema40。包含本地向量/重排轮询、OAuth结构化输出、输出上限与别名、截断终态、日志和重排计量修复。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40122964321)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40124162546)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1239通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 
 历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
 
@@ -31,7 +30,6 @@ Chat→Responses effort对象兼容及6项回归已发布。精确main CI和发�
 
 公开发行隔离验收阶段没有访问或升级生产237；其后已完成独立冷备升级，当前运行qiwolf.12公开原生包。既有调用、共享入口授权、Key生命周期及300×4096真实上游回退通过，隔离副本清理完成，见[后续升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。此前私有 `0d0e6e7` 为升级前状态，不再表示当前运行版本。GPU分词器及8192窗口为独立现场配置，网关包不会自动修改。标签和资产内文档是构建时快照；最终发布后收据维护在main和Release页面，后补文档不表示资产重新打包。 具体忽略项、检查范围及产物身份见[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。
 
-
 ### qiwolf.11公开发行与既有热修复
 
 本版范围为 Chatbox 订阅 system 指令、Responses 显式会话、向量/重排真实负载与 v4 有界噪声兼容检查。300×4096 是完整验收样本，不限制用户请求；实际模型窗口和传输预算分别管理。单个来源续验失败不整体停用已核实健康的来源，真实容量拒绝可逐请求回退，原文和候选保留。详见[版本说明](releases/v0.34.0-qiwolf.11.md)与[能力合同](vector-model-capabilities.md)。
@@ -41,7 +39,6 @@ Chat→Responses effort对象兼容及6项回归已发布。精确main CI和发�
 **本版公开发行已独立验收。** 精确提交[CI](https://github.com/qiwolf/tokengo/actions/runs/39982597664)及[发布](https://github.com/qiwolf/tokengo/actions/runs/39984393819)成功；build-test完整Rust工作区1144通过、0失败、3忽略，另22项Python通过，native/WASM release构建成功。9个公开资产匿名下载校验、GHCR实际拉取、离线双标签、无.env固定引用Compose、非root/只读根、ready/WASM、重启与同卷重建、正式原生和容器Key检查通过。详见[最终收据](acceptance/2026-10-24-qiwolf11-release/README.md)。阶段性热修复与重复检查不叠加数量；3项忽略分别为由父测试调用的子进程辅助入口、外部注册表联网检查和需显式凭据的真实上游检查。
 
 本次没有访问或升级生产，已部署热修复不表示现场已切换正式发行产物。标签及资产内文档为构建时快照，最终收据维护在main与Release页面，不追认先前资产已包含后补文档。
-
 
 
 ### qiwolf.9公开分发与独立验收
@@ -116,7 +113,6 @@ MT Photos人脸与共享智能识别两项配置已切至网关；其他模型�
 - 后续容器与优雅退出基线 `74c8800aeb7166275575fb0dfa9019c55bc0045a` 已推送；本机Linux ARM64源码镜像完成服务端/CLI/WASM构建及非root、鉴权、实际WASM、主密钥0600、重启持久化和两次正常停止检查。此结果不替代最终AMD64分发镜像CI。
 - 第一阶段统一用户、Browser自助Key与点选策略的精确提交 `48960927cceaf67ecc45f8ed57bda38ac8ff5599` 完成Rust/WASM CI、同提交AMD64原生包/容器构建与容器生命周期检查，已部署。冷备前后全部业务表/schema一致，已有浏览器会话可正常打开统一用户页。隔离浏览器已验证普通用户自助创建、使用与撤销Key及390px布局；实际推理使用本机受控来源。
 - 新的渠道多Key池和用户私有路由已有23项渠道/池、10项私有路由、20项网关HTTP定向回归通过。真实冷备离线演练schema34→36、36来源不变，旧6分组整理为19入口/20凭据，所有受保护旧表与schema保持，二次backfill幂等；另有10个保护反例被拒绝。本轮全仓852通过、0失败、2忽略；隔离浏览器验证渠道/Key增改停用、虚拟名顺序与每周时段、真实别名调用和账单，以及390px无横向溢出、无JSON编辑。新池路径自有模型960次真实请求全部成功且960账本结算守恒（使用独立本地测试价1 microUSD/Token，不是供应商实付账单）（客户端最高128并发、来源及凭据保护并发4，非128路GPU生成）。同一运行提交的双分发CI、正式Release及目标原生升级现已核验；详见本页顶部与Release随附验收记录。
-
 
 第一阶段实际没有新增schema、用户整体到期/自助开关，固定32把活动Key；沿用microUSD金额上限，未实现原始Token套餐、月周期或用户/Key policy版本409；自定义探针现已独立实现并带自身配置版本保护。完整覆盖见[需求状态](requirements-status.md)，实际API见[账号与自助Key合同](account-login.md)。旧用户与面板账号兼容API不再是主UI的手工关联路径；root保留独立安全身份。
 
