@@ -87,3 +87,7 @@ Hermes 等客户端使用 `store:false` 时，应在首轮即通过专用会话�
 当 Chat 请求需要转换到仅原生支持 Responses 的来源时，兼容客户端使用的 `"reasoning":{"effort":"low"}` 写法，精确映射到 Responses 的 `reasoning.effort`；Chat 标准写法 `"reasoning_effort":"low"` 继续支持。客户端显式档位优先于来源默认，档位仍由来源能力声明校验，不按模型名称猜测。
 
 兼容对象仅允许 `effort` 字段。两个字段同时出现且值相同可合并；值冲突、非字符串档位、空对象及含有无法无损转换的其他 reasoning 属性时，返回明确 400 并且不发送上游。不会静默删除推理参数，也不通过普遍重试 400 掩盖参数错误。原生 Chat 的供应商扩展透传与原生 Responses 对象语义保持原样；这条兼容规则只用于 Chat→Responses 转换，不扩大 Messages 或不透明推理历史的转换范围。
+
+### 关闭推理的来源语义
+
+`none`与省略参数不同。内置来源规则、DeepSeek目录effort字段和Chat/Messages的`thinking.type=disabled`转换见[推理关闭兼容](reasoning-compatibility.md)。已知来源的Responses/Messages转换保留明确关闭意图；未知兼容服务不自动套用官方契约。

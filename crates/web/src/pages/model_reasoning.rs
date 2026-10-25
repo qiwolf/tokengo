@@ -14,6 +14,7 @@ pub(crate) fn confirmed_levels(text: &str) -> Vec<String> {
 pub(crate) fn capability_label(c: &ReasoningCapability) -> String {
     let source = match c.source.as_str() {
         "upstream" => "上游声明",
+        "upstream_with_compatibility" => "上游声明 + 内置兼容",
         "user_confirmed" => "人工确认",
         _ => "尚未确认",
     };
@@ -23,7 +24,7 @@ pub(crate) fn capability_label(c: &ReasoningCapability) -> String {
         "unsupported" => "明确不支持推理".into(),
         _ => "尚未确认支持哪些推理档位".into(),
     };
-    if c.source=="upstream"||c.source=="user_confirmed" {format!("{status} · {source}")}else{status}
+    if matches!(c.source.as_str(), "upstream" | "upstream_with_compatibility" | "user_confirmed") {format!("{status} · {source}")}else{status}
 }
 #[component]
 pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(optional)] label: Option<String>) -> impl IntoView {
@@ -131,6 +132,16 @@ mod tests {
         };
         assert!(capability_label(&c).contains("档位未知"));
         assert!(!capability_label(&c).contains("low"));
+    }
+    #[test]
+    fn compatibility_is_distinguished_from_upstream_and_manual_claims() {
+        let c = ReasoningCapability {
+            status: "supported".into(),
+            source: "upstream_with_compatibility".into(),
+            levels: vec!["none".into(), "high".into()],
+            ..Default::default()
+        };
+        assert_eq!(capability_label(&c), "支持档位：none / high · 上游声明 + 内置兼容");
     }
     #[test]
     fn manual_confirmation_deduplicates_only_explicit_values() {

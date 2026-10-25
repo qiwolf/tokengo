@@ -69,6 +69,7 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         (v.pointer("/capabilities/reasoning_effort"), false),
         (v.pointer("/capabilities/reasoning/effort_levels"), false),
         (v.pointer("/reasoning/effort_levels"), false),
+        (v.pointer("/effort/supported_levels"), false),
     ];
     let mut declared: Option<Vec<String>> = None;
     for (value, objects) in candidates {
@@ -102,19 +103,23 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         }
         return ReasoningCapabilities::default();
     };
-    let default = v
-        .get("default_reasoning_level")
-        .or_else(|| v.pointer("/capabilities/reasoning/default_effort"));
-    let default = match default {
-        None | Some(Value::Null) => None,
-        Some(value) => match value
-            .as_str()
-            .filter(|s| levels.iter().any(|level| level == s))
-        {
-            Some(s) => Some(s.to_owned()),
-            None => return ReasoningCapabilities::unknown("上游默认推理档位不在其声明列表中"),
-        },
-    };
+    let mut default: Option<String> = None;
+    for value in [
+        v.get("default_reasoning_level"),
+        v.pointer("/capabilities/reasoning/default_effort"),
+        v.pointer("/effort/default_level"),
+    ].into_iter().flatten() {
+        if value.is_null() {
+            continue;
+        }
+        let Some(value) = value.as_str().filter(|s| levels.iter().any(|level| level == s)) else {
+            return ReasoningCapabilities::unknown("上游默认推理档位不在其声明列表中");
+        };
+        if default.as_deref().is_some_and(|old| old != value) {
+            return ReasoningCapabilities::unknown("上游默认推理档位声明相互矛盾");
+        }
+        default = Some(value.to_owned());
+    }
     ReasoningCapabilities {
         status: "supported".into(),
         levels,
@@ -200,9 +205,95 @@ pub(crate) fn for_model_with_identity(
             "来源凭据、地址或协议已变化，请重新读取模型目录",
         ));
     }
-    serde_json::from_str(&json)
-        .map_err(|_| DbError::Other("Invalid reasoning capability cache".into()))
+    let mut caps: ReasoningCapabilities = serde_json::from_str(&json)
+        .map_err(|_| DbError::Other("Invalid reasoning capability cache".into()))?;
+    // A provider compatibility rule augments a valid same-identity declaration;
+    // it never manufactures support from an empty, unsupported or invalid cache.
+    let compatible = match compatibility_provider(c, id)? {
+        Some(CompatibilityProvider::DeepSeek) => true,
+        Some(CompatibilityProvider::OpenAi) => upstream == "gpt-6-luna",
+        None => false,
+    };
+    if caps.status == "supported" && !caps.levels.is_empty()
+        && !caps.levels.iter().any(|level| level == "none") && compatible
+    {
+        caps.levels.insert(0, "none".into());
+        caps.source = "upstream_with_compatibility".into();
+        caps.reason = "上游模型目录声明的档位，加上官方来源已验证的关闭推理兼容值；保留服务商默认，未对当前账号执行推理探测".into();
+    }
+    Ok(caps)
 }
+
+#[derive(Clone, Copy, PartialEq)]
+enum CompatibilityProvider { OpenAi, DeepSeek }
+
+fn compatibility_provider(c: &Connection, id: i64) -> db::Result<Option<CompatibilityProvider>> {
+    let raw: Option<String> = c.query_row("SELECT base_url FROM channels WHERE id=?1", [id], |row| row.get(0)).optional()?;
+    let Some(url) = raw.and_then(|raw| url::Url::parse(&raw).ok()) else { return Ok(None); };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some()
+        || url.port().is_some() || url.query().is_some() || url.fragment().is_some()
+    { return Ok(None); }
+    Ok(match (url.host_str(), url.path().trim_end_matches('/')) {
+        (Some("api.openai.com"), "/v1") => Some(CompatibilityProvider::OpenAi),
+        (Some("api.deepseek.com"), "" | "/v1" | "/anthropic/v1") => Some(CompatibilityProvider::DeepSeek),
+        _ => None,
+    })
+}
+
+/// Generic legacy normalization drops disabled effort on some conversions.
+/// Restore explicit off intent only for DeepSeek, whose default is thinking on.
+pub(crate) fn restore_disable_intent(
+    c: &Connection, id: i64, from: Protocol, to: Protocol, original: &Value, body: &mut Value,
+) -> Result<bool, String> {
+    let disabled = match from {
+        Protocol::Responses => original.pointer("/reasoning/effort"),
+        Protocol::Messages => original.pointer("/output_config/effort"),
+        Protocol::Chat => None, // Chat->Responses already preserves its effort.
+    }.and_then(Value::as_str) == Some("none");
+    if from == to || !disabled
+        || compatibility_provider(c, id).map_err(|_| "Cannot read source reasoning identity")? != Some(CompatibilityProvider::DeepSeek)
+    { return Ok(false); }
+    if to == Protocol::Chat {
+        body["reasoning_effort"] = serde_json::json!("none");
+    } else if to == Protocol::Responses {
+        if body.get("reasoning").is_none() { body["reasoning"] = serde_json::json!({}); }
+        body["reasoning"].as_object_mut().ok_or("Native reasoning configuration must be an object")?
+            .insert("effort".into(), serde_json::json!("none"));
+    } else {
+        if body.get("output_config").is_none() { body["output_config"] = serde_json::json!({}); }
+        body["output_config"].as_object_mut().ok_or("Native reasoning configuration must be an object")?
+            .insert("effort".into(), serde_json::json!("none"));
+    }
+    Ok(true)
+}
+
+/// DeepSeek Chat/Messages use thinking.type as the off switch; effort selects
+/// only the active-thinking effort. Validate before mutation, preserving fields.
+fn deepseek_disable(protocol: Protocol, body: &mut Value) -> Result<bool, String> {
+    let none = match protocol {
+        Protocol::Chat => body.get("reasoning_effort"),
+        Protocol::Responses => body.pointer("/reasoning/effort"),
+        Protocol::Messages => body.pointer("/output_config/effort"),
+    }.and_then(Value::as_str) == Some("none");
+    if !none { return Ok(false); }
+    if let Some(thinking) = body.get("thinking") {
+        let object = thinking.as_object().ok_or("DeepSeek thinking must be an object")?;
+        if object.len() != 1 || object.get("type").and_then(Value::as_str) != Some("disabled") {
+            return Err("Reasoning none conflicts with active or unsupported DeepSeek thinking controls".into());
+        }
+    }
+    if protocol == Protocol::Responses { return Ok(false); }
+    if protocol == Protocol::Chat {
+        body.as_object_mut().ok_or("Expected request object")?.remove("reasoning_effort");
+    } else {
+        let output = body["output_config"].as_object_mut().ok_or("Native reasoning configuration must be an object")?;
+        output.remove("effort");
+        if output.is_empty() { body.as_object_mut().unwrap().remove("output_config"); }
+    }
+    body["thinking"] = serde_json::json!({"type":"disabled"});
+    Ok(true)
+}
+
 fn mapping(c: &Connection, id: i64, model: &str) -> db::Result<crate::db::channels::ModelMapping> {
     let channel = db::channels::get(c, tokengo_shared::ChannelId(id))?
         .ok_or_else(|| DbError::Other("连接不存在".into()))?;
@@ -285,7 +376,7 @@ pub fn configure(
     for_mapping(c, id, model)
 }
 /// Applies only defaults for this mapping; explicit client effort always wins.
-/// Returns whether the mapping explicitly supersedes legacy source defaults.
+/// Returns whether source defaults are superseded or the native wire body changed.
 pub fn apply_defaults_and_validate(
     c: &Connection,
     id: i64,
@@ -296,6 +387,8 @@ pub fn apply_defaults_and_validate(
 ) -> Result<bool, String> {
     let caps = for_mapping(c, id, model)
         .map_err(|_| "Cannot read model reasoning configuration".to_owned())?;
+    let deepseek = compatibility_provider(c, id)
+        .map_err(|_| "Cannot read source reasoning identity")? == Some(CompatibilityProvider::DeepSeek);
     let key = match protocol {
         Protocol::Chat => "reasoning_effort",
         Protocol::Responses => "reasoning",
@@ -311,7 +404,18 @@ pub fn apply_defaults_and_validate(
             .as_str()
             .filter(|s| valid_level(s))
             .ok_or("Reasoning effort must be a bounded native parameter value")?;
-        if caps.status == "supported" && !caps.levels.iter().any(|level| level == value) {
+        // DeepSeek documents native effort aliases beyond its catalog's recommended
+        // levels. Preserve accepted client payloads rather than narrowing them after
+        // adding catalog discovery. A manual list remains an explicit restriction.
+        let native_alias = if deepseek && caps.manual_levels.is_none() {
+            match value {
+                "minimal" => Some("low"),
+                "medium" | "xhigh" => Some("high"),
+                "ultra" => Some("max"),
+                _ => None,
+            }.is_some_and(|canonical| caps.levels.iter().any(|level| level == canonical))
+        } else { false };
+        if caps.status == "supported" && !caps.levels.iter().any(|level| level == value) && !native_alias {
             return Err(
                 "Requested reasoning effort is not declared for this model on this connection"
                     .into(),
@@ -320,7 +424,9 @@ pub fn apply_defaults_and_validate(
         if caps.status == "unsupported" {
             return Err("This model explicitly declares no reasoning support".into());
         }
-    } else if caps.configured_default {
+    } else if caps.configured_default
+        && !(deepseek && protocol != Protocol::Responses && body.get("thinking").is_some())
+    {
         if caps.status == "unknown"
             && settings(c, id, model)
                 .map_err(|_| "Cannot read reasoning settings")?
@@ -331,7 +437,7 @@ pub fn apply_defaults_and_validate(
                     .into(),
             );
         }
-        if let Some(default) = caps.default_effort {
+        if let Some(default) = caps.default_effort.as_ref() {
             if protocol == Protocol::Chat {
                 body[key] = serde_json::json!(default);
             } else {
@@ -345,7 +451,8 @@ pub fn apply_defaults_and_validate(
             }
         }
     }
-    Ok(caps.configured_default)
+    let wire_changed = deepseek && deepseek_disable(protocol, body)?;
+    Ok(caps.configured_default || wire_changed)
 }
 
 #[cfg(test)]
@@ -609,4 +716,204 @@ mod tests {
         )
         .unwrap());
     }
+
+    fn portable_source(url: &str, upstream: &str, mut metadata: Value) -> (Connection, i64) {
+        let c = db::open_in_memory().unwrap();
+        let id = db::channels::create(&c, &db::channels::NewChannel {
+            name: "Synthetic provider".into(), base_url: url.into(), enabled: true,
+            unwrap_envelope: false, max_concurrent: 0,
+        }).unwrap();
+        db::channels::set_models(&c, id, &[db::channels::ModelMapping::new("public", Some(upstream.into()), false)]).unwrap();
+        metadata["id"] = json!(upstream);
+        let models = crate::upstream::parse_model_catalog(&json!({"data":[metadata]}).to_string());
+        store_catalog(&c, id.0, &models, 1).unwrap();
+        (c, id.0)
+    }
+
+    fn deepseek_metadata() -> Value {
+        json!({"effort":{"supported_levels":["low","high","max"],"default_level":"high"}})
+    }
+
+    #[test]
+    fn deepseek_effort_metadata_is_explicit_and_conflicts_fail_closed() {
+        let caps = from_metadata(&deepseek_metadata());
+        assert_eq!(caps.levels, vec!["low", "high", "max"]);
+        assert_eq!(caps.default_effort.as_deref(), Some("high"));
+        assert!(!caps.levels.contains(&"none".into()), "raw upstream declaration must remain truthful");
+        for invalid in [
+            json!({"effort":{"supported_levels":["low",4]}}),
+            json!({"effort":{"supported_levels":["high","high"]}}),
+            json!({"effort":{"supported_levels":["high"],"default_level":"low"}}),
+            json!({"effort":{"supported_levels":["high"]},"reasoning":false}),
+            json!({"effort":{"supported_levels":["high"]},"reasoning_effort_levels":["low"]}),
+            json!({"effort":{"supported_levels":["low","high"],"default_level":"high"},"default_reasoning_level":"low"}),
+        ] {
+            assert_eq!(from_metadata(&invalid).status, "unknown", "{invalid}");
+        }
+    }
+
+    #[test]
+    fn portable_none_augments_only_exact_official_provider_contracts() {
+        for url in ["https://api.deepseek.com", "https://api.deepseek.com/v1/", "https://api.deepseek.com/anthropic/v1"] {
+            let (c, id) = portable_source(url, "arbitrary-upstream", deepseek_metadata());
+            let before: String = c.query_row("SELECT capability_json FROM channel_reasoning_catalog WHERE channel_id=?1", [id], |row| row.get(0)).unwrap();
+            let caps = for_mapping(&c, id, "public").unwrap();
+            assert_eq!(caps.levels, vec!["none", "low", "high", "max"]);
+            assert_eq!(caps.source, "upstream_with_compatibility");
+            assert_eq!(caps.default_effort.as_deref(), Some("high"));
+            assert!(!caps.configured_default);
+            assert!(caps.manual_levels.is_none());
+            let after: String = c.query_row("SELECT capability_json FROM channel_reasoning_catalog WHERE channel_id=?1", [id], |row| row.get(0)).unwrap();
+            assert_eq!(before, after);
+        }
+        let (c, id) = portable_source("https://api.openai.com/v1", "gpt-6-luna", deepseek_metadata());
+        assert!(for_model(&c, id, "gpt-6-luna").unwrap().levels.contains(&"none".into()));
+        let (c, id) = portable_source("https://api.openai.com/v1", "another-gpt", deepseek_metadata());
+        assert!(!for_model(&c, id, "another-gpt").unwrap().levels.contains(&"none".into()));
+    }
+
+    #[test]
+    fn provider_names_and_lookalike_endpoints_do_not_grant_none() {
+        for url in [
+            "http://api.deepseek.com", "https://api.deepseek.com.attacker.test/v1",
+            "https://api.deepseek.com:8443/v1", "https://api.deepseek.com/proxy/v1",
+            "https://api.deepseek.com/v1?other=1", "https://name@api.deepseek.com/v1",
+            "https://api.openai.com/proxy/v1", "https://proxy.example.test/v1",
+        ] {
+            let (c, id) = portable_source(url, "gpt-6-luna", deepseek_metadata());
+            assert!(!for_model(&c, id, "gpt-6-luna").unwrap().levels.contains(&"none".into()), "{url}");
+            let mut body = json!({"reasoning_effort":"none"});
+            configure(&c, id, "public", Some(&["none".into(), "high".into()]), None).unwrap();
+            apply_defaults_and_validate(&c, id, "public", "gpt-6-luna", Protocol::Chat, &mut body).unwrap();
+            assert_eq!(body, json!({"reasoning_effort":"none"}));
+        }
+    }
+
+    #[test]
+    fn none_compatibility_never_revives_unknown_unsupported_or_stale_catalogs() {
+        for metadata in [json!({}), json!({"reasoning":true}), json!({"reasoning":false}), json!({"effort":{"supported_levels":[]}})] {
+            let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", metadata);
+            assert!(!for_model(&c, id, "exact").unwrap().levels.contains(&"none".into()));
+        }
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        assert_eq!(for_model(&c, id, "missing").unwrap().status, "unknown");
+        c.execute("UPDATE channels SET base_url='https://api.deepseek.com/anthropic/v1' WHERE id=?1", [id]).unwrap();
+        assert_eq!(for_model(&c, id, "exact").unwrap().status, "unknown", "identity changes still require catalog refresh");
+    }
+
+    #[test]
+    fn none_manual_exclusion_and_explicit_default_remain_authoritative() {
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        configure(&c, id, "public", Some(&["high".into()]), Some("high")).unwrap();
+        let caps = for_mapping(&c, id, "public").unwrap();
+        assert_eq!(caps.levels, vec!["high"]);
+        assert_eq!(caps.source, "user_confirmed");
+        let mut body = json!({"reasoning_effort":"none"});
+        assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut body).is_err());
+        configure(&c, id, "public", None, Some("none")).unwrap();
+        let mut body = json!({});
+        assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut body).unwrap());
+        assert_eq!(body, json!({"thinking":{"type":"disabled"}}));
+        let mut explicit = json!({"thinking":{"type":"enabled"}});
+        apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut explicit).unwrap();
+        assert_eq!(explicit, json!({"thinking":{"type":"enabled"}}), "native explicit client intent wins over configured default");
+        configure(&c, id, "public", None, Some("high")).unwrap();
+        let mut disabled = json!({"thinking":{"type":"disabled"}});
+        apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut disabled).unwrap();
+        assert_eq!(disabled, json!({"thinking":{"type":"disabled"}}));
+    }
+
+    #[test]
+    fn deepseek_none_uses_native_wire_toggle_and_reports_mutation_without_defaults() {
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        let mut chat = json!({"reasoning_effort":"none","extra":"preserved"});
+        assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut chat).unwrap());
+        assert_eq!(chat, json!({"thinking":{"type":"disabled"},"extra":"preserved"}));
+        let mut messages = json!({"output_config":{"effort":"none","format":{"type":"text"}},"extra":"preserved"});
+        assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Messages, &mut messages).unwrap());
+        assert_eq!(messages, json!({"output_config":{"format":{"type":"text"}},"thinking":{"type":"disabled"},"extra":"preserved"}));
+        let mut responses = json!({"reasoning":{"effort":"none","summary":"none"}});
+        assert!(!apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Responses, &mut responses).unwrap());
+        assert_eq!(responses, json!({"reasoning":{"effort":"none","summary":"none"}}));
+        let mut untouched = json!({"messages":[]});
+        assert!(!apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut untouched).unwrap());
+        assert_eq!(untouched, json!({"messages":[]}));
+    }
+
+    #[test]
+    fn deepseek_none_rejects_conflicting_or_unknown_thinking_without_mutation() {
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        for thinking in [json!({"type":"enabled"}), json!({"type":"disabled","budget_tokens":10}), json!({"type":"adaptive"}), json!(true), Value::Null] {
+            for protocol in [Protocol::Chat, Protocol::Messages, Protocol::Responses] {
+                let mut body = match protocol {
+                    Protocol::Chat => json!({"reasoning_effort":"none","thinking":thinking.clone()}),
+                    Protocol::Messages => json!({"output_config":{"effort":"none"},"thinking":thinking.clone()}),
+                    Protocol::Responses => json!({"reasoning":{"effort":"none"},"thinking":thinking.clone()}),
+                };
+                let before = body.clone();
+                assert!(apply_defaults_and_validate(&c, id, "public", "exact", protocol, &mut body).is_err());
+                assert_eq!(before, body);
+            }
+        }
+    }
+
+    #[test]
+    fn deepseek_catalog_discovery_preserves_documented_native_client_aliases() {
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        for alias in ["minimal", "medium", "xhigh", "ultra"] {
+            for protocol in [Protocol::Chat, Protocol::Responses, Protocol::Messages] {
+                let mut body = match protocol {
+                    Protocol::Chat => json!({"reasoning_effort":alias}),
+                    Protocol::Responses => json!({"reasoning":{"effort":alias}}),
+                    Protocol::Messages => json!({"output_config":{"effort":alias}}),
+                };
+                let before = body.clone();
+                apply_defaults_and_validate(&c, id, "public", "exact", protocol, &mut body).unwrap();
+                assert_eq!(body, before, "native aliases are preserved, never rewritten");
+            }
+        }
+        configure(&c, id, "public", Some(&["high".into()]), None).unwrap();
+        assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut json!({"reasoning_effort":"medium"})).is_err());
+    }
+
+    #[test]
+    fn messages_none_conversion_does_not_reenable_deepseek_reasoning() {
+        let original = json!({"model":"public","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"output_config":{"effort":"none"}});
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        configure(&c, id, "public", None, Some("high")).unwrap();
+        for to in [Protocol::Chat, Protocol::Responses] {
+            let mut converted = crate::protocol::convert_request(Protocol::Messages, to, &original).unwrap();
+            assert!(restore_disable_intent(&c, id, Protocol::Messages, to, &original, &mut converted).unwrap());
+            apply_defaults_and_validate(&c, id, "public", "exact", to, &mut converted).unwrap();
+            if to == Protocol::Chat {
+                assert_eq!(converted["thinking"], json!({"type":"disabled"}));
+                assert!(converted.get("reasoning_effort").is_none());
+            } else {
+                assert_eq!(converted["reasoning"]["effort"], "none");
+            }
+        }
+    }
+
+    #[test]
+    fn responses_none_conversion_restores_deepseek_off_intent_only() {
+        let original = json!({"model":"public","input":"hello","reasoning":{"effort":"none"}});
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        let mut converted = crate::protocol::convert_request(Protocol::Responses, Protocol::Chat, &original).unwrap();
+        assert!(converted.get("reasoning_effort").is_none(), "keep the generic legacy converter contract unchanged");
+        assert!(restore_disable_intent(&c, id, Protocol::Responses, Protocol::Chat, &original, &mut converted).unwrap());
+        assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut converted).unwrap());
+        assert_eq!(converted["thinking"], json!({"type":"disabled"}));
+        let mut messages = json!({"output_config":{"format":{"type":"text"}}});
+        assert!(restore_disable_intent(&c, id, Protocol::Responses, Protocol::Messages, &original, &mut messages).unwrap());
+        apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Messages, &mut messages).unwrap();
+        assert_eq!(messages["thinking"], json!({"type":"disabled"}));
+        assert_eq!(messages["output_config"], json!({"format":{"type":"text"}}));
+        let (other, oid) = portable_source("https://proxy.example.test/v1", "exact", deepseek_metadata());
+        let mut body = json!({});
+        assert!(!restore_disable_intent(&other, oid, Protocol::Responses, Protocol::Chat, &original, &mut body).unwrap());
+        assert_eq!(body, json!({}));
+        assert!(!restore_disable_intent(&c, id, Protocol::Chat, Protocol::Chat, &json!({"reasoning_effort":"none"}), &mut body).unwrap());
+        assert_eq!(body, json!({}));
+    }
+
 }

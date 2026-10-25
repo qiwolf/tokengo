@@ -1819,6 +1819,48 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn portable_luna_none_covers_fresh_and_cached_catalogs_without_private_settings() {
+        let f = Fixture::new().await;
+        let account = f.authorize().await;
+        let ch = f.channel(account.id);
+        let c = f.state.conn();
+        let id = tokengo_shared::ChannelId(ch);
+        db::channels::set_models(&c, id, &[db::channels::ModelMapping::new("public-luna", Some("gpt-6-luna".into()), false)]).unwrap();
+        let raw = r#"{"models":[{"slug":"gpt-6-luna","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}],"default_reasoning_level":"medium"}]}"#;
+        let parsed = crate::upstream::parse_model_catalog(raw);
+        // The upstream projection stays honest; an old persisted cache has this shape too.
+        assert_eq!(parsed[0].reasoning.source, "upstream");
+        assert!(!parsed[0].reasoning.levels.iter().any(|v| v == "none"));
+        db::catalog::replace(&c, id, &parsed, 1).unwrap();
+        let before: String = c.query_row("SELECT capability_json FROM channel_reasoning_catalog WHERE channel_id=?1", [ch], |r| r.get(0)).unwrap();
+        let caps = crate::reasoning_capabilities::for_mapping(&c, ch, "public-luna").unwrap();
+        assert_eq!(caps.levels, vec!["none", "low", "medium", "high"]);
+        assert_eq!(caps.source, "upstream_with_compatibility");
+        assert_eq!(caps.default_effort.as_deref(), Some("medium"));
+        assert!(!caps.configured_default);
+        assert!(caps.manual_levels.is_none());
+        assert!(db::catalog::list(&c, id).unwrap()[0].reasoning.levels.contains(&"none".into()));
+        for (protocol, mut body) in [(Protocol::Responses, json!({"reasoning":{"effort":"none"}})), (Protocol::Chat, json!({"reasoning_effort":"none"}))] {
+            crate::reasoning_capabilities::apply_defaults_and_validate(&c, ch, "public-luna", "gpt-6-luna", protocol, &mut body).unwrap();
+        }
+        let after: String = c.query_row("SELECT capability_json FROM channel_reasoning_catalog WHERE channel_id=?1", [ch], |r| r.get(0)).unwrap();
+        assert_eq!(before, after, "read-time compatibility must not rewrite cached claims");
+        crate::reasoning_capabilities::configure(&c, ch, "public-luna", None, Some("none")).unwrap();
+        let mut body = json!({});
+        crate::reasoning_capabilities::apply_defaults_and_validate(&c, ch, "public-luna", "gpt-6-luna", Protocol::Responses, &mut body).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "none");
+        // A manual exclusion remains authoritative; profile cannot re-add none.
+        crate::reasoning_capabilities::configure(&c, ch, "public-luna", Some(&["low".into()]), Some("low")).unwrap();
+        assert_eq!(crate::reasoning_capabilities::for_mapping(&c, ch, "public-luna").unwrap().levels, vec!["low"]);
+        c.execute("DELETE FROM channel_reasoning_settings WHERE channel_id=?1", [ch]).unwrap();
+        // Unbinding changes source identity; the API catalog must be refreshed.
+        drop(c);
+        unbind(&f.state, ch).unwrap();
+        let c = f.state.conn();
+        assert!(!crate::reasoning_capabilities::for_model(&c, ch, "gpt-6-luna").unwrap().levels.contains(&"none".into()));
+    }
+
+    #[tokio::test]
     async fn account_catalog_caches_safe_metadata_only_for_unchanged_current_bindings() {
         let f=Fixture::new().await;
         f.state.oauth.test_api_base(&format!("{}/v1",f.mock.base.lock().unwrap()));

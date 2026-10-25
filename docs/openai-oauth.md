@@ -19,6 +19,10 @@
 
 获取授权账号目录时，会将其明确声明的 `supported_reasoning_levels` / `default_reasoning_level` 等安全能力元数据缓存到仍绑定同一账号及来源身份的连接。缓存不存完整目录正文或凭据，不对同品牌其他连接套用；只声明 reasoning boolean 不会生成 low/high 等档位。新增模型缺缓存时由面板读取目录，手动“刷新能力元数据”同样只读目录。
 
+分发版本内置兼容规则会在**有效且同来源身份的目录**上补齐已核实的遗漏项：官方 OpenAI API/OAuth 的精确 `gpt-6-luna` 增加 `none`。它不是账号目录原始声明，面板标记为“上游声明 + 内置兼容”。目录未知、无效、显式不支持或来源身份已变化时不会据型号猜测能力。读取旧缓存也应用相同规则，无需迁移237的数据库或执行手工SQL；管理员手工列表仍优先，可明确排除 `none`，默认值不自动改成 `none`。普通服务商的关闭语义见[推理关闭兼容](reasoning-compatibility.md)。
+
+首次新建 OAuth Key 必须配置成对、已核实的输入与输出上界。目录刷新不把 `context_window` 当成输出上限，也不自动复制其他账号的边界。旧绑定 API 可以暂存未知/不完整的上界，但此时推理未就绪，会返回 `source_limits_required`；应通过绑定 API 补齐 `max_input_tokens` 与 `max_output_tokens` 后再调用。订阅成本未知仍保持未定价，不补零价。
+
 在服务商模型行展开“连接与推理参数”，即可选择该连接上游明确声明的档位，或保留“使用服务商默认”。`PUT /api/channels/{id}/models/reasoning` 的 `default_effort:null` 明确不注入档位，覆盖旧连接绑定的 effort 默认；客户端显式 `reasoning.effort` / `reasoning_effort` 仍优先。档位值不局限于旧绑定枚举，但必须符合当前目录或明确人工确认的值；元数据变更使已选默认不再有效时要求重新确认，不静默恢复旧默认。
 
 模型名使用当前目录中的标准名称，旧档位别名只作为兼容配置保留。目录声明不证明该档位已做真实推理，也不证明加密/签名语义可跨协议转换；详见[服务商与模型合同](provider-channels.md)及[公开验收状态](acceptance-status.md)。

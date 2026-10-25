@@ -47,6 +47,8 @@ Cargo 版本号保留上游 **v0.34.0**；本分支的实际功能以提交及�
 
 推理档位通过 `reasoning.effort`（Responses）或 `reasoning_effort`（Chat）表达，`service_tier` 是独立参数；客户端显式值优先。新增/编辑模型读取普通来源目录或绑定 OAuth 账号的官方目录，具体 levels、默认值及来源照实展示，不自动发送付费推理。“支持推理”这一 boolean 不足以推断档位；未知保持未知，允许明确人工确认并标记来源。目录声明未经推理实测，跨协议支持以接入协议为准。
 
+`none` 是明确关闭推理，不是“使用服务商默认”。官方 OpenAI Luna 和 DeepSeek 的目录遗漏由分发版本内置规则补齐，界面注明兼容来源，旧缓存升级无需手工改库。DeepSeek 的 Chat/Messages 用原生 thinking 关闭开关，Responses 保留 none；手工列表及已有默认值优先。第三方兼容服务不套官方规则。见[推理关闭兼容](reasoning-compatibility.md)。
+
 本轮标准 GPT 展示使用 `gpt-6.1-sol`、`gpt-6-luna`、`gpt-5.6-luna`，不把 low/high 拼成新模型。实际可用名称和档位仍以当前授权账号目录为准。已有档位兼容别名可显式隐藏，从 `/v1/models` 与 auto 排除但保留直接请求、历史及内部引用；不按后缀自动删改。完整配置见 [服务商渠道](provider-channels.md)。
 
 例如向 `POST /v1/responses` 发送下列原生请求；使用前确认该账号目录开放该模型及 low 档位。`service_tier` 若受支持应作为独立顶层字段配置，不由推理档位推断。
