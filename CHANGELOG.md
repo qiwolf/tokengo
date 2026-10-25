@@ -2,11 +2,12 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## v0.34.0-qiwolf.17 — 2026-10-25（候选）
+## v0.34.0-qiwolf.17 — 2026-10-25（北京时间）
 
 - 官方OpenAI Luna与DeepSeek的推理关闭兼容随产品分发，新安装和旧缓存升级无需手工SQL；保留手工列表及默认设置。
 - DeepSeek目录effort字段解析、协议原生关闭开关和跨协议关闭意图保留，冲突显式拒绝。
 - 包含此前移动端模型分类与筛选紧凑布局。Cargo0.34.0/schema40不变。
+- Cargo0.34.0/schema40不变。本版已公开发行，精确提交`0aced3ddbdcc`的main CI和发布流程成功；9个公开资产与GHCR镜像已独立验收。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发行收据](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。
 
 ## v0.34.0-qiwolf.16 — 2026-10-25（北京时间）
 

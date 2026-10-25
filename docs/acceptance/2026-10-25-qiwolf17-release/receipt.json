@@ -1,6 +1,148 @@
 {
-  "status": "pending",
+  "status": "passed",
+  "published": true,
   "tag": "v0.34.0-qiwolf.17",
-  "source_commit": null,
-  "published": false
+  "repository": "qiwolf/tokengo",
+  "source_commit": "0aced3ddbdcc8da38cead83b553f863804605bbb",
+  "source_url": "https://github.com/qiwolf/tokengo/commit/0aced3ddbdcc8da38cead83b553f863804605bbb",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17",
+  "accepted_date_asia_shanghai": "2026-10-25",
+  "cargo_version": "0.34.0",
+  "schema": 40,
+  "platform": "linux/amd64",
+  "main_ci": {
+    "status": "completed",
+    "conclusion": "success",
+    "source_commit": "0aced3ddbdcc8da38cead83b553f863804605bbb",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40159567667"
+  },
+  "release_workflow": {
+    "status": "completed",
+    "conclusion": "success",
+    "source_commit": "0aced3ddbdcc8da38cead83b553f863804605bbb",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40159639375"
+  },
+  "local_merged_source_tests": {
+    "rust": {
+      "passed": 1253,
+      "failed": 0,
+      "ignored": 3
+    },
+    "ignored_test_names": [
+      "tests::signal_child",
+      "real_registry_fetch",
+      "real_cloud_to_gpu_embedding_and_rerank_fallback"
+    ],
+    "python_suites": {
+      "mineru-contracts": 13,
+      "deploy-contracts": 6,
+      "container-contracts": 3
+    },
+    "scope_note": "Build-test merged-source counts; exact public-source main CI independently passed. Overlapping reruns are not added."
+  },
+  "public_assets": [
+    {
+      "name": "compose.yaml",
+      "bytes": 797,
+      "sha256": "751b93b3b0eefad025edf7a188f221b7111f8d7a79c57407f00bbb0cea527c76",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/compose.yaml"
+    },
+    {
+      "name": "container-deployment.md",
+      "bytes": 13548,
+      "sha256": "50745c3f6a95a9c5f292dac2fa465bb119d9e4783aedd644434a13db05d9c204",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/container-deployment.md"
+    },
+    {
+      "name": "container.env.example",
+      "bytes": 316,
+      "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/container.env.example"
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "bytes": 564,
+      "sha256": "8729ce77c870626e4df605e8a0c616221ffceee579639367594a83cf49247c91",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/image-SHA256SUMS"
+    },
+    {
+      "name": "image-manifest.json",
+      "bytes": 199,
+      "sha256": "13f5b52b0a5226b8097cb2002c42ec83776eea0866be35dbe2b35f773a8bbade",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/image-manifest.json"
+    },
+    {
+      "name": "registry-image.txt",
+      "bytes": 95,
+      "sha256": "4d677fb9c4f1e2538d0a44904b540e041b2d05577a0f9a25b0616bf8460d70b5",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/registry-image.txt"
+    },
+    {
+      "name": "tokengo-0aced3ddbdcc-linux-x86_64.tar.gz",
+      "bytes": 20131874,
+      "sha256": "f6e109e4104dcfc1a2c73b9a09ac14e47ea5aa5d9307e29b043816a4dce58fc6",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/tokengo-0aced3ddbdcc-linux-x86_64.tar.gz"
+    },
+    {
+      "name": "tokengo-0aced3ddbdcc-linux-x86_64.tar.gz.sha256",
+      "bytes": 107,
+      "sha256": "3df7af74d002834efc32360f43da9ecfd6c4e369521c04c3e20e12ead9ee80a2",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/tokengo-0aced3ddbdcc-linux-x86_64.tar.gz.sha256"
+    },
+    {
+      "name": "tokengo-0aced3ddbdcc8da38cead83b553f863804605bbb-linux-amd64.tar.gz",
+      "bytes": 40101737,
+      "sha256": "1b960f817262125d8545fc3d039d05cc9beb04b03e2477238be7b892f73027ed",
+      "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/tokengo-0aced3ddbdcc8da38cead83b553f863804605bbb-linux-amd64.tar.gz"
+    }
+  ],
+  "native_package": {
+    "name": "tokengo-0aced3ddbdcc-linux-x86_64.tar.gz",
+    "bytes": 20131874,
+    "sha256": "f6e109e4104dcfc1a2c73b9a09ac14e47ea5aa5d9307e29b043816a4dce58fc6",
+    "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/tokengo-0aced3ddbdcc-linux-x86_64.tar.gz"
+  },
+  "offline_image": {
+    "name": "tokengo-0aced3ddbdcc8da38cead83b553f863804605bbb-linux-amd64.tar.gz",
+    "bytes": 40101737,
+    "sha256": "1b960f817262125d8545fc3d039d05cc9beb04b03e2477238be7b892f73027ed",
+    "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.17/tokengo-0aced3ddbdcc8da38cead83b553f863804605bbb-linux-amd64.tar.gz"
+  },
+  "registry": {
+    "image": "ghcr.io/qiwolf/tokengo@sha256:7bba3a312f80960a0d79d01eb6e8dd61c371210126b6c042955767b8c41d88af",
+    "config_digest": "sha256:41895d36db071054ada769595fcd389da3af10dfcb7e12dbaa41d04d684e573b",
+    "verified_tags": {
+      "v0.34.0-qiwolf.17": "sha256:7bba3a312f80960a0d79d01eb6e8dd61c371210126b6c042955767b8c41d88af",
+      "sha-0aced3ddbdcc8da38cead83b553f863804605bbb": "sha256:7bba3a312f80960a0d79d01eb6e8dd61c371210126b6c042955767b8c41d88af",
+      "latest": "sha256:7bba3a312f80960a0d79d01eb6e8dd61c371210126b6c042955767b8c41d88af"
+    },
+    "anonymous": true
+  },
+  "public_acceptance": {
+    "anonymous_downloads": true,
+    "anonymous_registry": true,
+    "offline_archive_two_tags": true,
+    "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+    "smoke_restart_recreation": true,
+    "native_runtime": true,
+    "recoverable_key_runtime": true,
+    "container_key_runtime": true,
+    "production_access": false
+  },
+  "cleanup_audit": {
+    "status": "passed",
+    "production_access": false
+  },
+  "snapshot_policy": "Tag and packaged documentation remain the original build snapshot; post-publication receipts are updated on main and the Release page. No tag is moved.",
+  "features": [
+    "portable Luna/DeepSeek reasoning-off compatibility",
+    "effort metadata and native thinking-disable controls",
+    "compact mobile model categories and filters"
+  ],
+  "boundaries": [
+    "No new production migration is implied by public artifact acceptance.",
+    "Earlier private-provider probes do not establish all model/account/client compatibility.",
+    "Compatibility is limited to verified official sources/exact models; manual levels and defaults remain explicit, conflicts are rejected and third-party catalogs are not globally expanded.",
+    "Public lifecycle checks do not establish every provider/account/client reasoning-off behavior."
+  ]
 }
