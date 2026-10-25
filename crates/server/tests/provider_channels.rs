@@ -922,14 +922,15 @@ async fn managed_non_auth_headers_duplicate_identity_rolls_back_entire_key() {
 #[tokio::test]
 async fn managed_non_auth_headers_preserve_anonymous_and_oauth_authentication_boundaries() {
     let f=Fixture::new().await;
-    for oauth in [false,true] {
-        let p=f.provider(if oauth{"oauth headers"}else{"anonymous headers"}).await;
+    for issuer in [None,Some("https://auth.openai.com"),Some("https://fixture.invalid")] {
+        let oauth=issuer.is_some();
+        let p=f.provider(match issuer{None=>"anonymous headers",Some("https://auth.openai.com")=>"oauth headers",_=>"unsupported oauth headers"}).await;
         let(status,v)=f.req("POST","/api/channels",json!({"name":"no secret","base_url":"http://127.0.0.1:1","models":[{"model":"m"}]})).await;assert_eq!(status,200,"{v}");let id=v["id"].as_i64().unwrap();
-        if oauth {let c=f.state.conn();c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('fixture','https://fixture.invalid','subject','client','active','[]',9999999999999,9999999999999)",[]).unwrap();let account=c.last_insert_rowid();c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id) VALUES(?1,?2)",rusqlite::params![id,account]).unwrap();}
+        if oauth {let c=f.state.conn();c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('fixture',?1,'subject','client','active','[]',9999999999999,9999999999999)",[issuer.unwrap()]).unwrap();let account=c.last_insert_rowid();c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id) VALUES(?1,?2)",rusqlite::params![id,account]).unwrap();}
         f.assign(id,Some(p)).await;
         let before=protected_connection_snapshot(&f.state.conn());let body=managed_header_body(&f,id,json!([{"name":"X-Trace-Label","value":"safe-metadata"}]));let(status,v)=f.req("PUT",&format!("/api/channels/{id}"),body).await;
-        if oauth {assert_eq!(status,200,"{v}");assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap()[0].kind,"oauth");assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM oauth_channel_bindings WHERE channel_id=?1",[id],|r|r.get::<_,i64>(0)).unwrap(),1);}
-        else {assert_eq!(status,409,"{v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap()[0].kind,"anonymous");}
+        if issuer==Some("https://auth.openai.com") {assert_eq!(status,200,"{v}");assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap()[0].kind,"oauth");assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM oauth_channel_bindings WHERE channel_id=?1",[id],|r|r.get::<_,i64>(0)).unwrap(),1);}
+        else {assert_eq!(status,409,"{v}");assert_eq!(protected_connection_snapshot(&f.state.conn()),before);assert_eq!(db::provider_pool::credentials(&f.state.conn(),p).unwrap()[0].kind,if oauth{"oauth"}else{"anonymous"});}
     }
 }
 

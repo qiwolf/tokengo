@@ -2474,7 +2474,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 let mut oauth_channel = channel.clone();
                 if let Some(credential) = &oauth {
                     oauth_channel.base_url = credential.api_base.clone();
-                    oauth_channel.headers=crate::oauth::inference_headers(credential);
+                    oauth_channel.headers=crate::oauth::inference_headers_for_body(credential,&body_bytes);
                 }
                 let outbound_secret = oauth
                     .as_ref()

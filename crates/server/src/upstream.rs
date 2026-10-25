@@ -197,7 +197,7 @@ impl Upstream {
     /// Managed OpenAI diagnostics use its native SSE collector. Other OAuth
     /// providers retain their fixed native protocol and bounded JSON response.
     pub async fn custom_probe_oauth_request(&self,source:&Channel,credential:&crate::oauth::OAuthCredential,body:Bytes,timeout:Duration,limit:usize)->Result<(u16,Bytes),ChannelFault> {
-        let mut channel=source.clone();channel.base_url=credential.api_base.clone();channel.headers=crate::oauth::inference_headers(credential);
+        let mut channel=source.clone();channel.base_url=credential.api_base.clone();channel.headers=crate::oauth::inference_headers_for_body(credential,&body);
         let fault=||ChannelFault{message:"OAuth diagnostic response unavailable".into()};
         let path=oauth_diagnostic_path(credential)?;
         if !credential.managed_openai {

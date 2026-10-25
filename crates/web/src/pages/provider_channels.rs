@@ -57,11 +57,7 @@ pub fn Providers(ctx: Ctx) -> impl IntoView {
     let channels = RwSignal::new(Vec::<Channel>::new());
     let err = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
-    let name = RwSignal::new(String::new());
-    let base_url = RwSignal::new(String::new());
-    let endpoint_mode = RwSignal::new("single".to_string());
     let ungrouped_open = RwSignal::new(false);
-    let creating = RwSignal::new(false);
     let show_disabled = RwSignal::new(false);
     let model_panels = RwSignal::new(BTreeSet::<i64>::new());
     let key_panels = RwSignal::new(BTreeSet::<i64>::new());
@@ -89,40 +85,11 @@ pub fn Providers(ctx: Ctx) -> impl IntoView {
         });
     });
     reload.run(());
-    let create = move |ev: leptos::ev::SubmitEvent| {
-        ev.prevent_default();
-        if busy.get_untracked() {
-            return;
-        }
-        let n = name.get_untracked().trim().to_string();
-        if n.is_empty() {
-            err.set("请输入服务商名称。".into());
-            return;
-        }
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            match p::save_config(None, serde_json::json!({"name":n,"enabled":true,"base_url":if endpoint_mode.get_untracked()=="local"{None}else{Some(base_url.get_untracked().trim().to_string())},"endpoint_mode":endpoint_mode.get_untracked(),"key_strategy":"ordered","switch_on_429":true,"switch_on_400":false})).await {
-                Ok(()) => {
-                    creating.set(false);
-                    name.set(String::new());
-                    base_url.set(String::new());
-                    err.set(String::new());
-                    reload.run(());
-                }
-                Err(e) => {
-                    ctx.note_err(&e);
-                    err.set(e.message);
-                    busy.set(false);
-                }
-            }
-        });
-    };
-    view! {<div class="page provider-page"><super::PageHead title="供应商与接入" desc="管理供应商、接入凭据与模型声明。本地供应商可包含多个服务地址。"><button type="button" class="primary" on:click=move |_|creating.set(true)>"新建渠道"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|reload.run(())>"刷新"</button></super::PageHead>
-    <super::ModuleDialog open=creating busy=busy title="新建渠道".to_string()><form class="provider-create" on:submit=create><div class="account-field"><label for="provider-name">"服务商名称"</label><input id="provider-name" required=true maxlength="128" placeholder="如：OpenAI、DeepSeek、本地推理服务" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></div><label class="account-field"><span>"服务类型"</span><select prop:value=endpoint_mode on:change=move|e|endpoint_mode.set(event_target_value(&e))><option value="single">"在线服务：统一 API 地址"</option><option value="local">"本地服务：多个 API 地址"</option></select></label><Show when=move||endpoint_mode.get()=="single"><div class="account-field"><label for="provider-url">"API URL"</label><input id="provider-url" type="url" required placeholder="https://api.example.com/v1" prop:value=base_url on:input=move|e|base_url.set(event_target_value(&e))/></div></Show><button type="submit" class="primary" disabled=move||busy.get()>"创建渠道"</button></form><Show when=move||!err.get().is_empty()><p class="banner bad" role="alert">{move||err.get()}</p></Show></super::ModuleDialog>
+    view! {<div class="page provider-page"><super::PageHead title="供应商与接入" desc="管理供应商、接入凭据与模型声明。本地供应商可包含多个服务地址。"><super::provider_keys::ProviderKeys ctx=ctx provider_id=0 on_changed=reload create_provider=true/><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|reload.run(())>"刷新"</button></super::PageHead>
     <Show when=move||!err.get().is_empty()><p class="banner bad" role="alert">{move||err.get()}</p></Show>
     <Show when=move||busy.get()&&providers.get().is_empty()><p role="status">"正在读取服务商…"</p></Show>
     <label class="account-check provider-filter"><input type="checkbox" prop:checked=show_disabled on:change=move|e|show_disabled.set(event_target_checked(&e))/>"显示已停用渠道"</label><div class="provider-list">{move||{let mut rows=providers.get();rows.sort_by(|a,b|a.name.cmp(&b.name).then(a.id.cmp(&b.id)));rows}.into_iter().filter(|p|p.enabled||show_disabled.get()).map(|provider|view!{<ProviderCard ctx=ctx provider=provider channels=channels.get() all_providers=providers.get() reload=reload model_panels=model_panels key_panels=key_panels/>}).collect_view()}</div>
-    <Show when=move||!busy.get()&&providers.get().is_empty()><p class="account-empty">"尚未设置渠道。填写供应方名称与API URL，再添加上游Key和模型。"</p></Show>
+    <Show when=move||!busy.get()&&providers.get().is_empty()><p class="account-empty">"尚未设置渠道。点击“新建渠道”，选择模型家族与认证线路，再配置模型和参数。"</p></Show>
     <section class="card provider-ungrouped"><header class="card-head"><h2>"未分组接入"</h2><span>{move||format!("{} 条",channels.get().iter().filter(|c|c.provider_id.is_none()).count())}</span><button type="button" class="ghost" aria-expanded=move||ungrouped_open.get().to_string() on:click=move |_|ungrouped_open.update(|v|*v=!*v)>{move||if ungrouped_open.get(){"收起"}else{"查看与整理"}}</button></header><super::ModuleDialog open=ungrouped_open title="未分组接入".to_string()><Show when=move||ungrouped_open.get()><div class="card-body"><p class="muted small">"尚未归属服务商的上游接入，可在此设置分组。原有模型、Key、权限与历史保留。"</p><super::channels::Connections ctx=ctx on_changed=reload providers=providers.get()/></div></Show></super::ModuleDialog></section>
     <p class="muted small">"按路径访问的接口请在“透传服务”中添加与管理。" <a href="#services">"打开透传服务"</a></p>
     </div>}

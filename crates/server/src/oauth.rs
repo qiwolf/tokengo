@@ -130,6 +130,11 @@ pub fn inference_headers(credential:&OAuthCredential)->Vec<(String,String)> {
     if let Some(account)=&credential.account_header {headers.push(("chatgpt-account-id".into(),account.clone()));}
     headers
 }
+pub fn inference_headers_for_body(credential:&OAuthCredential,body:&[u8])->Vec<(String,String)> {
+    let mut headers=inference_headers(credential);
+    if !credential.managed_openai {headers.extend(crate::oauth_external::request_headers(credential,body));}
+    headers
+}
 fn account_header(id_token:&str)->Result<Option<String>> {
     let payload=id_token.split('.').nth(1).ok_or(OAuthError("oauth_invalid_identity"))?;
     let payload=URL_SAFE_NO_PAD.decode(payload).map_err(|_|OAuthError("oauth_invalid_identity"))?;

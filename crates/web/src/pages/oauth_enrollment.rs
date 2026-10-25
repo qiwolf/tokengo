@@ -13,7 +13,10 @@ fn provider_reason(provider:&Value)->String {
     match provider["reason"].as_str().unwrap_or("") {
         "oauth_client_registration_required"=>format!("请先为 TokenGo 注册此供应方的 OAuth 客户端，并在服务器配置 {}。",provider["configuration_key"].as_str().unwrap_or("相应客户端标识")),
         "oauth_transport_not_available"=>"可以完成账号认证，但模型服务传输尚未接通；不能将此账号绑定为推理来源。".into(),
-        "registered_device_flow"=>"使用 TokenGo 自有客户端的设备授权流程，成功后绑定当前来源的专属模型目录。".into(),
+        "registered_device_flow"=>"使用配置的公开客户端进行设备授权，成功后读取当前账号的模型目录。".into(),
+        "published_public_client_device_flow"=>if matches!(provider["id"].as_str(),Some("minimax-cn"|"minimax-global")){"使用公开原生客户端的设备授权流程；在供应方页面确认后，读取官方公共模型目录；账号可调用范围以授权后的实际返回为准。".into()}else{"使用公开原生客户端的设备授权流程；在供应方页面确认后，读取当前账号实际可用的模型目录。".into()},
+        "existing_browser_pkce"=>"使用现有 PKCE 浏览器授权流程，服务端验证回调与账号身份。".into(),
+        "oauth_invalid_client_id"=>"服务器配置的客户端标识无效；请管理员修正覆盖值后重试。".into(),
         "independent_registration_and_transport_required"=>"此来源还需要独立的客户端注册和模型传输实现，目前不能开始授权。".into(),
         "public_oauth_contract_not_confirmed"=>"尚未确认可供本系统使用的公开账号授权协议，请使用已支持的 API 接入。".into(),
         "official_client_only_not_gateway_binding"=>"此订阅授权用于官方客户端，不能直接绑定为本系统的第三方模型来源。".into(),
@@ -140,6 +143,8 @@ pub fn OAuthEnrollment(ctx: Ctx, provider_id: i64, draft: RwSignal<Value>, accou
         let compatible=providers.get().into_iter().filter(|p|provider_matches_family(p,&family)).collect::<Vec<_>>();
         let inference=compatible.iter().find(|p|p["id"].as_str()==Some(selected.as_str())).is_some_and(|p|p["inference_available"]==true);
         if draft.get_untracked()["_oauth_inference_available"]!=json!(inference){draft.update(|d|d["_oauth_inference_available"]=json!(inference));}
+        let api_base=compatible.iter().find(|p|p["id"].as_str()==Some(selected.as_str())).map(|p|api::text(p,"api_base")).unwrap_or_default();
+        if draft.get_untracked()["_oauth_api_base"]!=json!(api_base){draft.update(|d|d["_oauth_api_base"]=json!(api_base));}
         if !compatible.iter().any(|p|p["id"].as_str()==Some(selected.as_str())) {
             let first=compatible.iter().find(|p|p["available"]==true).or_else(||compatible.first()).and_then(|p|p["id"].as_str()).map(str::to_owned);
             if let Some(first)=first {draft.update(|d|{d["_oauth_provider"]=json!(first);d["oauth_account_id"]=Value::Null;});}
@@ -153,7 +158,7 @@ pub fn OAuthEnrollment(ctx: Ctx, provider_id: i64, draft: RwSignal<Value>, accou
         cancel.run(());let g=generation.get_untracked();busy.set(true);error.set(String::new());note.set(String::new());
         let device=device_method(&provider);let redirect_uri=redirect.get_untracked();
         leptos::task::spawn_local(async move {
-            let (path,body)=if device{("/api/oauth/device/start",json!({"provider":selected,"label":label,"provider_id":provider_id}))}else{("/api/oauth/start",json!({"label":label,"redirect_uri":redirect_uri,"account_id":null,"provider_id":provider_id}))};
+            let (path,body)=if device{("/api/oauth/device/start",json!({"provider":selected,"label":label,"provider_id":if provider_id>0{Some(provider_id)}else{None}}))}else{("/api/oauth/start",json!({"label":label,"redirect_uri":redirect_uri,"account_id":null,"provider_id":if provider_id>0{Some(provider_id)}else{None}}))};
             let result=api::request("POST",path,Some(body)).await;
             if generation.try_get_untracked()!=Some(g){
                 if let Ok(v)=result {if let Some(id)=v["attempt_id"].as_str(){invalidate_attempt(id.to_owned(),device).await;}}
@@ -187,9 +192,9 @@ pub fn OAuthEnrollment(ctx: Ctx, provider_id: i64, draft: RwSignal<Value>, accou
         <Show when=move||loading.get()><p role="status">"正在读取可用认证线路…"</p></Show>
         <Show when=move||!loading.get()&&providers.get().iter().all(|p|!provider_matches_family(p,draft.get()["_model_family"].as_str().unwrap_or("")))><p class="account-help">"此家族暂未接通可用的账号授权，请使用 API 接入。"</p></Show>
         <div class="oauth-source-list">{move||{let family=draft.get()["_model_family"].as_str().unwrap_or("").to_owned();providers.get().into_iter().filter(|p|provider_matches_family(p,&family)).map(|p|{
-            let id=api::text(&p,"id");let choose=id.clone();let selected=id.clone();let label=api::text(&p,"label");let available=p["available"]==true;
+            let id=api::text(&p,"id");let choose_provider_is_copilot=id=="copilot";let choose=id.clone();let selected=id.clone();let label=api::text(&p,"label");let available=p["available"]==true;
             let docs=p["docs_url"].as_str().and_then(safe_link);let reason=provider_reason(&p);let inference=p["inference_available"]==true;let api_base=api::text(&p,"api_base");let native=api::text(&p,"native_protocol");
-            view!{<div class="oauth-source" class:is-selected=move||draft.get()["_oauth_provider"].as_str()==Some(&selected)><label class="oauth-source-head"><input type="radio" name="oauth-provider" prop:checked=move||draft.get()["_oauth_provider"].as_str()==Some(&id) on:change=move |_|draft.update(|d|{d["_oauth_provider"]=json!(choose);d["oauth_account_id"]=Value::Null;})/><strong>{label}</strong><span class="status-pill">{if available&&inference{"可开始授权"}else if available{"可认证 · 传输待接入"}else{"尚不可用"}}</span></label><p class="account-help">{reason}</p>{(!api_base.is_empty()).then(||view!{<p class="account-help">{format!("供应方接口：{api_base} · {native}；保存绑定时会核对当前渠道地址。")}</p>})}{docs.map(|url|view!{<a href=url target="_blank" rel="noopener noreferrer">"官方说明 ↗"</a>})}</div>}
+            view!{<div class="oauth-source" class:is-selected=move||draft.get()["_oauth_provider"].as_str()==Some(&selected)><label class="oauth-source-head"><input type="radio" name="oauth-provider" prop:checked=move||draft.get()["_oauth_provider"].as_str()==Some(&id) on:change=move |_|draft.update(|d|{d["_oauth_provider"]=json!(choose);d["oauth_account_id"]=Value::Null;})/><strong>{label}</strong><span class="status-pill">{if available&&inference{"可开始授权"}else if available{"可认证 · 传输待接入"}else{"尚不可用"}}</span></label><p class="account-help">{reason}</p>{(choose_provider_is_copilot).then(||view!{<p class="account-help">"GitHub 授权页会显示公开注册应用 OpenCode。当前仅接入账号目录明确支持 Chat 的模型；可用模型与订阅权限以你的账号实际返回为准。"</p>})}{(!api_base.is_empty()).then(||view!{<p class="account-help">{format!("供应方接口：{api_base} · {native}；保存绑定时会核对当前渠道地址。")}</p>})}{docs.map(|url|view!{<a href=url target="_blank" rel="noopener noreferrer">"官方说明 ↗"</a>})}</div>}
         }).collect_view()}}</div>
         <Show when=move||draft.get()["_oauth_provider"]=="openai"><label class="account-field"><span>"本机回调地址"</span><input type="url" prop:value=redirect on:input=move|e|redirect.set(event_target_value(&e)) disabled=move||!flow.get().is_null()/><span class="account-help">"授权结束后将浏览器最终回调地址粘贴到下方。服务端会校验 PKCE、state 和账号身份；不接收访问令牌。"</span></label></Show>
         <div class="account-actions"><button type="button" class="ghost" on:click=start disabled=move||busy.get()||!flow.get().is_null()||!providers.get().iter().any(|p|p["id"]==draft.get()["_oauth_provider"]&&p["available"]==true)>"开始新账号授权"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|load.run(())>"刷新认证线路"</button></div>

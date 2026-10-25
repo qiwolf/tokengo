@@ -1,5 +1,5 @@
-//! Source-bound public-client device OAuth. Native CLI identities are never impersonated.
-//! Each deployment supplies its own provider-issued client ID. No client secret is embedded.
+//! Source-bound public-client device OAuth using published native-client registrations.
+//! Public client IDs are identifiers, not secrets; deployments may override them.
 use crate::{db, oauth::{Account, Binding, OAuthCredential, OAuthError, Revoked}, protocol::Protocol, SharedState};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
@@ -21,34 +21,41 @@ pub struct ProviderSpec {
     pub id: &'static str, pub label: &'static str, pub issuer: &'static str,
     pub api_base: &'static str, pub native_protocol: Protocol,
     pub families: &'static [&'static str], pub docs_url: &'static str,
-    client_env: &'static str, device_path: &'static str, token_path: &'static str,
+    client_env: &'static str, public_client_id: &'static str, device_path: &'static str, token_path: &'static str,
     scope: &'static str, audience: &'static str, pub inference_available: bool,
 }
 pub fn provider(id:&str)->Option<ProviderSpec> {
     Some(match id {
-        "kimi"=>ProviderSpec{id:"kimi",label:"Kimi Code",issuer:"https://auth.kimi.com",api_base:"https://api.kimi.com/coding/v1",native_protocol:Protocol::Chat,families:&["kimi"],docs_url:"https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html",client_env:"TOKENGO_KIMI_OAUTH_CLIENT_ID",device_path:"/api/oauth/device_authorization",token_path:"/api/oauth/token",scope:"",audience:"",inference_available:true},
-        "minimax-cn"=>ProviderSpec{id:"minimax-cn",label:"MiniMax Code · 中国",issuer:"https://account.minimax.cn",api_base:"https://agent.minimax.cn/mavis/api/v1/llm/v1",native_protocol:Protocol::Messages,families:&["minimax"],docs_url:"https://github.com/MiniMax-AI/minimax-code",client_env:"TOKENGO_MINIMAX_CN_OAUTH_CLIENT_ID",device_path:"/oauth2/device/code",token_path:"/oauth2/token",scope:"agent.default",audience:"agent-backend",inference_available:true},
-        "minimax-global"=>ProviderSpec{id:"minimax-global",label:"MiniMax Code · Global",issuer:"https://account.minimax.io",api_base:"https://agent.minimax.io/mavis/api/v1/llm/v1",native_protocol:Protocol::Messages,families:&["minimax"],docs_url:"https://github.com/MiniMax-AI/minimax-code",client_env:"TOKENGO_MINIMAX_GLOBAL_OAUTH_CLIENT_ID",device_path:"/oauth2/device/code",token_path:"/oauth2/token",scope:"agent.default",audience:"agent-backend",inference_available:true},
-        "copilot"=>ProviderSpec{id:"copilot",label:"GitHub Copilot",issuer:"https://github.com",api_base:"",native_protocol:Protocol::Chat,families:&["gpt","claude","gemini","kimi","other"],docs_url:"https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli",client_env:"TOKENGO_GITHUB_OAUTH_CLIENT_ID",device_path:"/login/device/code",token_path:"/login/oauth/access_token",scope:"read:user",audience:"",inference_available:false},
+        "kimi"=>ProviderSpec{id:"kimi",label:"Kimi Code",issuer:"https://auth.kimi.com",api_base:"https://api.kimi.com/coding/v1",native_protocol:Protocol::Chat,families:&["kimi"],docs_url:"https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html",client_env:"TOKENGO_KIMI_OAUTH_CLIENT_ID",public_client_id:"17e5f671-d194-4dfb-9706-5516cb48c098",device_path:"/api/oauth/device_authorization",token_path:"/api/oauth/token",scope:"",audience:"",inference_available:true},
+        "minimax-cn"=>ProviderSpec{id:"minimax-cn",label:"MiniMax Code · 中国",issuer:"https://account.minimax.cn",api_base:"https://agent.minimax.cn/mavis/api/v1/llm/v1",native_protocol:Protocol::Messages,families:&["minimax"],docs_url:"https://github.com/MiniMax-AI/minimax-code",client_env:"TOKENGO_MINIMAX_CN_OAUTH_CLIENT_ID",public_client_id:"mcode-public",device_path:"/oauth2/device/code",token_path:"/oauth2/token",scope:"agent.default",audience:"agent-backend",inference_available:true},
+        "minimax-global"=>ProviderSpec{id:"minimax-global",label:"MiniMax Code · Global",issuer:"https://account.minimax.io",api_base:"https://agent.minimax.io/mavis/api/v1/llm/v1",native_protocol:Protocol::Messages,families:&["minimax"],docs_url:"https://github.com/MiniMax-AI/minimax-code",client_env:"TOKENGO_MINIMAX_GLOBAL_OAUTH_CLIENT_ID",public_client_id:"mcode-public",device_path:"/oauth2/device/code",token_path:"/oauth2/token",scope:"agent.default",audience:"agent-backend",inference_available:true},
+        "copilot"=>ProviderSpec{id:"copilot",label:"GitHub Copilot",issuer:"https://github.com",api_base:"https://api.githubcopilot.com",native_protocol:Protocol::Chat,families:&["gpt","claude","gemini","kimi","other"],docs_url:"https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli",client_env:"TOKENGO_GITHUB_OAUTH_CLIENT_ID",public_client_id:"Ov23li8tweQw6odWQebz",device_path:"/login/device/code",token_path:"/login/oauth/access_token",scope:"read:user",audience:"",inference_available:true},
         _=>return None,
     })
 }
-fn registered_client(p:ProviderSpec)->Result<String> {
-    let value=std::env::var(p.client_env).map_err(|_|OAuthError("oauth_client_registration_required"))?;
-    if value.is_empty()||value.len()>256||value.chars().any(|c|c.is_control()||c.is_whitespace()) { return Err(OAuthError("oauth_client_registration_required")); }
-    // The published CLI IDs identify those CLI applications, not TokenGo.
-    if matches!(value.as_str(),"17e5f671-d194-4dfb-9706-5516cb48c098"|"mcode-public"|"Iv1.b507a08c87ecfe98"|"01ab8ac9400c4e429b23") { return Err(OAuthError("oauth_independent_client_required")); }
-    Ok(value)
+fn client_id(p:ProviderSpec,override_value:Option<&str>)->Result<String> {
+    let value=override_value.unwrap_or(p.public_client_id);
+    if value.is_empty()||value.len()>256||value.chars().any(|c|c.is_control()||c.is_whitespace()) { return Err(OAuthError("oauth_invalid_client_id")); }
+    Ok(value.into())
 }
+fn registered_client(p:ProviderSpec)->Result<String> {
+    match std::env::var(p.client_env) {
+        Ok(value)=>client_id(p,Some(&value)),
+        Err(std::env::VarError::NotPresent)=>client_id(p,None),
+        Err(_)=>Err(OAuthError("oauth_invalid_client_id")),
+    }
+}
+
 pub fn providers()->Value {
-    let mut rows=vec![json!({"id":"openai","label":"ChatGPT / Codex","families":["gpt"],"available":true,"authentication_available":true,"inference_available":true,"reason":"existing_independent_registration","api_base":crate::oauth::API_BASE,"native_protocol":"responses","method":"browser_pkce","docs_url":"https://learn.chatgpt.com/docs/auth"})];
+    let mut rows=vec![json!({"id":"openai","label":"ChatGPT / Codex","families":["gpt"],"available":true,"authentication_available":true,"inference_available":true,"reason":"existing_browser_pkce","api_base":crate::oauth::API_BASE,"native_protocol":"responses","method":"browser_pkce","docs_url":"https://learn.chatgpt.com/docs/auth"})];
     for id in ["kimi","minimax-cn","minimax-global","copilot"] {
         let p=provider(id).unwrap();let configured=registered_client(p).is_ok();
-        rows.push(json!({"id":p.id,"label":p.label,"families":p.families,"available":configured,"authentication_available":configured,"inference_available":configured&&p.inference_available,"reason":if !configured{"oauth_client_registration_required"}else if !p.inference_available{"oauth_transport_not_available"}else{"registered_device_flow"},"configuration_key":p.client_env,"api_base":p.api_base,"native_protocol":p.native_protocol,"method":"device_code","docs_url":p.docs_url}));
+        rows.push(json!({"id":p.id,"label":p.label,"families":p.families,"available":configured,"authentication_available":configured,"inference_available":configured&&p.inference_available,"reason":if !configured{"oauth_invalid_client_id"}else if !p.inference_available{"oauth_transport_not_available"}else{"published_public_client_device_flow"},"configuration_key":p.client_env,"api_base":p.api_base,"native_protocol":p.native_protocol,"method":"device_code","docs_url":p.docs_url}));
     }
     for (id,label,families,reason,url) in [
         ("antigravity","Google Antigravity",vec!["gemini"],"independent_registration_and_transport_required","https://www.antigravity.google/docs/install?tab=cli"),
-        ("iflow","iFlow",vec!["qwen","deepseek","glm","kimi","other"],"public_oauth_contract_not_confirmed","https://docs.iflow.cn/cli/quickstart/"),
+        ("iflow","iFlow",vec!["qwen","deepseek","glm","kimi","other"],"upstream_oauth_retired","https://github.com/iflow-ai/iflow-cli/blob/main/README.md"),
+        ("gemini-native","Gemini CLI",vec!["gemini"],"official_client_only_not_gateway_binding","https://github.com/google-gemini/gemini-cli/blob/main/docs/resources/faq.md"),
         ("claude-native","Claude Code",vec!["claude"],"official_client_only_not_gateway_binding","https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use"),
         ("qwen-retired","Qwen OAuth",vec!["qwen"],"upstream_oauth_retired","https://github.com/QwenLM/qwen-code/blob/main/docs/users/quickstart.md")
     ] {rows.push(json!({"id":id,"label":label,"families":families,"available":false,"authentication_available":false,"inference_available":false,"reason":reason,"method":"unavailable","docs_url":url}));}
@@ -94,7 +101,7 @@ async fn json_body(mut response:reqwest::Response)->Result<(u16,Value)> {
     Ok((status,serde_json::from_slice(&bytes).map_err(|_|OAuthError("oauth_invalid_result"))?))
 }
 async fn form(state:&SharedState,p:ProviderSpec,path:&str,values:&[(&str,&str)],account:Option<i64>,origin:Option<i64>)->Result<(u16,Value)> {
-    let mut request=client(state,p,account,origin)?.post(format!("{}{}",p.issuer,path)).header("Accept","application/json").form(values);
+    let mut request=client(state,p,account,origin)?.post(format!("{}{}",p.issuer,path)).header("Accept","application/json").header("User-Agent",concat!("TokenGo/",env!("CARGO_PKG_VERSION"))).form(values);
     if p.id=="kimi" {request=request.header("X-Msh-Platform","tokengo").header("X-Msh-Version",env!("CARGO_PKG_VERSION"));}
     json_body(request.send().await.map_err(|_|OAuthError("oauth_unavailable"))?).await
 }
@@ -220,7 +227,7 @@ fn token_reply(p:ProviderSpec,v:&Value,old:Option<&TokenBundle>)->Result<(TokenB
     if !bearer{return invalid();}
     let refresh_token=match v.get("refresh_token") {Some(Value::String(s)) if !s.is_empty()&&s.len()<=16384&&!s.chars().any(char::is_control)=>Some(s.clone()),None=>old.and_then(|b|b.refresh_token.clone()),_=>return invalid()};
     if p.id!="copilot"&&refresh_token.is_none(){return invalid();}
-    let seconds=match wire_integer(v.get("expires_in"),p.id=="kimi"){Some(n) if (1..=31_536_000).contains(&n)=>n,None if p.id=="copilot"=>86400,_=>return invalid()};
+    let seconds=match wire_integer(v.get("expires_in"),p.id=="kimi"){Some(n) if (1..=31_536_000).contains(&n)=>n,None if p.id=="copilot"&&v.get("expires_in").is_none()=>86400,_=>return invalid()};
     // A scope hint may be carried inside the access token returned directly by
     // this fixed TLS token endpoint. It is never used as verified user identity.
     let hint=v.get("scope").cloned().or_else(|| {
@@ -230,11 +237,13 @@ fn token_reply(p:ProviderSpec,v:&Value,old:Option<&TokenBundle>)->Result<(TokenB
     });
     let scopes=match hint.as_ref() {Some(Value::String(s)) if s.len()<=4096=>s.split_whitespace().map(str::to_owned).collect::<Vec<_>>(),Some(Value::Array(rows)) if rows.len()<=64=>rows.iter().map(|r|r.as_str().filter(|s|s.len()<=128).map(str::to_owned).ok_or(OAuthError("oauth_invalid_result"))).collect::<Result<Vec<_>>>()?,None=>old.map(|v|v.scopes.clone()).unwrap_or_default(),_=>return invalid()};
     if !p.scope.is_empty()&&!scopes.iter().any(|s|s==p.scope){return Err(OAuthError("oauth_invalid_scope"));}
-    let expiry=db::now_ms().checked_add(seconds*1000).ok_or(OAuthError("oauth_invalid_result"))?;
+    // GitHub's OAuth token may have no expiry, as in its supported OpenCode flow.
+    // Do not fabricate a one-day expiry that forces a valid token to be discarded.
+    let expiry=if p.id=="copilot"&&v.get("expires_in").is_none(){253_402_300_799_000}else{db::now_ms().checked_add(seconds*1000).ok_or(OAuthError("oauth_invalid_result"))?};
     Ok((TokenBundle{provider:p.id.into(),access_token,refresh_token,scopes,origin_provider_id:old.and_then(|v|v.origin_provider_id)},expiry))
 }
 async fn github_subject(state:&SharedState,token:&str,origin:Option<i64>)->Result<String> {
-    let response=client(state,provider("copilot").unwrap(),None,origin)?.get("https://api.github.com/user").header("Accept","application/vnd.github+json").bearer_auth(token).send().await.map_err(|_|OAuthError("oauth_unavailable"))?;
+    let response=client(state,provider("copilot").unwrap(),None,origin)?.get("https://api.github.com/user").header("Accept","application/vnd.github+json").header("User-Agent",concat!("TokenGo/",env!("CARGO_PKG_VERSION"))).bearer_auth(token).send().await.map_err(|_|OAuthError("oauth_unavailable"))?;
     let (code,v)=json_body(response).await?;if code!=200{return Err(OAuthError("oauth_identity_unavailable"));}v.get("id").and_then(Value::as_u64).map(|id|format!("github:{id}")).ok_or(OAuthError("oauth_invalid_identity"))
 }
 fn bundle(state:&SharedState,id:i64)->Result<TokenBundle> {
@@ -304,7 +313,7 @@ pub async fn credentials(state:&SharedState,channel:i64)->Result<Option<OAuthCre
     let initial:Option<i64>=store(state.conn().query_row("SELECT account_id FROM oauth_channel_bindings WHERE channel_id=?1",[channel],|r|r.get(0)).optional())?;
     let Some(id)=initial else{return Ok(None)};ensure_session(state,id).await?;
     let needs_catalog={let c=state.conn();let a=crate::oauth::account(&c,id)?;
-        if a.provider!="kimi"{false}else{
+        if !matches!(a.provider.as_str(),"kimi"|"copilot"){false}else{
             let raw=store(db::settings::get(&c,&format!("oauth_external_catalog:{id}")))?;
             raw.as_deref().and_then(|s|serde_json::from_str::<Value>(s).ok()).is_none_or(|v|v["revision"]!=a.credential_revision||v["client_id"]!=a.client_id||v["expires_at"].as_i64().is_none_or(|expiry|expiry<=db::now_ms()))
         }};
@@ -331,8 +340,24 @@ pub fn inference_headers(credential:&OAuthCredential)->Vec<(String,String)> {
     // interpreting an OAuth bearer as x-api-key. This value is transport-only.
     let mut headers=vec![("Authorization".into(),format!("Bearer {}",credential.access_token))];
     if credential.oauth_provider=="kimi" {headers.extend([("X-Msh-Platform".into(),"tokengo".into()),("X-Msh-Version".into(),env!("CARGO_PKG_VERSION").into())]);}
+    if credential.oauth_provider=="copilot" {headers.extend([("User-Agent".into(),concat!("TokenGo/",env!("CARGO_PKG_VERSION")).into()),("Openai-Intent".into(),"conversation-edits".into()),("X-GitHub-Api-Version".into(),"2026-08-01".into()),("X-Interaction-Type".into(),"conversation-agent".into())]);}
     if credential.oauth_provider.starts_with("minimax-"){headers.push(("anthropic-version".into(),"2023-06-01".into()));}
     headers
+}
+/// Copilot classifies the final upstream request, after protocol conversion.
+pub fn request_headers(credential:&OAuthCredential,body:&[u8])->Vec<(String,String)> {
+    if credential.oauth_provider!="copilot" {return Vec::new();}
+    let value:Value=serde_json::from_slice(body).unwrap_or(Value::Null);
+    let (agent,vision)=copilot_request_metadata(&value);
+    let mut headers=vec![("X-Initiator".into(),if agent{"agent"}else{"user"}.into())];
+    if vision {headers.push(("Copilot-Vision-Request".into(),"true".into()));}
+    headers
+}
+fn copilot_request_metadata(value:&Value)->(bool,bool) {
+    let Some(messages)=value["messages"].as_array() else{return (true,false)};
+    let agent=messages.last().and_then(|message|message["role"].as_str())!=Some("user");
+    let vision=messages.iter().any(|message|message["content"].as_array().is_some_and(|parts|parts.iter().any(|part|part["type"]=="image_url")));
+    (agent,vision)
 }
 /// Only explicit account catalog protocol declarations allow Kimi Chat bindings.
 /// MiniMax's verified Messages transport permits manually configured model IDs;
@@ -349,27 +374,57 @@ pub fn validate_bound_models(c:&rusqlite::Connection,id:i64,models:&[String])->R
     let rows=v["models"].as_array().ok_or(OAuthError("oauth_model_protocol_confirmation_required"))?;
     if models.iter().any(|model|!rows.iter().any(|row|row["id"].as_str()==Some(model.as_str())&&matches!(row["protocol"].as_str(),Some("chat")))){return Err(OAuthError("oauth_model_protocol_not_supported"));}Ok(())
 }
+fn minimax_catalog(v:&Value)->Result<Vec<Value>> {
+    let providers=v["providers"].as_array().filter(|a|a.len()<=64).ok_or(OAuthError("oauth_invalid_catalog"))?;
+    let config=providers.iter().find(|p|p["providerId"]=="minimax").and_then(|p|p.get("config")).ok_or(OAuthError("oauth_invalid_catalog"))?;
+    if config["npm"]!="@ai-sdk/anthropic" {return Err(OAuthError("oauth_model_protocol_not_supported"));}
+    let models=config["models"].as_object().filter(|m|m.len()<=2048).ok_or(OAuthError("oauth_invalid_catalog"))?;
+    let mut rows=Vec::new();
+    for (id,model) in models {
+        if id.is_empty()||id.len()>256||id.chars().any(char::is_control){return Err(OAuthError("oauth_invalid_catalog"));}
+        let mut row=json!({"id":id,"protocol":"messages","catalog_scope":"provider_public"});
+        for (path,key) in [("/name","display_name"),("/limit/context","context_length"),("/limit/output","max_output_tokens"),("/reasoning","supports_reasoning"),("/attachment","supports_image_in")] {if let Some(value)=model.pointer(path){row[key]=value.clone();}}
+        if let Some(values)=model.pointer("/thinking/effortOptions"){row["effort"]=values.clone();}
+        rows.push(row);
+    }
+    Ok(rows)
+}
+fn copilot_chat_model(row:&Value)->bool {
+    row.get("supported_endpoints").and_then(Value::as_array).is_some_and(|values|values.iter().any(|v|v.as_str()==Some("/chat/completions")))
+        &&row.get("model_picker_enabled").and_then(Value::as_bool)!=Some(false)
+        &&!matches!(row.pointer("/policy/state").and_then(Value::as_str),Some("disabled"|"unconfigured"))
+}
 fn catalog_protocol(value:Option<&Value>)->&'static str {
     match value {None=>"chat",Some(Value::String(s)) if s=="kimi"=>"chat",Some(Value::String(s)) if s=="anthropic"=>"messages",Some(Value::String(s)) if s=="response"=>"responses",_=>"unsupported"}
 }
 pub async fn models(state:&SharedState,id:i64)->Result<Value> {
     let p=provider(&account_provider(&state.conn(),id)?).ok_or(OAuthError("oauth_invalid_source"))?;
     if !p.inference_available{return Err(OAuthError("oauth_transport_not_available"));}
-    if p.id!="kimi"{return Err(OAuthError("oauth_models_manual_configuration_required"));}
     ensure_session(state,id).await?;let a=crate::oauth::account(&state.conn(),id)?;let token=bundle(state,id)?;
-    let response=client(state,p,Some(id),token.origin_provider_id)?.get(format!("{}/models",p.api_base)).bearer_auth(&token.access_token).header("X-Msh-Platform","tokengo").send().await.map_err(|_|OAuthError("oauth_unavailable"))?;
+    let minimax=p.id.starts_with("minimax-");
+    let catalog_url=if minimax {format!("{}/models",p.api_base.strip_suffix("/llm/v1").ok_or(OAuthError("oauth_invalid_source"))?)}else{format!("{}/models",p.api_base)};
+    let mut request=client(state,p,Some(id),token.origin_provider_id)?.get(catalog_url).header("User-Agent",concat!("TokenGo/",env!("CARGO_PKG_VERSION")));
+    // MiniMax publishes model metadata without authentication. Never send a
+    // user's bearer to a public metadata request or call it account entitlement.
+    if !minimax {request=request.bearer_auth(&token.access_token);}
+    if p.id=="kimi" {request=request.header("X-Msh-Platform","tokengo");}
+    if p.id=="copilot" {request=request.header("X-GitHub-Api-Version","2026-08-01");}
+    let response=request.send().await.map_err(|_|OAuthError("oauth_unavailable"))?;
     let (http,v)=json_body(response).await?;if !(200..300).contains(&http){return Err(OAuthError("oauth_models_unavailable"));}
     let serialized=v.to_string();if serialized.contains(&token.access_token)||token.refresh_token.as_ref().is_some_and(|s|serialized.contains(s)){return invalid();}
-    let rows=v["data"].as_array().filter(|rows|rows.len()<=2048).ok_or(OAuthError("oauth_invalid_catalog"))?;
+    let minimax_rows=if minimax{Some(minimax_catalog(&v)?)}else{None};
+    let rows=if let Some(rows)=minimax_rows.as_ref(){rows}else{v["data"].as_array().filter(|rows|rows.len()<=2048).ok_or(OAuthError("oauth_invalid_catalog"))?};
     let mut safe=Vec::new();let mut seen=std::collections::HashSet::new();
     for row in rows {
         let id=bounded_string(row,"id",256)?;if !seen.insert(id.clone()){return Err(OAuthError("oauth_invalid_catalog"));}
+        if p.id=="copilot"&&!copilot_chat_model(row){continue;}
         let mut out=json!({"id":id,"object":"model"});
-        for key in ["context_length","supports_reasoning","supports_image_in","supports_video_in","display_name","effort","capabilities"] {if let Some(value)=row.get(key){out[key]=value.clone();}}
+        for key in ["catalog_scope","max_output_tokens","context_length","supports_reasoning","supports_image_in","supports_video_in","display_name","effort","capabilities"] {if let Some(value)=row.get(key){out[key]=value.clone();}}
         // Current official Kimi SDK uses its Chat adapter for legacy missing/kimi
         // protocol, and explicitly branches anthropic and response. Unknown future
         // declarations are not assigned that legacy default.
-        out["protocol"]=json!(catalog_protocol(row.get("protocol")));
+        out["protocol"]=json!(if minimax{"messages"}else if p.id=="copilot"{"chat"}else{catalog_protocol(row.get("protocol"))});
+        if p.id=="copilot" {out["supported_endpoints"]=row["supported_endpoints"].clone();for (from,to) in [("/capabilities/limits/max_context_window_tokens","context_length"),("/capabilities/limits/max_output_tokens","max_output_tokens"),("/capabilities/supports/reasoning_effort","reasoning_efforts")] {if let Some(value)=row.pointer(from){out[to]=value.clone();}}}
         if let Some(value)=row.get("protocol"){out["upstream_protocol"]=value.clone();}
         safe.push(out);
     }
@@ -379,7 +434,7 @@ pub async fn models(state:&SharedState,id:i64)->Result<Value> {
     let mut stmt=store(c.prepare("SELECT channel_id FROM oauth_channel_bindings WHERE account_id=?1"))?;
     let channels=store(stmt.query_map([id],|r|r.get::<_,i64>(0)))?.collect::<rusqlite::Result<Vec<_>>>().map_err(|_|OAuthError("oauth_storage_unavailable"))?;
     for channel in channels {store(db::catalog::replace(&c,tokengo_shared::ChannelId(channel),&parsed,db::now_ms()))?;}
-    Ok(json!({"object":"list","data":safe}))
+    Ok(json!({"object":"list","catalog_scope":if minimax{"provider_public"}else{"account"},"data":safe}))
 }
 pub async fn revoke(state:&SharedState,id:i64)->Result<Revoked> {
     let a=crate::oauth::account(&state.conn(),id)?;let p=provider(&a.provider).ok_or(OAuthError("oauth_invalid_source"))?;
@@ -400,6 +455,56 @@ pub async fn revoke(state:&SharedState,id:i64)->Result<Revoked> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn published_clients_work_without_deployment_registration_and_overrides_are_checked() {
+        for (id,expected) in [("kimi","17e5f671-d194-4dfb-9706-5516cb48c098"),("minimax-cn","mcode-public"),("minimax-global","mcode-public"),("copilot","Ov23li8tweQw6odWQebz")] {
+            let p=provider(id).unwrap();assert_eq!(client_id(p,None).unwrap(),expected);
+            assert_eq!(client_id(p,Some("own-public-client")).unwrap(),"own-public-client");
+            for value in ["","white space","newline\n"] {assert!(client_id(p,Some(value)).is_err());}
+        }
+    }
+    #[test]
+    fn minimax_live_catalog_shape_exposes_public_models_without_claiming_account_entitlement() {
+        let rows=minimax_catalog(&json!({"version":"1.0","providers":[{"providerId":"minimax","config":{"npm":"@ai-sdk/anthropic","models":{"MiniMax-M3":{"name":"M3","limit":{"context":512000,"output":128000},"reasoning":true}}}}]})).unwrap();
+        assert_eq!(rows[0]["id"],"MiniMax-M3");assert_eq!(rows[0]["protocol"],"messages");assert_eq!(rows[0]["catalog_scope"],"provider_public");assert_eq!(rows[0]["max_output_tokens"],128000);
+        assert!(minimax_catalog(&json!({"providers":[{"providerId":"minimax","config":{"npm":"future-protocol","models":{}}}]})).is_err());
+    }
+    #[test]
+    fn copilot_models_require_an_explicit_usable_chat_endpoint() {
+        assert!(copilot_chat_model(&json!({"supported_endpoints":["/chat/completions","/responses"],"model_picker_enabled":true,"policy":{"state":"enabled"}})));
+        for row in [json!({}),json!({"supported_endpoints":["/v1/messages"]}),json!({"supported_endpoints":["/responses"]}),json!({"supported_endpoints":["/chat/completions"],"policy":{"state":"disabled"}}),json!({"supported_endpoints":["/chat/completions"],"model_picker_enabled":false})] {assert!(!copilot_chat_model(&row));}
+    }
+    #[test]
+    fn copilot_initiator_and_vision_follow_the_final_chat_body() {
+        assert_eq!(copilot_request_metadata(&json!({"messages":[{"role":"user","content":"hello"}]})),(false,false));
+        assert_eq!(copilot_request_metadata(&json!({"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,test"}}]}]})),(false,true));
+        for role in ["assistant","tool","system"] {assert_eq!(copilot_request_metadata(&json!({"messages":[{"role":role,"content":"x"}]})),(true,false));}
+        assert_eq!(copilot_request_metadata(&json!({"messages":[]})),(true,false));
+    }
+    #[test]
+    fn copilot_nonexpiring_tokens_do_not_require_a_refresh_token_or_invent_expiry() {
+        let p=provider("copilot").unwrap();let value=json!({"access_token":"gho-test-only","token_type":"bearer","scope":"read:user"});
+        let (token,expiry)=token_reply(p,&value,None).unwrap();assert!(token.refresh_token.is_none());assert_eq!(expiry,253_402_300_799_000);
+        let (_,expiry)=token_reply(p,&json!({"access_token":"gho-test-only","token_type":"bearer","scope":"read:user","expires_in":3600}),None).unwrap();
+        assert!(expiry>db::now_ms()&&expiry<db::now_ms()+3_601_000);
+        for bad in [Value::Null,json!("bad"),json!({}),json!("3600")] {assert!(token_reply(p,&json!({"access_token":"a","token_type":"bearer","scope":"read:user","expires_in":bad}),None).is_err());}
+        for seconds in [0,-1,31_536_001] {assert!(token_reply(p,&json!({"access_token":"a","token_type":"bearer","scope":"read:user","expires_in":seconds}),None).is_err());}
+    }
+    #[tokio::test]
+    async fn expired_unrefreshable_copilot_grant_requires_only_its_own_reauthorization() {
+        let dir=std::env::temp_dir().join(format!("tokengo-copilot-expiry-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&dir).unwrap();
+        let state=crate::AppState::init(crate::Config{db_path:dir.join("db"),master_key_path:dir.join("master").to_string_lossy().into(),..Default::default()}).unwrap();
+        let token=TokenBundle{provider:"copilot".into(),access_token:"gho-synthetic-only".into(),refresh_token:None,scopes:vec!["read:user".into()],origin_provider_id:None};
+        let (nonce,cipher)=state.secrets.seal(&serde_json::to_string(&token).unwrap()).unwrap();
+        for (subject,expiry) in [("github:expired",db::now_ms()-1),("github:active",253_402_300_799_000)] {
+            state.conn().execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at,nonce,cipher) VALUES(?1,'https://github.com',?1,'Ov23li8tweQw6odWQebz','active','[\"read:user\"]',?2,0,?3,?4)",params![subject,expiry,nonce,cipher]).unwrap();
+        }
+        assert!(refresh_once(&state,2).await.is_ok());assert_eq!(bundle(&state,2).unwrap().access_token,"gho-synthetic-only");
+        assert_eq!(refresh_once(&state,1).await.unwrap_err().0,"oauth_reauthorization_required");
+        let rows=state.conn().prepare("SELECT status,nonce IS NULL,cipher IS NULL FROM oauth_accounts ORDER BY id").unwrap().query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert_eq!(rows,vec![("reauth_required".into(),true,true),("active".into(),false,false)]);
+        drop(state);std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn only_missing_or_declared_kimi_protocol_uses_legacy_chat() {
         assert_eq!(catalog_protocol(None),"chat");
