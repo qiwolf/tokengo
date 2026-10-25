@@ -255,12 +255,10 @@ fn allowed_sources_from(c:&Connection,auth:&identity::AuthContext,t:&Target,chan
     Ok(ids)
 }
 fn validate(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError> {
-    preflight(c, user_id, v)?;
-    compatibility(c, user_id, &v.targets)?;
-    Ok(())
+    preflight(c, user_id, v)
 }
 
-/// Reject invalid or unauthorized edits before billable compatibility probes.
+/// Saving checks configuration and authorization locally; diagnostics are explicit.
 pub fn preflight(c: &Connection, user_id: i64, v: &Config) -> Result<(), VirtualError> {
     validate_shape(v)?;
     let auth = owner_auth(c, user_id)?;

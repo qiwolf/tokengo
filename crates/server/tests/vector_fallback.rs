@@ -444,11 +444,14 @@ async fn single_target_keeps_working_without_a_compatibility_certificate() {
 }
 
 #[tokio::test]
-async fn multiple_targets_require_real_verification_before_save() {
+async fn multiple_targets_save_offline_but_require_real_verification_before_call() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         let f = Fixture::new(kind, 2).await;
-        assert!(vr::create(&f.state.conn(), f.user, &f.config).is_err());
-        f.verify_save().await;
+        vr::create(&f.state.conn(), f.user, &f.config).unwrap();
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
+        assert!(!f.call(f.body()).await.0.is_success());
+        vector_compat::verify(&f.state,f.user,&f.config).await.unwrap();
+        f.clear();
         let (status, body) = f.call(f.body()).await;
         assert_eq!(status, StatusCode::OK, "{kind:?}: {body}");
         assert_eq!(f.upstreams[0].count(), 1);
@@ -471,7 +474,10 @@ async fn incompatible_dimensions_spaces_and_ranking_are_rejected() {
                 .is_err(),
             "{kind:?} must not certify incompatible output"
         );
-        assert!(vr::create(&f.state.conn(), f.user, &f.config).is_err());
+        vr::create(&f.state.conn(), f.user, &f.config).unwrap();
+        f.clear();
+        assert!(!f.call(f.body()).await.0.is_success());
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
     }
 }
 
@@ -684,7 +690,7 @@ async fn expired_evidence_blocks_requests_and_can_be_refreshed() {
 }
 
 #[tokio::test]
-async fn browser_save_automatically_verifies_and_bills_the_owning_user() {
+async fn browser_save_then_explicit_verification_bills_the_owning_user() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         let f = Fixture::new(kind, 2).await;
         let cookie = f.cookie();
@@ -699,6 +705,8 @@ async fn browser_save_automatically_verifies_and_bills_the_owning_user() {
             .await;
         assert_eq!(status, StatusCode::OK, "{kind:?}: {body}");
         assert!(body["virtual_model"]["id"].as_i64().is_some());
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
+        vector_compat::verify(&f.state,f.user,&f.config).await.unwrap();
         assert!(f.upstreams.iter().all(|source| source.count() > 0));
         f.assert_diagnostics();
         assert!(
@@ -816,10 +824,9 @@ async fn browser_verification_respects_owner_budget_before_network_and_rpm_betwe
                     serde_json::to_value(&f.config).unwrap(),
                 )
                 .await;
-            assert!(
-                !status.is_success(),
-                "{kind:?}, budget_block={budget_block}: {body}"
-            );
+            assert_eq!(status,StatusCode::OK,"configuration save does not consume diagnostic budget: {body}");
+            assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
+            assert!(vector_compat::verify(&f.state,f.user,&f.config).await.is_err());
             assert_eq!(
                 f.upstreams.iter().map(Upstream::count).sum::<usize>(),
                 if budget_block { 0 } else { 1 }
@@ -828,7 +835,7 @@ async fn browser_verification_respects_owner_budget_before_network_and_rpm_betwe
                 f.assert_diagnostics();
             }
             let c = f.state.conn();
-            assert!(vr::list(&c, f.user).unwrap().is_empty());
+            assert_eq!(vr::list(&c, f.user).unwrap().len(),1,"failed verification must not discard saved configuration");
             assert!(
                 db::settings::all(&c)
                     .unwrap()
@@ -905,64 +912,22 @@ async fn in_flight_kind_credentials_or_acl_changes_stop_before_the_next_attempt(
 }
 
 #[tokio::test]
-async fn revoked_browser_session_cannot_commit_after_async_verification() {
+async fn revoked_browser_session_cannot_save_or_start_verification() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
-        for editing in [false, true] {
-            let mut f = Fixture::new(kind, 2).await;
-            let id = if editing {
-                f.verify_save().await;
-                let id = vr::list(&f.state.conn(), f.user).unwrap()[0].id;
-                f.config.targets[0].switch_on_400 = true;
-                Some(id)
-            } else {
-                None
-            };
-            let cookie = f.cookie();
-            let entered = Arc::new(tokio::sync::Notify::new());
-            let release = Arc::new(tokio::sync::Notify::new());
-            *f.upstreams[0].state.hold.lock().unwrap() = Some((entered.clone(), release.clone()));
-            let mut body = serde_json::to_value(&f.config).unwrap();
-            let path = if let Some(id) = id {
-                body["version"] = json!(1);
-                format!("/api/account/virtual-models/{id}")
-            } else {
-                "/api/account/virtual-models".into()
-            };
-            let revoke = async {
-                tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
-                    .await
-                    .unwrap();
-                db::accounts::revoke(
-                    &f.state.conn(),
-                    cookie.strip_prefix("tokengo_account_session=").unwrap(),
-                )
-                .unwrap();
-                *f.upstreams[0].state.hold.lock().unwrap() = None;
-                release.notify_one();
-            };
-            let ((status, response), ()) = tokio::join!(
-                f.browser(
-                    if editing { "PATCH" } else { "POST" },
-                    &path,
-                    &cookie,
-                    true,
-                    body
-                ),
-                revoke
-            );
-            assert_eq!(
-                status,
-                StatusCode::UNAUTHORIZED,
-                "{kind:?} edit={editing}: {response}"
-            );
-            let routes = vr::list(&f.state.conn(), f.user).unwrap();
-            if editing {
-                assert_eq!(routes[0].version, 1);
-                assert!(!routes[0].config.targets[0].switch_on_400);
-            } else {
-                assert!(routes.is_empty());
-            }
+        let f = Fixture::new(kind, 2).await;
+        let cookie = f.cookie();
+        let (status,body)=f.browser("POST","/api/account/virtual-models",&cookie,true,serde_json::to_value(&f.config).unwrap()).await;
+        assert_eq!(status,StatusCode::OK,"{body}");
+        let id=body["virtual_model"]["id"].as_i64().unwrap();
+        db::accounts::revoke(&f.state.conn(),cookie.strip_prefix("tokengo_account_session=").unwrap()).unwrap();
+        let mut edit=serde_json::to_value(&f.config).unwrap();edit["version"]=json!(1);
+        for (path,body) in [(format!("/api/account/virtual-models/{id}"),edit),(format!("/api/account/virtual-models/{id}/verify"),json!({"version":1}))] {
+            let method=if path.ends_with("/verify"){"POST"}else{"PATCH"};
+            let (status,body)=f.browser(method,&path,&cookie,true,body).await;
+            assert_eq!(status,StatusCode::UNAUTHORIZED,"{path}: {body}");
         }
+        assert_eq!(vr::list(&f.state.conn(),f.user).unwrap()[0].version,1);
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
     }
 }
 

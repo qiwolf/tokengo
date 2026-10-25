@@ -161,7 +161,6 @@ pub fn create(c: &Connection, v: &vr::Config, actor: i64) -> Result<SharedModel,
     let tx = c.unchecked_transaction()?;
     root_actor(&tx, actor)?;
     preflight(&tx, v, None)?;
-    compatibility(&tx, &v.targets)?;
     let mut config = v.clone();
     config.name = config.name.trim().to_owned();
     tx.execute("INSERT INTO shared_virtual_models(name,normalized_name,enabled,config_json,version,actor_account_id,created_ms,updated_ms) VALUES(?1,?2,?3,?4,1,?5,?6,?6)",params![config.name,normalize_model_name(&config.name),config.enabled,serde_json::to_string(&config).map_err(|_|err("invalid_virtual_route","无法编码共享配置"))?,actor,super::now_ms()])?;
@@ -185,7 +184,6 @@ pub fn replace(
         return Err(err("virtual_route_changed", "共享模型已修改，请刷新"));
     }
     preflight(&tx, v, Some(id))?;
-    compatibility(&tx, &v.targets)?;
     let mut config = v.clone();
     config.name = config.name.trim().to_owned();
     let changed=tx.execute("UPDATE shared_virtual_models SET name=?3,normalized_name=?4,enabled=?5,config_json=?6,version=version+1,actor_account_id=?7,updated_ms=?8 WHERE id=?1 AND version=?2",params![id,version,config.name,normalize_model_name(&config.name),config.enabled,serde_json::to_string(&config).map_err(|_|err("invalid_virtual_route","无法编码共享配置"))?,actor,super::now_ms()])?;

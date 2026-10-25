@@ -3,6 +3,8 @@ use super::PageHead;
 use crate::{Ctx, admin_api as api};
 use leptos::prelude::*;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
+type TargetChecks = RwSignal<BTreeMap<(i64,i64,usize),(bool,bool,String)>>;
 fn compatibility_text(row:&Value)->String {
     let c=&row["compatibility"];
     let mut message=c["message"].as_str().unwrap_or("").to_string();
@@ -13,6 +15,57 @@ fn compatibility_text(row:&Value)->String {
         }
     }
     message
+}
+#[component]
+fn TargetVerification(api_base: &'static str, id:i64, version:i64, position:usize, label:String, checks:TargetChecks)->impl IntoView {
+    let key=(id,version,position);
+    let running=move||checks.with(|m|m.get(&key).is_some_and(|r|r.0));
+    let failed=move||checks.with(|m|m.get(&key).is_some_and(|r|r.1));
+    let result=move||checks.with(|m|m.get(&key).map(|r|r.2.clone()).unwrap_or_default());
+    let verify=move |_| {
+        if running(){return;}
+        checks.update(|m|{m.insert(key,(true,false,"正在检查此目标的各个来源…".into()));});
+        leptos::task::spawn_local(async move {
+            let (failed,message)=match api::request("POST",&format!("{api_base}/{id}/targets/{position}/verify"),Some(json!({"version":version}))).await {
+                Ok(v)=>{
+                    let sources=api::rows(&v,"sources");
+                    let failed=sources.is_empty()||sources.iter().any(|s|s["state"]!="valid");
+                    let message=if sources.is_empty(){"没有取得来源验证结果，请刷新后重试。".into()}else{sources.iter().map(|s|format!("{}：{}",s["source_name"].as_str().unwrap_or("来源"),s["message"].as_str().unwrap_or("未返回检查说明"))).collect::<Vec<_>>().join("；")};
+                    (failed,message)
+                },
+                Err(e)=>(true,e.message),
+            };
+            let _=checks.try_update(|m|{m.insert(key,(false,failed,message));});
+        });
+    };
+    view!{<div class="virtual-target panel"><p>{label}</p><button type="button" class="ghost" disabled=running on:click=verify>{move||if running(){"正在验证此目标…"}else{"验证此目标"}}</button><p role=move||if failed(){"alert"}else{"status"} aria-live="polite">{result}</p></div>}
+}
+#[component]
+fn SavedVerification(api_base: &'static str, row:Value, options:RwSignal<Vec<Value>>, checks:TargetChecks, on_changed:Callback<()>)->impl IntoView {
+    let id=row["id"].as_i64().unwrap_or(0);
+    let version=row["version"].as_i64().unwrap_or(0);
+    let enabled=row["enabled"]==true;
+    let key=(id,version,0);
+    let submitting=move||checks.with(|m|m.get(&key).is_some_and(|r|r.0));
+    let failed=move||checks.with(|m|m.get(&key).is_some_and(|r|r.1));
+    let message=move||checks.with(|m|m.get(&key).map(|r|r.2.clone()).unwrap_or_default());
+    let targets=api::rows(&row,"targets");
+    let needs_contract=targets.len()>1&&row["compatibility"]["state"]!="not_required";
+    let verify=move |_|{
+        if submitting(){return;}
+        checks.update(|m|{m.insert(key,(true,false,String::new()));});
+        leptos::task::spawn_local(async move{
+            let (failed,message)=match api::request("POST",&format!("{api_base}/{id}/verify"),Some(json!({"version":version}))).await{
+                Ok(_)=>(false,"完整兼容验证已提交，在后台执行；可以继续编辑或保存。结果会自动刷新，也可点击刷新查看。".into()),
+                Err(e)=>(true,e.message),
+            };
+            if checks.try_update(|m|{m.insert(key,(false,failed,message));}).is_some(){on_changed.try_run(());}
+        });
+    };
+    view!{<details><summary>"验证已保存的目标"</summary><p class="account-help">"验证独立执行，不影响编辑或保存。单目标检查报告各来源的可用性；完整兼容验证用于确认向量与重排的跨来源回退。"</p>{targets.into_iter().enumerate().map(|(i,t)|{
+        let provider=options.get_untracked().into_iter().find(|o|o["provider_id"]==t["provider_id"]&&o["logical_model"]==t["logical_model"]).map(|o|api::text(&o,"provider_name")).unwrap_or_else(||"原供应方".into());
+        view!{<TargetVerification api_base=api_base id=id version=version position=i+1 checks=checks label=format!("第{}步 · {} · {}",i+1,provider,api::text(&t,"logical_model"))/>}
+    }).collect_view()}{needs_contract.then(||view!{<button type="button" class="ghost" disabled=move||submitting()||!enabled on:click=verify>{move||if submitting(){"正在提交验证…"}else{"后台验证完整兼容性"}}</button><p class="account-help">{if enabled{"完整验证可能需要数分钟，通过后才能进行向量或重排多目标调用。"}else{"启用并保存后可执行完整兼容验证。"}}</p>})}<p role=move||if failed(){"alert"}else{"status"} aria-live="polite">{message}</p></details>}
 }
 fn fresh() -> Value {
     json!({"name":"","enabled":true,"mode":"ordered","timezone":"Asia/Shanghai","targets":[],"windows":[],"default_positions":[]})
@@ -167,6 +220,7 @@ pub fn VirtualModels(ctx: Ctx, #[prop(default=false)] shared:bool) -> impl IntoV
     let error = RwSignal::new(String::new());
     let notice = RwSignal::new(String::new());
     let revision = RwSignal::new(0u64);
+    let checks:TargetChecks=RwSignal::new(BTreeMap::new());
     let timer=crate::every(30_000,move||{if !busy.get_untracked()&&!loading.get_untracked(){revision.update(|r|*r+=1);}});
     on_cleanup(move||crate::stop_timer(timer));
     Effect::new(move |_| {
@@ -242,7 +296,7 @@ pub fn VirtualModels(ctx: Ctx, #[prop(default=false)] shared:bool) -> impl IntoV
                     if row["id"].as_i64().is_some() {
                         selected.set(row["id"].as_i64());
                         draft.set(row);
-                        notice.set(if shared{"共享模型已保存，请在用户页面分配该名称的访问权限。"}else{"调用策略已保存；使用本页的虚拟模型名发起调用。"}.into());
+                        notice.set(if shared{"共享模型配置已保存。可在列表中单独验证目标，并分配访问权限。"}else{"调用策略配置已保存。可在列表中单独验证目标。"}.into());
                         editor_open.set(false);
                         show_trash.set(false);
                         revision.update(|r| *r += 1);
@@ -260,8 +314,8 @@ pub fn VirtualModels(ctx: Ctx, #[prop(default=false)] shared:bool) -> impl IntoV
     };
     view!{<div class="page admin-page virtual-model-page"><PageHead title=title desc=description><button type="button" class="primary" disabled=move||busy.get()||loading.get() on:click=move |_|{selected.set(None);draft.set(fresh());error.set(String::new());notice.set(String::new());editor_open.set(true);revision.update(|r|*r+=1);}>"新建虚拟模型"</button></PageHead>
  <section class="card"><header class="card-head"><h2>{move||if show_trash.get(){"虚拟模型回收站"}else if shared{"管理员共享模型"}else{"我的虚拟模型"}}</h2><div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|{show_trash.update(|v|*v=!*v);error.set(String::new());notice.set(String::new());}>{move||if show_trash.get(){"返回模型列表"}else{"回收站"}}</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body"><p role="status">{move||if loading.get(){"正在读取调用策略…"}else if rows.get().is_empty(){if show_trash.get(){"回收站为空。删除的虚拟模型会显示在这里。"}else{"还没有虚拟模型。点击新建虚拟模型，添加供应方与模型即可开始。"}}else{""}}</p><Show when=move||show_trash.get()><p class="account-help">"删除后停止调用，历史请求和审计保留。恢复后保持停用；同名入口已被重新创建时，不能覆盖恢复。"</p></Show><div class="table-wrap"><table><thead><tr><th>"调用模型名"</th><th>"策略 / 状态"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|row|{
- let edit_row=row.clone();let disable_row=row.clone();let trash_row=row.clone();let restore_row=row.clone();let row_enabled=row["enabled"]==true;let row_deleted=row["deleted_at_ms"].as_i64().is_some();let name=api::text(&row,"name");let compat=compatibility_text(&row);let compat_failed=row["compatibility"]["state"]=="failed";let label=format!("{} · {} 个目标 · {}",if row["mode"]=="scheduled"{"按时段"}else{"按顺序"},api::rows(&row,"targets").len(),if row_deleted{"已删除"}else if row_enabled{"启用"}else{"停用"});
- view!{<tr><td data-label="模型名"><code>{name}</code></td><td data-label="策略">{label}<p role=if compat_failed{"alert"}else{"status"}>{compat}</p></td><td data-label="操作">{if row_deleted{
+ let verify_row=row.clone();let edit_row=row.clone();let disable_row=row.clone();let trash_row=row.clone();let restore_row=row.clone();let row_enabled=row["enabled"]==true;let row_deleted=row["deleted_at_ms"].as_i64().is_some();let name=api::text(&row,"name");let compat=compatibility_text(&row);let compat_failed=row["compatibility"]["state"]=="failed";let label=format!("{} · {} 个目标 · {}",if row["mode"]=="scheduled"{"按时段"}else{"按顺序"},api::rows(&row,"targets").len(),if row_deleted{"已删除"}else if row_enabled{"启用"}else{"停用"});
+ view!{<tr><td data-label="模型名"><code>{name}</code></td><td data-label="策略">{label}<p role=if compat_failed{"alert"}else{"status"}>{compat}</p>{(!row_deleted).then(||view!{<SavedVerification api_base=api_base row=verify_row options=options checks=checks on_changed=Callback::new(move|_:()|revision.update(|r|*r+=1))/>})}</td><td data-label="操作">{if row_deleted{
  view!{<button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return}let Some(id)=restore_row["id"].as_i64()else{return};let version=restore_row["version"].clone();busy.set(true);error.set(String::new());notice.set(String::new());leptos::task::spawn_local(async move{match api::request("POST",&format!("{api_base}/{id}/restore"),Some(json!({"version":version}))).await{Ok(_)=>{notice.set("虚拟模型已恢复为停用状态，请返回模型列表确认后启用。".into());revision.update(|r|*r+=1);},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>"恢复"</button>}.into_any()
  }else{
  view!{<div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{selected.set(edit_row["id"].as_i64());draft.set(edit_row.clone());error.set(String::new());notice.set(String::new());editor_open.set(true);revision.update(|r|*r+=1);}>"编辑"</button><button type="button" class=if row_enabled{"ghost danger"}else{"ghost"} disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return}let Some(id)=disable_row["id"].as_i64()else{return};let version=disable_row["version"].clone();let active=disable_row["enabled"]==true;let enable_body=if active{None}else{match reenable(&disable_row){Ok(v)=>Some(v),Err(e)=>{error.set(e);return}}};busy.set(true);error.set(String::new());notice.set(String::new());leptos::task::spawn_local(async move{match api::request(if active{"DELETE"}else{"PATCH"},&format!("{api_base}/{id}"),Some(if active{json!({"version":version})}else{enable_body.unwrap()})).await{Ok(v)=>{if selected.get_untracked()==Some(id){draft.set(v["virtual_model"].clone());}notice.set(if active{"虚拟模型已停用，历史与配置保留。"}else{"虚拟模型已启用。"}.into());revision.update(|r|*r+=1);},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>{if row_enabled{"停用"}else{"启用"}}</button><button type="button" class="ghost danger" disabled=move||busy.get() on:click=move |_|{delete_target.set(trash_row.clone());error.set(String::new());delete_open.set(true);}>"删除"</button></div>}.into_any()
@@ -269,13 +323,13 @@ pub fn VirtualModels(ctx: Ctx, #[prop(default=false)] shared:bool) -> impl IntoV
  }).collect_view()}</tbody></table></div></div></section>
  <super::ModuleDialog open=delete_open busy=busy title="删除虚拟模型".to_string()><p>{move||format!("将 {} 移到回收站？删除后立即停止调用，历史请求和审计保留，可以恢复。",api::text(&delete_target.get(),"name"))}</p><p role="alert">{move||error.get()}</p><div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|delete_open.set(false)>"取消"</button><button type="button" class="danger" disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return}let row=delete_target.get_untracked();let Some(id)=row["id"].as_i64()else{return};busy.set(true);error.set(String::new());leptos::task::spawn_local(async move{match api::request("POST",&format!("{api_base}/{id}/trash"),Some(json!({"version":row["version"]}))).await{Ok(_)=>{delete_open.set(false);notice.set("虚拟模型已移到回收站，调用已停止，可在回收站恢复。".into());revision.update(|r|*r+=1);},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>{move||if busy.get(){"正在移到回收站…"}else{"移到回收站"}}</button></div></super::ModuleDialog>
  <p role="status">{move||if !editor_open.get(){notice.get()}else{String::new()}}</p><p role="alert">{move||if !editor_open.get(){error.get()}else{String::new()}}</p><super::ModuleDialog open=editor_open busy=busy title="调用策略设置".to_string()><h3>{move||if selected.get().is_some(){"编辑调用策略"}else{"新建调用策略"}}</h3><form class="account-form virtual-policy-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()><div class="policy-limits"><label class="account-field"><span>"虚拟模型名"</span><input type="text" required maxlength="128" placeholder="如 my-coding" prop:value=move||draft.get()["name"].as_str().unwrap_or("").to_string() on:input=move|e|draft.update(|d|d["name"]=json!(event_target_value(&e)))/></label><label class="account-field"><span>"调用方式"</span><select prop:value=move||draft.get()["mode"].as_str().unwrap_or("ordered").to_string() on:change=move|e|draft.update(|d|d["mode"]=json!(event_target_value(&e)))><option value="ordered">"按1、2、3、4顺序切换"</option><option value="scheduled">"按每周时段选择顺序"</option></select></label></div>
- <label class="account-check"><input type="checkbox" prop:checked=move||draft.get()["enabled"]==true on:change=move|e|draft.update(|d|d["enabled"]=json!(event_target_checked(&e)))/>"启用此虚拟模型"</label><div class="virtual-target-options"><h3>"调用目标"</h3><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|{error.set(String::new());revision.update(|r|*r+=1);}>"刷新可选模型"</button></div><p class="account-help">"候选取自已保存并启用的上游映射；停用、来源不可用或未获授权的模型不会列出。新增或恢复模型后，可点击刷新；刷新保留当前编辑内容。"</p><p role="status" aria-live="polite">{move||options_status.get()}</p><Show when=move||!loading.get()&&options.get().is_empty()><p class="account-help">"当前没有可选目标，请先保存并启用上游模型，再刷新。"</p></Show><p class="account-help">{if shared{"共享模型按这里选定的供应方与步骤调用；同名普通模型的渠道顺序独立配置。"}else{"个人调用策略仍遵守普通模型的渠道范围和你的访问权限。"}}</p><p class="account-help">"每个目标选择供应方与实际模型。429/400开关控制对应错误是否切到下一目标。向量与重排多目标保存时会自动检查兼容性，通过后支持网络、超时、5xx及无效响应回退；实际请求按后端真实模型能力处理，不额外缩小输入范围。其他模型维持原有规则，流式输出开始后不会重放。"</p>
+ <label class="account-check"><input type="checkbox" prop:checked=move||draft.get()["enabled"]==true on:change=move|e|draft.update(|d|d["enabled"]=json!(event_target_checked(&e)))/>"启用此虚拟模型"</label><div class="virtual-target-options"><h3>"调用目标"</h3><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|{error.set(String::new());revision.update(|r|*r+=1);}>"刷新可选模型"</button></div><p class="account-help">"候选取自已保存并启用的上游映射；停用、来源不可用或未获授权的模型不会列出。新增或恢复模型后，可点击刷新；刷新保留当前编辑内容。"</p><p role="status" aria-live="polite">{move||options_status.get()}</p><Show when=move||!loading.get()&&options.get().is_empty()><p class="account-help">"当前没有可选目标，请先保存并启用上游模型，再刷新。"</p></Show><p class="account-help">{if shared{"共享模型按这里选定的供应方与步骤调用；同名普通模型的渠道顺序独立配置。"}else{"个人调用策略仍遵守普通模型的渠道范围和你的访问权限。"}}</p><p class="account-help">"每个目标选择供应方与实际模型。429/400开关控制对应错误是否切到下一目标。保存仅检查配置，不调用上游。保存后可在列表中单独验证各目标；向量与重排多目标需另外通过后台完整兼容验证后才能调用。验证失败不撤销已保存的配置；实际请求按后端真实模型能力处理，不额外缩小输入范围。其他模型维持原有规则，流式输出开始后不会重放。"</p>
  {move||api::rows(&draft.get(),"targets").into_iter().enumerate().map(|(index,target)|{let position=index+1;view!{<section class="virtual-target panel"><header class="card-head"><h3>{format!("第{position}步")}</h3><div class="account-actions"><button type="button" class="ghost" aria-label=format!("上移第{position}步") disabled=move||index==0 on:click=move |_|draft.update(|d|rearrange(d,index,Some(index-1)))>"上移"</button><button type="button" class="ghost" aria-label=format!("下移第{position}步") disabled=move||{index+1>=api::rows(&draft.get(),"targets").len()} on:click=move |_|draft.update(|d|rearrange(d,index,Some(index+1)))>"下移"</button><button type="button" class="ghost danger" aria-label=format!("移除第{position}步") on:click=move |_|draft.update(|d|rearrange(d,index,None))>"移除"</button></div></header><label class="account-field"><span>"供应方与模型"</span><select prop:value=move||options.get().iter().position(|o|o["provider_id"]==draft.get()["targets"][index]["provider_id"]&&o["logical_model"]==draft.get()["targets"][index]["logical_model"]).map(|n|n.to_string()).unwrap_or_default() on:change=move|e|{if let Ok(n)=event_target_value(&e).parse::<usize>(){if let Some(o)=options.get_untracked().get(n){draft.update(|d|{d["targets"][index]["provider_id"]=o["provider_id"].clone();d["targets"][index]["logical_model"]=o["logical_model"].clone();})}}}><option value="">"选择已授权目标"</option>{move||options.get().into_iter().enumerate().map(|(i,o)|view!{<option value=i.to_string()>{format!("{} · {}",api::text(&o,"provider_name"),api::text(&o,"logical_model"))}</option>}).collect_view()}</select></label><div class="account-actions"><label class="account-check"><input type="checkbox" prop:checked=target["switch_on_429"]==true on:change=move|e|draft.update(|d|d["targets"][index]["switch_on_429"]=json!(event_target_checked(&e)))/>"429时切下一目标"</label><label class="account-check"><input type="checkbox" prop:checked=target["switch_on_400"]==true on:change=move|e|draft.update(|d|d["targets"][index]["switch_on_400"]=json!(event_target_checked(&e)))/>"400时切下一目标"</label></div></section>}}).collect_view()}
  <button type="button" class="ghost" disabled=move||options.get().is_empty()||(api::rows(&draft.get(),"targets").len()>=16) on:click=move |_|{if let Some(o)=options.get_untracked().first(){draft.update(|d|{let mut targets=api::rows(d,"targets");targets.push(new_target(o));let n=targets.len();d["targets"]=json!(targets);let mut defaults=selected_positions(&d["default_positions"]);defaults.push(n as i64);d["default_positions"]=json!(defaults);})}}>"添加调用目标"</button>
  <Show when=move||draft.get()["mode"]=="scheduled"><h3>"每周时段"</h3><label class="account-field"><span>"时区"</span><select prop:value=move||draft.get()["timezone"].as_str().unwrap_or("Asia/Shanghai").to_string() on:change=move|e|draft.update(|d|d["timezone"]=json!(event_target_value(&e)))><option value="Asia/Shanghai">"北京时间 UTC+8"</option><option value="UTC">"UTC"</option></select></label><p class="account-help">"开始时间包含、结束时间不包含；结束00:00表示当日24:00。跨午夜自动拆分为两段；重叠时段不能保存。开始新尝试时复核时段，已开始的推理不会到点中断。"</p>
  {move||api::rows(&draft.get(),"windows").into_iter().enumerate().map(|(i,w)|view!{<section class="panel"><header class="card-head"><h3>{format!("时段{}",i+1)}</h3><button type="button" class="ghost danger" on:click=move |_|draft.update(|d|{let mut a=api::rows(d,"windows");a.remove(i);d["windows"]=json!(a);})>"移除此时段"</button></header><div class="policy-options">{["周一","周二","周三","周四","周五","周六","周日"].into_iter().enumerate().map(|(day,label)|view!{<label class="account-check"><input type="checkbox" prop:checked=w["days_mask"].as_i64().unwrap_or(0)&(1<<day)!=0 on:change=move|e|draft.update(|d|{let mask=d["windows"][i]["days_mask"].as_i64().unwrap_or(0);d["windows"][i]["days_mask"]=json!(if event_target_checked(&e){mask|(1<<day)}else{mask&!(1<<day)});})/>{label}</label>}).collect_view()}</div><div class="policy-limits"><label class="account-field"><span>"开始"</span><input type="time" required prop:value=clock(w["start_minute"].as_i64().unwrap_or(0)) on:input=move|e|{if let Some(n)=minute(&event_target_value(&e),false){draft.update(|d|d["windows"][i]["start_minute"]=json!(n))}}/></label><label class="account-field"><span>"结束"</span><input type="time" required prop:value=clock(w["end_minute"].as_i64().unwrap_or(1440)) on:input=move|e|{if let Some(n)=minute(&event_target_value(&e),true){draft.update(|d|d["windows"][i]["end_minute"]=json!(n))}}/></label></div><p>"此时段按以下步骤顺序调用："</p><div class="policy-options">{move||api::rows(&draft.get(),"targets").iter().enumerate().map(|(n,t)|{let checked=selected_positions(&draft.get()["windows"][i]["target_positions"]).contains(&(n as i64+1));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle_position(draft,Some(i),n as i64+1,event_target_checked(&e))/>{format!("第{}步 · {}",n+1,api::text(t,"logical_model"))}</label>}}).collect_view()}</div></section>}).collect_view()}
  <button type="button" class="ghost" on:click=move |_|draft.update(|d|{let mut w=api::rows(d,"windows");w.push(json!({"days_mask":127,"start_minute":0,"end_minute":1440,"target_positions":[1]}));d["windows"]=json!(w);})>"添加时段"</button><h3>"无时段命中时"</h3><p class="account-help">"勾选默认调用顺序；全部不选则拒绝调用，不会擅自换到其他模型。"</p><div class="policy-options">{move||api::rows(&draft.get(),"targets").iter().enumerate().map(|(n,t)|{let checked=selected_positions(&draft.get()["default_positions"]).contains(&(n as i64+1));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle_position(draft,None,n as i64+1,event_target_checked(&e))/>{format!("第{}步 · {}",n+1,api::text(t,"logical_model"))}</label>}}).collect_view()}</div></Show>
- <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p><div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|editor_open.set(false)>"取消"</button><button class="primary" type="submit">{move||if busy.get(){"正在保存并检查目标…"}else{"保存调用策略"}}</button></div></fieldset></form></super::ModuleDialog></div>}.into_any()
+ <p role="alert">{move||error.get()}</p><p role="status">{move||notice.get()}</p><div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|editor_open.set(false)>"取消"</button><button class="primary" type="submit">{move||if busy.get(){"正在保存配置…"}else{"保存调用策略"}}</button></div></fieldset></form></super::ModuleDialog></div>}.into_any()
 }
 #[cfg(test)]
 mod tests {

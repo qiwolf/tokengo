@@ -19,6 +19,8 @@ pub fn router() -> Router<SharedState> {
             "/api/shared-virtual-models/{id}",
             patch(update).delete(disable),
         )
+        .route("/api/shared-virtual-models/{id}/verify",post(verify))
+        .route("/api/shared-virtual-models/{id}/targets/{position}/verify",post(verify_target))
         .route("/api/shared-virtual-models/{id}/trash",post(trash))
         .route("/api/shared-virtual-models/{id}/restore",post(restore))
         .route("/api/model-access", put(model_access))
@@ -77,7 +79,7 @@ async fn list(root: RootGrant, State(s): State<SharedState>,Query(query):Query<L
         }
     }
     Ok(Json(
-        json!({"virtual_models":shared::list_all(&c)?.into_iter().filter(|r|r.deleted_at_ms.is_some()==query.trash).map(|r|{let status=crate::vector_renewal::status(&c,0,&r.config);let mut v=serde_json::to_value(r).unwrap_or_default();v["compatibility"]=status;v}).collect::<Vec<_>>(),"options":options}),
+        json!({"virtual_models":shared::list_all(&c)?.into_iter().filter(|r|r.deleted_at_ms.is_some()==query.trash).map(|r|{let status=crate::vector_renewal::saved_status(&s,&c,0,r.id,r.version,&r.config);let mut v=serde_json::to_value(r).unwrap_or_default();v["compatibility"]=status;v}).collect::<Vec<_>>(),"options":options}),
     ))
 }
 async fn create(
@@ -91,9 +93,6 @@ async fn create(
         shared::preflight(&c, &v, None).map_err(api)?;
         actor
     };
-    crate::vector_compat::verify_shared(&s, &v, actor)
-        .await
-        .map_err(api)?;
     let c = s.conn();
     valid(&root, &c)?;
     Ok(Json(
@@ -129,9 +128,6 @@ async fn update(
         shared::preflight(&c, &v.config, Some(id)).map_err(api)?;
         actor
     };
-    crate::vector_compat::verify_shared(&s, &v.config, actor)
-        .await
-        .map_err(api)?;
     let c = s.conn();
     valid(&root, &c)?;
     Ok(Json(
@@ -142,6 +138,49 @@ async fn update(
 #[serde(deny_unknown_fields)]
 struct Version {
     version: i64,
+}
+/// Validation always uses the persisted version, never an unsaved editor payload.
+fn verification_config(
+    s: &SharedState,
+    root: &RootGrant,
+    id: i64,
+    version: i64,
+) -> Result<(i64, vr::Config), ApiError> {
+    let c = s.conn();
+    let actor = valid(root, &c)?;
+    let row = shared::get(&c, id)?.ok_or_else(|| ApiError::not_found("共享模型不存在"))?;
+    if row.version != version {
+        return Err(ApiError::new(StatusCode::CONFLICT, "virtual_route_changed", "共享模型已修改，请刷新后验证"));
+    }
+    Ok((actor, row.config))
+}
+async fn verify(
+    root: RootGrant,
+    State(s): State<SharedState>,
+    Path(id): Path<i64>,
+    Json(body): Json<Version>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let (actor, config) = verification_config(&s, &root, id, body.version)?;
+    let status = crate::vector_renewal::start_saved(
+        &s, 0, id, body.version, config, Some(actor),
+    ).map_err(api)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({"compatibility":status}))))
+}
+async fn verify_target(
+    root: RootGrant,
+    State(s): State<SharedState>,
+    Path((id, position)): Path<(i64, usize)>,
+    Json(body): Json<Version>,
+) -> Result<Json<Value>, ApiError> {
+    let (actor, config) = verification_config(&s, &root, id, body.version)?;
+    let guard = crate::vector_renewal::RouteGuard {
+        user: 0, id, version: body.version, allow_disabled: true,
+    };
+    let result = crate::vector_compat::verify_target(
+        &s, 0, &config, position, Some(actor), &guard,
+    ).await;
+    verification_config(&s, &root, id, body.version)?;
+    Ok(Json(result.map_err(api)?))
 }
 async fn disable(
     root: RootGrant,

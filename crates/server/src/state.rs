@@ -94,6 +94,8 @@ pub struct AppState {
     pub auth_slots: Arc<tokio::sync::Semaphore>,
     pub model_loads: Arc<ModelLoads>,
     pub auto_sequence: std::sync::atomic::AtomicU64,
+    /// Explicit vector checks are independent of editor requests and deduplicated per saved version.
+    pub(crate) vector_verification_jobs: Mutex<HashSet<(i64, i64, i64)>>,
     /// Entrypoint + provider + target model rotation, independent from Key affinity.
     local_vector_sequences: Mutex<HashMap<(String, i64, String), u64>>,
     pub db: Mutex<Connection>,
@@ -281,6 +283,7 @@ impl AppState {
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             model_loads: Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),
+            vector_verification_jobs: Mutex::new(HashSet::new()),
             local_vector_sequences: Mutex::new(HashMap::new()),
             db: Mutex::new(conn),
             routing: Mutex::new(router),

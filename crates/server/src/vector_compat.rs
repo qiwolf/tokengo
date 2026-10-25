@@ -74,8 +74,17 @@ fn snapshot(
     targets: &[vr::Target],
     kind: ModelKind,
 ) -> Result<Snapshot, vr::VirtualError> {
-    if targets.len() < 2 || !supported(kind) {
-        return Err(unverified("兼容合同仅用于向量或重排多目标调用链"));
+    snapshot_with_source(c, user, targets, kind, None)
+}
+fn snapshot_with_source(
+    c: &Connection,
+    user: i64,
+    targets: &[vr::Target],
+    kind: ModelKind,
+    source_filter: Option<i64>,
+) -> Result<Snapshot, vr::VirtualError> {
+    if targets.is_empty() || !supported(kind) {
+        return Err(unverified("检查要求至少一个向量或重排目标"));
     }
     let auth = vr::owner_auth(c, user)?;
     let mut facts = Vec::new();
@@ -100,7 +109,7 @@ fn snapshot(
             db::model_routes::provider_channels_for(c,&target.logical_model,target.provider_id)?
         }else{db::model_routes::channels_for(c,&target.logical_model)?};
         for channel in channels {
-            if !ids.contains(&channel.id.0) {
+            if !ids.contains(&channel.id.0) || source_filter.is_some_and(|id| id != channel.id.0) {
                 continue;
             }
             if !crate::protocol_config::background_probe_allowed(c, channel.id.0)? {
@@ -241,6 +250,7 @@ struct ProbeContext<'a> {
     kind: ModelKind,
     fingerprint: &'a str,
     guard: Option<&'a crate::vector_renewal::RouteGuard>,
+    source_filter: Option<i64>,
 }
 struct ProbeBilling {
     state: SharedState,
@@ -381,7 +391,7 @@ async fn request(
         if let Some(actor) = context.actor {
             db::shared_virtual_routes::root_actor(&c, actor)?;
         }
-        if snapshot(&c, context.user, context.targets, context.kind)?.fingerprint
+        if snapshot_with_source(&c, context.user, context.targets, context.kind, context.source_filter)?.fingerprint
             != context.fingerprint
         {
             return Err(unverified("兼容检查期间来源配置或权限已变化，请重试"));
@@ -560,6 +570,74 @@ async fn observe(state:&SharedState,context:&ProbeContext<'_>,source:&Source,con
         Ok(Reference{rank:Some(source_ranks),unit_normalized:true,..Reference::default()})
     }
 }
+/// A saved target can be diagnosed independently. This never issues or upgrades a
+/// cross-source compatibility contract, even when every source responds successfully.
+pub(crate) async fn verify_target(
+    state: &SharedState,
+    user: i64,
+    config: &vr::Config,
+    position: usize,
+    actor: Option<i64>,
+    guard: &crate::vector_renewal::RouteGuard,
+) -> Result<Value, vr::VirtualError> {
+    let target = config.targets.get(position.checked_sub(1).ok_or_else(|| error("invalid_virtual_route", "目标位置无效"))?)
+        .ok_or_else(|| error("invalid_virtual_route", "目标位置无效"))?;
+    let targets = [target.clone()];
+    let (kind, sources) = {
+        let c = state.conn();
+        guard.check(&c)?;
+        if let Some(actor) = actor { db::shared_virtual_routes::root_actor(&c, actor)?; }
+        let kind = db::model_routes::routes_for(&c, &target.logical_model)?
+            .ok_or_else(|| error("virtual_target_forbidden", "目标模型已不存在"))?.kind;
+        if !supported(kind) {
+            return Err(error("vector_target_verification_unsupported", "此处支持向量与重排目标验证；其他用途请使用渠道诊断"));
+        }
+        let auth = vr::owner_auth(&c, user)?;
+        let ids = if user == 0 { vr::allowed_sources_shared(&c, &auth, target)? } else { vr::allowed_sources(&c, &auth, target)? };
+        let channels = if user == 0 { db::model_routes::provider_channels_for(&c, &target.logical_model, target.provider_id)? } else { db::model_routes::channels_for(&c, &target.logical_model)? };
+        let sources = channels.into_iter().filter(|channel| ids.contains(&channel.id.0))
+            .map(|channel| Source { channel, model: target.logical_model.clone() }).collect::<Vec<_>>();
+        if sources.is_empty() || sources.len() > 32 { return Err(error("virtual_target_forbidden", "目标要求1至32个已授权可用来源")); }
+        (kind, sources)
+    };
+    // Every physical source is bounded independently, including errors in source
+    // configuration. No source failure or diagnostic wait holds the editor busy.
+    let checks = sources.iter().map(|source| {
+        let targets = &targets;
+        async move {
+            let started = std::time::Instant::now();
+            let check = async {
+                let snap = {
+                    let c = state.conn();
+                    guard.check(&c)?;
+                    snapshot_with_source(&c, user, targets, kind, Some(source.channel.id.0))?
+                };
+                let context = ProbeContext { user, actor, targets, kind, fingerprint: &snap.fingerprint, guard: Some(guard), source_filter: Some(source.channel.id.0) };
+                let contract = candidate_contract(snap.fingerprint.clone());
+                observe(state, &context, source, &contract).await?;
+                let c = state.conn();
+                guard.check(&c)?;
+                if snapshot_with_source(&c, user, targets, kind, Some(source.channel.id.0))?.fingerprint != snap.fingerprint {
+                    return Err(unverified("验证期间来源配置或权限已变化，请重新验证"));
+                }
+                Ok::<_,vr::VirtualError>(())
+            };
+            let result = tokio::time::timeout(Duration::from_secs(20), check).await
+                .map_err(|_| error("vector_source_unavailable", "此来源验证超过20秒，其他来源独立检查"))
+                .and_then(|result| result);
+            let (phase, message, code) = match result {
+                Ok(()) => ("valid", "此来源的小样本调用验证通过；不代表跨来源兼容认证".to_owned(), ""),
+                Err(e) => ("failed", e.message, e.code),
+            };
+            json!({"source_id":source.channel.id.0,"source_name":source.channel.name,"logical_model":source.model,
+                "state":phase,"message":message,"error_code":code,"latency_ms":started.elapsed().as_millis() as u64})
+        }
+    });
+    let sources = futures_util::future::join_all(checks).await;
+    guard.check(&state.conn())?;
+    Ok(json!({"position":position,"version":guard.version,"sources":sources,
+        "message":"目标验证已完成；结果仅用于诊断，不修改配置或跨来源兼容证据"}))
+}
 /// Deterministic long-form corpus: every candidate is preserved and individually identifiable.
 fn workload_texts(count: usize) -> Vec<String> {
     (0..count).map(|i| {
@@ -608,7 +686,7 @@ fn read_reference(c:&Connection,user:i64,fp:&str)->Result<Option<Reference>,vr::
 pub(crate) async fn verify_impl(state:&SharedState,user:i64,config:&vr::Config,actor:Option<i64>,force:bool,guard:Option<&crate::vector_renewal::RouteGuard>)->Result<(),vr::VirtualError>{
     if config.targets.len()<2{return Ok(());}
     let(kind,snapshot,mut reference,previous_contract)={let c=state.conn();let kind=db::model_routes::routes_for(&c,&config.targets[0].logical_model)?.ok_or_else(||unverified("目标模型不存在"))?.kind;if !supported(kind){return Ok(());}if !force&&require(&c,user,&config.targets,kind).is_ok(){return Ok(());}let snap=snapshot(&c,user,&config.targets,kind)?;let reference=read_reference(&c,user,&snap.fingerprint)?;let previous=historical(&c,user,&config.targets,kind).ok();(kind,snap,reference,previous)};
-    let context=ProbeContext{user,actor,targets:&config.targets,kind,fingerprint:&snapshot.fingerprint,guard};
+    let context=ProbeContext{user,actor,targets:&config.targets,kind,fingerprint:&snapshot.fingerprint,guard,source_filter:None};
     // Full workload certification is explicit; daily renewal never reruns 300 long documents.
     let budget = Duration::from_millis((snapshot.sources.len() as u64).saturating_mul(full_source_budget_ms(kind)));
     let checked=tokio::time::timeout(budget,async{
@@ -673,7 +751,7 @@ impl PartialVerification{
 /// Renew each source against an immutable numeric/ranking reference; one outage is not chain revocation.
 pub(crate) async fn renew_sources(state:&SharedState,user:i64,config:&vr::Config,actor:Option<i64>,guard:Option<&crate::vector_renewal::RouteGuard>,previous:&[SourceCheck])->Result<PartialVerification,vr::VirtualError>{
     let(kind,snapshot,mut contract,reference)={let c=state.conn();let kind=db::model_routes::routes_for(&c,&config.targets[0].logical_model)?.ok_or_else(||unverified("目标模型不存在"))?.kind;let snap=snapshot(&c,user,&config.targets,kind)?;let contract=historical(&c,user,&config.targets,kind)?;let reference=read_reference(&c,user,&snap.fingerprint)?.ok_or_else(||unverified("尚未建立完整数值参考，不能由单一来源续签整链"))?;(kind,snap,contract,reference)};
-    let context=ProbeContext{user,actor,targets:&config.targets,kind,fingerprint:&snapshot.fingerprint,guard};
+    let context=ProbeContext{user,actor,targets:&config.targets,kind,fingerprint:&snapshot.fingerprint,guard,source_filter:None};
     let mut order=(0..snapshot.sources.len()).collect::<Vec<_>>();
     order.sort_by_key(|i|{let s=&snapshot.sources[*i];previous.iter().find(|r|r.source_id==s.channel.id.0&&r.logical_model==s.model).map(|r|(if r.usable(db::now_ms()){0}else if r.checked_at_ms==0{1}else{2},r.checked_at_ms)).unwrap_or((1,0))});
     let deadline=tokio::time::Instant::now()+Duration::from_secs(60);let mut checks=Vec::new();

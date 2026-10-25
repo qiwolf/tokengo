@@ -1,9 +1,8 @@
 //! Voluntary workload-profile upgrades must preserve valid old service on failure.
 use axum::{
     Json, Router,
-    body::Body,
     extract::State,
-    http::{Request, StatusCode, Uri},
+    http::{StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -15,13 +14,10 @@ use tokengo_server::{
     vector_compat, vector_renewal,
 };
 use tokengo_shared::{ChannelId, ModelKind};
-use tower::ServiceExt;
 #[derive(Clone, Copy, Default)]
 enum Behavior {
     #[default]
     Good,
-    Status(u16),
-    Dimension,
     WorkloadUnavailable,
 }
 #[derive(Default)]
@@ -68,13 +64,9 @@ fn hash(text: &str) -> u64 {
         (v ^ u64::from(b)).wrapping_mul(0x100000001b3)
     })
 }
-fn embedding(text: &str, behavior: Behavior) -> Vec<f64> {
+fn embedding(text: &str, _behavior: Behavior) -> Vec<f64> {
     let mut seed = hash(text);
-    let n = if matches!(behavior, Behavior::Dimension) {
-        7
-    } else {
-        8
-    };
+    let n = 8;
     let values: Vec<f64> = (0..n)
         .map(|_| {
             seed ^= seed << 13;
@@ -103,13 +95,6 @@ async fn upstream(
             || body["input"].as_array().is_some_and(|items| items.len() >= 300))
     {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error":{"message":"fixture large workload unavailable"}}))).into_response();
-    }
-    if let Behavior::Status(code) = behavior {
-        return (
-            StatusCode::from_u16(code).unwrap(),
-            Json(json!({"error":{"message":"controlled failure"}})),
-        )
-            .into_response();
     }
     if uri.path().ends_with("embeddings") {
         let input: Vec<&str> = if let Some(s) = body["input"].as_str() {
@@ -307,16 +292,6 @@ impl Fixture {
     fn scope(&self, shared: bool) -> i64 {
         if shared { 0 } else { self.user }
     }
-    fn age(&self, hours: i64) {
-        let c = self.state.conn();
-        for (k, raw) in db::settings::all(&c).unwrap() {
-            if k.starts_with("internal_vector_compat_v1:") {
-                let mut v: Value = serde_json::from_str(&raw).unwrap();
-                v["verified_at_ms"] = json!(db::now_ms() - hours * 60 * 60 * 1000);
-                db::settings::set(&c, &k, &v.to_string()).unwrap();
-            }
-        }
-    }
     fn retry_now(&self) {
         let c = self.state.conn();
         for (k, raw) in db::settings::all(&c).unwrap() {
@@ -403,7 +378,7 @@ async fn manual(f: &Fixture, shared: bool) -> Result<(), vr::VirtualError> {
 }
 
 #[tokio::test]
-async fn manual_save_upgrades_fresh_old_profiles_with_full_workload_while_tick_stays_light() {
+async fn explicit_validation_upgrades_fresh_old_profiles_with_full_workload_while_tick_stays_light() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             let f = Fixture::new(kind, 2).await;
@@ -412,6 +387,7 @@ async fn manual_save_upgrades_fresh_old_profiles_with_full_workload_while_tick_s
             vector_renewal::tick(&f.state).await.unwrap();
             assert_eq!(f.count(), 0, "fresh old profile does not trigger paid background load tests");
             manual(&f, shared).await.unwrap();
+            f.diagnostics(shared);
             let (_, upgraded) = compatibility(&f, shared);
             assert_eq!(upgraded["version"], 4);
             assert!(upgraded["workload_verified_at_ms"].as_i64().unwrap() > 0);
@@ -421,7 +397,7 @@ async fn manual_save_upgrades_fresh_old_profiles_with_full_workload_while_tick_s
                     body["documents"].as_array().is_some_and(|docs| docs.len() == 300)
                 } else {
                     body["input"].as_array().is_some_and(|items| items.len() == 300)
-                }), "manual save must execute actual 300-item verification on every source");
+                }), "explicit validation must execute actual 300-item verification on every source");
             }
             f.clear();
             vector_renewal::tick(&f.state).await.unwrap();

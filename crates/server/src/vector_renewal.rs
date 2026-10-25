@@ -84,20 +84,172 @@ pub(crate) struct RouteGuard {
     pub user: i64,
     pub id: i64,
     pub version: i64,
+    pub allow_disabled: bool,
 }
 impl RouteGuard {
     pub(crate) fn check(&self, c: &Connection) -> Result<(), vr::VirtualError> {
         let valid = if self.user == 0 {
             db::shared_virtual_routes::get(c,self.id)?
-                .is_some_and(|r| r.version == self.version && r.config.enabled)
+                .is_some_and(|r| r.version == self.version && (self.allow_disabled || r.config.enabled))
         } else {
             vr::get(c,self.user,self.id)?
-                .is_some_and(|r| r.version == self.version && r.config.enabled)
+                .is_some_and(|r| r.version == self.version && (self.allow_disabled || r.config.enabled))
         };
         if !valid {
             return Err(fail("续验期间策略已停用或修改，旧检查结果不再发布"));
         }
         Ok(())
+    }
+}
+/// A separate task ticket keeps repeated clicks from creating parallel checks of one version.
+struct VerificationJob {
+    state: SharedState,
+    identity: (i64, i64, i64),
+    token: String,
+}
+impl Drop for VerificationJob {
+    fn drop(&mut self) {
+        self.state.vector_verification_jobs.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.identity);
+        let c = self.state.conn();
+        let (user, id, _) = self.identity;
+        if let Ok(Some(raw)) = db::settings::get(&c, &manual_key(user, id)) {
+            if let Ok(mut row) = serde_json::from_str::<Value>(&raw) {
+                if row["token"] == self.token && row["state"] == "checking" {
+                    row["state"] = "failed".into();
+                    row["error_code"] = "vector_verification_interrupted".into();
+                    row["message"] = "独立验证任务已中断，请重新启动验证；配置不受影响".into();
+                    row["finished_at_ms"] = db::now_ms().into();
+                    let _ = db::settings::set(&c, &manual_key(user, id), &row.to_string());
+                }
+            }
+        }
+    }
+}
+fn manual_key(user: i64, id: i64) -> String { format!("internal_vector_manual_job_v1:{user}:{id}") }
+/// Editor requests only schedule validation. Neither saving nor closing the page owns this task.
+pub(crate) fn start_saved(
+    state: &SharedState,
+    user: i64,
+    id: i64,
+    version: i64,
+    config: vr::Config,
+    actor: Option<i64>,
+) -> Result<Value, vr::VirtualError> {
+    let guard = RouteGuard { user, id, version, allow_disabled: true };
+    {
+        let c = state.conn();
+        guard.check(&c)?;
+        if let Some(actor) = actor {
+            db::shared_virtual_routes::root_actor(&c, actor)?;
+            vr::preflight_shared(&c, &config)?;
+        } else {
+            vr::preflight(&c, user, &config)?;
+        }
+        let kind = config.targets.first().and_then(|t| db::model_routes::routes_for(&c, &t.logical_model).ok().flatten()).map(|r| r.kind).unwrap_or_default();
+        if config.targets.len() < 2 || !matches!(kind, ModelKind::Embeddings | ModelKind::Rerank) {
+            return Ok(serde_json::json!({"state":"not_required","message":"此策略无需向量或重排跨来源兼容验证"}));
+        }
+        // Surface unsupported source configurations immediately, without scheduling
+        // a job whose first local snapshot would otherwise fail out of view.
+        let fp = vector_compat::fingerprint(&c, user, &config.targets, kind)?;
+        let renewal = read(&c, &key(user, &fp))?;
+        if renewal.lease_until_ms > db::now_ms() {
+            let same_job = state.vector_verification_jobs.lock().unwrap_or_else(|e| e.into_inner()).contains(&(user,id,version));
+            if same_job {
+                return Ok(saved_status(state, &c, user, id, version, &config));
+            }
+            return Err(vr::VirtualError {
+                code: "vector_compatibility_renewing",
+                message: "相同来源的另一项检查仍在执行，本次未创建验证任务；请稍后重新启动验证".into(),
+            });
+        }
+    }
+    let identity = (user, id, version);
+    let inserted = state.vector_verification_jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(identity);
+    if inserted {
+        let state = state.clone();
+        let token = uuid::Uuid::new_v4().to_string();
+        let job = VerificationJob { state: state.clone(), identity, token: token.clone() };
+        {
+            let c = state.conn();
+            db::settings::set(&c, &manual_key(user, id), &json!({"version":version,"token":token,
+                "state":"checking","message":"独立兼容验证已排入后台","started_at_ms":db::now_ms()}).to_string())?;
+        }
+        tokio::spawn(async move {
+            let _job = job;
+            let result = verify(&state, user, &config, actor, Some(guard), false).await;
+            let (phase, message, code) = match result {
+                Ok(()) => ("valid", "独立兼容验证已完成".to_owned(), ""),
+                Err(e) => {
+                    tracing::warn!(scope=user,model=%config.name,error_code=e.code,"独立兼容验证未完成；结果可在调用策略查看");
+                    ("failed", e.message, e.code)
+                },
+            };
+            let c = state.conn();
+            if let Ok(Some(raw)) = db::settings::get(&c, &manual_key(user, id)) {
+                if let Ok(mut row) = serde_json::from_str::<Value>(&raw) {
+                    if row["token"] == token {
+                        row["state"] = phase.into();
+                        row["message"] = message.into();
+                        row["error_code"] = code.into();
+                        row["finished_at_ms"] = db::now_ms().into();
+                        if let Err(e) = db::settings::set(&c, &manual_key(user, id), &row.to_string()) {
+                            tracing::warn!(scope=user,route=id,error=%e,"无法持久化独立验证结果");
+                        }
+                    }
+                }
+            }
+        });
+    }
+    Ok(serde_json::json!({"state":"checking","message":"兼容验证已在后台进行，可以继续编辑或离开页面"}))
+}
+/// Expose a queued task immediately, before it has acquired its durable source lease.
+pub(crate) fn saved_status(state: &SharedState, c: &Connection, user: i64, id: i64, version: i64, config: &vr::Config) -> Value {
+    let mut value = status(c, user, config);
+    let active = state.vector_verification_jobs.lock().unwrap_or_else(|e| e.into_inner()).contains(&(user,id,version));
+    if let Ok(Some(raw)) = db::settings::get(c, &manual_key(user, id)) {
+        if let Ok(mut row) = serde_json::from_str::<Value>(&raw) {
+            if row["version"] == version {
+                if let Some(fields) = row.as_object_mut() { fields.remove("token"); }
+                if row["state"] == "failed" {
+                    let previous = value["message"].as_str().unwrap_or("");
+                    value["message"] = format!("独立验证未完成：{}；{}", row["message"].as_str().unwrap_or("请重新验证"), previous).into();
+                    if value["state"] != "valid" && value["state"] != "degraded" && value["state"] != "disabled" {
+                        value["state"] = "failed".into();
+                        value["error_code"] = row["error_code"].clone();
+                    }
+                } else if row["state"] == "checking" && !active && value["state"] != "checking" {
+                    row["state"] = "interrupted".into();
+                    row["message"] = "上次独立验证未完成，请重新启动验证".into();
+                    value["message"] = row["message"].clone();
+                }
+                value["manual_verification"] = row;
+            }
+        }
+    }
+    if active {
+        value["state"] = "checking".into();
+        value["message"] = "兼容验证在后台进行，可以继续编辑或离开页面".into();
+    }
+    value
+}
+/// Restore only our unfinished lease when a task is cancelled or superseded by an edit.
+struct RenewalLease {
+    state: SharedState,
+    key: String,
+    token: String,
+    previous: Renewal,
+}
+impl Drop for RenewalLease {
+    fn drop(&mut self) {
+        let c = self.state.conn();
+        if let Ok(current) = read(&c, &self.key) {
+            if current.token == self.token && current.state == "checking" && current.lease_until_ms > 0 {
+                let mut previous = self.previous.clone();
+                previous.lease_until_ms = 0;
+                let _ = write(&c, &self.key, &previous);
+            }
+        }
     }
 }
 /// Shared by manual saves and background scans, with a durable lease across restarts.
@@ -129,10 +281,18 @@ pub(crate) async fn verify(
         if let Some(g) = &guard {
             g.check(&c)?;
         }
+        // First-time heavy certification is an explicit action after saving. The
+        // scheduler renews existing evidence but never starts a load test for a new edit.
+        if automatic && !vector_compat::has_history(&c, user, &config.targets, kind) {
+            return Ok(());
+        }
         let fingerprint = vector_compat::fingerprint(&c, user, &config.targets, kind)?;
+        if automatic && matches!(vector_compat::has_reference(&c, user, &fingerprint), Ok(false)) {
+            return Ok(());
+        }
         let current = vector_compat::require(&c, user, &config.targets, kind);
         let previous_valid = current.is_ok();
-        // Saving an old workload profile authorizes a complete upgrade. Background
+        // An explicit compatibility check may upgrade an old workload profile. Background
         // renewal keeps using the compact immutable reference and never does a load test.
         let full_verification = !automatic
             && current.as_ref().map_or(true, |contract| !vector_compat::current_profile(contract));
@@ -162,8 +322,7 @@ pub(crate) async fn verify(
         let tx = c.unchecked_transaction()?;
         let mut r = read(&tx, &k)?;
         let now = db::now_ms();
-        if r.lease_until_ms > now
-            || (r.next_retry_at_ms > now && !(full_verification && previous_valid)) {
+        if r.lease_until_ms > now || (automatic && r.next_retry_at_ms > now) {
             if automatic {
                 return Ok(());
             }
@@ -189,10 +348,11 @@ pub(crate) async fn verify(
         tx.commit()?;
         previous
     };
+    let _lease = RenewalLease { state: state.clone(), key: k.clone(), token: token.clone(), previous: previous.clone() };
     let has_history={let c=state.conn();vector_compat::has_history(&c,user,&config.targets,kind)};
     let has_reference={let c=state.conn();vector_compat::has_reference(&c,user,&fingerprint)};
     let partial=if !full_verification&&has_history&&matches!(has_reference,Ok(true)){Some(vector_compat::renew_sources(state,user,config,actor,guard.as_ref(),&previous.sources).await)}else{None};
-    let result=if let Err(e)=has_reference{Err(e)}else if let Some(result)=&partial{result.as_ref().map(|_|()).map_err(|e|vr::VirtualError{code:e.code,message:e.message.clone()})}else{vector_compat::verify_impl(state,user,config,actor,true,guard.as_ref()).await};
+    let result=if let Err(e)=has_reference{Err(e)}else if let Some(result)=&partial{result.as_ref().map(|_|()).map_err(|e|vr::VirtualError{code:e.code,message:e.message.clone()})}else if automatic {Err(vr::VirtualError{code:"vector_fallback_unverified",message:"缺少数值参考，请独立启动兼容验证；自动续验不会执行完整负载检查".into()})}else{vector_compat::verify_impl(state,user,config,actor,true,guard.as_ref()).await};
     {
         let c=state.conn();let tx=c.unchecked_transaction()?;let mut r=read(&tx,&k)?;
         if r.token!=token{return Err(fail("自动续验租约已变化，旧结果不再生效"));}
@@ -223,7 +383,7 @@ pub(crate) async fn verify(
     if let Err(e) = &result {
         tracing::warn!(scope=user,model=%config.name,kind=?kind,error_code=e.code,"兼容检查未完成；逐来源服务状态和负载升级失败原因已记录");
     }
-    if !automatic {if let Some(Ok(outcome))=&partial {if !outcome.sources.iter().all(|s|s.usable(db::now_ms())){return Err(vr::VirtualError{code:"vector_source_unavailable",message:"部分来源尚未通过兼容检查；现有健康来源继续服务，请修复来源后再保存策略".into()});}}}
+    if !automatic {if let Some(Ok(outcome))=&partial {if !outcome.sources.iter().all(|s|s.usable(db::now_ms())){return Err(vr::VirtualError{code:"vector_source_unavailable",message:"部分来源尚未通过兼容检查；现有健康来源继续服务，请修复来源后再单独验证".into()});}}}
     result
 }
 /// Visible to the owning user/root. Does not expose URLs, credentials or provider response bodies.
@@ -259,15 +419,18 @@ pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
             .and_then(|s| serde_json::from_str::<Value>(&s).ok());
         let verified = raw.as_ref().and_then(|v| v["verified_at_ms"].as_i64());
         let current = vector_compat::require(c, user, &config.targets, kind);
+        let renewable = vector_compat::has_history(c, user, &config.targets, kind)
+            && vector_compat::has_reference(c, user, &fp).unwrap_or(false);
         let now = db::now_ms();
         let available=r.sources.iter().filter(|s|s.usable(now)).count();
         let (phase, mut message) = if !r.sources.is_empty()&&available>0&&available<r.sources.len(){("degraded",format!("部分来源已隔离：{}；仍有 {available}/{} 个健康来源可用，系统5分钟后重试",r.sources.iter().filter(|s|!s.usable(now)).map(|s|format!("来源{}：{}",s.source_id,s.message)).collect::<Vec<_>>().join("；"),r.sources.len()))}else if r.state=="degraded" {("degraded",format!("续验未完成：{}；保留仍有效且身份未变的兼容证据继续服务，系统5分钟后重试",r.message))}else if r.state == "failed" {
             (
                 "failed",
-                format!(
-                    "自动续验失败：{}；暂无已核实健康来源，系统每5分钟自动重试",
-                    r.message
-                ),
+                if renewable {
+                    format!("自动续验失败：{}；暂无已核实健康来源，系统每5分钟自动重试", r.message)
+                } else {
+                    format!("兼容验证失败：{}；配置已保存，请修复来源后重新启动兼容验证", r.message)
+                },
             )
         } else if r.lease_until_ms > now {
             (
@@ -278,14 +441,19 @@ pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
                     format!("兼容自动重试中；上次失败：{}；多目标调用仍暂停", r.message)
                 },
             )
+        } else if vector_compat::has_history(c, user, &config.targets, kind) && !vector_compat::has_reference(c, user, &fp).unwrap_or(false) {
+            (if current.is_ok() {"valid"} else {"pending"}, "缺少当前来源的数值参考，自动续验已跳过；请独立启动兼容验证，保存不会执行完整负载检查".into())
         } else if current.is_ok() {
             ("valid", "兼容校验通过，系统将在到期前自动续验".into())
         } else {
             (
                 "pending",
-                "兼容证据已过期或来源已变化，等待系统自动续验；多目标调用暂不可用".into(),
+                "配置已保存。尚无当前来源的兼容证据，请单独验证目标并启动兼容验证；验证通过前多目标调用暂不可用".into(),
             )
         };
+        if !renewable && r.lease_until_ms <= now && matches!(phase, "degraded") {
+            message = "配置已保存，但缺少当前来源的完整数值参考，自动续验已跳过；请单独启动兼容验证".into();
+        }
         if !r.profile_upgrade_error.is_empty() {
             message.push_str(&format!("；新负载范围校验未通过：{}；仍按原有有效证据和健康来源服务，未扩大已验证范围", r.profile_upgrade_message));
         }
@@ -310,6 +478,7 @@ pub async fn tick(state: &SharedState) -> Result<(), vr::VirtualError> {
                         user: 0,
                         id: r.id,
                         version: r.version,
+                        allow_disabled: false,
                     },
                 ));
             }
@@ -333,6 +502,7 @@ pub async fn tick(state: &SharedState) -> Result<(), vr::VirtualError> {
                             user,
                             id: r.id,
                             version: r.version,
+                            allow_disabled: false,
                         },
                     ));
                 }

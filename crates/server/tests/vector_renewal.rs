@@ -642,18 +642,55 @@ async fn cancelled_scan_releases_billing_and_expired_durable_lease_can_recover()
             f.require(shared).is_err(),
             "cancelled expired renewal cannot grant fallback"
         );
-        vector_renewal::tick(&f.state).await.unwrap();
-        assert_eq!(
-            f.count(),
-            1,
-            "live durable lease prevents overlapping retry after cancellation"
-        );
+        f.state.drain_writes();
+        let status=f.status(shared);
+        assert_eq!(status["lease_until_ms"],0,"cancelling a live task must release its owned lease: {status}");
+        {
+            let c=f.state.conn();
+            let reserved:i64=c.query_row("SELECT count(*) FROM billing_ledger WHERE status='reserved'",[],|r|r.get(0)).unwrap();
+            assert_eq!(reserved,0,"cancelled diagnostic reservations must be settled or released");
+            let cancelled:i64=c.query_row("SELECT count(*) FROM billing_ledger WHERE outcome='compatibility_cancelled_unknown'",[],|r|r.get(0)).unwrap();
+            assert!(cancelled>0,"cancellation must retain its diagnostic accounting outcome");
+        }
         *f.upstreams[0].state.hold.lock().unwrap() = None;
         release.notify_one();
-        f.retry_now();
         f.clear();
         vector_renewal::tick(&f.state).await.unwrap();
-        assert_eq!(f.count(), 4);
+        assert_eq!(f.count(), 4,"RAII cancellation cleanup permits an immediate retry without editing durable state");
+        assert!(f.require(shared).is_ok());
+        f.diagnostics(shared);
+
+        // A durable lease left by another process/restart remains authoritative
+        // until it expires; cancellation cleanup must not bypass that protection.
+        f.age(25);
+        {
+            let c=f.state.conn();
+            for (key,raw) in db::settings::all(&c).unwrap() {
+                if key.starts_with("internal_vector_renewal_v1:") {
+                    let mut value:Value=serde_json::from_str(&raw).unwrap();
+                    value["state"]=json!("checking");
+                    value["lease_until_ms"]=json!(db::now_ms()+60_000);
+                    value["token"]=json!("fixture-abandoned-durable-lease");
+                    db::settings::set(&c,&key,&value.to_string()).unwrap();
+                }
+            }
+        }
+        f.clear();
+        vector_renewal::tick(&f.state).await.unwrap();
+        assert_eq!(f.count(),0,"unexpired durable lease prevents overlapping retries");
+        assert!(f.require(shared).is_err(),"an in-flight durable lease cannot refresh expired proof");
+        {
+            let c=f.state.conn();
+            for (key,raw) in db::settings::all(&c).unwrap() {
+                if key.starts_with("internal_vector_renewal_v1:") {
+                    let mut value:Value=serde_json::from_str(&raw).unwrap();
+                    value["lease_until_ms"]=json!(db::now_ms()-1);
+                    db::settings::set(&c,&key,&value.to_string()).unwrap();
+                }
+            }
+        }
+        vector_renewal::tick(&f.state).await.unwrap();
+        assert_eq!(f.count(),4,"expired durable lease permits automatic recovery");
         assert!(f.require(shared).is_ok());
         f.diagnostics(shared);
     }
@@ -694,7 +731,7 @@ async fn missing_legacy_reference_never_bootstraps_from_only_one_healthy_source(
 }
 
 #[tokio::test]
-async fn fresh_healthy_contract_automatically_backfills_missing_reference() {
+async fn missing_reference_skips_automatic_load_and_explicit_verification_backfills() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             let f = Fixture::new(kind, 2).await;
@@ -708,6 +745,15 @@ async fn fresh_healthy_contract_automatically_backfills_missing_reference() {
                 }
             }
             vector_renewal::tick(&f.state).await.unwrap();
+            assert_eq!(f.count(), 0, "automatic maintenance must not rebuild a missing reference with a full workload");
+            assert!(f.status(shared)["message"].as_str().unwrap().contains("自动续验已跳过"), "{}", f.status(shared));
+            assert!(!db::settings::all(&f.state.conn()).unwrap().iter().any(|(key, _)| key.starts_with("internal_vector_reference_v1:")));
+            if shared {
+                let actor=db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;
+                vector_compat::verify_shared(&f.state,&f.config,actor).await.unwrap();
+            } else {
+                vector_compat::verify(&f.state,f.user,&f.config).await.unwrap();
+            }
             for source in &f.upstreams {
                 let seen = source.state.seen.lock().unwrap();
                 // Embeddings: two compact probes, two fixed full batches, and their first/last singles.
@@ -757,14 +803,21 @@ async fn legacy_reference_bootstrap_preserves_existing_dimensions() {
         {let c=f.state.conn();for(k,_)in db::settings::all(&c).unwrap(){if k.starts_with("internal_vector_reference_v1:"){db::settings::delete(&c,&k).unwrap();}}}
         for source in &f.upstreams {source.set(Behavior::Dimension);}
         vector_renewal::tick(&f.state).await.unwrap();
-        assert_eq!(f.status(shared)["state"],"failed");assert!(f.require(shared).is_err());
+        assert_eq!(f.count(),0,"missing reference must not trigger automatic load tests");
+        let result=if shared {
+            let actor=db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;
+            vector_compat::verify_shared(&f.state,&f.config,actor).await
+        } else {
+            vector_compat::verify(&f.state,f.user,&f.config).await
+        };
+        assert!(result.is_err(),"explicit bootstrap must reject the changed vector dimensions");
         let c=f.state.conn();for(k,raw)in db::settings::all(&c).unwrap(){if k.starts_with("internal_vector_compat_v1:"){let old:Value=serde_json::from_str(&raw).unwrap();assert_eq!(old["dimensions"],8);assert_eq!(old["verified_at_ms"],original.verified_at_ms);}assert!(!k.starts_with("internal_vector_reference_v1:"));}
     }
 }
 
 
 #[tokio::test]
-async fn manual_http_save_cannot_reuse_degraded_certificate_and_keeps_healthy_routing() {
+async fn manual_http_save_is_offline_with_degraded_certificate_and_keeps_healthy_routing() {
     for shared in [false,true] {
         let f=Fixture::new(ModelKind::Embeddings,2).await;f.publish(shared).await;f.age(19);
         f.upstreams[1].set(Behavior::Status(503));vector_renewal::tick(&f.state).await.unwrap();
@@ -774,10 +827,10 @@ async fn manual_http_save_cannot_reuse_degraded_certificate_and_keeps_healthy_ro
             let cookie=format!("tokengo_account_session={}",db::accounts::create_session(&c,&account).unwrap());let key=db::identity::create_key(&c,f.user,"healthy-caller",&Default::default(),None,None).unwrap().1;(id,version,cookie,key)};
         let base=if shared{"/api/shared-virtual-models"}else{"/api/account/virtual-models"};let mut body=serde_json::to_value(&f.config).unwrap();body["version"]=json!(version);
         let request=Request::builder().method("PATCH").uri(format!("{base}/{id}")).header("host","localhost").header("content-type","application/json").header("X-Tokengo-Panel","1").header("cookie",cookie).body(Body::from(body.to_string())).unwrap();
-        let response=tokengo_server::app(f.state.clone()).oneshot(request).await.unwrap();assert!(!response.status().is_success(),"saving must probe and reject unavailable target even when healthy source keeps alias usable");
-        assert!(f.upstreams[1].count()>0,"manual save must probe the isolated source instead of reusing degraded evidence");
-        {let c=f.state.conn();let saved=if shared{let row=db::shared_virtual_routes::list(&c).unwrap().into_iter().find(|r|r.id==id).unwrap();(row.version,row.config)}else{let row=vr::list(&c,f.user).unwrap().into_iter().find(|r|r.id==id).unwrap();(row.version,row.config)};assert_eq!(saved.0,version);assert_eq!(saved.1,f.config,"failed save cannot change stored route");}
-        assert!(f.require(shared).is_ok(),"rejected config edit must preserve serving healthy source");f.clear();
+        let response=tokengo_server::app(f.state.clone()).oneshot(request).await.unwrap();assert_eq!(response.status(),StatusCode::OK,"saving configuration must not require a healthy upstream");
+        assert_eq!(f.count(),0,"manual save must not dispatch any diagnostic request");
+        {let c=f.state.conn();let saved=if shared{let row=db::shared_virtual_routes::list(&c).unwrap().into_iter().find(|r|r.id==id).unwrap();(row.version,row.config)}else{let row=vr::list(&c,f.user).unwrap().into_iter().find(|r|r.id==id).unwrap();(row.version,row.config)};assert_eq!(saved.0,version+1);assert_eq!(saved.1,f.config,"successful save preserves the submitted route");}
+        assert!(f.require(shared).is_ok(),"saving an identical scope preserves healthy-source evidence");f.clear();
         let request=Request::builder().method("POST").uri("/v1/embeddings").header("content-type","application/json").header("authorization",format!("Bearer {key}")).body(Body::from(json!({"model":f.config.name,"input":"healthy source remains callable"}).to_string())).unwrap();
         let response=tokengo_server::app(f.state.clone()).oneshot(request).await.unwrap();assert_eq!(response.status(),StatusCode::OK);assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),0,"isolated source must stay excluded from user calls");
     }

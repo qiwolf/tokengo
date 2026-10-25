@@ -19,6 +19,8 @@ pub fn router() -> Router<SharedState> {
             "/api/account/virtual-models/{id}",
             patch(update).delete(disable),
         )
+        .route("/api/account/virtual-models/{id}/verify",post(verify))
+        .route("/api/account/virtual-models/{id}/targets/{position}/verify",post(verify_target))
         .route("/api/account/virtual-models/{id}/trash",post(trash))
         .route("/api/account/virtual-models/{id}/restore",post(restore))
         .layer(DefaultBodyLimit::max(65536))
@@ -78,7 +80,7 @@ async fn list(b: Browser, State(s): State<SharedState>, Query(query):Query<ListQ
         }
     }
     Ok(Json(
-        json!({"virtual_models":vr::list_all(&c,user)?.into_iter().filter(|r|r.deleted_at_ms.is_some()==query.trash).map(|r|{let status=crate::vector_renewal::status(&c,user,&r.config);let mut v=serde_json::to_value(r).unwrap_or_default();v["compatibility"]=status;v}).collect::<Vec<_>>(),"options":options}),
+        json!({"virtual_models":vr::list_all(&c,user)?.into_iter().filter(|r|r.deleted_at_ms.is_some()==query.trash).map(|r|{let status=crate::vector_renewal::saved_status(&s,&c,user,r.id,r.version,&r.config);let mut v=serde_json::to_value(r).unwrap_or_default();v["compatibility"]=status;v}).collect::<Vec<_>>(),"options":options}),
     ))
 }
 async fn create(
@@ -87,9 +89,6 @@ async fn create(
     Json(body): Json<vr::Config>,
 ) -> Result<Json<Value>, ApiError> {
     let user = owner(&b, &s.conn())?;
-    crate::vector_compat::verify(&s, user, &body)
-        .await
-        .map_err(api)?;
     let c = s.conn();
     if !b.valid(&c)? || owner(&b, &c)? != user {
         return Err(ApiError::unauthorized("登录状态已变化，请重新登录后保存"));
@@ -111,7 +110,7 @@ async fn update(
     Json(body): Json<Edit>,
 ) -> Result<Json<Value>, ApiError> {
     let user = owner(&b, &s.conn())?;
-    // Check ownership and CAS before issuing any billable diagnostic calls.
+    // Reject stale edits before replacing the saved configuration.
     let old = vr::list(&s.conn(), user)?
         .into_iter()
         .find(|r| r.id == id)
@@ -129,9 +128,6 @@ async fn update(
             "路由已修改，请刷新后重试",
         ));
     }
-    crate::vector_compat::verify(&s, user, &body.config)
-        .await
-        .map_err(api)?;
     let c = s.conn();
     if !b.valid(&c)? || owner(&b, &c)? != user {
         return Err(ApiError::unauthorized("登录状态已变化，请重新登录后保存"));
@@ -144,6 +140,51 @@ async fn update(
 #[serde(deny_unknown_fields)]
 struct Version {
     version: i64,
+}
+fn verification_config(
+    s: &SharedState,
+    browser: &Browser,
+    id: i64,
+    version: i64,
+) -> Result<(i64, vr::Config), ApiError> {
+    let c = s.conn();
+    if !browser.valid(&c)? {
+        return Err(ApiError::unauthorized("登录状态已变化，请重新登录"));
+    }
+    let user = owner(browser, &c)?;
+    let row = vr::get(&c, user, id)?.ok_or_else(|| ApiError::not_found("虚拟模型不存在"))?;
+    if row.version != version {
+        return Err(ApiError::new(StatusCode::CONFLICT, "virtual_route_changed", "路由已修改，请刷新后验证"));
+    }
+    Ok((user, row.config))
+}
+async fn verify(
+    browser: Browser,
+    State(s): State<SharedState>,
+    Path(id): Path<i64>,
+    Json(body): Json<Version>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let (user, config) = verification_config(&s, &browser, id, body.version)?;
+    let status = crate::vector_renewal::start_saved(
+        &s, user, id, body.version, config, None,
+    ).map_err(api)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({"compatibility":status}))))
+}
+async fn verify_target(
+    browser: Browser,
+    State(s): State<SharedState>,
+    Path((id, position)): Path<(i64, usize)>,
+    Json(body): Json<Version>,
+) -> Result<Json<Value>, ApiError> {
+    let (user, config) = verification_config(&s, &browser, id, body.version)?;
+    let guard = crate::vector_renewal::RouteGuard {
+        user, id, version: body.version, allow_disabled: true,
+    };
+    let result = crate::vector_compat::verify_target(
+        &s, user, &config, position, None, &guard,
+    ).await;
+    verification_config(&s, &browser, id, body.version)?;
+    Ok(Json(result.map_err(api)?))
 }
 async fn disable(
     b: Browser,

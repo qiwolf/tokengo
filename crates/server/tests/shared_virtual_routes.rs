@@ -247,6 +247,10 @@ impl Fixture {
         let (status,body)=self.admin("POST","/api/shared-virtual-models",serde_json::to_value(&self.config).unwrap()).await;
         assert_eq!(status,StatusCode::OK,"publish {:?}: {body}",self.kind);
         assert!(body["virtual_model"]["id"].as_i64().is_some());
+        if matches!(self.kind, ModelKind::Embeddings | ModelKind::Rerank) {
+            let actor = db::accounts::root(&self.state.conn()).unwrap().unwrap().account.id;
+            tokengo_server::vector_compat::verify_shared(&self.state, &self.config, actor).await.unwrap();
+        }
         body["virtual_model"].clone()
     }
     fn allow_alias_only(&self) {
@@ -411,12 +415,20 @@ async fn in_flight_shared_route_rechecks_caller_key_acl_budget_and_admin_version
 }
 
 #[tokio::test]
-async fn incompatible_shared_vectors_are_rejected_before_publishing() {
-    let f=Fixture::new(ModelKind::Embeddings).await;f.upstreams[1].set(Behavior::Dimension);
+async fn incompatible_shared_vectors_save_but_are_not_certified_or_callable() {
+    let f=Fixture::new(ModelKind::Embeddings).await;
+    f.upstreams[1].set(Behavior::Dimension);
     let (status,body)=f.admin("POST","/api/shared-virtual-models",serde_json::to_value(&f.config).unwrap()).await;
-    assert!(!status.is_success(),"{body}");
+    assert_eq!(status,StatusCode::OK,"{body}");
+    assert_eq!(f.count(),0);
+    let actor=db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;
+    assert!(tokengo_server::vector_compat::verify_shared(&f.state,&f.config,actor).await.is_err());
+    f.clear();
+    assert!(!f.call("shared-model").await.0.is_success());
+    assert_eq!(f.count(),0,"uncertified chain must fail before any user inference");
     let (status,list)=f.admin("GET","/api/shared-virtual-models",Value::Null).await;
-    assert_eq!(status,StatusCode::OK,"{list}");assert!(list["virtual_models"].as_array().unwrap().is_empty());
+    assert_eq!(status,StatusCode::OK,"{list}");
+    assert_eq!(list["virtual_models"].as_array().unwrap().len(),1);
 }
 
 #[tokio::test]
@@ -688,5 +700,212 @@ async fn explicit_shared_providers_ignore_direct_allowlists_without_expanding_pr
             c.execute("UPDATE provider_credentials SET enabled=1",[]).unwrap();c.execute("UPDATE provider_channels SET canonical_state='conflict'",[]).unwrap();assert!(db::model_routes::provider_channels_for(&c,"bottom-0",f.config.targets[0].provider_id).unwrap().is_empty());
             c.execute("UPDATE provider_channels SET canonical_state='canonical'",[]).unwrap();db::model_routes::set_enabled(&c,"bottom-0",false).unwrap();assert!(db::model_routes::provider_channels_for(&c,"bottom-0",f.config.targets[0].provider_id).unwrap().is_empty());
         }
+    }
+}
+
+/// Saving configuration must never depend on any upstream being available.
+#[tokio::test]
+async fn vector_configuration_save_is_offline_for_shared_and_private_routes() {
+    for shared in [true, false] {
+        let f = Fixture::new(ModelKind::Embeddings).await;
+        for upstream in &f.upstreams {
+            upstream.set(Behavior::Status(503));
+        }
+        let cookie = if shared { f.root.clone() } else { f.cookie() };
+        let base = if shared {
+            "/api/shared-virtual-models"
+        } else {
+            "/api/account/virtual-models"
+        };
+        let (status, body) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            f.request("POST", base, None, Some(&cookie), serde_json::to_value(&f.config).unwrap()),
+        ).await.expect("configuration save must not wait for upstream checks");
+        assert_eq!(status, StatusCode::OK, "shared={shared}: {body}");
+        let saved = &body["virtual_model"];
+        assert!(saved["id"].as_i64().is_some(), "{body}");
+        assert_eq!(f.count(), 0, "saving must not issue any upstream probe");
+        let contracts: i64 = f.state.conn().query_row(
+            "SELECT count(*) FROM settings WHERE key LIKE 'internal_vector_compat_v1:%'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(contracts, 0, "saving must not fabricate compatibility evidence");
+        let id = saved["id"].as_i64().unwrap();
+        let mut edit = serde_json::to_value(&f.config).unwrap();
+        edit["version"] = saved["version"].clone();
+        edit["targets"].as_array_mut().unwrap().reverse();
+        let (status, updated) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            f.request("PATCH", &format!("{base}/{id}"), None, Some(&cookie), edit.clone()),
+        ).await.expect("configuration update must not wait for upstream checks");
+        assert_eq!(status, StatusCode::OK, "shared={shared}: {updated}");
+        assert_eq!(updated["virtual_model"]["version"].as_i64(), saved["version"].as_i64().map(|v| v + 1));
+        assert_eq!(updated["virtual_model"]["targets"], edit["targets"]);
+        assert_eq!(f.count(), 0, "updating must not issue any upstream probe");
+        let (status, stale) = f.request("PATCH", &format!("{base}/{id}"), None, Some(&cookie), edit).await;
+        assert_eq!(status, StatusCode::CONFLICT, "stale version: {stale}");
+        assert_eq!(f.count(), 0);
+        let (status, list) = f.request("GET", base, None, Some(&cookie), Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        let reloaded = list["virtual_models"].as_array().unwrap().iter().find(|v| v["id"] == json!(id)).unwrap();
+        assert_eq!(reloaded["targets"], updated["virtual_model"]["targets"]);
+        assert_eq!(reloaded["version"], updated["virtual_model"]["version"]);
+        assert_eq!(f.count(), 0, "reading pending verification state must not probe");
+    }
+}
+
+#[tokio::test]
+async fn saved_vector_target_can_be_checked_independently_without_certifying_chain() {
+    for shared in [true, false] {
+        let f = Fixture::new(ModelKind::Embeddings).await;
+        let cookie = if shared { f.root.clone() } else { f.cookie() };
+        let base = if shared { "/api/shared-virtual-models" } else { "/api/account/virtual-models" };
+        let (status, saved) = f.request("POST", base, None, Some(&cookie), serde_json::to_value(&f.config).unwrap()).await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        let id = saved["virtual_model"]["id"].as_i64().unwrap();
+        let version = saved["virtual_model"]["version"].clone();
+        assert_eq!(f.count(), 0);
+        let path = format!("{base}/{id}/targets/1/verify");
+        for failure in [true, false] {
+            f.clear();
+            f.upstreams[0].set(if failure { Behavior::Status(503) } else { Behavior::Good });
+            let (status, result) = f.request("POST", &path, None, Some(&cookie), json!({"version":version})).await;
+            assert_eq!(status, StatusCode::OK, "{result}");
+            assert_eq!(result["position"], 1);
+            assert_eq!(result["version"], version);
+            let sources = result["sources"].as_array().unwrap();
+            assert_eq!(sources.len(), 1, "{result}");
+            assert_eq!(sources[0]["source_id"], f.sources[0].0);
+            assert_eq!(sources[0]["state"], if failure { "failed" } else { "valid" });
+            assert!(f.upstreams[0].count() > 0);
+            assert_eq!(f.upstreams[1].count(), 0, "only selected target may be diagnosed");
+            for body in f.upstreams[0].state.seen.lock().unwrap().iter() {
+                let texts:Vec<&str>=if let Some(items)=body["input"].as_array() {
+                    assert!(items.len()<=16,"target diagnosis must not dispatch the 300-item workload");
+                    items.iter().map(|v|v.as_str().expect("diagnostic embedding input is text")).collect()
+                } else {
+                    vec![body["input"].as_str().expect("diagnostic embedding input is text")]
+                };
+                assert!(texts.iter().all(|text|text.chars().count()<=512),"target diagnosis must keep each sample compact");
+                assert!(texts.iter().map(|text|text.chars().count()).sum::<usize>()<=8192,"target diagnosis must stay within the compact total-input bound");
+            }
+        }
+        let contracts: i64 = f.state.conn().query_row("SELECT count(*) FROM settings WHERE key LIKE 'internal_vector_compat_v1:%'", [], |r| r.get(0)).unwrap();
+        assert_eq!(contracts, 0, "source reachability is not cross-source compatibility evidence");
+        f.clear();
+        for (uri, body, expected) in [
+            (path.clone(), json!({"version":version.as_i64().unwrap()+1}), StatusCode::CONFLICT),
+            (format!("{base}/{id}/targets/0/verify"), json!({"version":version}), StatusCode::BAD_REQUEST),
+            (format!("{base}/{id}/targets/3/verify"), json!({"version":version}), StatusCode::BAD_REQUEST),
+        ] {
+            let (status,result)=f.request("POST",&uri,None,Some(&cookie),body).await;
+            assert_eq!(status,expected,"{result}");
+        }
+        assert_eq!(f.count(),0,"invalid or stale diagnostics must not dispatch requests");
+        f.flush().await;
+    }
+}
+
+#[tokio::test]
+async fn target_check_reports_each_local_source_and_continues_after_failure() {
+    let mut f=Fixture::new(ModelKind::Embeddings).await;
+    let provider=f.config.targets[0].provider_id;
+    {
+        let c=f.state.conn();
+        c.execute("UPDATE provider_channels SET endpoint_mode='local' WHERE id=?1",[provider]).unwrap();
+        let second=db::provider_pool::source_credential(&c,f.sources[1].0).unwrap().unwrap();
+        c.execute("UPDATE provider_credentials SET provider_id=?1 WHERE id=?2",rusqlite::params![provider,second.id]).unwrap();
+        db::provider_channels::set_membership(&c,f.sources[1].0,Some(provider)).unwrap();
+        db::channels::set_models(&c,f.sources[1],&[db::channels::ModelMapping::new("bottom-0",None,false)]).unwrap();
+    }
+    f.config.targets.truncate(1);
+    let (status,saved)=f.admin("POST","/api/shared-virtual-models",serde_json::to_value(&f.config).unwrap()).await;
+    assert_eq!(status,StatusCode::OK,"{saved}");
+    f.upstreams[0].set(Behavior::Status(503));
+    let (status,result)=f.admin("POST",&format!("/api/shared-virtual-models/{}/targets/1/verify",saved["virtual_model"]["id"].as_i64().unwrap()),json!({"version":saved["virtual_model"]["version"]})).await;
+    assert_eq!(status,StatusCode::OK,"{result}");
+    let sources=result["sources"].as_array().unwrap();
+    assert_eq!(sources.len(),2,"{result}");
+    for (source,state) in [(f.sources[0].0,"failed"),(f.sources[1].0,"valid")] {
+        assert_eq!(sources.iter().find(|v|v["source_id"]==json!(source)).unwrap()["state"],state,"{result}");
+    }
+    assert!(f.upstreams.iter().all(|s|s.count()>0),"failed source must not prevent checking its peer");
+    f.flush().await;
+}
+
+#[tokio::test]
+async fn explicit_chain_verification_runs_in_background_and_does_not_block_save() {
+    let f=Fixture::new(ModelKind::Embeddings).await;
+    let (status,saved)=f.admin("POST","/api/shared-virtual-models",serde_json::to_value(&f.config).unwrap()).await;
+    assert_eq!(status,StatusCode::OK,"{saved}");
+    let row=&saved["virtual_model"];
+    let id=row["id"].as_i64().unwrap();
+    let entered=Arc::new(tokio::sync::Notify::new());
+    let release=Arc::new(tokio::sync::Notify::new());
+    *f.upstreams[0].state.hold.lock().unwrap()=Some((entered.clone(),release.clone()));
+    let (status,result)=tokio::time::timeout(std::time::Duration::from_secs(2),f.admin("POST",&format!("/api/shared-virtual-models/{id}/verify"),json!({"version":row["version"]}))).await.expect("starting verification must not wait for upstream response");
+    assert_eq!(status,StatusCode::ACCEPTED,"{result}");
+    tokio::time::timeout(std::time::Duration::from_secs(5),entered.notified()).await.unwrap();
+    let (status,duplicate)=f.admin("POST",&format!("/api/shared-virtual-models/{id}/verify"),json!({"version":row["version"]})).await;
+    assert_eq!(status,StatusCode::ACCEPTED,"same-version in-flight task may be acknowledged: {duplicate}");
+    assert_eq!(f.upstreams[0].count(),1,"duplicate start must not create another probe task");
+    let mut edit=serde_json::to_value(&f.config).unwrap();
+    edit["version"]=row["version"].clone();
+    edit["timezone"]=json!("Asia/Shanghai");
+    let (status,updated)=tokio::time::timeout(std::time::Duration::from_secs(2),f.admin("PATCH",&format!("/api/shared-virtual-models/{id}"),edit)).await.expect("in-flight verification must not block configuration edits");
+    assert_eq!(status,StatusCode::OK,"{updated}");
+    assert_eq!(updated["virtual_model"]["version"].as_i64(),row["version"].as_i64().map(|v|v+1));
+    assert_eq!(updated["virtual_model"]["timezone"],"Asia/Shanghai");
+    let (status,blocked)=f.admin("POST",&format!("/api/shared-virtual-models/{id}/verify"),json!({"version":updated["virtual_model"]["version"]})).await;
+    assert_eq!(status,StatusCode::SERVICE_UNAVAILABLE,"an old-version lease must not be acknowledged as a new-version verification task: {blocked}");
+    assert!(blocked.to_string().contains("vector_compatibility_renewing"),"{blocked}");
+    assert_eq!(f.upstreams[0].count(),1);
+    *f.upstreams[0].state.hold.lock().unwrap()=None;
+    release.notify_one();
+    f.flush().await;
+    // The old version may complete its current request, but cannot send a second
+    // probe or publish a compatibility contract after this edit.
+    tokio::time::timeout(std::time::Duration::from_secs(5),async {
+        loop {
+            let n:i64=f.state.conn().query_row("SELECT count(*) FROM billing_ledger WHERE status='reserved'",[],|r|r.get(0)).unwrap();
+            if n==0 {break;}
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }).await.unwrap();
+    assert_eq!(f.upstreams[0].count(),1);
+    assert_eq!(f.upstreams[1].count(),0);
+    let contracts:i64=f.state.conn().query_row("SELECT count(*) FROM settings WHERE key LIKE 'internal_vector_compat_v1:%'",[],|r|r.get(0)).unwrap();
+    assert_eq!(contracts,0,"old-version verification must not publish evidence");
+}
+
+#[tokio::test]
+async fn saved_pending_chain_waits_for_explicit_verification_and_can_become_callable() {
+    for shared in [true,false] {
+        let f=Fixture::new(ModelKind::Embeddings).await;
+        let cookie=if shared{f.root.clone()}else{f.cookie()};
+        let base=if shared{"/api/shared-virtual-models"}else{"/api/account/virtual-models"};
+        let (status,saved)=f.request("POST",base,None,Some(&cookie),serde_json::to_value(&f.config).unwrap()).await;
+        assert_eq!(status,StatusCode::OK,"{saved}");
+        let row=&saved["virtual_model"];let id=row["id"].as_i64().unwrap();
+        tokengo_server::vector_renewal::tick(&f.state).await.unwrap();
+        assert_eq!(f.count(),0,"background maintenance must not start a new full workload after save");
+        assert!(!f.call(&f.config.name).await.0.is_success(),"uncertified multi-target invocation must fail closed");
+        assert_eq!(f.count(),0);
+        let (status,result)=f.request("POST",&format!("{base}/{id}/verify"),None,Some(&cookie),json!({"version":row["version"]})).await;
+        assert_eq!(status,StatusCode::ACCEPTED,"{result}");
+        let verified=tokio::time::timeout(std::time::Duration::from_secs(10),async {
+            loop {
+                let (status,list)=f.request("GET",base,None,Some(&cookie),Value::Null).await;
+                assert_eq!(status,StatusCode::OK,"{list}");
+                let row=list["virtual_models"].as_array().unwrap().iter().find(|row|row["id"]==json!(id)).unwrap().clone();
+                if row["compatibility"]["state"]=="valid" {break row;}
+                assert_ne!(row["compatibility"]["state"],"failed","{row}");
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.expect("explicit background verification should finish on controlled healthy sources");
+        assert_eq!(verified["version"],row["version"],"verification must not mutate saved configuration");
+        assert!(f.upstreams.iter().all(|source|source.count()>0));
+        f.flush().await;f.clear();
+        let (status,result)=f.call(&f.config.name).await;
+        assert_eq!(status,StatusCode::OK,"{result}");
     }
 }

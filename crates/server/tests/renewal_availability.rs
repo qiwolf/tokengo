@@ -526,10 +526,19 @@ async fn changed_source_identity_and_revoked_private_acl_cannot_reuse_degraded_e
         vector_renewal::tick(&f.state).await.unwrap();
         assert!(f.require(shared).is_err(), "new source identity plus cloud outage must not reuse old partial proof");
         assert_ne!(f.status(shared)["state"], "degraded");
+        assert_eq!(f.count(), 0, "a changed source identity must not silently trigger automatic full certification");
         f.upstreams[0].set(Behavior::Good);
         f.retry_now();
         vector_renewal::tick(&f.state).await.unwrap();
-        assert_eq!(f.status(shared)["state"], "valid", "new fingerprint can establish fresh full-chain proof after every source recovers");
+        assert_eq!(f.status(shared)["state"], "pending", "a recovered new fingerprint still requires an explicit verification action");
+        assert_eq!(f.count(), 0, "source recovery alone must not authorize a new full workload");
+        if shared {
+            let actor=db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;
+            vector_compat::verify_shared(&f.state,&f.config,actor).await.unwrap();
+        } else {
+            vector_compat::verify(&f.state,f.user,&f.config).await.unwrap();
+        }
+        assert_eq!(f.status(shared)["state"], "valid", "explicit verification establishes fresh full-chain proof after every source recovers");
         f.assert_only_source(0).await;
     }
     let f = Fixture::new(ModelKind::Embeddings, 2).await;
