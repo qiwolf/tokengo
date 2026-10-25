@@ -323,7 +323,7 @@ async fn oauth_caps_preserve_truncation_usage_and_subscription_ledger() {
 #[tokio::test]
 async fn oauth_caps_reject_below_minimum_above_model_ceiling_and_bad_types_before_source() {
     let f = Fixture::new().await;
-    for cap in [json!(0), json!(15), json!(32769), json!(-1), json!(16.5), json!("32"), Value::Null] {
+    for cap in [json!(0), json!(15), json!(32769), json!(-1), json!(16.5), json!("32")] {
         let reply = f.send("responses", json!({"model":"gpt-test","input":"hello","max_output_tokens":cap})).await;
         assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "{cap}");
     }
@@ -378,10 +378,30 @@ async fn oauth_responses_accepts_output_cap_aliases_without_weakening_conflict_o
         assert!(body.get("max_tokens").is_none());
         assert!(body.get("max_completion_tokens").is_none());
     }
-    for limits in [json!({"max_tokens":15}),json!({"max_completion_tokens":32769}),json!({"max_tokens":16,"max_output_tokens":32}),json!({"max_tokens":16,"max_completion_tokens":32}),json!({"max_tokens":"32"}),json!({"max_tokens":null})] {
+    for limits in [json!({"max_tokens":15}),json!({"max_completion_tokens":32769}),json!({"max_tokens":16,"max_output_tokens":32}),json!({"max_tokens":16,"max_completion_tokens":32}),json!({"max_tokens":"32"})] {
         let mut body=json!({"model":"gpt-test","input":"Count numbers"});
         body.as_object_mut().unwrap().extend(limits.as_object().unwrap().clone());
         assert_eq!(f.send("responses",body).await.status(),StatusCode::BAD_REQUEST);
     }
     assert_eq!(f.seen.seen.lock().unwrap().len(),3);
+}
+
+#[tokio::test]
+async fn oauth_null_output_caps_are_omitted_and_reserve_the_verified_subscription_ceiling() {
+    let f=Fixture::new().await;
+    for (path,field) in [("responses","max_output_tokens"),("chat/completions","max_tokens"),("chat/completions","max_completion_tokens")] {
+        let mut body=if path=="responses"{json!({"model":"gpt-test","input":"hello"})}else{json!({"model":"gpt-test","messages":[{"role":"user","content":"hello"}]})};
+        body[field]=Value::Null;
+        let response=f.send(path,body).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let _=response.bytes().await.unwrap();
+        let seen=f.seen.seen.lock().unwrap();
+        let sent=&seen.last().unwrap().1;
+        for field in ["max_tokens","max_completion_tokens","max_output_tokens"] {assert!(sent.get(field).is_none(),"nullable cap must be omitted, not converted to zero");}
+    }
+    f.state.drain_writes();
+    crate::billing_writer::replay(&f.state.conn(),&f.state.cfg.db_path).unwrap();
+    let c=f.state.conn();
+    let reserved:i64=c.query_row("SELECT count(*) FROM billing_ledger WHERE channel_id=?1 AND output_bound=32768 AND status='unpriced' AND settled_ms IS NOT NULL",[f.channel],|row|row.get(0)).unwrap();
+    assert_eq!(reserved,3,"omitted/null subscription caps must retain the verified full output reservation");
 }

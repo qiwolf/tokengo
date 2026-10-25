@@ -55,17 +55,19 @@ fn responses_active_effort_with_disabled_summary_is_representable() {
 }
 
 #[test]
-fn disabled_responses_reasoning_keeps_existing_cli_normalization_contract() {
+fn disabled_responses_reasoning_preserves_explicit_none_without_inventing_an_effort() {
     for reasoning in [
         json!({}),
         json!({"effort":"none"}),
         json!({"summary":"none"}),
     ] {
         let mut body = responses();
+        let explicit_none=reasoning.get("effort").and_then(Value::as_str)==Some("none");
         body["reasoning"] = reasoning;
         body["include"] = json!(["reasoning.encrypted_content"]);
         let result = convert_request(Protocol::Responses, Protocol::Chat, &body).unwrap();
-        assert!(result.get("reasoning_effort").is_none());
+        if explicit_none {assert_eq!(result["reasoning_effort"],"none","explicit off must survive protocol conversion");}
+        else {assert!(result.get("reasoning_effort").is_none(),"an absent effort must not acquire a manufactured value");}
         assert!(result.get("include").is_none());
         assert!(
             normalization_notes(Protocol::Responses, Protocol::Chat, &body)
