@@ -79,6 +79,89 @@ async fn call(f: &Fixture, key: &str, name: &str) -> StatusCode {
 }
 
 #[tokio::test]
+async fn anonymous_responses_replay_keeps_later_private_target_after_status_switch() {
+    use tokengo_server::{protocol::Protocol, protocol_config};
+    for first_status in [400, 429] {
+        let seen = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let a_seen = seen.clone();
+        let b_seen = seen.clone();
+        let upstream = Router::new()
+            .route("/a/v1/responses", route_post(move |axum::Json(body): axum::Json<Value>| {
+                let seen = a_seen.clone();
+                async move {
+                    seen.lock().unwrap().push(("a".into(), body));
+                    (StatusCode::from_u16(first_status).unwrap(), axum::Json(json!({
+                        "error":{"message":"controlled target failure"},
+                        "usage":{"input_tokens":0,"output_tokens":0}
+                    })))
+                }
+            }))
+            .route("/b/v1/responses", route_post(move |axum::Json(body): axum::Json<Value>| {
+                let seen = b_seen.clone();
+                async move {
+                    seen.lock().unwrap().push(("b".into(), body));
+                    axum::Json(json!({
+                        "id":"resp_private_b", "object":"response", "status":"completed",
+                        "model":"target-b",
+                        "output":[
+                            {"type":"reasoning","id":"rs_private_b","summary":[],"encrypted_content":"private-b-opaque"},
+                            {"type":"message","id":"msg_private_b","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello","annotations":[]}]}
+                        ],
+                        "usage":{"input_tokens":3,"output_tokens":1}
+                    }))
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap(); });
+        let f = fixture();
+        let mut targets = vec![];
+        for label in ["a", "b"] {
+            let name = format!("target-{label}");
+            let source = f.add_channel(&name, &format!("{base}/{label}/v1"), ChannelSpec::default());
+            f.serve(&name, &[source]);
+            db::kinds::set(&f.state.conn(), &name, tokengo_shared::ModelKind::Chat).unwrap();
+            db::billing::create_price(&f.state.conn(), &db::billing::Price {
+                id: 0, channel_id: source.0, model: name.clone(),
+                input_micro_per_million: 1_000_000, output_micro_per_million: 1_000_000,
+                max_input_tokens: 10000, max_output_tokens: 100,
+            }, "fixture").unwrap();
+            protocol_config::save(&f.state.conn(), source.0, &protocol_config::Capabilities {
+                native: vec![Protocol::Responses],
+                max_input_tokens: Some(10000), max_output_tokens: Some(100),
+                ..Default::default()
+            }).unwrap();
+            let provider = pool_backfill(&f, source, "ordered", false, false);
+            targets.push(virtuals::Target {
+                provider_id: provider, logical_model: name,
+                switch_on_429: true, switch_on_400: true,
+            });
+        }
+        f.state.routing().cfg.retry_times = 0;
+        let (user, keys) = user_keys(&f, &format!("anonymous-private-{first_status}"));
+        alias(&f, user, targets);
+        let (status, bytes, _) = post(&f, "/v1/responses", Some(&keys[0].1), json!({
+            "model":"my-private-model","input":"hello","store":false,"max_output_tokens":16
+        })).await;
+        assert_eq!(status, StatusCode::OK, "first turn: {}", String::from_utf8_lossy(&bytes));
+        let first: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(first["output"][0]["encrypted_content"], "private-b-opaque");
+        let replay_input = json!([
+            first["output"][0].clone(),
+            {"role":"user","content":"continue"}
+        ]);
+        let (status, bytes, _) = post(&f, "/v1/responses", Some(&keys[0].1), json!({
+            "model":"my-private-model","input":replay_input,"store":false,"max_output_tokens":16
+        })).await;
+        assert_eq!(status, StatusCode::OK, "replay after {first_status}: {}", String::from_utf8_lossy(&bytes));
+        let calls = seen.lock().unwrap();
+        assert_eq!(calls.iter().map(|(source, _)| source.as_str()).collect::<Vec<_>>(), ["a", "b", "b"]);
+        assert_eq!(calls[2].1["input"], replay_input, "replay must reach its original source unchanged");
+        server.abort();
+    }
+}
+
+#[tokio::test]
 async fn same_user_two_vkeys_keep_one_upstream_identity_and_switch_once() {
     let f = fixture();
     let m = start_mock(Reply::Ok).await;

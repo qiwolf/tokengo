@@ -23,6 +23,50 @@ pub fn key(namespace: &str, session: &str, model: &str, protocol: Protocol) -> S
         )
     )
 }
+/// Source ownership for clients which do not supply a conversation identity.
+/// Separate from explicit sessions; cache hints and prompt text never participate.
+/// Same-key anonymous conversations may share a source, but never another source's artifacts.
+pub fn anonymous_key(namespace: &str, model: &str, pin: &Pin) -> String {
+    use sha2::{Digest, Sha256};
+    let scope = serde_json::json!([
+        namespace,
+        tokengo_shared::normalize_model_name(model),
+        Protocol::Responses,
+        pin
+    ]).to_string();
+    format!("protocol_anonymous:{:x}", Sha256::digest(scope.as_bytes()))
+}
+
+/// Resolve only against currently authorized native Responses sources. Every supplied
+/// artifact must have been issued to the same anonymous scope. Explicit owners are never
+/// searched, and ambiguity fails closed rather than choosing an account arbitrarily.
+pub fn resolve_anonymous(
+    c: &rusqlite::Connection,
+    namespace: &str,
+    model: &str,
+    candidates: &[Pin],
+    body: &Value,
+) -> db::Result<Option<(String, Pin)>> {
+    if !matches!(bounded_values(body), Ok(values) if !values.is_empty()) {
+        return Ok(None);
+    }
+    let mut found: Option<(String, Pin)> = None;
+    let mut visited = std::collections::BTreeSet::new();
+    for pin in candidates.iter().filter(|p| p.protocol == Protocol::Responses) {
+        let owner = anonymous_key(namespace, model, pin);
+        if !visited.insert(owner.clone()) {
+            continue;
+        }
+        if verify_artifacts(c, &owner, pin, body)? {
+            if found.is_some() {
+                return Ok(None);
+            }
+            found = Some((owner, pin.clone()));
+        }
+    }
+    Ok(found)
+}
+
 pub const SQL: &str = include_str!("db/protocol_state.sql");
 pub const INACTIVE_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 pub const MAX_ARTIFACTS_PER_OWNER: usize = 4096;
@@ -878,5 +922,86 @@ mod migration_tests {
                 .unwrap(),
             0
         );
+    }
+}
+
+#[cfg(test)]
+mod anonymous_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn pin(channel: i64) -> Pin {
+        Pin { channel, generation: 1, upstream_model: "upstream".into(), protocol: Protocol::Responses }
+    }
+    fn body(value: &str) -> Value {
+        json!({"input":[{"type":"reasoning","encrypted_content":value}]})
+    }
+    fn issue(c: &rusqlite::Connection, namespace: &str, model: &str, pin: &Pin, value: &str) -> String {
+        let owner = anonymous_key(namespace, model, pin);
+        let mut artifacts = ArtifactCollector::default();
+        artifacts.value(&body(value));
+        artifacts.persist(c, &owner, pin).unwrap();
+        owner
+    }
+
+    #[test]
+    fn anonymous_resolution_requires_all_artifacts_from_one_authorized_scope() {
+        let c = db::open_in_memory().unwrap();
+        let a = pin(1);
+        let b = pin(2);
+        let owner = issue(&c, "key-a", "model", &a, "a");
+        issue(&c, "key-a", "model", &b, "b");
+        let candidates = [a.clone(), a.clone(), b.clone()];
+        assert_eq!(resolve_anonymous(&c, "key-a", "model", &candidates, &body("a")).unwrap(), Some((owner, a.clone())));
+        for (namespace, model, values) in [
+            ("key-b", "model", body("a")),
+            ("key-a", "other-model", body("a")),
+            ("key-a", "model", body("unknown")),
+            ("key-a", "model", json!({"input":[{"type":"reasoning","encrypted_content":"a"},{"type":"reasoning","encrypted_content":"b"}]})),
+            ("key-a", "model", body("")),
+            ("key-a", "model", json!({"input":[{"type":"reasoning","summary":[]}]})),
+        ] {
+            assert!(resolve_anonymous(&c, namespace, model, &candidates, &values).unwrap().is_none());
+        }
+        assert!(resolve_anonymous(&c, "key-a", "model", &[b], &body("a")).unwrap().is_none());
+        let mut changed = a.clone();
+        changed.generation += 1;
+        assert!(resolve_anonymous(&c, "key-a", "model", &[changed], &body("a")).unwrap().is_none());
+        let mut changed = a.clone();
+        changed.upstream_model = "other".into();
+        assert!(resolve_anonymous(&c, "key-a", "model", &[changed], &body("a")).unwrap().is_none());
+        let mut changed = a;
+        changed.protocol = Protocol::Messages;
+        assert!(resolve_anonymous(&c, "key-a", "model", &[changed], &body("a")).unwrap().is_none());
+    }
+
+    #[test]
+    fn anonymous_resolution_rejects_ambiguous_sources_and_expired_artifacts() {
+        let c = db::open_in_memory().unwrap();
+        let a = pin(1);
+        let b = pin(2);
+        let owner = issue(&c, "key", "model", &a, "same");
+        issue(&c, "key", "model", &b, "same");
+        assert!(resolve_anonymous(&c, "key", "model", &[a.clone(), b], &body("same")).unwrap().is_none());
+        c.execute("UPDATE protocol_artifacts SET last_used_ms=0 WHERE owner=?1", [&owner]).unwrap();
+        assert!(resolve_anonymous(&c, "key", "model", &[a.clone()], &body("same")).unwrap().is_none());
+        issue(&c, "key", "model", &a, "new");
+        c.execute("UPDATE protocol_sessions SET last_used_ms=0 WHERE key=?1", [&owner]).unwrap();
+        assert!(resolve_anonymous(&c, "key", "model", &[a], &body("new")).unwrap().is_none());
+    }
+
+    #[test]
+    fn anonymous_resolution_never_imports_explicit_ownership_or_oversized_input() {
+        let c = db::open_in_memory().unwrap();
+        let p = pin(1);
+        let owner = key("key", "real-session", "model", Protocol::Responses);
+        let mut artifacts = ArtifactCollector::default();
+        artifacts.value(&body("explicit"));
+        artifacts.persist(&c, &owner, &p).unwrap();
+        assert!(resolve_anonymous(&c, "key", "model", &[p.clone()], &body("explicit")).unwrap().is_none());
+        issue(&c, "key", "model", &p, "anonymous");
+        assert!(!verify_artifacts(&c, &owner, &p, &body("anonymous")).unwrap());
+        let oversized = json!({"input":vec![json!({"type":"reasoning","encrypted_content":"anonymous"});513]});
+        assert!(resolve_anonymous(&c, "key", "model", &[p], &oversized).unwrap().is_none());
     }
 }

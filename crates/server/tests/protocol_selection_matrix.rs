@@ -38,6 +38,9 @@ async fn source(
     Json(v): Json<Value>,
 ) -> Response {
     s.seen.lock().unwrap().push((uri.path().into(), v.clone()));
+    if v["provider_fail"] == true {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error":{"message":"synthetic source unavailable","type":"server_error"}}))).into_response();
+    }
     let responses = uri.path().ends_with("responses");
     let mut value = if responses {
         json!({"id":"resp_matrix","object":"response","status":"completed","model":"upstream","output":[{"id":"msg_matrix","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"matrix answer","annotations":[]}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}})
@@ -502,24 +505,161 @@ async fn responses_real_session_header_survives_cache_prefix_changes_and_isolate
 }
 
 
+fn anonymous_request(mut request: Value, cache_hint: bool) -> Value {
+    request.as_object_mut().unwrap().remove("client_metadata");
+    if !cache_hint {
+        request.as_object_mut().unwrap().remove("prompt_cache_key");
+    }
+    request
+}
+
 #[tokio::test]
-async fn responses_cache_only_opaque_replay_requires_a_real_session_identity() {
+async fn responses_anonymous_opaque_tool_replay_preserves_json_sse_and_cache_changes() {
+    for cache_hint in [false, true] {
+        for first_stream in [false, true] {
+            for second_stream in [false, true] {
+                let f = prompt_cache_fixture().await;
+                let first_request = anonymous_request(prompt_cache_first(first_stream), cache_hint);
+                let (code, text) = f.call(Protocol::Responses, first_request).await;
+                assert_eq!(code, 200, "fresh anonymous request: {text}");
+                let first = completed_response(&text, first_stream);
+                assert_eq!(first["output"][0]["encrypted_content"], "test-opaque-state");
+                let mut replay = anonymous_request(prompt_cache_replay(&first, second_stream), cache_hint);
+                if cache_hint {
+                    replay["prompt_cache_key"] = json!("cache-after-prefix-change");
+                }
+                replay["instructions"] = json!("Updated instructions must not change artifact ownership.");
+                replay["tools"][0]["description"] = json!("Updated sum description.");
+                let (code, text) = f.call(Protocol::Responses, replay.clone()).await;
+                assert_eq!(code, 200, "cache={cache_hint}, first SSE={first_stream}, second SSE={second_stream}: {text}");
+                assert_eq!(completed_response(&text, second_stream)["status"], "completed");
+                let seen = f.seen.seen.lock().unwrap();
+                assert_eq!(seen.len(), 2);
+                assert_eq!(seen[1].1["input"], replay["input"], "reasoning and tool identities must reach their original source unchanged");
+                assert_eq!(seen[1].1["prompt_cache_key"], replay["prompt_cache_key"]);
+                assert!(seen[1].1.get("client_metadata").is_none());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_anonymous_opaque_replay_rejects_foreign_key_unknown_artifacts_and_explicit_session() {
     for stream in [false, true] {
         let f = prompt_cache_fixture().await;
-        let mut first_request = prompt_cache_first(stream);
-        first_request.as_object_mut().unwrap().remove("client_metadata");
-        let (code, text) = f.call(Protocol::Responses, first_request).await;
-        assert_eq!(code, 200, "a fresh request without identity can still run: {text}");
-        let first = completed_response(&text, stream);
-        let mut replay = prompt_cache_replay(&first, stream);
-        replay.as_object_mut().unwrap().remove("client_metadata");
+        let (code, text) = f.call(Protocol::Responses, anonymous_request(prompt_cache_first(stream), true)).await;
+        assert_eq!(code, 200, "{text}");
+        let replay = anonymous_request(prompt_cache_replay(&completed_response(&text, stream), stream), true);
+        let (_, other_key) = db::identity::create_key(
+            &f.state.conn(), 1, "anonymous-other-key", &Default::default(), None, None,
+        ).unwrap();
+        let (code, text) = f.call_with_key(Protocol::Responses, &other_key, replay.clone()).await;
+        assert_eq!(code, 400, "another key cannot borrow anonymous artifacts: {text}");
+        let mut unknown = replay.clone();
+        unknown["input"][1]["encrypted_content"] = json!("never-issued-opaque-state");
+        let (code, text) = f.call(Protocol::Responses, unknown).await;
+        assert_eq!(code, 400, "unknown history cannot establish ownership: {text}");
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &[("x-session-id", "new-explicit-session")], replay.clone(),
+        ).await;
+        assert_eq!(code, 400, "explicit identity must not fall back to anonymous ownership: {text}");
+        // Even an established explicit session cannot import anonymous artifacts.
+        let mut explicit_first = prompt_cache_first(stream);
+        explicit_first["provider_opaque"] = json!(false);
+        explicit_first["provider_tool"] = json!(false);
+        let (code, text) = f.call(Protocol::Responses, explicit_first).await;
+        assert_eq!(code, 200, "{text}");
+        let mut explicit_replay = replay.clone();
+        explicit_replay["client_metadata"] = json!({"session_id":"real-session-a"});
+        let (code, text) = f.call(Protocol::Responses, explicit_replay).await;
+        assert_eq!(code, 400, "established explicit identity cannot import anonymous artifacts: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 2, "all invalid replays fail before outbound attempts");
         let (code, text) = f.call(Protocol::Responses, replay).await;
-        assert_eq!(code, 400, "a cache key alone must never establish opaque ownership: {text}");
-        let error: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(error["error"]["type"], "invalid_request_error");
-        assert_eq!(error["error"]["code"], "explicit_session_required");
-        assert_eq!(f.seen.seen.lock().unwrap().len(), 1, "unowned replay must fail before the source attempt");
+        assert_eq!(code, 200, "rejections must preserve anonymous ownership: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 3);
     }
+}
+
+#[tokio::test]
+async fn responses_anonymous_opaque_replay_rejects_changed_source_generation() {
+    for stream in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let (code, text) = f.call(Protocol::Responses, anonymous_request(prompt_cache_first(stream), false)).await;
+        assert_eq!(code, 200, "{text}");
+        let replay = anonymous_request(prompt_cache_replay(&completed_response(&text, stream), stream), false);
+        db::channels::set_secret(
+            &f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(f.channel_id),
+            "ROTATED-ANONYMOUS-SYNTHETIC-CREDENTIAL",
+        ).unwrap();
+        let (code, text) = f.call(Protocol::Responses, replay).await;
+        assert_eq!(code, 400, "changed credential generation cannot inherit anonymous artifacts: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn responses_anonymous_opaque_replay_rejects_replacement_source() {
+    let f = prompt_cache_fixture().await;
+    let (code, text) = f.call(Protocol::Responses, anonymous_request(prompt_cache_first(false), false)).await;
+    assert_eq!(code, 200, "{text}");
+    let replay = anonymous_request(prompt_cache_replay(&completed_response(&text, false), false), false);
+    {
+        let c = f.state.conn();
+        db::channels::set_models(&c, tokengo_shared::ChannelId(f.channel_id), &[]).unwrap();
+        let replacement = db::channels::create(&c, &db::channels::NewChannel {
+            name: "replacement source".into(), base_url: format!("{}/v1", f._source.url),
+            enabled: true, unwrap_envelope: false, max_concurrent: 0,
+        }).unwrap();
+        db::channels::set_models(&c, replacement, &[db::channels::ModelMapping::new(
+            "matrix", Some("upstream".into()), false,
+        )]).unwrap();
+        let caps = tokengo_server::protocol_config::load(&c, f.channel_id).unwrap();
+        tokengo_server::protocol_config::save(&c, replacement.0, &caps).unwrap();
+    }
+    let (code, text) = f.call(Protocol::Responses, replay).await;
+    assert_eq!(code, 400, "replacement source must not inherit old artifacts: {text}");
+    assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+}
+
+
+#[tokio::test]
+async fn responses_anonymous_opaque_source_failure_does_not_fallback() {
+    for stream in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let (code, text) = f.call(Protocol::Responses, anonymous_request(prompt_cache_first(stream), false)).await;
+        assert_eq!(code, 200, "{text}");
+        let mut replay = anonymous_request(prompt_cache_replay(&completed_response(&text, stream), stream), false);
+        replay["provider_fail"] = json!(true);
+        let other_seen = Arc::new(Source::default());
+        let other_source = serve(Router::new().route("/v1/responses", post(source)).with_state(other_seen.clone())).await;
+        {
+            let c = f.state.conn();
+            let id = db::channels::create(&c, &db::channels::NewChannel {
+                name: "available fallback".into(), base_url: format!("{}/v1", other_source.url),
+                enabled: true, unwrap_envelope: false, max_concurrent: 0,
+            }).unwrap();
+            db::channels::set_models(&c, id, &[db::channels::ModelMapping::new("matrix", Some("upstream".into()), false)]).unwrap();
+            let caps = tokengo_server::protocol_config::load(&c, f.channel_id).unwrap();
+            tokengo_server::protocol_config::save(&c, id.0, &caps).unwrap();
+        }
+        let (code, text) = f.call(Protocol::Responses, replay).await;
+        assert!(code >= 500, "original source failure must remain a failure: {code}: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 2, "replay must reach its original source");
+        assert!(other_seen.seen.lock().unwrap().is_empty(), "opaque history must never reach another source after failure");
+    }
+}
+
+#[tokio::test]
+async fn responses_anonymous_opaque_replay_honors_live_key_revocation() {
+    let f = prompt_cache_fixture().await;
+    let (row, key) = db::identity::create_key(&f.state.conn(), 1, "revocable-anonymous", &Default::default(), None, None).unwrap();
+    let (code, text) = f.call_with_key(Protocol::Responses, &key, anonymous_request(prompt_cache_first(false), false)).await;
+    assert_eq!(code, 200, "{text}");
+    let replay = anonymous_request(prompt_cache_replay(&completed_response(&text, false), false), false);
+    assert!(db::identity::revoke(&f.state.conn(), row.id).unwrap());
+    let (code, text) = f.call_with_key(Protocol::Responses, &key, replay).await;
+    assert_eq!(code, 401, "issued artifacts cannot override revoked credentials: {text}");
+    assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
 }
 
 

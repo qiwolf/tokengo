@@ -1548,17 +1548,36 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         .endpoint
         .protocol()
         .is_some_and(|p| crate::protocol_sessions::opaque_history(p, &req.body));
-    let pin_key = req.explicit_session.as_deref().and_then(|id| {
+    let mut pin_key = req.explicit_session.as_deref().and_then(|id| {
         req.endpoint
             .protocol()
             .filter(|p| *p != crate::protocol::Protocol::Chat)
             .map(|p| crate::protocol_sessions::key(&req.session_namespace, id, &req.model, p))
     });
-    let existing_pin = pin_key
+    let mut existing_pin = pin_key
         .as_deref()
         .map(|key| crate::protocol_sessions::load(&state.conn(), key))
         .transpose()?
         .flatten();
+    let anonymous_responses = req.endpoint == EndpointKind::Responses
+        && req.explicit_session.is_none();
+    if anonymous_responses && opaque {
+        let candidates: Vec<_> = plan.entries.iter().filter_map(|entry| {
+            (entry.protocols.select(crate::protocol::Protocol::Responses)
+                == Some(crate::protocol::Protocol::Responses)).then(|| crate::protocol_sessions::Pin {
+                    channel: entry.channel.id.0,
+                    generation: entry.binding_generation,
+                    upstream_model: entry.channel.upstream_model(&entry.name).into(),
+                    protocol: crate::protocol::Protocol::Responses,
+                })
+        }).collect();
+        if let Some((owner, pin)) = crate::protocol_sessions::resolve_anonymous(
+            &state.conn(), &req.session_namespace, &req.model, &candidates, &req.body,
+        )? {
+            pin_key = Some(owner);
+            existing_pin = Some(pin);
+        }
+    }
     let order: Vec<usize> = order
         .into_iter()
         .filter(|index| {
@@ -1577,7 +1596,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         return Err(error);
     }
     if opaque && existing_pin.is_none() {
-        let error=ApiError::bad_request("Opaque reasoning history requires an existing explicit session bound to its original source").with_code("explicit_session_required");
+        let note = if anonymous_responses {
+            "Opaque reasoning history has no unique verifiable ownership for this key, model and authorized source; start without untracked opaque history"
+        } else {
+            "Opaque reasoning history requires an existing explicit session bound to its original source"
+        };
+        let error = ApiError::bad_request(note).with_code("explicit_session_required");
         guard.reject(&error);
         return Err(error);
     }
@@ -1623,7 +1647,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             // Verified vector chains may walk the remaining ordered candidates
             // on transport, source-health and malformed-output faults. Complete
             // 400/429 responses still stop below when their switches are off.
-            if !plan.automatic_target_failover() && target
+            // A restored native pin may belong to a later target selected on a prior
+            // turn. Its exact source check below takes precedence over the fresh-call cursor.
+            if existing_pin.is_none() && !plan.automatic_target_failover() && target
                 .as_ref()
                 .is_some_and(|target| Some(target.position) != active_target)
             {
@@ -1669,6 +1695,16 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 generation: *binding_generation,
                 upstream_model: channel.upstream_model(name).into(),
                 protocol,
+            });
+            // Fresh anonymous calls acquire ownership only after a successful response.
+            // Replays use the previously resolved source and all existing pin safeguards.
+            let pin_key = pin_key.clone().or_else(|| {
+                candidate_pin.as_ref()
+                    .filter(|_| anonymous_responses)
+                    .filter(|pin| pin.protocol == crate::protocol::Protocol::Responses)
+                    .map(|pin| crate::protocol_sessions::anonymous_key(
+                        &req.session_namespace, &req.model, pin,
+                    ))
             });
             if existing_pin
                 .as_ref()
