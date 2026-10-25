@@ -379,7 +379,7 @@ async fn first_oauth_credential_has_responses_and_verified_bounds_without_a_temp
     let f = Fixture::new().await;
     let account = {
         let c = f.state.conn();
-        c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at,nonce,cipher) VALUES('test','issuer','subject','client','active','[]',9999999999999,9999999999999,X'01',X'02')",[]).unwrap();
+        c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at,nonce,cipher) VALUES('test','https://auth.openai.com','subject','client','active','[]',9999999999999,9999999999999,X'01',X'02')",[]).unwrap();
         c.last_insert_rowid()
     };
     let (s, v) = f
@@ -395,6 +395,19 @@ async fn first_oauth_credential_has_responses_and_verified_bounds_without_a_temp
     let(s,v)=f.req("POST",&path,json!({"label":"OAuth","kind":"oauth","oauth_account_id":account,"models":[{"model":"gpt"}]})).await;
     assert_eq!(s, 400, "{v}");
     assert!(db::channels::list(&f.state.conn()).unwrap().is_empty());
+    // Unknown issuers must not become bindable just because the caller supplies
+    // valid bounds. Metadata failure leaves sources, credentials and billing untouched.
+    let unsupported_account = {
+        let c=f.state.conn();
+        c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at,nonce,cipher) VALUES('unsupported','https://fixture.invalid','subject','client','active','[]',9999999999999,9999999999999,X'01',X'02')",[]).unwrap();
+        c.last_insert_rowid()
+    };
+    let(s,v)=f.req("POST",&path,json!({"label":"unsupported","kind":"oauth","oauth_account_id":unsupported_account,"max_input_tokens":16000,"max_output_tokens":4000,"models":[{"model":"gpt"}]})).await;
+    assert_eq!(s,400,"{v}");
+    assert!(db::channels::list(&f.state.conn()).unwrap().is_empty());
+    assert!(db::provider_pool::credentials(&f.state.conn(),p).unwrap().is_empty());
+    assert_eq!(f.state.conn().query_row("SELECT count(*) FROM oauth_channel_bindings",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(f.state.conn().query_row("SELECT count(*) FROM billing_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let(s,v)=f.req("POST",&path,json!({"label":"OAuth","kind":"oauth","oauth_account_id":account,"max_input_tokens":16000,"max_output_tokens":4000,"models":[{"model":"gpt"}]})).await;
     assert_eq!(s, 200, "{v}");
     let source = v["source_id"].as_i64().unwrap();
