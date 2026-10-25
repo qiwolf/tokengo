@@ -2,6 +2,8 @@
 
 当前正式版 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)**，发行源码`1b672c8d34ca`，Cargo0.34.0/schema41。完整新建渠道、公开客户端设备OAuth、参数合同与分层HTTP(S)代理已随同一源码发行；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40181428585)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40182556647)成功，9个公开资产及GHCR、配套原生/容器与Key生命周期独立验收通过。build-test完整工作区Rust **1345通过、0失败、3忽略**；Python分别python-container 3项、python-deploy 6项、python-mineru 13项，不与历史定向687项或重复覆盖累加。真实用户授权完成、令牌刷新和真实模型调用仍须逐账号验收。见[版本说明](releases/v0.34.0-qiwolf.18.md)及[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。标签快照不移动，后补结果维护于main与Release页面。
 
+2026-10-25另完成[首页、双语指南与84秒介绍视频更新](acceptance/2026-10-25-docs-video/README.md)，产品仍以q18为基线；本次文档和媒体更新不移动公开标签，也不重新打包已发布资产。
+
 上一公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 
 历史公开版 **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)**，发行源码`2702757fe472`，Cargo0.34.0/schema40。包含本地向量/重排轮询、OAuth结构化输出、输出上限与别名、截断终态、日志和重排计量修复。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40122964321)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40124162546)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1239通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
@@ -28,7 +30,7 @@ Chat→Responses effort对象兼容及6项回归已发布。精确main CI和发�
 
 9个公开资产匿名下载校验通过。公开原生包 `tokengo-6bf36fa917cd-linux-x86_64.tar.gz` 的SHA256为 `aa4b94472ffecf6a5a941f2c05e5e7eb55ccd7b380da4409f2dfe06271eb3393`；GHCR不可变镜像为 `ghcr.io/qiwolf/tokengo@sha256:ac134402e1f4f3af17aa321b63a9e29235f41b597ef8f007dc822c2e6d93c583`。匿名实际拉取、离线镜像双标签、无.env固定引用Compose启动、非root/只读根、ready/WASM、重启/同卷重建、原生运行与原生/容器Key检查均通过。公开产物身份与本地独立构建hash分开，不混用。
 
-公开发行隔离验收阶段没有访问或升级生产237；其后已完成独立冷备升级，当前运行qiwolf.12公开原生包。既有调用、共享入口授权、Key生命周期及300×4096真实上游回退通过，隔离副本清理完成，见[后续升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。此前私有 `0d0e6e7` 为升级前状态，不再表示当前运行版本。GPU分词器及8192窗口为独立现场配置，网关包不会自动修改。标签和资产内文档是构建时快照；最终发布后收据维护在main和Release页面，后补文档不表示资产重新打包。 具体忽略项、检查范围及产物身份见[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。
+公开发行隔离验收阶段没有访问或升级生产237；其后完成独立冷备升级，当时升级为qiwolf.12公开原生包。既有调用、共享入口授权、Key生命周期及300×4096真实上游回退通过，隔离副本清理完成，见[后续升级收据](acceptance/2026-10-24-qiwolf12-upgrade237/README.md)。此前私有 `0d0e6e7` 为升级前状态，不再表示当前运行版本。GPU分词器及8192窗口为独立现场配置，网关包不会自动修改。标签和资产内文档是构建时快照；最终发布后收据维护在main和Release页面，后补文档不表示资产重新打包。 具体忽略项、检查范围及产物身份见[最终收据](acceptance/2026-10-24-qiwolf12-release/README.md)。
 
 ### qiwolf.11公开发行与既有热修复
 

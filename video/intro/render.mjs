@@ -1,11 +1,11 @@
 import {bundle} from '@remotion/bundler';
 import {selectComposition,renderStill,renderMedia} from '@remotion/renderer';
 import fs from 'node:fs';
-const browserExecutable='/srv/cache/playwright/manual-1248/chrome-linux64/chrome';
+const browserExecutable=process.env.CHROME_PATH || '/srv/cache/playwright/manual-1248/chrome-linux64/chrome';
 const serveUrl=await bundle({entryPoint:'src/index.ts'});
 const composition=await selectComposition({serveUrl,id:'TokenGoIntro',browserExecutable,chromiumOptions:{gl:'angle'}});
 fs.mkdirSync('out/qa',{recursive:true});
-const frames=[45,120,225,360,465,600,705,840,945,1065,1185,1320,1425,1560,1665,1755];
+const frames=[45,120,225,345,435,555,645,735,825,915,1065,1155,1335,1425,1575,1665,1815,1905,2055,2145,2325,2385,2475];
 for(const frame of frames){await renderStill({composition,serveUrl,output:`out/qa/f${frame}.png`,frame,browserExecutable,chromiumOptions:{gl:'angle'}});console.log('still',frame);}
 // Render picture once, then preserve it exactly while replacing only the audio track.
 let last=-1;

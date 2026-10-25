@@ -1,8 +1,8 @@
 # 通用 HTTP 透传开发与 MinerU 同步接入
 
-本文是实现合同和交付检查表。面板操作见[通用 HTTP 透传](passthrough.md)，设计与执行记录见[设计](superpowers/specs/2026-10-21-passthrough-design.md)和[计划](superpowers/plans/2026-10-21-passthrough.md)。
+本文保留2026-10-21至22日的实现合同、交付过程和检查表；其中schema39与现场版本均属于当时状态，当前版本及部署证据见[验收状态](acceptance-status.md)。面板操作见[通用 HTTP 透传](passthrough.md)，设计与执行记录见[设计](superpowers/specs/2026-10-21-passthrough-design.md)和[计划](superpowers/plans/2026-10-21-passthrough.md)。
 
-交付状态（2026-10-22）：当前公开发行[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，源码`684fa862c64bab5b16c438b7fb8db03295c5b8f4`，修复容器分发镜像引用和离线标签。该提交[CI](https://github.com/qiwolf/tokengo/actions/runs/39646529697)及[发布流程](https://github.com/qiwolf/tokengo/actions/runs/39646795983)通过；qiwolf.7的9资产匿名下载/SHA及native manifest提交匹配、GHCR匿名固定摘要拉取均通过；原生CLI/server/WASM和实际下载Compose/容器的非root、只读、ready、重启/同卷重建均在Linux x86_64隔离环境通过，本次无macOS或跨架构仿真，不借用qiwolf.6运行结果。现场237仍运行qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39，未升级本次二进制。
+历史交付状态（2026-10-22）：当时公开发行[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，源码`684fa862c64bab5b16c438b7fb8db03295c5b8f4`，修复容器分发镜像引用和离线标签。该提交[CI](https://github.com/qiwolf/tokengo/actions/runs/39646529697)及[发布流程](https://github.com/qiwolf/tokengo/actions/runs/39646795983)通过；qiwolf.7的9资产匿名下载/SHA及native manifest提交匹配、GHCR匿名固定摘要拉取均通过；原生CLI/server/WASM和实际下载Compose/容器的非root、只读、ready、重启/同卷重建均在Linux x86_64隔离环境通过，本次无macOS或跨架构仿真，不借用qiwolf.6运行结果。当时现场237仍运行qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39，未升级本次二进制。
 
 qiwolf.6于2026-10-21完成schema38→39和三服务临时验收，临时资源当日清理。2026-10-22是独立的正式配置与调用方切换阶段：Face、CLIP/OCR、MinerU正式路由保留启用，各有独立VKey，仅允许自己的内部计费接入和精确业务路径，`allowed_models=[]`。正式路由单价0且仍按次计量，实际GPU成本未知。MT Photos人脸与共享AI配置、本机doc-extract默认入口已切换；没有声称其他消费者已迁移。
 
@@ -37,7 +37,7 @@ MinerU 第一阶段仅接同步兼容 HTTP 服务（默认端口 5024）的 `/fi
 | `crates/server/src/db/passthrough.sql` | schema 39 的表与渠道类型 |
 | `crates/server/src/routes/passthrough_admin.rs` | root 配置 API |
 | `crates/server/src/routes/passthrough_probe.rs` | root 手动 HTTP 诊断和系统诊断结算 |
-| `crates/web/src/pages/passthrough.rs` | 渠道页透传面板、配置与诊断表单 |
+| `crates/web/src/pages/passthrough.rs` | 透传配置与诊断表单；当前入口为侧栏“透传服务”独立页（旧版曾嵌在渠道页） |
 | `crates/server/tests/passthrough*.rs` | 管理、数据面、真实 loopback HTTP 回归 |
 
 `channels.transport_kind` 新增 `llm` / `passthrough`；旧渠道默认 `llm`。每条透传路由有稳定内部 `channel_id`，用于既有授权、并发和按次金融账，不参与 LLM 模型发现、provider 回填或普通渠道管理。
@@ -199,7 +199,7 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 
 2026-10-21主交付者在237验收通过后公开发布 [v0.34.0-qiwolf.6](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.6)，源码为 `d5660992a6a1ef0b320ff143a19404ac3abad23e`。原生包、WASM和容器均来自该commit；9项公开资产校验及匿名获取已通过。发布产物隔离运行检查亦已通过：原生CLI/server/WASM、透传权限与旧ops兼容、容器非root/只读/ready/重启/同卷重建均在macOS Docker AMD64仿真环境核验；未以此访问生产上游，也不将仿真环境表述为独立物理AMD64机器复测。后续版本继续沿用 `v0.34.0-qiwolf.N` 约定。
 
-2026-10-22已公开[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)（`684fa862c64bab5b16c438b7fb8db03295c5b8f4`），交付Compose明确固定GHCR SHA镜像且离线包带匹配标签；Rust/schema39/透传合同保持。精确CI与发布通过，新产物9资产匿名下载校验、native manifest及GHCR匿名拉取通过。实际配套Compose无build/无需.env并以固定SHA镜像启动，容器完整smoke和原生包运行回归均在Linux x86_64隔离环境通过，本次无仿真。版本/sha/latest标签当时同摘要 `sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`，离线双标签同config。它是当前公开分发身份，与现场仍运行的d566和22日正式配置变更分别记录。
+2026-10-22已公开[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)（`684fa862c64bab5b16c438b7fb8db03295c5b8f4`），交付Compose明确固定GHCR SHA镜像且离线包带匹配标签；Rust/schema39/透传合同保持。精确CI与发布通过，新产物9资产匿名下载校验、native manifest及GHCR匿名拉取通过。实际配套Compose无build/无需.env并以固定SHA镜像启动，容器完整smoke和原生包运行回归均在Linux x86_64隔离环境通过，本次无仿真。版本/sha/latest标签当时同摘要 `sha256:92f3b51bf235098d1d68ab76319bd3c0832c7bebb092ceae97d25312339b931a`，离线双标签同config。它是2026-10-22当时的公开分发身份，与当时现场运行的d566和22日正式配置变更分别记录，不代表当前最新版或现场进程。
 
 同一 Git commit 生成 Linux x86_64 原生包（服务端/CLI/WASM/manifest）、容器linux/amd64、离线镜像及校验清单；服务器、web和镜像不得分别取不同目录重建。依现有 `deploy/build-release.sh`、`deploy/manage.py`、`Dockerfile` 和 `.github/workflows/release-check.yml`：
 

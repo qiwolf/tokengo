@@ -63,257 +63,60 @@
       "width": 1920,
       "height": 1080
     },
-    "pageH": 1080,
-    "source": "real isolated TokenGo console; fictional fixture data",
-    "elements": [
-      {
-        "selector": "console-sidebar",
-        "x": 0,
-        "y": 0,
-        "w": 208,
-        "h": 1080
-      },
-      {
-        "selector": "console-content",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 510
-      },
-      {
-        "selector": "page-head",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 50
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "provider-key-modal console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "provider-key-modal console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "provider-key-modal console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      }
-    ]
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".console-main .console-content",
+    "bounds": {
+      "x": 296,
+      "y": 80,
+      "width": 1536,
+      "height": 324
+    }
   },
   "models": {
     "viewport": {
       "width": 1920,
       "height": 1080
     },
-    "pageH": 1080,
-    "source": "real isolated TokenGo console; fictional fixture data",
-    "elements": [
-      {
-        "selector": "console-sidebar",
-        "x": 0,
-        "y": 0,
-        "w": 208,
-        "h": 1080
-      },
-      {
-        "selector": "console-content",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 807
-      },
-      {
-        "selector": "page-head",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 50
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      }
-    ]
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".console-main .console-content",
+    "bounds": {
+      "x": 296,
+      "y": 80,
+      "width": 1536,
+      "height": 425
+    }
   },
   "users": {
     "viewport": {
       "width": 1920,
       "height": 1080
     },
-    "pageH": 1080,
-    "source": "real isolated TokenGo console; fictional fixture data",
-    "elements": [
-      {
-        "selector": "console-sidebar",
-        "x": 0,
-        "y": 0,
-        "w": 208,
-        "h": 1080
-      },
-      {
-        "selector": "console-content",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 543
-      },
-      {
-        "selector": "page-head",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 50
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      }
-    ]
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".console-main .console-content",
+    "bounds": {
+      "x": 296,
+      "y": 80,
+      "width": 1536,
+      "height": 384
+    }
   },
   "billing": {
     "viewport": {
       "width": 1920,
       "height": 1080
     },
-    "pageH": 1080,
-    "source": "real isolated TokenGo console; fictional fixture data",
-    "elements": [
-      {
-        "selector": "console-sidebar",
-        "x": 0,
-        "y": 0,
-        "w": 208,
-        "h": 1080
-      },
-      {
-        "selector": "console-content",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 593.390625
-      },
-      {
-        "selector": "page-head",
-        "x": 296,
-        "y": 80,
-        "w": 1536,
-        "h": 50
-      },
-      {
-        "selector": "module-dialog console-content",
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      }
-    ]
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".console-main .console-content",
+    "bounds": {
+      "x": 296,
+      "y": 80,
+      "width": 1536,
+      "height": 540.390625
+    }
   },
   "shared-models": {
     "viewport": {
@@ -359,5 +162,140 @@
         "h": 0
       }
     ]
+  },
+  "onboarding": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": "dialog[open] .provider-key-editor .family-picker",
+    "bounds": {
+      "x": 485,
+      "y": 303.390625,
+      "width": 950,
+      "height": 201.390625
+    }
+  },
+  "authentication": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".oauth-source",
+    "bounds": {
+      "x": 485,
+      "y": 507.171875,
+      "width": 950,
+      "height": 137.78125
+    }
+  },
+  "authentication-copilot": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".oauth-source:nth-child(2)",
+    "bounds": {
+      "x": 485,
+      "y": 490.953125,
+      "width": 950,
+      "height": 170.171875
+    }
+  },
+  "authentication-options": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".provider-auth-choices",
+    "bounds": {
+      "x": 485,
+      "y": 535.78125,
+      "width": 950,
+      "height": 37
+    }
+  },
+  "proxy": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".network-proxy-settings",
+    "bounds": {
+      "x": 485,
+      "y": 365.34375,
+      "width": 950,
+      "height": 422.78125
+    }
+  },
+  "parameters": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".connection-parameters > form table",
+    "bounds": {
+      "x": 486,
+      "y": 405.0625,
+      "width": 510,
+      "height": 342
+    }
+  },
+  "parameters-protocol": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".connection-parameters > form table",
+    "bounds": {
+      "x": 486,
+      "y": 405.0625,
+      "width": 510,
+      "height": 342
+    }
+  },
+  "parameters-reasoning": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".connection-parameters > .reasoning-config",
+    "bounds": {
+      "x": 485,
+      "y": 549.453125,
+      "width": 950,
+      "height": 401.78125
+    }
+  },
+  "onboarding-expanded": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": "dialog[open] .provider-key-editor .family-picker",
+    "bounds": {
+      "x": 485,
+      "y": 303.390625,
+      "width": 950,
+      "height": 305.390625
+    }
   }
 }

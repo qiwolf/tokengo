@@ -1,0 +1,19 @@
+{
+  "source": "q18 public binary and web bundle",
+  "synthetic_only": true,
+  "production_access": false,
+  "oauth_started": false,
+  "inference_requested": false,
+  "captures": [
+    {
+      "name": "billing",
+      "focus": ".console-main .console-content",
+      "text": "用量与账务\n\n按管理目标切换：控制额度、维护价格、查询调用费用。\n\n额度管理\n价格配置\n用量账本\n额度管理\n\n用户额度约束名下所有 Key；单个 Key 可再设置独立额度。\n\n设置额度\n用户额度\nKey 额度\n对象状态\n当前有效\n历史 / 已停用\n全部\n刷新预算\n\n金额单位 USD。无限额表示未单独限额，仍受其他预算约束；冻结会阻止后续调用。历史对象仅供核对。\n\n对象名称\t所属用户\t总限额\t已使用\t在途预占\t状态\t管理\n演示开发者\t—\t$20\t$0\t$0\t有效\t管理额度\n演示团队\t—\t$100\t$0\t$0\t有效\t管理额度\n\n预算已刷新\n\n管理用户与 Key 身份"
+    },
+    {
+      "name": "onboarding-expanded",
+      "focus": "dialog[open] .provider-key-editor .family-picker",
+      "text": "模型家族\nGPT\n✓\nClaude\nGemini\nDeepSeek\nQwen\nGLM\nKimi\nMiMo\nMiniMax\nDoubao\nGrok\nMistral\nMeta / Llama\nCohere\n其他 / 多家族\n收起模型\n\n同一凭据可以包含多个家族；这里的选择用于匹配接入方式，不会删减模型目录。"
+    }
+  ]
+}

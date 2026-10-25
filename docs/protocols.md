@@ -2,6 +2,20 @@
 
 本分支提供 `POST /v1/chat/completions`、`POST /v1/responses` 和 `POST /v1/messages`。三者均使用用户虚拟密钥（VKey），共享实时权限、限额、预算与逐来源尝试账本；管理面板口令不能用于模型调用。
 
+## 上游协议与客户端接入协议
+
+**客户端接入协议（下游）**是应用或用户调用TokenGo的协议；**供应方接口协议（上游）**是TokenGo调用供应商的协议。API Key/OAuth决定如何认证，协议决定请求与响应的形状，两者要分别选择。模型家族也不等于协议：同一家族的API和订阅账号可能暴露不同接口。
+
+例如某来源只原生支持Responses：关闭转换时，客户端也只能通过Responses调用它；允许转换后，符合保真合同的Chat或Messages请求可转换到Responses，无法表达的内容仍明确拒绝。若来源原生Chat，网关不会因为用户选择“GPT”家族就假定它同时支持Responses。新建渠道第三步按实际来源声明及转换开关展示可用客户端协议，详细规则见[参数合同](references/provider-parameter-contracts.md)。
+
+| 客户端协议 | TokenGo入口 | 常用输出上限字段 |
+| --- | --- | --- |
+| Chat Completions | `/v1/chat/completions` | `max_tokens`或`max_completion_tokens`，依来源合同 |
+| Responses | `/v1/responses` | `max_output_tokens` |
+| Messages | `/v1/messages` | `max_tokens` |
+
+表中的字段不是任意可互换别名。OpenAI OAuth兼容上限别名有专门归一化合同，普通API按目标协议和供应方规则处理；不要把错误协议字段发给所有来源碰运气。客户端的base URL通常填站点`/v1`，供应方base按真实接口配置，避免重复追加协议路径。
+
 ## 显式来源能力
 
 在渠道编辑中选择真实支持的源协议及是否允许转换。对每个候选来源，支持客户端协议时原生转发；否则仅在该来源允许转换且请求语义可表示的情况下转换。来源顺序仍由路由配置决定。协议名称不保证某供应商支持该协议的全部角色、参数和工具模式。模型映射、必要的限额及安全校验仍会作用于原生请求。
@@ -23,6 +37,18 @@ DeepSeek 原生 Responses 的渠道 base 为 `https://api.deepseek.com`，由网
 两个数是独立的绝对上限，并不保证能同时装入供应商的联合上下文窗口。比如官方 DeepSeek 给出1M联合上下文和384K最大输出；完整输入上限可保守声明1048576、输出393216，但不能称其可同时容纳1M输入加384K输出。原生参数能力仍依供应商合同；[官方模型上限](https://api-docs.deepseek.com/quick_start/pricing/)应在配置时复核。
 
 Chat↔Responses 可精确保留明文推理：Chat `reasoning_content` 与 Responses `reasoning.content` 中的 `reasoning_text` 对应，不伪装为摘要。支持一段位于文本/工具之前的明文推理，含流式、用量和工具结果回放；摘要、加密内容、签名及无法表示的交错顺序仍拒绝。跨协议回放到 Chat 时还需来源显式声明 `chat_reasoning_replay:true`（要求 native 包含 chat），因为源会输出该字段不代表接受助手历史中的该字段。原生 Chat 透传不受此转换声明限制。
+
+## 结构化输出、推理与输出上限
+
+Chat的`response_format`与Responses的`text.format`可在已实现的双向转换范围内映射，保留JSON Schema的名称、描述、`strict`及schema内容，不通过修改schema来换取成功。具体模型是否接受该schema仍由真实来源决定。推理关闭`none`、强度档位和思考预算是不同控制；省略不等于关闭，见[推理兼容](reasoning-compatibility.md)。
+
+输出cap既约束请求，也参与预算预占。模型/来源边界与价格配置分别校验，价格不是模型能力证明；显式cap超出已知上界会明确报错，不静默缩小并重试。只有客户端省略且合同表示总输出时，普通API来源学习到的较小上限才可约束网关生成的默认cap，并在发出及预占前重算边界。截断终态与真实usage按实际协议保留，缺失usage不能伪造为0。OAuth专属最低16及已核实来源上界见[OpenAI OAuth](openai-oauth.md)。
+
+旧`drop_fields`不能删除客户端明确指定的输出上限、推理等受保护控制。配置冲突时应调整已核实的来源合同或客户端请求，不能用删参掩盖不支持的功能。未知供应商扩展和不能等价表达的跨协议字段，仍按各自保真与拒绝规则处理。
+
+![真实参数与转发规则示意](images/parameter-forwarding.png)
+
+上图为隔离演示来源的原生Chat路径；切换协议后的字段位置依当前来源合同计算，不把此图当作所有上游的通用能力。
 
 ## 请求示例
 

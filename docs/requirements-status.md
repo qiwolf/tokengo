@@ -1,10 +1,6 @@
 # 需求覆盖与未完成项
 
-当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](releases/v0.34.0-qiwolf.10.md)与[完整收据](acceptance/2026-10-23-disabled-key-upgrade/README.md)。
-
-更新：2026-10-23。历史公开版为 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**，发行提交`8598fc070ca4a91e700d5748947d0343766ad06b`，Cargo0.34.0/schema40。Key交付、撤销后列表删除与加密再次显示已交付；历史hash-only Key不能恢复。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。最终发行源码在build-test完整工作区测试为 **1103通过、0失败、3忽略**，另 **22项Python通过**；精确提交GitHub CI独立成功，不把CI、214项历史定向检查或补丁重复运行相加为唯一测试总数。详见[本版记录](releases/v0.34.0-qiwolf.9.md)、[公开产物验收](acceptance/2026-10-23-qiwolf9-release/README.md)及[验收状态](acceptance-status.md)。237历史阶段与本次公开产物分别验收，未因此升级237。
-
-v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整理、可见模型授权选择及自定义探针。统一用户、多Key池、私有路由，以及既有960次自有模型与有限真实OAuth、Search、Fetch结果属于各自历史版本和账号状态；保留在验收状态的历史段落，不扩展为本版逐项重测。
+当前功能以 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)** 为基线（Cargo0.34.0/schema41）；后续版本与验收结论统一见[验收状态](acceptance-status.md)和[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。本文的历史接口沿革不表示当前仍运行旧版本。
 
 ## 当前已实现
 
@@ -24,14 +20,18 @@ v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整�
 | 协议桥接与回退 | 可表示文本/客户端函数工具六向转换、Chat↔Responses原生推理参数；同候选优先同协议，缺协议才允许桥接 | 无法表达的语义拒绝，不塞入用户消息。多来源仍按来源顺序，不保证全局先找所有原生来源；流提交后不重放 |
 | 模型与推理档位 | 服务商分组、连接独立、启停/隐藏兼容别名、目录档位/默认元数据、客户端原生参数优先 | 目录无档位保持未知或人工确认；不是付费逐档实测，不按模型名后缀猜档位 |
 | 向量及重排 | embeddings/rerank原生入口和计量；显式图像及Chat内联语音能力门 | 不把独立音视频/文件API、图像生成或任意多模态转换称为已支持 |
-| OpenAI OAuth | 官方独立注册/授权/目录、加密会话、轮转/撤销、专用Responses订阅来源 | 仅指定OpenAI流程与有限真实用途验证；预览参数/工具限制保留，不等同任意订阅或所有CLI功能 |
+| 完整新建渠道 | 两行家族Logo卡片与“更多模型”、API/OAuth分线、保存凭据、选择模型、参数与转发三步流程 | 家族用于组织，不自动授权或声明真实模型能力；保存前取消不创建空渠道，保存后关闭保留配置；[流程](provider-channels.md) |
+| 多来源OAuth | OpenAI浏览器PKCE；Kimi、MiniMax中国/Global与Copilot公开客户端设备授权、密文存储、轮询/刷新/撤销及固定传输 | 四条设备端点仅验到发起/pending/取消；真实账号授权、权益、刷新和模型调用独立验收；MiniMax公共型号不等于账号权益；[来源](oauth-providers.md) |
+| 参数与推理匹配 | 按供应方、认证线路、原生协议、具体模型及目录匹配结构化格式、reasoning/thinking、none、输出cap及预算；规则随镜像/二进制分发 | 显式控制不静默删除/缩小，不能等价表达或已知不支持时拒绝；未知兼容服务不按品牌名猜测；[合同](references/provider-parameter-contracts.md) |
+| 家族/渠道/具体接入代理 | 三级覆盖和系统继承，支持inherit/direct/HTTP(S) proxy，独立密文认证及版本冲突保护；推理、目录、探测及OAuth使用统一出口选择 | 不含SOCKS；共享OAuth账号来源出口冲突拒绝，真实网络和认证代理需现场验证；[配置](outbound-proxy.md) |
+| 订阅输出cap与格式 | OpenAI OAuth的Chat结构化输出转Responses、输出cap与别名归一化、最低16及模型上界检查、截断终态/真实usage保留 | 以已核实账号/型号为边界，保留预览字段与工具限制；未知订阅成本不显示免费；[合同](openai-oauth.md) |
 | DeepSeek Search/Fetch | 独立JSON工具接口、VKey权限/预算及按次账本；已有各一次真实用途验证 | 不自动接管Claude Code/Codex内置搜索，不计入Token配额 |
 | fallback与恢复探活 | 有序候选、受限重试、冷却、恢复探活、权限/预算逐尝试复核；[逻辑图](protocol-routing-matrix.md) | 恢复探活与管理员自定义诊断分开，后者不改变业务 fallback 健康状态 |
 | 自定义探针 | 页面新增/编辑/保存/取消/启停/删除、手动及定时运行；API、OAuth Responses、独立 Search/Fetch，状态/内容/维度/延迟断言、版本冲突、共享并发及QPS、系统诊断账本 | 不扣普通用户额度；缺价与订阅成本未知；没有可配置独立系统总预算；[完整边界](custom-probes.md) |
 | 基础数据看板 | 实际请求指标、分组、明细、未知用量、预算/价格与逐尝试账本 | 未交付完整成本趋势图、周期套餐图表或通用BI |
 | 双版本封装 | 同提交Linux原生包；源码多阶段Dockerfile、非root Compose、持久卷与离线镜像CI | 最终可下载版本以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准；容器健康不等于真实模型/费用闭环通过 |
 
-## 最新渠道与私有调用策略合同（已实现，最终发布验收单列）
+## 渠道与私有调用策略合同（已实现）
 
 渠道以供应方与唯一API URL为主体，内部管理多把上游Key。支持顺序切换与多用户并发分配，同一真实用户跨VKey优先同一上游Key；429/显式400可触发切换。用户可设置私有虚拟模型名、目标1/2/3/4调用顺序及错误码/时段规则。上游Key池与用户自助创建的下游API Key分工明确；别名不扩大真实模型/来源权限。schema35/36保留旧source/Key/ACL/OAuth/账本身份，新目标逐attempt授权、价格预占与结算，流提交后不重放。向量与重排现已支持经来源兼容核验的多目标回退，错误边界见[向量回退合同](vector-fallback.md)。详见[行为合同](provider-key-pools.md)。
 
@@ -40,7 +40,7 @@ v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整�
 - **第二阶段：月套餐与原始Token权益。**周期、时区、结转、到期、所有尝试/最终成功扣除口径待明确；没有在线支付、自动续费或用户自增总额度。现有TPM是分钟限流，microUSD是金额，均不能包装成Token余额。
 - **系统诊断增强。**自定义探针和系统成本归属已实现；独立系统总预算、通知与更复杂断言仍未交付，现有执行保护不等同预算服务。
 - **更多专用订阅与协议。**通用兼容HTTP来源可接入相应API，但Claude/Grok/Meta等专用OAuth/订阅、Gemini原生、独立音视频/Files与任意托管工具未实现或未实证，不能按品牌一概承诺。
-- **用户增强。**第一阶段没有新增schema、用户整体到期、自助Key开关或可配置活动Key数；policy版本409并发编辑保护尚未实现。Key自身到期与用户整体到期不同。
+- **用户增强。**用户整体到期、自助Key开关或可配置活动Key数未提供；policy版本409并发编辑保护尚未实现。Key自身到期与用户整体到期不同。
 - **运营增强。**完整成本趋势/通用BI、多实例共享并发/额度、全部供应商账单对账与全客户端/移动设备验收仍有后续工作。
 
 完整分阶段合同及建议口径见[统一用户与权益方案](unified-user-and-quota-plan.md)。其中月度schema与周期规则是草案，不能作为当前可调用API。
@@ -50,3 +50,10 @@ v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整�
 原生/桥接已有HTTP矩阵与受控测试；混合多来源“前桥接、后原生”的优先顺序已有源码核对，不能冒称新增HTTP矩阵已单独覆盖此组合。指定CLI工具闭环和真实OAuth结果只覆盖当时版本/模型/参数，不能扩大到全部插件和托管工具。
 
 960次真实自有模型记账验证已完成并守恒；费用测试采用独立本地1 microUSD/Token价格，不是供应商发票。客户端最高并发128、来源保护并发4；它没有原样复现朋友独立环境的727/233截图，也不是128个GPU生成同时并发。后续套餐账务仍须独立进行周期与并发守恒回归。
+
+
+## 历史交付沿革
+
+历史验收沿革（2026-10-23）：公开版为 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**，发行提交`8598fc070ca4a91e700d5748947d0343766ad06b`，Cargo0.34.0/schema40。Key交付、撤销后列表删除与加密再次显示已交付；历史hash-only Key不能恢复。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。最终发行源码在build-test完整工作区测试为 **1103通过、0失败、3忽略**，另 **22项Python通过**；精确提交GitHub CI独立成功，不把CI、214项历史定向检查或补丁重复运行相加为唯一测试总数。详见[本版记录](releases/v0.34.0-qiwolf.9.md)、[公开产物验收](acceptance/2026-10-23-qiwolf9-release/README.md)及[验收状态](acceptance-status.md)。237历史阶段与本次公开产物分别验收，未因此升级237。
+
+v0.34.0-qiwolf.4 已加入完整用户/渠道生命周期、控制台弹窗整理、可见模型授权选择及自定义探针。统一用户、多Key池、私有路由，以及既有960次自有模型与有限真实OAuth、Search、Fetch结果属于各自历史版本和账号状态；保留在验收状态的历史段落，不扩展为本版逐项重测。

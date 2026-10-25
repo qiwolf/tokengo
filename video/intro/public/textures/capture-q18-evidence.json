@@ -1,0 +1,69 @@
+{
+  "source": "q18 public binary and web bundle",
+  "synthetic_only": true,
+  "production_access": false,
+  "oauth_started": false,
+  "inference_requested": false,
+  "captures": [
+    {
+      "name": "channels",
+      "focus": ".console-main .console-content",
+      "text": "供应商与接入\n\n管理供应商、接入凭据与模型声明。本地供应商可包含多个服务地址。\n\n新建渠道\n刷新\n显示已停用渠道\n演示服务商\n\nhttps://api.example.com/v1\n\n启用 1 / 已配置 1 个模型\n\n渠道启用\n管理模型\n编辑渠道\n删除渠道\n管理上游 Key\n未分组接入\n0 条\n查看与整理\n\n按路径访问的接口请在“透传服务”中添加与管理。打开透传服务"
+    },
+    {
+      "name": "models",
+      "focus": ".console-main .console-content",
+      "text": "模型与路由\n\n汇总服务商中已启用且可路由的对外模型；推理档位作为参数，不另建模型名。\n\n刷新\n自动选择与路由策略\n模型路由与回退约束\n服务商已配置模型\n更新 10-25 19:41:36\n对话模型\n1\n向量与重排\n0\n图像\n0\n视频模型\n0\n音频\n0\n工具服务\n0\n待识别\n0\n显示\n已启用\n已停用 / 无可用连接\n兼容隐藏\n仅内部调用\n全部\n供应商\n全部供应商\n演示服务商\n按评分\n按名称\n模型与调用名\n供应商 / 可用连接\n全局状态\n操作\ndemo-chat\n\nAPI 调用名：demo-chat\n\n对话\n实测识别\n已配置\n上下文 未知\n全局已启用\n演示服务商\n1 个可用连接\n详情与统计"
+    },
+    {
+      "name": "users",
+      "focus": ".console-main .console-content",
+      "text": "用户\n\n管理账号、授权与消费上限；用户可自行管理 API Key。\n\n用户列表\n刷新\n新建用户\n搜索显示名称或登录账号\n包含已停用用户\n显示名称\t登录账号\t状态\t消费额度\t操作\nLegacy administrator\t未开通登录\t已启用\t\n未设累计消费上限\n\t\n管理\n停用\n删除\n管理员 admin 的登录信息在账号安全中维护。\n账号安全"
+    },
+    {
+      "name": "billing",
+      "focus": ".console-main .console-content",
+      "text": "用量与账务\n\n按管理目标切换：控制额度、维护价格、查询调用费用。\n\n额度管理\n价格配置\n用量账本\n额度管理\n\n用户额度约束名下所有 Key；单个 Key 可再设置独立额度。\n\n设置额度\n用户额度\nKey 额度\n对象状态\n当前有效\n历史 / 已停用\n全部\n刷新预算\n\n金额单位 USD。无限额表示未单独限额，仍受其他预算约束；冻结会阻止后续调用。历史对象仅供核对。\n\n对象名称\t所属用户\t总限额\t已使用\t在途预占\t状态\t管理\n\n当前分类暂无预算，可为有效对象设置额度。\n\n管理用户与 Key 身份"
+    },
+    {
+      "name": "onboarding",
+      "focus": "dialog[open] .provider-key-editor .family-picker",
+      "text": "模型家族\nGPT\n✓\nClaude\nGemini\nDeepSeek\nQwen\nGLM\nKimi\nMiMo\n更多模型\n\n同一凭据可以包含多个家族；这里的选择用于匹配接入方式，不会删减模型目录。"
+    },
+    {
+      "name": "authentication",
+      "focus": ".oauth-source",
+      "text": "Kimi Code\n可开始授权\n\n使用公开原生客户端的设备授权流程；在供应方页面确认后，读取当前账号实际可用的模型目录。\n\n供应方接口：https://api.kimi.com/coding/v1 · chat；保存绑定时会核对当前渠道地址。\n\n官方说明 ↗"
+    },
+    {
+      "name": "authentication-copilot",
+      "focus": ".oauth-source:nth-child(2)",
+      "text": "GitHub Copilot\n可开始授权\n\n使用公开原生客户端的设备授权流程；在供应方页面确认后，读取当前账号实际可用的模型目录。\n\nGitHub 授权页会显示公开注册应用 OpenCode。当前仅接入账号目录明确支持 Chat 的模型；可用模型与订阅权限以你的账号实际返回为准。\n\n供应方接口：https://api.githubcopilot.com · chat；保存绑定时会核对当前渠道地址。\n\n官方说明 ↗"
+    },
+    {
+      "name": "authentication-options",
+      "focus": ".provider-auth-choices",
+      "text": "API 接入\n使用供应方 API Key\n订阅 OAuth\n使用已授权账号与专属模型目录"
+    },
+    {
+      "name": "proxy",
+      "focus": ".network-proxy-settings",
+      "text": "家族默认代理\n\n优先级：模型接入 → 渠道 → 家族默认 → 系统网络。继承会使用下一层策略；直连会关闭环境代理。\n\n连接方式\n继承上层策略\n直连（不使用代理）\n指定 HTTP / HTTPS 代理\n代理地址\n\n只支持 HTTP / HTTPS。地址中不要填写用户名、密码、查询参数或路径。\n\n代理认证\n保留现有认证\n设置 / 替换认证\n清除认证\n\n当前未保存代理认证，可直接连接无需认证的代理。\n\n保存代理策略\n重新读取"
+    },
+    {
+      "name": "parameters",
+      "focus": ".connection-parameters > form table",
+      "text": "参数\t客户端请求\t供应方接收\t处理规则\n推理强度\treasoning_effort\treasoning_effort\t保留显式档位；按来源能力校验，不自动降档\n结构化输出\tresponse_format\tresponse_format\t仅转换可等价表达的格式；不模拟或弱化 Schema\n输出上限\tmax_tokens / max_completion_tokens\tmax_tokens / max_completion_tokens\t核对是否包含推理；不静默缩小客户端显式上限\n无等价参数\t客户端显式字段\t无等价字段\t明确报错并说明原因"
+    },
+    {
+      "name": "parameters-protocol",
+      "focus": ".connection-parameters > form table",
+      "text": "参数\t客户端请求\t供应方接收\t处理规则\n推理强度\treasoning_effort\treasoning_effort\t保留显式档位；按来源能力校验，不自动降档\n结构化输出\tresponse_format\tresponse_format\t仅转换可等价表达的格式；不模拟或弱化 Schema\n输出上限\tmax_tokens / max_completion_tokens\tmax_tokens / max_completion_tokens\t核对是否包含推理；不静默缩小客户端显式上限\n无等价参数\t客户端显式字段\t无等价字段\t明确报错并说明原因"
+    },
+    {
+      "name": "parameters-reasoning",
+      "focus": ".connection-parameters > .reasoning-config",
+      "text": "当前模型的推理参数\n\n支持档位：none / low / medium / high · 上游声明\n\n思考模式：服务商未公布具体模式\n\n当前跟随服务商默认设置。\n\n先更新模型信息，查看服务商公布的档位，再选择默认值。未公布档位时保持默认；客户端指定的推理档位优先生效。\n\n识别依据与高级说明\n更新模型信息\n默认推理档位\n使用服务商默认\nnone\nlow\nmedium\nhigh\n人工确认支持档位\n\n已从服务商更新模型信息；本次未调用模型。\n\n保存推理参数"
+    }
+  ]
+}

@@ -49,7 +49,9 @@ Chat→Responses 转换支持 response_format 的 text、json_object 与 json_sc
 
 ## 验证边界
 
-可在受限服务环境文件中设置 `TOKENGO_OPENAI_PROXY=http://proxy-host:port`。它只作用于独立的 OpenAI 授权/目录/撤销客户端与订阅推理连接池，其他模型保持原连接池。未设置时沿用原默认网络行为；不需要设置全局 HTTP_PROXY 或修改共享网络。代理配置错误只返回固定错误信息，不打印 URL 或可能包含的代理凭据。
+优先在正式控制台配置[家族、渠道与具体接入代理](outbound-proxy.md)，有效优先级为具体接入 → 渠道 → 家族默认 → 系统网络。初次未保存渠道的OpenAI授权按`gpt`家族出口选择；已绑定账号的刷新、目录、撤销按实际来源解析，同账号多来源策略冲突会明确报错。`direct`显式直连，`proxy`显式覆盖环境；二者都不再继承`TOKENGO_OPENAI_PROXY`。
+
+兼容环境变量 `TOKENGO_OPENAI_PROXY=http://proxy-host:port` 仍可在受限服务环境文件中设置，但仅作为OpenAI专属客户端在继承路径上的网络基线，不是高于后台设置的强制代理。无需为单一家族修改全局HTTP_PROXY。认证信息通过后台独立密文字段保存，不能夹在代理URL中；错误不打印可能含凭据的URL。
 
 自动化回归使用独立合成RSA测试密钥、loopback JWKS/token/revocation/catalog服务；回归本身没有调用真实授权或读旧CLI认证。另行进行的真实授权、有限客户端与转换验证见[公开验收状态](acceptance-status.md)，不能将合成回归与真实推理结果混为一项。测试覆盖非法JWT、一次性state、跨账号、并发轮转/跨runtime CAS、刷新取消/撤销、重启保留、密文存储和管理权限。测试用api_base覆盖仅在cfg(test)编译；生产端点固定，不能经API/环境配置任意host。
 

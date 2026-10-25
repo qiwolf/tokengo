@@ -4,17 +4,19 @@
 
 本功能的配置由服务端 SQLite 管理，通过面板和管理 API 修改，不新增 YAML 配置源。路由配置中的上游 Header 值加密保存，读取接口只返回名称及是否存在值，面板不会回显明文。
 
-本功能自qiwolf.6公开；当前发行版为[v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)，修复容器交付的固定镜像引用和离线导入标签，不改变透传业务合同。部署实例仍运行qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39；本轮未升级该实例二进制，不能把qiwolf.7公开等同于现场软件升级。
+本功能自qiwolf.6公开。当前版本、数据库版本及部署结果统一见[验收状态](acceptance-status.md)；下文带日期的现场接入记录只代表当时环境，不能作为当前运行身份。历史qiwolf.7修复容器交付的固定镜像引用和离线导入标签，不改变透传业务合同；当时现场仍为qiwolf.6源码 `d5660992a6a1ef0b320ff143a19404ac3abad23e`、schema39，该次公开发行没有升级现场二进制。
 
-2026-10-21的qiwolf.6发布验收使用临时路由，结束后已清理。2026-10-22另行完成正式接入：Face、CLIP/OCR和MinerU三条正式路由启用并保留，各有独立VKey，仅授权自己的路由及计费接入，设置 `allowed_models=[]`。当前每次网关价格为0，仍按次计量；实际GPU成本未知，不能称上游计算免费。MT Photos人脸与共享智能识别配置、本机doc-extract默认入口已切换；不代表其他外部消费者全部迁移。详情和证据边界见[开发文档](passthrough-development.md)。
+2026-10-21的qiwolf.6发布验收使用临时路由，结束后已清理。2026-10-22另行完成正式接入：Face、CLIP/OCR和MinerU三条正式路由启用并保留，各有独立VKey，仅授权自己的路由及计费接入，设置 `allowed_models=[]`。该次接入每次网关价格为0，仍按次计量；实际GPU成本未知，不能称上游计算免费。MT Photos人脸与共享智能识别配置、本机doc-extract默认入口已切换；不代表其他外部消费者全部迁移。详情和证据边界见[开发文档](passthrough-development.md)。
 
 ## 在面板配置
 
-进入「渠道」页底部的「透传路由」，点击「新建透传路由」。填写名称、路径前缀、完整上游地址及是否剥离前缀。例如前缀 `/face/`、上游 `http://inference.example:8066`，启用剥离前缀后，客户端 `/face/represent` 对应上游 `/represent`。
+进入侧栏独立的「透传服务」页面（`/ui/#services`），点击「新建透传服务」。旧版渠道页底部入口不再是当前操作路径。填写名称、路径前缀、完整上游地址及是否剥离前缀。例如前缀 `/face/`、上游 `http://inference.example:8066`，启用剥离前缀后，客户端 `/face/represent` 对应上游 `/represent`。
 
 新建表单默认停用，且未授权任何 VKey、任何上游路径。配置完成并确认授权后再启用。
 
-「允许调用的 VKey ID」填写密钥的数字 ID，以逗号或空格分隔；这不是密钥明文。白名单覆盖该Key本身及其有效后代，父Key撤销会阻止后代调用，且用户与全部父链的实时策略继续生效。留空表示全部拒绝。客户端使用获授权的 Tokengo VKey 鉴权（`Authorization: Bearer <VKey>`、`x-api-key`，或透传路由专用的 `api-key`；同一请求不能混用冲突凭据），不能用管理会话或运维令牌代替业务密钥。
+推荐在「用户与 Key」中为用户点选透传服务，其新旧有效Key在用户及祖先限制内继承授权；Key可继续收紧。服务列表和权限配置与LLM模型分开，详见[透传服务与用户授权](passthrough-user-access.md)。
+
+表单保留「旧模式：允许调用的 VKey ID」，填写密钥数字ID，以逗号或空格分隔；这不是密钥明文。它覆盖该Key本身及有效后代，父Key撤销仍会阻止后代调用。用户`allowed_services`未配置时沿用这条旧白名单，留空不新增授权；管理员显式授予用户服务后不能再用“旧白名单为空”判断其无权，用户显式空服务集合则拒绝全部。客户端使用获授权的TokenGo VKey鉴权（`Authorization: Bearer <VKey>`、`x-api-key`，或透传路由专用的`api-key`；同一请求不能混用冲突凭据），不能用管理会话或运维令牌代替业务密钥。
 
 已有 VKey 的渠道授权 `allowed_channels` 和付费开关 `allow_paid` 仍参与校验。给路由填写 VKey ID 不会自动扩大原权限：受限渠道的密钥还需允许路由对应的只读「计费接入 ID」，收费路由需要 `allow_paid=true`。建议分别为人脸、CLIP/OCR和文档解析创建独立VKey，设置 `allowed_models=[]` 阻止LLM调用，`allowed_channels`仅包含对应路由的计费接入ID，并用该路由的显式密钥白名单授予业务接口，并配置预算、RPM、并发限制，不设置 TPM。
 

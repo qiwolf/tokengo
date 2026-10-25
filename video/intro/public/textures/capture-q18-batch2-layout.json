@@ -1,0 +1,32 @@
+{
+  "billing": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": ".console-main .console-content",
+    "bounds": {
+      "x": 296,
+      "y": 80,
+      "width": 1536,
+      "height": 540.390625
+    }
+  },
+  "onboarding-expanded": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "scale": 2,
+    "source": "real q18 isolated demo; fictional fixture data",
+    "focus": "dialog[open] .provider-key-editor .family-picker",
+    "bounds": {
+      "x": 485,
+      "y": 303.390625,
+      "width": 950,
+      "height": 305.390625
+    }
+  }
+}

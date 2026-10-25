@@ -1,99 +1,84 @@
-# tokengo
+# TokenGo 中文使用指南
 
-本文随 **v0.34.0-qiwolf.18** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **41**。这是构建时的文档快照，不据此推定该版本已经公开发行；当前公开版本以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases)、[仓库 README](../README.md)和[最终发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)为准。新安装和从 schema40 升级均执行源码中的 schema41 迁移；升级前一致备份数据库、主密钥、程序与配置，回滚须保留升级后的新写入并使用匹配快照。
+[项目首页](../README.md) · [English guide](guide.en.md) · [版本说明](releases/v0.34.0-qiwolf.18.md) · [发行与验收](acceptance/2026-10-25-qiwolf18-release/README.md)
 
-历史公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
+本文面向 **v0.34.0-qiwolf.18**：Cargo **0.34.0**、数据库 schema **41**。本版已公开发行；固定版本下载、精确源码与验收结果以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 和[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)为准。旧版变更保存在 [CHANGELOG](../CHANGELOG.md) 与[历史版本说明](releases/)，不必先读历史回执才能开始使用。
 
-历史公开版 **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)**，发行源码`2702757fe472`，Cargo0.34.0/schema40。包含本地向量/重排轮询、OAuth结构化输出、输出上限与别名、截断终态、日志和重排计量修复。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40122964321)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40124162546)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1239通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
+TokenGo 将 API 服务、可接入的订阅账号与本地模型放进同一个自托管网关。Rust/Axum 服务端使用 SQLite，Leptos/WebAssembly 控制台无需 Node.js 运行时。可使用原生包或容器部署；当前公开产物为 Linux AMD64。“轻量”指部署结构，不代表固定内存、延迟或吞吐保证。
 
-历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
+## 开始使用
 
-历史公开版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](releases/v0.34.0-qiwolf.14.md)和[发行收据](acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
+部署与备份见下文；已经启动服务时，从“供应商与接入 → 新建渠道”开始。完整流程如下：
 
-历史公开版 [qiwolf.11](releases/v0.34.0-qiwolf.11.md) 的既有收据保留。
+1. **家族与认证**：从带 Logo 的家族卡片选择，默认显示两行，用“更多模型”展开。家族用于组织接入，不缩减真实模型目录，也不授予能力。选择 API 接入或订阅 OAuth；本地模型服务可使用 API Key 或明确的免密方式。
+2. **保存凭据**：API 接入填写实际地址、渠道名和 Key；在线渠道使用统一 API URL，本地渠道允许多个地址。OAuth 选择实际认证来源，在官方页面完成本人账号确认，再保存绑定；不能用 API Key 冒充订阅认证。
+3. **选择模型**：读取当前凭据的目录，搜索、多选并保存映射；可手工输入已核实型号。先填上游名，再填可选对外名，留空沿用上游名。已有映射保持原身份和权限。读取目录不发送付费推理，也不能证明账号可以调用每个模型。
+4. **参数与转发**：核对来源输入/输出 Token 上界、供应方原生协议、客户端可用协议、推理档位、默认参数及网络出口。只有有证据的能力才启用；未知值保留未知，不按品牌或模型名猜测。
+5. **用户与调用**：在“用户与 Key”创建登录账号、授予模型/来源权限，按需配置价格与预算。普通用户登录后创建自己的 Key，客户端使用网关地址、该 Key 与获准的对外模型名。
 
-历史公开版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)** 修复管理员停用Key后的删除，既有冷备升级与Key验收见[历史收据](releases/v0.34.0-qiwolf.10.md)。
+首次保存前关闭不会创建空渠道。凭据保存后退出会保留已存配置，可从“管理上游 Key”继续。保存响应不确定时先关闭并刷新确认，不重复新建；系统不会为补偿一个丢失的响应自动删除可能已保存的凭据。详见[渠道流程](provider-channels.md)和[Key 池](provider-key-pools.md)。
 
-中文首页 | [English / 完整英文部署指南](guide.en.md) | [MIT 许可证](../LICENSE)
+## API、订阅与本地服务
 
-历史公开版本为 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**：Key直接交付与自动复制、撤销后列表删除、加密再次显示及普通HTTP嵌套弹窗系统剪贴板修复。Cargo0.34.0、schema40，Linux x86_64原生包与linux/amd64容器。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。详见[本版说明](releases/v0.34.0-qiwolf.9.md)与[验收状态](acceptance-status.md)。标签及公开资产内的文档是发布前源码快照；完整发布后收据保存在main分支与GitHub Release说明中，不代表先前资产已包含后补回执。
+| 线路 | 如何接入 | 需要核对 |
+| --- | --- | --- |
+| API 服务 / 兼容地址 | 填实际 API URL、Key 与原生协议；代理地址可显式选择参数合同 | 实际服务商、协议和模型元数据；选择家族不等于自动兼容 |
+| OpenAI / Codex 订阅 | 既有浏览器 PKCE 授权，绑定账号后使用其专属目录 | 账号权益、Responses 传输和专属字段限制，见[OpenAI OAuth](openai-oauth.md) |
+| Kimi Code | 设备授权，读取绑定账号目录 | 目前只开放目录确认的原生 Chat 型号 |
+| MiniMax 中国 / Global | 分地区设备授权与绑定；读取当地官方公共型号快照 | 公共目录标记 `provider_public`，不代表该账号订阅权益 |
+| GitHub Copilot | 设备授权；官方确认页显示公开注册应用 OpenCode | 只开放账号目录明确支持 Chat 且未禁用的模型，不把登录成功当作推理成功 |
+| 本地模型 | 多地址渠道，每地址独立配置 API Key 或免密、模型与边界 | 同一 IP 不同端口不自动共享协议、模型或能力；不承接订阅 OAuth |
 
-上一公开版本（历史收据）为 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**：共享向量/重排回退、逐来源自动续验、虚拟模型回收站、透传服务授权与目录展示整理。发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。详见[本版说明](releases/v0.34.0-qiwolf.8.md)与[验收状态](acceptance-status.md)。Cargo仍为上游0.34.0。
+Kimi、MiniMax 中国/Global、Copilot 的有出处公开客户端标识随镜像和二进制内置，无需每位部署者先申请独立 Client ID；有自己的注册时可显式覆盖。OAuth 令牌由服务端加密保存，不导入用户 Cookie 或本机会话文件。
 
-上游 Key 管理使用独立弹窗，“编辑 Key”与“选择模型”分开。已有 API Key 可由管理员显式查看或复制，编辑留空保留原值。点击上游模型输入框即读取当前 Key 的目录，搜索、多选后生成上游名称与本地映射对照，也可手工输入；本地映射留空沿用上游名。既有映射保持原名，详见[操作说明](provider-key-pools.md)。
+上述四条新设备线路已实际验证发起、轮询到 pending、取消及密文清除；**真实用户登录、刷新、订阅权益、模型推理与账务仍需逐账号验收**。Qwen/iFlow 旧授权停用，Gemini CLI、Claude Code 及 Antigravity 不作为已接通订阅入口。依据、配置变量、限制和取消/撤销行为见[OAuth 来源](oauth-providers.md)。
 
-本 fork 基于上游 v0.34.0，使用 Rust / Axum / SQLite 与 Leptos / WebAssembly 构建个人或小团队网关。已实现多用户、多 VKey、预算与持久账本、有序 fallback、三协议原生入口，以及账号密码登录。统一用户、自助 Key 和点选权限的第一阶段已实现，最终界面、CI和部署验收状态单列。最新分支增加在线单地址与本地多地址渠道、多上游Key池、用户私有虚拟模型与顺序/时段策略，以及非破坏模型开关和原生推理档位元数据管理。
+## 协议和参数怎么选
 
-本分支已实现不等于生产验收完成；生产验收状态见[公开验收状态与边界](acceptance-status.md)。Cargo 版本仍为 **0.34.0**，以审阅提交和对应 CI 为准；fork 分发标签使用 `v0.34.0-qiwolf.N`，可下载版本以 GitHub Releases 为准。更新内容见 [CHANGELOG](../CHANGELOG.md)。
+**客户端接入协议**是应用调用 TokenGo 的格式，例如 Chat `/v1/chat/completions`、Responses `/v1/responses` 或 Messages `/v1/messages`；**供应方接口协议**是 TokenGo 调用上游的格式。原生路径优先，其他入口须在当前来源允许转换且能表达请求语义时使用。不能仅按上游家族决定下游接口，也不能让未支持的字段靠静默丢弃通过。见[协议选路矩阵](protocol-routing-matrix.md)。
 
-自qiwolf.6提供[通用 HTTP 透传](passthrough.md)：使用独立 VKey 路由授权，将人脸、CLIP 等原生 HTTP 接口接入同一网关；请求正文不解析，凭据由服务端注入，沿用预算及按次账本。部署和调用方切流按对应版本验收记录核对，不从保存配置推定业务可用。
-透传服务使用独立管理入口，可新增、管理和删除；普通用户仅看到获准服务。用户与 Key 的 `allowed_services` 逐层收窄，保留旧逐 Key 白名单的兼容语义，撤权及排队后的调用重新鉴权；服务目录不会暴露上游凭据。详见[服务授权合同](passthrough-user-access.md)。
+| 控制 | 使用原则 |
+| --- | --- |
+| 推理档位 | Chat 用 `reasoning_effort`，Responses 用 `reasoning.effort`；实际 levels、thinking 开关及映射按来源/认证/协议/型号匹配。boolean“支持推理”不产生 low/high 枚举。 |
+| `none` | 明确关闭推理，与省略、供应商默认、low/minimal 不同。精确匹配的官方兼容规则随源码分发；人工列表、已有默认及客户端显式值保留，未知第三方不自动套用。 |
+| 默认值 | 只在客户端没有明确指定原生参数时补充；档位不是新模型，不按名称后缀推断。`service_tier` 与推理强度分别处理。 |
+| JSON Schema | Chat `response_format` 与 Responses `text.format` 在可保真路径转换，保留 schema/name/description/strict；无法等价表达时明确拒绝。 |
+| 输出上限 | 按协议区分总输出与仅答案 Token，显式 cap 保留或报错，不能删掉或偷偷缩小后重试。省略时可应用默认与已学习边界，并在出站及账务预留前重新计算。 |
+| 预算与边界 | 推理预算、候选数、来源已核实上界共同约束预留；价格不是能力证明。OpenAI OAuth 有独立 cap 与别名规则，详见其专页。 |
 
-Rust 编写的自托管大模型网关。将多个上游渠道统一到一个 OpenAI 兼容入口，管理模型别名、重试切换、客户端密钥及请求记录。服务端采用 Axum + SQLite，管理面板采用 Leptos / WebAssembly，不需要 Node.js 运行时或 npm 构建。
+兼容地址可显式配置 `parameter_profile`，但选择 profile 不授予认证、订阅或实测能力。内置识别与适配规则随源码和产物分发，不依赖私有数据库补丁；控制台保存的实例配置留在自己的数据库。新安装仍需自己的凭据和真实模型边界。详见[参数合同与供应方清单](references/provider-parameter-contracts.md)、[推理关闭](reasoning-compatibility.md)。
 
-## 中文使用指南
+原生签名、加密推理和不透明历史有来源归属要求，不能跨账号或协议随意搬运。Responses 要求完整历史重放。Gemini 原生 `generateContent`、独立音视频/文件 API 和所有品牌订阅兼容不在当前范围。
 
-### 版本与范围
+## 网络与代理
 
-Cargo 版本号保留上游 **v0.34.0**；本分支的实际功能以提交及文档为准。服务端与前端须从同一提交构建。
+在接入第一步展开“网络与代理”；保存渠道后可设渠道覆盖，在参数页可设具体模型接入覆盖。优先级为：**具体接入 → 渠道 → 家族默认 → 系统网络**。每层选择继承、明确直连或 HTTP/HTTPS 代理；明确直连不会继续继承环境代理。
 
-提供 Chat、Responses、Messages、向量、重排、模型清单与独立 Search/Fetch 接口。源协议、转换、图像及内联语音能力须显式配置，不按模型名猜测。流式提交前可切换允许的备用源，提交后不重放；取消、未知用量与来源错误分别记录。
+代理地址与认证分开填写，URL 不带用户名/密码；密码保存后不回显，换地址时明确清除或替换认证。暂不支持 SOCKS。OAuth 的设备请求、交换、刷新、目录与撤销也经过对应出口；同一账号多个绑定来源的有效策略冲突时会报错。
 
-管理面板包括总览、服务商渠道、模型、共享虚拟模型、透传服务、探针、用户、账务和设置；普通账号进入“我的空间”和“调用策略”。管理员在一个“用户”入口创建登录账号并配置授权与费用上限；普通用户登录后自行管理本人的 API Key。内部凭证与权益分表保留，主界面不再要求手动关联两套用户；根管理员仍是独立安全身份。总览显示真实请求指标、运行中请求及按类型/渠道/模型/客户端分组，账务显示价格、预算与逐尝试账本。当前以指标和明细列表为主，不把尚未实现的完整成本趋势图或 BI 分析称为现有能力；本地配额也不是多实例共享配额服务。
+首次创建未保存渠道时，OAuth 按认证来源选择网络家族：OpenAI 为 GPT、Kimi 为 Kimi、MiniMax 为 MiniMax、Copilot 为“其他 / 多家族”。Copilot 授权不因所选模型家族不同而切换首次授权出口。规则和未实测范围见[网络与代理](outbound-proxy.md)。
 
-当前转换只覆盖可保真的文本与客户端函数工具。原生签名/不透明状态有归属约束，不能跨协议搬运；Responses 要求完整历史重放。未实现 Gemini 原生协议、独立音视频/文件 API 或任意订阅转换。官方 OAuth 预览也不接受部分普通 API 参数，详见对应文档。
+## 路由、Key 池与虚拟模型
 
-### 服务商渠道、模型与原生参数
+在线渠道的多个上游 Key 可逐个切换或按用户粘性分配；后者不是同时发送多份推理。同一用户的多个下游 Key 共享上游粘性，原生会话归属优先。429/400 切换由明确开关控制，参数错误不自动等于坏 Key。
 
-在线渠道对应供应方和一个统一 API URL；本地渠道允许同一供应方配置多个 API URL（包括同 IP、不同端口），各地址分别管理凭据和模型。渠道内管理多个上游Key及其模型。支持逐个切换或并发分配；同一用户的多个下游Key保持上游Key粘性，可按显式429/400规则切换。不同URL或认证适配语义的旧来源会拆成独立入口，原来源ID、授权、价格、OAuth和历史保留；没有固定“六个渠道”的目录限制。详见[渠道与Key池](provider-key-pools.md)。
+用户可创建私有虚拟模型名、配置目标顺序或北京时间/UTC 周时段；管理员可授予共享虚拟入口并限制底层模型直接访问。每次尝试仍检查真实来源权限、价格、预算与当前策略。已提交的流不在另一来源重放，虚拟名字不扩大授权。停用保留配置；删除可变配置保留请求、价格版本与财务历史，进行中或未结算时拒绝删除。见[Key 池与私有策略](provider-key-pools.md)、[共享虚拟模型](shared-virtual-models.md)。
 
-在服务商内启用/停用模型会原子更新明确列出的连接范围，停用保留上游模型名、视觉能力及字段配置。模型页默认汇总公开、启用且可路由的模型，停用项与兼容隐藏项可筛选恢复。服务商内模型开关、连接开关、整个服务商开关及全局逻辑模型开关各有不同作用域。
+向量与重排多目标回退先验证各来源数值/输出兼容性；证据按来源身份绑定、到期并自动续验，不能以相同模型名代替验证。本地来源可选择 `local_strategy: "round_robin"` 轮转起点，云端/OAuth 粘性不变；不承诺多实例分布式负载均衡或相同 GPU 利用率。见[向量回退](vector-fallback.md)和[本地节点合同](maintenance/local-vector-balancing.md)。
 
-推理档位通过 `reasoning.effort`（Responses）或 `reasoning_effort`（Chat）表达，`service_tier` 是独立参数；客户端显式值优先。新增/编辑模型读取普通来源目录或绑定 OAuth 账号的官方目录，具体 levels、默认值及来源照实展示，不自动发送付费推理。“支持推理”这一 boolean 不足以推断档位；未知保持未知，允许明确人工确认并标记来源。目录声明未经推理实测，跨协议支持以接入协议为准。
+## 用户、用量和账务
 
-`none` 是明确关闭推理，不是“使用服务商默认”。官方 OpenAI Luna 和 DeepSeek 的目录遗漏由分发版本内置规则补齐，界面注明兼容来源，旧缓存升级无需手工改库。DeepSeek 的 Chat/Messages 用原生 thinking 关闭开关，Responses 保留 none；手工列表及已有默认值优先。第三方兼容服务不套官方规则。见[推理关闭兼容](reasoning-compatibility.md)。
+管理员统一创建登录账号和授权，普通用户在“我的空间”管理自己的 Key 与用量。用户、Key 及祖先 Key 的模型/来源/付费权限和限额取交集；创建子 Key 不能扩大权限或绕过总预算。禁用用户同时阻止登录与 API 调用，根管理员保留独立安全身份。
 
-本轮标准 GPT 展示使用 `gpt-6.1-sol`、`gpt-6-luna`、`gpt-5.6-luna`，不把 low/high 拼成新模型。实际可用名称和档位仍以当前授权账号目录为准。已有档位兼容别名可显式隐藏，从 `/v1/models` 与 auto 排除但保留直接请求、历史及内部引用；不按后缀自动删改。完整配置见 [服务商渠道](provider-channels.md)。
+“运行总览”查看请求指标、运行中进度及类型/来源/模型/客户端分组；“用量与账务”分开管理价格、预算及逐次尝试明细。每个 retry/fallback 按真实来源记录预占与结算；输入/输出 Token 和 Search/Fetch 按次账分开。未知用量不等于零，未定价不是免费，网关计算也不代替供应商最终账单。累计金额预算不是月度 Token 套餐，当前没有多实例共享配额服务。见[账号与自助 Key](account-login.md)、[身份与计量](identity-metering.md)。
 
-例如向 `POST /v1/responses` 发送下列原生请求；使用前确认该账号目录开放该模型及 low 档位。`service_tier` 若受支持应作为独立顶层字段配置，不由推理档位推断。
+## 诊断与其他服务
 
-```json
-{"model":"gpt-6-luna","stream":true,"store":false,"reasoning":{"effort":"low"},"input":[{"role":"user","content":"Hello"}]}
-```
+[自定义探针](custom-probes.md)按实际目标类型定期或手动诊断，保存不立即发请求；诊断账本独立，不扣普通用户额度。探针通过不等于所有真实业务链路已验收。
 
-部署者的可信智能体可使用[独立运维令牌](operations-tokens.md)进行脚本化管理（自 v0.34.0-qiwolf.5 提供）；旧 root 会话用法见[兼容说明](account-login.md#脚本化运维)。
+[独立 Search/Fetch](deepseek-search-fetch.md)提供搜索与网页提取接口，不自动接管 CLI 内置工具。[HTTP 透传](passthrough.md)按用户/Key 服务授权接入原生 HTTP 服务，正文按其合同透传，不把任意异步资源链都视为支持。普通用户只看到获准服务，不取得上游凭据。
 
-### 用户私有虚拟模型
-
-普通用户可自定义私有调用名、按顺序或每周时段选择目标。向量与重排多目标链须先通过服务端的真实来源兼容检查；通过后可对连接、超时、5xx及无效输出故障切换；已识别的真实容量拒绝可逐请求继续备用来源，普通400/429仍遵守显式开关。虚拟入口不因300×4096验收样本限制文本或候选数，全文及合法参数保留，实际窗口由来源决定。18小时提前自动续验；单个来源失败只隔离该来源，身份未变且核实健康的备用来源继续服务，全部不可用或全局证据损坏时拒绝调用并提示原因。首次初始化与手动保存仍要求完整检查，兼容范围及探测成本见[向量与重排回退](vector-fallback.md)。Chat既有回退规则、原生会话固定来源与提交后的流式保护保留。
-
-管理员可创建[共享虚拟模型](shared-virtual-models.md)，只向用户授权共享入口，把底层模型设为“仅内部调用”以阻止直接调用和私有策略绕过；“兼容隐藏”只控制发现，不能代替访问限制。每次尝试仍检查实际来源权限、预算与价格。共享和私有模型支持移入回收站、恢复；恢复保持停用，历史与审计保留。
-
-模型目录按供应商与用途筛选，展示名称与 API 调用名分别显示。展示用途可独立于实际路由类型：整理音频、工具等目录不会更改请求格式、端点能力、调用标识、授权或执行顺序。详见[目录展示合同](catalog-presentation.md)。
-
-### 账号、VKey、fallback 与账务
-
-- 控制台使用账号与密码登录，同源 HttpOnly cookie 恢复会话；不再要求浏览器手填或保存登录 token。初始管理员名为 `admin`，本人可确认当前密码后改登录名或密码，成功撤销全部会话。管理员一次创建普通用户、登录凭证及授权；历史用户可在原用户内补开登录，不改变既有 Key 和账本归属。用户停用同时阻断其登录和 API 调用。见 [账号合同](account-login.md)。
-- 新建用户自动生成初始密码，显示/隐藏仅切换眼睛图标；保存成功后尝试复制账号、显示名和密码到系统剪贴板，复制失败提供明确提示与手动重试。
-- 一个用户可有多个 VKey，按模型、原连接、付费权限及限额隔离；父级限制与预算不能被子密钥绕过。客户端用 VKey，不用面板密码或供应商密钥。见 [身份与计量](identity-metering.md)。
-- 逻辑模型的有序 fallback、重试、冷却及并发限制遵守权限和预算。流式输出提交前可切源，提交后不重放；不是对任意不同模型能力的无损替换。见 [模型路由](logical-routing.md)。
-- Token 与 Search/Fetch 按次账本分开，未知用量/未定价不冒充 0。价格版本、原子预占和持久结算 outbox 保留审计证据，供应商最终账单仍需对账。
-
-### 协议与有限验收范围
-
-Chat / Responses / Messages 有原生入口及受限文本/客户端函数工具转换；明文推理与部分原生请求字段可在可表示路径转换。签名、加密推理、不透明状态和供应商角色差异不能据此宣称无损全兼容。DeepSeek 原生 Responses 的 developer 语义、Messages 忽略参数及 OpenAI OAuth 预览字段限制须分别遵循 [协议文档](protocols.md)。
-
-独立 [DeepSeek Search/Fetch](deepseek-search-fetch.md) 已有有限真实请求与按次入账验证，不会自动接管 Claude Code/Codex 的内置搜索工具，也不以本地价格代替供应商最终发票。[独立 OpenAI OAuth](openai-oauth.md) 已有实际授权、目录、有限文本、受控单工具客户端循环及指定转换流验证；这不代表任意订阅、模型、参数或完整 Claude/Codex 功能集均通过。新增服务商分组与档位 UI 本轮依靠隔离浏览器及合成目录验收，未为其追加付费推理。
-
-### 自定义探针
-
-管理员可在“探针”页通过表单新增、编辑、启停、手动执行与删除诊断，配置目标、输入、状态码、内容/维度断言、超时及周期。支持 Chat、Responses、Messages、Embeddings、已绑定 OpenAI OAuth Responses，以及显式声明的独立 Search / Fetch；只显示目标实际类型。保存不发送请求，启用后等待完整周期再运行。
-
-探针固定请求指定接入，不修改业务 fallback 健康状态；共用来源/Key 并发门及工具账号 QPS。诊断账本记录实际 Token 或请求次数，不扣用户额度；缺价或订阅成本显示未知。OAuth 使用正常刷新链，订阅探针仍以超时和响应大小约束，不把探针配置当作已发送的输出cap；业务推理输出上限见OAuth说明。详见[探针配置与计量](custom-probes.md)。
-
-### 协议回退与下一阶段
-
-Chat 与 Responses 同时可用时使用本次请求的同名原生接口；跨协议无法表示的字段明确拒绝，不放进用户消息。完整交叉矩阵、字段处理和回退逻辑图见[协议选路合同](protocol-routing-matrix.md)。统一用户、自助 Key、点选权限第一阶段已有实现；它没有新增 schema、用户到期或自助开关，自助创建固定最多32把活动 Key。现有上限为金额，不是原始 Token 套餐。自定义探针已实现并单独记录系统诊断成本；月套餐与累计 Token 权益仍未实现，详见[需求覆盖与缺口](requirements-status.md)及[分阶段改造方案](unified-user-and-quota-plan.md)。
+## 部署与维护
 
 ### 构建与启动
 
@@ -125,12 +110,11 @@ TOKENGO_LOG_DIR=./logs \
 
 ### 首次配置和客户端接入
 
-1. 打开 http://127.0.0.1:3160/ui/ ，首次设置管理员密码并安全保存一次性显示的网关密钥，再开放访问。显示名称留空使用默认“管理员”。
-2. 在“渠道”创建服务商，将已有未分组连接显式归属，或在“管理上游 Key”中新增凭据及其模型。连接名称是内部标识；填写真实协议对应的基础地址与供应商凭据。
-3. 获取真实模型目录，在连接内启用需要的标准模型，必要时设置对外名到上游名的映射；确认父服务商、连接及模型均已启用。新增目录元数据不是推理实测。
-4. 依据实际声明配置用途、图片能力与原生参数；未知能力先确认，不按模型名猜测。
-5. 在“用户”填写登录名、显示名、初始密码，点选模型/连接范围、付费权限和限流，按需设置明确单位的费用上限；使用费用预算前先配置真实来源价格。历史无登录用户在原详情内启用登录。普通用户随后登录“我的用量与密钥”，创建自己的 Key；Key与用户共用总额度，不能扩大总权限或额度。
-6. 客户端基础地址填写 `http://127.0.0.1:3160/v1`，使用 VKey 和当前目录中允许的对外模型名。
+1. 打开 http://127.0.0.1:3160/ui/，首次设置管理员密码并安全保存一次性显示的网关密钥，再开放访问。
+2. 按本文[开始使用](#开始使用)完成“新建渠道”的家族、认证、模型与参数流程；需要添加备用凭据时从现有渠道的“管理上游 Key”继续。
+3. 确认渠道、接入和模型均启用；为用户配置模型/来源权限、真实价格及按需金额预算。
+4. 普通用户创建自己的 Key；客户端通常填写 `http://127.0.0.1:3160/v1`，使用网关 Key 和当前目录中允许的对外模型名。Messages 客户端按其约定使用网关根地址与 `/v1/messages`，不要重复拼接 `/v1`。
+
 ```sh
 export TOKENGO_API_KEY='YOUR_GATEWAY_KEY'
 curl http://127.0.0.1:3160/v1/models \
@@ -152,7 +136,7 @@ curl -N http://127.0.0.1:3160/v1/chat/completions \
 | TOKENGO_MASTER_KEY_FILE | master.key | 持久化加密主密钥 |
 | TOKENGO_WEB_DIR | 自动查找 | 面板目录；生产建议显式指定 |
 | TOKENGO_LOG_DIR | 服务入口默认 ./logs | 运行日志目录 |
-| TOKENGO_OPENAI_PROXY | 未设置则沿用 HTTP 客户端默认出站行为 | 仅 OpenAI OAuth/订阅推理专用代理，不改普通源客户端 |
+| TOKENGO_OPENAI_PROXY | 未设置则沿用 HTTP 客户端默认出站行为 | 兼容的 OpenAI 专用继承基线；后台显式 direct/proxy 策略优先，其他来源按其网络策略 |
 
 相对路径以工作目录为准；生产使用绝对路径。路由、超时和数据保留通过面板设置，不是额外的 YAML 配置。
 
@@ -164,7 +148,7 @@ curl -N http://127.0.0.1:3160/v1/chat/completions \
 
 公网通过 HTTPS 反向代理接入本机监听。保留 Authorization 请求头，SSE 关闭响应缓冲，设置适当的长响应读取超时。先完成管理员初始化，再开放访问；必要时额外限制面板访问。
 
-数据库与对应 `master.key` 必须成套备份，备份也按凭据保密。主密钥丢失后无法解密存储的秘密。WAL 数据库写入期间不能只复制 `.db`：使用 SQLite backup API，或者干净停服后备份持久数据。
+数据库、对应 `master.key` 与 `.billing-outbox` / dead-letter 必须成套备份，备份也按凭据保密。主密钥丢失后无法解密存储的秘密。WAL 数据库写入期间不能只复制 `.db`：使用 SQLite backup API，或者干净停服后备份持久数据。
 
 升级前保存数据库、密钥、程序、面板和服务配置的完整备份。启动会应用数据库迁移，之后检查 `/api/ping`、`/readyz`、面板及一次真实请求。旧程序不一定能读取新数据库；回滚可能需要匹配的整套备份，且丢失备份后的新写入。先在独立实例演练恢复。
 
@@ -200,14 +184,6 @@ cargo check --locked -p tokengo-web --target wasm32-unknown-unknown
 
 ---
 
-完整英文说明、请求示例及通用 systemd 模板见 [README.en.md](guide.en.md)。
+英文指南、请求示例及通用 systemd 模板见 [English guide](guide.en.md)。
 
 向量及重排共享虚拟入口完整保留真实后端的输入规模与扩展参数，兼容探针样本不作为接收上限；详见[模型能力与兼容证据](vector-model-capabilities.md)。
-
-## 本地节点轮询与 OAuth 输出控制（qiwolf.16）
-
-本地向量/重排模型可在路由编辑器选择等权轮询：`local_strategy: "round_robin"`。仅影响获授权的本地候选顺序，游标按入口/owner/provider/目标模型隔离；在线Key和OAuth粘性不改成轮询。配置替换整个策略，修改前读取并保留其他字段；节点身份变化后刷新向量兼容证据。详见[合同](maintenance/local-vector-balancing.md)。
-
-Chat结构化输出使用 `response_format`，转换后的Responses使用 `text.format`。OAuth输出上限为 `max_output_tokens`；Responses也接受 `max_tokens`、`max_completion_tokens` 别名，但同时给出时必须相等。整数至少16且不超过配置的来源与计费上界，包含推理token。截断保留实际usage和length/incomplete原因，费用未知继续未定价。见[OAuth](openai-oauth.md)。
-
-运行时临时debug使用代次保护，旧计时器不会覆盖新的级别；机器运维令牌仍需实时权限与成功持久审计才能修改日志。日志字节预算不是服务的固定内存承诺。

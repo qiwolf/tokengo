@@ -1,6 +1,6 @@
 # 后台代理策略实现说明
 
-2026-10-25。实现已在 build-test 构建并完成定向回归，私有实例 `e281c51` 已部署；后台入口与代理配置组件已有渲染核对。四条真实设备授权的发起/轮询/取消在隔离环境验证。公开发行与真实用户授权后的推理验收分别见[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)和[OAuth边界](oauth-providers.md)。
+2026-10-25。三级代理已随qiwolf.18公开发行，后台入口与代理配置组件已有渲染核对；实现基线曾在私有实例 `e281c51` 先行验证，当前部署结果见发行收据。四条真实设备授权的发起/轮询/取消在隔离环境验证。公开发行与真实用户授权后的推理验收分别见[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)和[OAuth边界](oauth-providers.md)。
 
 ## 配置与范围
 
@@ -9,6 +9,23 @@
 新root-panel API：GET /api/network/proxy-policies；PUT /api/network/proxy-policies/{family|provider|source}/{id}。目标必须存在；family为受控15项枚举。策略存settings，用户名/密码分开以SecretBox密文存储，只读DTO仅返回规范代理URL、has_credentials和版本。URL禁止userinfo、非根路径、query、fragment。认证操作显式keep/replace/clear，更换代理URL时禁止悄悄沿用旧代理认证。CAS防并发覆盖。更新会清空复用客户端缓存。
 
 network_family是明确的网络选择，不承担模型能力声明。优先source和provider已保存值，随后官方精确endpoint识别；不按模型别名或模糊域名猜测。尚未保存新渠道时没有父渠道标识，OAuth初次授权按认证来源使用默认网络家族：OpenAI=gpt、Kimi=kimi、MiniMax=minimax、Copilot=other（其他/多家族）。界面显示并编辑这一实际策略，不能把选择的GPT/Claude模型家族误当成Copilot初次授权出口。保存渠道后可设置其network_family和代理覆盖。
+
+## 按需求选择层级
+
+| 需求 | 配置方式 | 结果 |
+| --- | --- | --- |
+| 某一家族统一走代理 | 设置该家族默认`proxy`，渠道与接入保持`inherit` | 该家族没有更高层覆盖的请求使用此代理 |
+| 同家族某一渠道单独走代理 | 设置该渠道`proxy` | 覆盖家族默认，仅影响该渠道及其继承接入 |
+| 某个模型接入必须直连 | 设置具体接入`direct` | 停止继承渠道、家族及环境代理 |
+| 清除某层覆盖 | 改为`inherit` | 继续解析下一层，不等于强制直连 |
+
+普通API的模型调用、读取模型目录与手动探测均按有效来源策略选择出口。OAuth还包括授权申请、交换、刷新、目录与撤销；浏览器能打开验证页不代表服务端这些路径可达。共享一个OAuth账号的不同接入若选择了冲突出口会明确报错，应先统一该账号的有效策略，不会自动挑一条或回退直连。
+
+保存策略后，使用该来源重新读取目录，再按需要做一次受控模型调用检查用量/错误。手动探测仅能证明所测目的和时刻的连通性，不证明全部认证阶段、模型或代理均可用。日志和截图不要包含代理密码、完整认证链接或token。
+
+![HTTP与HTTPS代理配置](images/outbound-proxy.png)
+
+上图使用示例地址，未连接或保存真实代理，不包含认证秘密。
 
 ## 实际传输
 

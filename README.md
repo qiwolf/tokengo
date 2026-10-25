@@ -4,9 +4,9 @@
 
 **A lightweight gateway. A simpler way to connect and manage your models.**
 
-TokenGo 是面向个人与小团队的自托管大模型网关：将多个服务商接入一个兼容 OpenAI 的应用程序接口（API），在同一个控制台管理模型、密钥、用户、路由和用量。
+TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务、可接入的订阅账号和本地模型整理到同一个控制台，按来源能力向客户端提供 Chat、Responses、Messages 等接口，并统一管理模型、密钥、权限、路由和账务。
 
-TokenGo is a self-hosted large language model (LLM) gateway for individuals and small teams. Connect providers through one OpenAI-compatible API and manage models, keys, users, routing and usage in one console.
+TokenGo is a self-hosted large language model (LLM) gateway for individuals and small teams. Bring API providers, supported subscription accounts and local models into one console. Expose Chat, Responses, Messages and other endpoints according to source capabilities, with shared model, key, access, routing and accounting management.
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
@@ -14,29 +14,33 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 Current stable release: **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)** · [Release notes](docs/releases/v0.34.0-qiwolf.18.md) · [Publication record](docs/acceptance/2026-10-25-qiwolf18-release/README.md).
 
-## 60 秒认识 TokenGo · Meet TokenGo in 60 seconds
+## 84 秒认识 TokenGo · Meet TokenGo in 84 seconds
 
-https://github.com/user-attachments/assets/82866974-b13c-4f5c-8606-c03348bd94d1
+https://github.com/user-attachments/assets/6a26c4d3-f4c5-4523-bc90-8cffe3a7c73f
 
 **[下载 1080P 视频 · Download the 1080p video](docs/media/tokengo-intro.mp4)**
 
-1920 × 1080 · 约 60 秒 / about 60 seconds · 中英双语字幕 / Chinese & English captions
+1920 × 1080 · 84 秒 / 84 seconds · 中英双语字幕 / Chinese & English captions · [无背景音乐版 / SFX only](docs/media/tokengo-intro-no-bgm.mp4)
 
 ## 为什么选择 TokenGo · Why TokenGo
 
 | 特点 | 中文 | English |
 | --- | --- | --- |
-| 轻量 · Lightweight | Rust 服务端、SQLite 存储、WebAssembly 管理面板；部署无需 Node.js 运行时，也无需额外数据库服务。 | A Rust server, SQLite storage and a WebAssembly console. No Node.js runtime or separate database service to deploy. |
-| 简单 · Simple | 在控制台配置服务商与模型，给客户端填写统一地址、密钥和模型名。 | Configure providers and models in the console; give your client a gateway URL, key and model name. |
-| 统一 · Unified | 同一入口管理多服务商、模型别名、上游密钥池，以及私有和共享虚拟模型。 | Manage providers, model aliases, upstream key pools, and private or shared virtual models together. |
-| 可控 · Controlled | 按用户与密钥分配权限、限额和预算；普通用户自助管理自己的密钥。 | Set permissions, quotas and budgets per user and key. Users manage their own keys. |
-| 可追踪 · Observable | 查看请求进度、用量与逐次尝试账本；未知用量与未知费用单独标记。 | Inspect request progress, usage and per-attempt ledgers. Unknown usage and costs stay explicitly unknown. |
+| 轻量部署 · Lightweight | Rust 服务端、SQLite 与 WebAssembly 控制台；原生包或容器部署，无需 Node.js 运行时或额外数据库服务。 | A Rust server, SQLite and a WebAssembly console, distributed as native packages and containers. No Node.js runtime or separate database service. |
+| 按流程接入 · Guided setup | 从家族 Logo 选择开始，分清 API 与订阅 OAuth，再保存凭据、选模型、检查参数和协议。 | Choose a model family, select API or supported subscription OAuth, save credentials, select models and review parameters and protocols. |
+| 按来源适配 · Source-aware controls | 区分推理档位、thinking 开关、JSON Schema 和输出上限；显式参数优先，不能等价表达时明确报错。 | Match reasoning levels, thinking switches, JSON Schema and output caps to the source. Explicit controls take priority; unrepresentable requests are rejected. |
+| 出口可控 · Network control | 模型接入、渠道、家族逐层设置 HTTP/HTTPS 代理，可继承或明确直连。 | Set HTTP(S) proxy policies per model source, provider or family, with inheritance and explicit direct access. |
+| 统一路由 · Unified routing | 上游 Key 池、私有/共享虚拟模型、有序回退与时段策略；本地向量和重排可配置等权轮询。 | Upstream credential pools, private/shared virtual models, ordered fallback and schedules; optional round-robin for local embedding/rerank sources. |
+| 权限与账务 · Access and accounting | 用户自助 Key、逐层授权与预算、请求进度及逐次尝试账本；未知用量或费用不冒充零。 | Self-service keys, intersecting permissions and budgets, request progress and per-attempt ledgers. Unknown usage and cost remain explicit. |
 
 ## 从部署到调用 · From deployment to your first request
 
-1. **部署 / Deploy** — 从 [Releases](https://github.com/qiwolf/tokengo/releases) 获取原生程序或容器部署文件，按[部署指南](docs/container-deployment.md)启动。Download a native package or container deployment files and follow the [deployment guide](docs/deployment.md).
-2. **配置 / Configure** — 首次打开控制台设置管理员密码，添加服务商凭据和模型，再创建用户并分配权限。Set your administrator password, add provider credentials and models, then create users and assign access.
-3. **接入 / Connect** — 客户端填写网关地址、自己的密钥及已授权模型名。Enter the gateway URL, your own key and an authorized model name in your client.
+1. **部署 / Deploy** — 从 [Releases](https://github.com/qiwolf/tokengo/releases) 获取原生包或容器文件，按[原生部署](docs/deployment.md)或[容器部署](docs/container-deployment.md)启动并完成管理员初始化。Install a matching native package or container and initialize the administrator.
+2. **接入来源 / Add a source** — 在“供应商与接入”点“新建渠道”，选择家族和认证线路；API 填真实地址与 Key，OAuth 在官方页面完成账号授权。In Providers and Connections, use New Channel to choose a family and authentication route; enter API credentials or complete the supported provider's authorization.
+3. **选择并核对 / Select and review** — 读取目录、保存模型映射，核对输入/输出上界、原生协议、推理档位及网络出口；目录可读不等于推理已通过。Save model mappings, verify source bounds, native protocols, reasoning controls and network policy. Catalog discovery is not an inference test.
+4. **授权并调用 / Grant and call** — 创建用户、授予模型和来源权限，按需配置价格与预算；用户创建自己的 Key，客户端使用网关地址、Key 和获准模型名。Create users and grants, configure prices and budgets where needed, then connect with a user's gateway key and authorized model name.
+
+完整操作见[中文指南](docs/guide.zh-CN.md) / [English guide](docs/guide.en.md)。
 
 OpenAI 兼容客户端通常填写 `http://127.0.0.1:3160/v1`；远程部署请替换为自己的 HTTPS 地址。
 
@@ -53,13 +57,21 @@ curl http://127.0.0.1:3160/v1/chat/completions \
 
 ## 能力与边界 · Capabilities and scope
 
-支持 Chat、Responses、Messages、向量、重排、模型清单及独立 Search/Fetch；还可按授权接入通用 HTTP 透传服务。有序回退遵守来源权限、预算与会话归属，流式输出提交后不重放。
+支持 Chat、Responses、Messages、向量、重排、模型清单、独立 Search/Fetch 及按授权的 HTTP 透传。**客户端接入协议**是应用调用 TokenGo 的协议；**供应方接口协议**是 TokenGo 调用上游的协议。两者可以相同，也可以经过允许的可表达转换，不能只凭模型家族判断兼容。
 
-Supports Chat, Responses, Messages, embeddings, reranking, model listing and standalone Search/Fetch, plus authorized HTTP pass-through services. Ordered fallback respects source permissions, budgets and session ownership; committed streams are never replayed.
+Supports Chat, Responses, Messages, embeddings, reranking, model listing, standalone Search/Fetch and authorized HTTP pass-through. The **client protocol** is how an application calls TokenGo; the **provider protocol** is how TokenGo calls the upstream. They may be native or use an explicitly permitted, representable conversion.
 
-协议转换仅覆盖可保真的文本与客户端函数工具；签名、不透明状态和官方 OAuth 预览各有约束。未实现 Gemini 原生协议或独立音视频/文件 API。实际能力取决于来源配置，测试通过不代表所有供应商与客户端都已验收。当前公开交付架构为 Linux AMD64；“轻量”描述部署结构，不承诺固定内存、延迟或吞吐数字。
+订阅线路包括既有 OpenAI/Codex 浏览器授权，以及 Kimi Code、MiniMax 中国/Global、GitHub Copilot 设备授权。后四条已验证真实设备端点的发起、轮询 pending 和取消；真实用户授权、刷新、权益、推理及账务仍需逐账号验收。Copilot 授权页显示公开注册应用 OpenCode，目前仅开放账号目录明确支持 Chat 的模型；MiniMax 公共目录不代表订阅权益。
 
-Protocol conversion covers representable text and client function tools. Signatures, opaque state and the official OAuth preview have specific constraints. Native Gemini and separate audio/video/file APIs are not implemented. Capabilities depend on source configuration; passing tests does not establish acceptance for every provider or client. Public distributions currently target Linux AMD64. “Lightweight” describes the deployment architecture, without a fixed memory, latency or throughput claim.
+Subscription routes include the existing OpenAI/Codex browser flow and device authorization for Kimi Code, MiniMax CN/Global and GitHub Copilot. The latter four flows have verified start, pending polling and cancellation against real endpoints; real-user login, refresh, entitlement, inference and accounting still require account-specific acceptance. Copilot displays the registered public application OpenCode and currently accepts only catalog-declared Chat models. MiniMax's public catalog does not establish subscription entitlement.
+
+`none` 是显式关闭推理，与省略参数不同；适配按真实来源、认证、协议和型号匹配，不给未知兼容服务自动套用能力。显式输出上限保留或明确拒绝，不静默删除或缩小；JSON Schema 只在可保真路径转换。完整规则见[参数合同](docs/references/provider-parameter-contracts.md)。
+
+`none` explicitly disables reasoning and differs from omission. Matching uses the actual provider, authentication route, protocol and model. Explicit output caps are preserved or rejected rather than silently removed or reduced; JSON Schema conversion is limited to representable paths. See the [parameter contract](docs/references/provider-parameter-contracts.md).
+
+原生签名和不透明状态受来源归属约束；流式输出提交后不重放。未实现 Gemini 原生 `generateContent`、独立音视频/文件 API 或所有品牌订阅接入；代理目前支持 HTTP/HTTPS，未支持 SOCKS。公开产物当前为 Linux AMD64。“轻量”描述部署结构，不承诺固定资源消耗或吞吐数字。
+
+Native signatures and opaque state retain source ownership; committed streams are not replayed. Native Gemini `generateContent`, separate audio/video/file APIs, every subscription brand and SOCKS are outside current scope. Public packages target Linux AMD64. “Lightweight” describes deployment structure, without fixed resource or throughput claims.
 
 ## 文档 · Documentation
 
@@ -67,9 +79,11 @@ Protocol conversion covers representable text and client function tools. Signatu
 | --- | --- |
 | 完整使用、配置与示例 / Full usage, configuration and examples | [中文指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) |
 | 部署、升级与备份 / Deployment, upgrades and backups | [Deployment](docs/deployment.md) · [Containers](docs/container-deployment.md) |
-| 渠道与上游密钥池 / Providers and upstream key pools | [Provider channels](docs/provider-channels.md) · [Key pools](docs/provider-key-pools.md) |
+| 渠道、凭据与 OAuth / Channels, credentials and OAuth | [接入流程 / Provider setup](docs/provider-channels.md) · [Key pools](docs/provider-key-pools.md) · [OAuth](docs/oauth-providers.md) |
+| 参数、推理关闭与网络 / Parameters, reasoning off and networking | [参数合同 / Parameter matching](docs/references/provider-parameter-contracts.md) · [Reasoning off](docs/reasoning-compatibility.md) · [代理 / Proxies](docs/outbound-proxy.md) |
 | 用户、自助密钥与权限 / Users, self-service keys and access | [Accounts](docs/account-login.md) · [Identity and metering](docs/identity-metering.md) |
-| 协议、客户端与路由 / Protocols, clients and routing | [Protocols](docs/protocols.md) · [Routing](docs/logical-routing.md) |
+| 协议、客户端与路由 / Protocols, clients and routing | [Protocols](docs/protocols.md) · [Protocol matrix](docs/protocol-routing-matrix.md) · [Routing](docs/logical-routing.md) · [Shared models](docs/shared-virtual-models.md) |
+| 向量、诊断与透传 / Vectors, diagnostics and pass-through | [Vector fallback](docs/vector-fallback.md) · [Local rotation](docs/maintenance/local-vector-balancing.md) · [Probes](docs/custom-probes.md) · [Pass-through](docs/passthrough.md) |
 | 版本、验收与已知限制 / Versions, acceptance and limits | [Changelog](CHANGELOG.md) · [Acceptance status](docs/acceptance-status.md) · [Release notes](docs/releases/) |
 
 发行版本以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 的实际附件与对应验收记录为准；历史版本说明与技术细节保留在完整指南中。
@@ -79,7 +93,3 @@ Published versions are identified by the actual Release assets and their accepta
 TokenGo 基于 [shang1626/tokengo](https://github.com/shang1626/tokengo)，采用 [MIT 许可证](LICENSE)，归属见 [NOTICE](NOTICE)。
 
 Based on [shang1626/tokengo](https://github.com/shang1626/tokengo), distributed under the [MIT License](LICENSE); see [NOTICE](NOTICE) for attribution.
-
-参数匹配、认证线路与逐来源验收边界见 [模型家族与参数合同](docs/references/provider-parameter-contracts.md)。
-
-“新建渠道”直接进入家族 Logo、认证、模型与参数流程；[OAuth 来源与配置](docs/oauth-providers.md)、[渠道与家族代理](docs/outbound-proxy.md)记录公开客户端默认配置、已验证步骤和真实账号验收边界。

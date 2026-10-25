@@ -1,12 +1,16 @@
 # 浏览器账号与接口合同
 
-当前正式版 **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)**，源码`b619c57fb9be`，Cargo0.34.0/schema40。修复管理员停用Key后本人及管理员无法删除；旧管理删除通道同步保留撤销、历史与审计。公开原生包和容器独立验收通过，237已先冷备再升级，现有向量/重排、MinerU、Andy授权及Key功能验证通过。见[本版说明](releases/v0.34.0-qiwolf.10.md)与[完整收据](acceptance/2026-10-23-disabled-key-upgrade/README.md)。
+当前功能以 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)** 为基线（Cargo0.34.0/schema41）；后续版本与验收结论统一见[验收状态](acceptance-status.md)和[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。本文的历史接口沿革不表示当前仍运行旧版本。
 
-Key交付、列表删除和加密再次显示已随 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)** 公开，Cargo0.34.0/schema40。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。完整测试和公开产物收据见[本版记录](releases/v0.34.0-qiwolf.9.md)及[独立发行验收](acceptance/2026-10-23-qiwolf9-release/README.md)；214项定向和237部署证据单列，不合计或据此声称237换用本版公开二进制。
+## 从控制台配置用户与 Key
+
+管理员在“用户与 Key”创建普通用户并设置登录凭证、模型/来源权限及费用上限；这和“供应商与接入”中保存的上游 API Key 或 OAuth 账号是两类凭据。客户端填写用户自己的下游 Key，不能填写上游 token、管理员密码或运维令牌。普通用户登录后在自己的门户管理 Key、查看本人用量；权限和预算只能收紧，不能借创建新 Key 扩大。
+
+需要脚本访问管理接口时使用[独立运维令牌](operations-tokens.md)，需要调用模型时使用下游 Key。账号密码、登录 Cookie、运维令牌、上游凭据和下游 Key 的用途见下文[选择凭据](#选择凭据)。新增上游请按[完整渠道流程](provider-channels.md#从新建渠道开始)操作。
 
 主流程只有一个“用户”入口：管理员一次创建普通用户、登录凭证、授权及可选费用上限；历史用户可以在原详情内补开登录，普通用户登录后自助管理本人的 API Key。内部保留稳定 users.id 与 panel_accounts 凭证分表，用户无须手工关联两套身份。迁移32将旧panel_password_hash原样迁入唯一root，初始用户名admin，不重设旧密码；root仍是独立安全身份，不从API role/admin_access推导。
 
-第一阶段不新增数据库schema，不提供用户到期、自助开关或可配置活动Key上限；浏览器自助创建固定最多32把活动Key。金额上限以整数microUSD表示，不能称为Token套餐。实现及验收状态见[需求覆盖](requirements-status.md)和[验收状态](acceptance-status.md)。
+统一用户功能本身不新增数据库schema；当前不提供用户整体到期、自助Key开关或可配置活动Key上限；浏览器自助创建固定最多32把活动Key。金额上限以整数microUSD表示，不能称为Token套餐。实现及验收状态见[需求覆盖](requirements-status.md)和[验收状态](acceptance-status.md)。
 
 浏览器使用 `tokengo_account_session` Cookie，Path=/、HttpOnly、SameSite=Lax、12小时绝对有效期；HTTPS请求设置Secure（依据Origin HTTPS或反代X-Forwarded-Proto=https，仅可加强Secure；当前服务监听HTTP，TLS在前置代理终止；HTTP本地访问不设Secure）。不向JSON/前端暴露session secret，数据库新会话仅存SHA256摘要。新建legacy运维会话也改存带域前缀的摘要，历史明文legacy rows启动时摘要迁移，原Bearer值仍可验证。
 
@@ -175,3 +179,8 @@ print("会话已撤销，再次访问返回401")
 管理员可删除普通用户：`DELETE /api/managed-users/{id}` 归档稳定用户身份，撤销其全部 Key，移除登录凭证/会话和私有策略，保留请求、用量、账本及删除审计。存在该用户运行请求、预占或未结算项时拒绝；根管理员不能从普通用户删除入口移除。普通用户可恢复自己暂停的 Key，但不能恢复管理员停用、撤销或祖先禁用的 Key。
 
 Key 再次显示及嵌套弹窗系统剪贴板验收见[记录](acceptance/2026-10-23-key-reveal/README.md)。此能力属于 qiwolf.8 之后 main 与237的后续修改，原发行附件不变。
+
+
+## 历史交付沿革
+
+历史沿革：Key交付、列表删除和加密再次显示已随 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)** 公开，Cargo0.34.0/schema40。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。完整测试和公开产物收据见[本版记录](releases/v0.34.0-qiwolf.9.md)及[独立发行验收](acceptance/2026-10-23-qiwolf9-release/README.md)；214项定向和237部署证据单列，不合计或据此声称237换用本版公开二进制。

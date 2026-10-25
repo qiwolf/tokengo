@@ -1,93 +1,82 @@
-# tokengo
+# TokenGo User Guide
 
-This document is a build-time snapshot for **v0.34.0-qiwolf.18** source and its matching distribution: Cargo **0.34.0**, database schema **41**. It does not establish that publication has completed. Check [GitHub Releases](https://github.com/qiwolf/tokengo/releases), the [repository README](../README.en.md) and the [final publication receipt](acceptance/2026-10-25-qiwolf18-release/README.md) for the current public release. Fresh installations and upgrades from schema40 run the schema41 migration from source. Back up the database, master key, application and configuration together; rollback requires a matching snapshot while preserving post-upgrade writes.
+[Project home](../README.en.md) · [中文指南](guide.zh-CN.md) · [Release notes](releases/v0.34.0-qiwolf.18.md) · [Publication receipt](acceptance/2026-10-25-qiwolf18-release/README.md)
 
-Historical public release: **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**, source `0aced3ddbdcc`, Cargo0.34.0/schema40. Includes distributable Luna and DeepSeek reasoning-off compatibility, effort metadata parsing and native thinking-disable controls, plus compact mobile model categories and filters. Compatibility is scoped to verified official sources and exact models; conflicts are rejected, manual levels and configured defaults are preserved, explicit client parameters take priority, and third-party sources are not automatically amended. [Exact-commit main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667) and [publication](https://github.com/qiwolf/tokengo/actions/runs/40159639375) passed; all nine public assets, anonymous GHCR pull and native/container lifecycle and Key checks passed. Build-test merged-source verification recorded **1253 passed, 0 failed, 3 ignored** Rust tests; Python suites recorded 13, 6, 3 tests respectively, without adding overlapping reruns. See [release notes](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md) and the [publication record](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md). Tag/package docs remain build-time snapshots; later receipts live on main and the Release page, without moving the tag.
+This guide covers **v0.34.0-qiwolf.18**, Cargo **0.34.0**, database schema **41**. The release is public; use [GitHub Releases](https://github.com/qiwolf/tokengo/releases) and the [receipt](acceptance/2026-10-25-qiwolf18-release/README.md) for exact source and artifact identity. Historical changes remain in the [changelog](../CHANGELOG.md) and [release notes](releases/). Tagged package documentation is a build-time snapshot; later receipts live on main without moving the tag.
 
-Historical public release: **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)**, source `2702757fe472`, Cargo0.34.0/schema40. Includes local vector/rerank rotation, OAuth structured outputs and token-cap aliases, capped terminal handling, runtime logging and endpoint-scoped rerank meters. [Exact-commit main CI](https://github.com/qiwolf/tokengo/actions/runs/40122964321) and [publication](https://github.com/qiwolf/tokengo/actions/runs/40124162546) passed; all nine public assets, anonymous GHCR pull and native/container lifecycle and Key checks passed. Build-test merged-source verification recorded **1239 passed, 0 failed, 3 ignored** Rust tests; Python suites recorded 13, 6, 3 tests respectively, without adding overlapping reruns. See [release notes](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md) and the [publication record](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md). Tag/package docs remain build-time snapshots; later receipts live on main and the Release page, without moving the tag.
+TokenGo brings API providers, supported subscription accounts and local models into one self-hosted gateway. The Rust/Axum server uses SQLite, with a Leptos/WebAssembly console. Native and container deployments need no Node.js runtime or separate database service. Current public packages target Linux AMD64; “lightweight” describes this architecture, without a fixed memory, latency or throughput claim.
 
-Earlier public release: **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**, source `c3ecd31250f0`, Cargo0.34.0/schema40. The console redesign, grouped settings and dialog/form consistency update changes no business APIs or database schema. Local merged-source native/WASM builds and native/container lifecycle tests passed. Exact-commit CI and publication passed;9 assets and the GHCR image are available. UI acceptance covered284 effective browser checks. See [release notes](releases/v0.34.0-qiwolf.15.md) and the [publication record](acceptance/2026-10-25-qiwolf15-release/README.md). Tag/asset documentation is a build-time snapshot; later receipts live on main and the Release page.
+## Start With a Source
 
-Earlier public release: **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**, source `1386fa2d410e`, Cargo0.34.0/schema40. Billing management and model-mapping lifecycle fixes are documented in the [previous release notes](releases/v0.34.0-qiwolf.14.md) and [public artifact receipt](acceptance/2026-10-24-qiwolf14-release/README.md).
+After deployment and administrator initialization, open Providers and Connections → New Channel:
 
-The previous public [qiwolf.11](releases/v0.34.0-qiwolf.11.md) retains its historical receipt.
+1. **Family and authentication**: choose a logo card, initially displayed in two rows; More Models expands the rest. The family organizes setup, without restricting the real catalog or granting capabilities. Choose API, supported subscription OAuth, or explicit anonymous access for a local service.
+2. **Save credentials**: enter the actual API URL and key, or complete your own authorization on the official provider page and save the binding. Online channels use one API URL; local channels may contain multiple independent addresses. An API key cannot substitute for subscription authentication.
+3. **Select models**: read the selected credential's catalog, search and select models, then save mappings. Enter the upstream name and an optional public alias; a blank new alias uses the upstream name. Existing mappings retain their identity and grants. Manual entry remains available for verified models. Catalog discovery is not a paid inference test or entitlement confirmation.
+4. **Parameters and forwarding**: verify source input/output token bounds, native protocol, permitted client protocols, reasoning controls, defaults and network policy. Unknown capabilities remain unknown rather than being inferred from a brand or model name.
+5. **Grant and call**: create users and model/source grants. Configure prices and monetary budgets where required, then let users create their own gateway keys and connect with an authorized public model name.
 
-The previous public release **[v0.34.0-qiwolf.10](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.10)** fixed disabled-Key deletion. Its historical production upgrade and Key acceptance remain in the [previous receipt](releases/v0.34.0-qiwolf.10.md).
+Closing before the first save creates no empty channel. Closing after credentials are saved retains them; continue through Manage Upstream Keys. If a save response is uncertain, close and refresh to confirm the result before retrying. The system does not delete possibly saved credentials to compensate for a lost response. See [provider setup](provider-channels.md) and [credential pools](provider-key-pools.md).
 
-[中文](guide.zh-CN.md) | English | [MIT License](../LICENSE)
+## API, Subscription and Local Routes
 
-A self-hosted OpenAI-compatible LLM gateway written in Rust, with an Axum server, SQLite storage and a Leptos WebAssembly administration panel. No Node.js runtime or npm build is required.
+| Route | Setup | Check before use |
+| --- | --- | --- |
+| API / compatible endpoint | Actual URL, API key and native protocol; explicit parameter profile for a compatible proxy when needed | The real provider, protocol and model metadata, rather than the selected family alone |
+| OpenAI / Codex | Existing browser PKCE flow and account-specific catalog | Account access, Responses transport and dedicated controls; see [OpenAI OAuth](openai-oauth.md) |
+| Kimi Code | Device authorization and bound-account catalog | Currently only catalog-confirmed native Chat models |
+| MiniMax CN / Global | Separate regional device flows and official public model snapshots | `provider_public` is public metadata, not account entitlement |
+| GitHub Copilot | Device flow; confirmation page names the registered public application OpenCode | Only enabled models whose account catalog explicitly declares Chat; successful login is not proof of inference |
+| Local model service | Multiple addresses with independent key/anonymous credentials, models and bounds | The same IP on different ports does not share protocol or capability declarations; no subscription OAuth in local mode |
 
-## Version and Scope
+Published public-client identifiers for Kimi, MiniMax CN/Global and Copilot ship with the binary/image. New deployments need no independent Client ID registration to start these flows; explicitly configured registrations may override the defaults. Tokens are encrypted server-side. User cookies and local session files are not imported.
 
-This fork builds on upstream **v0.34.0** and retains that Cargo version. Use the commit identity and current documentation to determine behavior; build the server and panel from the same commit.
+Those four new device routes have real endpoint verification for start, pending polling, cancellation and encrypted-state cleanup. **Real-user login, refresh, subscription entitlement, inference and accounting still require per-account acceptance.** Retired Qwen/iFlow flows and Gemini CLI, Claude Code and Antigravity are not advertised as connected subscription routes. See [OAuth providers](oauth-providers.md) for evidence, overrides and limitations.
 
-The fork provides native Chat, Responses and Messages endpoints, strict text/client-function conversion in all six directions, embeddings, reranking, model listing and standalone DeepSeek Search/Fetch. Users, scoped virtual keys, ancestor quotas, ordered fallback, versioned prices, budgets and durable per-attempt accounting share one executor. Configure source capabilities explicitly; a model name is not evidence of support.
+## Client Protocols and Parameter Matching
 
-The previous public distribution (historical receipt) is **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)**, source `8598fc070ca4a91e700d5748947d0343766ad06b`: visible Key delivery and clipboard retry, list-only removal of revoked Keys, and authorized reveal/copy of encrypted credentials. Cargo **0.34.0**, schema **40**, Linux x86_64 native and linux/amd64 containers. [Exact-source CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368) and [packaging/release](https://github.com/qiwolf/tokengo/actions/runs/39898890902) passed. All nine assets were anonymously downloaded and verified; native/container Key contracts, anonymous GHCR pull and Compose/container lifecycle checks passed independently. Full build-test tests: 1103 passed, 0 failed, 3 ignored; 22 Python tests passed. Historical focused checks are not added to these totals. See the [release receipt](releases/v0.34.0-qiwolf.9.md). Tagged/packaged docs are pre-publication snapshots; final receipts live on main and in Release notes. Production 237 was not switched to these public binaries by this acceptance.
+The **client protocol** is how an application calls TokenGo: Chat `/v1/chat/completions`, Responses `/v1/responses` or Messages `/v1/messages`. The **provider protocol** is how TokenGo calls the upstream. Prefer a native path; other endpoints require an explicitly enabled conversion that can represent the request. A model family alone does not establish compatibility. See the [protocol routing matrix](protocol-routing-matrix.md).
 
-The previous public distribution (historical receipt) is **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**, source `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`: shared vector/rerank fallback, independent renewal, virtual-model trash, scoped service access and catalog presentation. [Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738) and [packaging/release](https://github.com/qiwolf/tokengo/actions/runs/39837203892) passed. All nine assets were downloaded anonymously and verified; Linux x86_64 native runtime, anonymous GHCR pull, literal Compose startup and container restart/recreation passed on build-test. See the [release record](releases/v0.34.0-qiwolf.8.md) and [acceptance status](acceptance-status.md). Cargo remains **0.34.0**. Tagged and packaged documentation is a pre-publication snapshot; final receipts are maintained on main and in the GitHub Release notes.
+| Control | Behavior |
+| --- | --- |
+| Reasoning levels | Chat uses `reasoning_effort`, Responses uses `reasoning.effort`; levels and native thinking switches are matched by provider, authentication, protocol and model. A boolean reasoning flag does not establish low/high levels. |
+| `none` | Explicitly disables reasoning, unlike omission, provider defaults or low/minimal. Source-distributed compatibility rules apply only to verified provider/model combinations; manual lists, configured defaults and explicit client controls retain priority. |
+| Defaults | Added only when the client omitted the native control. Reasoning levels are not separate models or inferred suffixes. `service_tier` remains independent. |
+| JSON Schema | Chat `response_format` and Responses `text.format` convert on representable paths, preserving schema/name/description/strict. Unrepresentable fields are rejected. |
+| Output caps | Total-output and answer-only semantics stay distinct. Explicit caps are preserved or rejected, never silently removed or reduced for a retry. Omitted caps may use defaults and learned bounds, recomputed before dispatch and accounting reservation. |
+| Budgets | Reasoning budgets, candidate counts and verified source ceilings contribute to reservation. A price table is not capability evidence. OpenAI OAuth has its own cap/alias contract. |
 
+`parameter_profile` can explicitly select a compatible endpoint contract; it does not grant authentication, entitlement or inference acceptance. Built-in recognition and adaptation rules ship in source and artifacts without a private database patch; instance configuration saved in the console remains in that instance's database. Fresh installations still need their own credentials and verified bounds. See [parameter contracts and provider inventory](references/provider-parameter-contracts.md) and [reasoning-off compatibility](reasoning-compatibility.md).
 
-[Generic HTTP pass-through](passthrough.md), introduced in qiwolf.6, uses encrypted static upstream headers and opaque streams. MinerU covers synchronous `/file_parse` and `/health`; its native asynchronous resource chain remains unsupported. The local doc-extract health check and upload both use dedicated gateway authentication. See the [development contract](passthrough-development.md) and [acceptance record](acceptance-status.md) for the separate release, deployment and caller boundaries.
+Native signatures, encrypted reasoning and opaque history retain source ownership and cannot be moved freely between accounts or protocols. Responses requires complete input replay. Native Gemini `generateContent`, standalone audio/video/file APIs and arbitrary subscription conversion remain outside scope. See [protocol details](protocols.md).
 
-See the [changelog](../CHANGELOG.md), [provider channels](provider-channels.md), [accounts and self-service Keys](account-login.md), [protocols and clients](protocols.md), [identity and metering](identity-metering.md), [routing](logical-routing.md), [Search/Fetch](deepseek-search-fetch.md), [independent OpenAI OAuth](openai-oauth.md), [requirements coverage](requirements-status.md), and [deployment](deployment.md). Implementation and local tests do not establish acceptance by every real provider, subscription or CLI.
+## Network and Proxies
 
-Conversion rejects semantics it cannot represent. Responses requires full input replay; native signatures and opaque state have ownership restrictions. Native Chat inline audio is an explicit source capability, but separate audio/video/file APIs, native Gemini and arbitrary subscription conversion are not implemented. The official OAuth preview rejects some ordinary API generation fields; review its specific limitations.
+Expand Network and Proxies in the first setup step. After saving a channel, set a provider override; the parameter step also exposes a specific model-source override. Priority is **model source → provider → family default → system network**. Each layer supports inheritance, explicit direct access or HTTP/HTTPS proxying. Explicit direct access stops environment-proxy inheritance.
 
-Production acceptance is tracked in the [public acceptance status and limits](acceptance-status.md). The Cargo version remains **0.34.0**; fork release tags identify the distributed build.
+Keep the proxy URL separate from credentials. Saved passwords are not returned; changing the address requires an explicit clear/replace decision. SOCKS is not supported. OAuth device, token, refresh, catalog and revocation traffic also uses the selected policies; conflicting effective policies for one account's bound sources are rejected.
 
-## Provider Channels and Native Parameters
+Before a new channel exists, OAuth's initial network family follows the authentication provider: GPT for OpenAI, Kimi for Kimi, MiniMax for MiniMax, and Other / Multi-family for Copilot. Selecting a GPT/Claude model family does not alter Copilot's initial authorization exit. See [proxy configuration and verification limits](outbound-proxy.md).
 
-Channels now presents an explicit provider identity above its connections. Connections retain their original IDs, URLs, credentials, protocols, OAuth bindings, concurrency, pricing and fallback references. Provider grouping is explicit and configurable; there is no fixed provider catalog or count. Assign ungrouped connections explicitly rather than inferring identity from hostnames or model names.
+## Routing, Credential Pools and Virtual Models
 
-A provider's model switch atomically updates the explicitly listed connections. Disabling preserves aliases and capability configuration. The Models page defaults to public, enabled, routable models; disabled and compatibility-hidden items can be restored through explicit filters. Provider, connection, per-connection model and global logical-model switches have distinct scopes.
+An online channel's upstream credentials use ordered selection or user-sticky allocation, not duplicate inference fan-out. A user's downstream keys share upstream affinity; native session ownership takes precedence. Explicit 429/400 switches control credential changes. A parameter error does not automatically establish a bad key.
 
-Catalog display names are separate from API model identifiers. Supplier and purpose filters organize discovery without changing aliases, upstream mappings, grants, prices or execution order. A catalog purpose may differ from the actual route type; details retain the actual type, and presentation changes do not establish endpoint capabilities. See the [catalog presentation contract](catalog-presentation.md).
+Users can define private virtual models with ordered targets or weekly UTC/Asia-Shanghai schedules. Administrators can grant shared entries and restrict direct calls to backing models. Every attempt still checks actual target permissions, current policy, prices and budgets. Committed streams are not replayed. Virtual names cannot expand access. Disabling retains configuration; deletion removes live configuration while retaining request, price and financial history, and is refused during active/unsettled work. See [key pools and private strategies](provider-key-pools.md), [shared entries](shared-virtual-models.md) and [routing](logical-routing.md).
 
-Reasoning is a native parameter: `reasoning.effort` for Responses or `reasoning_effort` for Chat, independent of `service_tier`. Explicit client values take precedence. Adding/editing models reads a normal upstream catalog or the bound OAuth account's official catalog without paid inference. Levels, defaults and provenance follow actual metadata. A reasoning boolean does not establish effort levels; unknown remains unknown, with explicit manual confirmation available and labeled as such. Catalog declarations are not inference tests; cross-protocol support depends on the configured protocol.
+Multi-target embedding/rerank fallback verifies numeric/output compatibility per source. Evidence is source-bound, expires and renews independently; equal model names are insufficient. Local routes can choose `local_strategy: "round_robin"` to rotate their start while preserving cloud/OAuth affinity. This is not a distributed load-balancing or equal-GPU-utilization guarantee. See [vector fallback](vector-fallback.md), [capacity](vector-model-capabilities.md) and [local node rotation](maintenance/local-vector-balancing.md).
 
-`none` explicitly disables reasoning; it is different from following the provider default. Built-in rules supplement omitted off controls for official OpenAI Luna and DeepSeek, including valid existing caches, without private SQL. DeepSeek Chat/Messages use the native thinking switch; Responses keeps `reasoning.effort`. Manual lists and defaults remain authoritative, and unknown third-party APIs receive no inferred capability. See [reasoning compatibility](reasoning-compatibility.md).
+## Accounts, Usage and Accounting
 
-The standard GPT display names are `gpt-6.1-sol`, `gpt-6-luna` and `gpt-5.6-luna`, subject to the current account's catalog and access. Effort levels are not separate models. Existing effort aliases can remain as explicitly hidden compatibility entries: excluded from `/v1/models` and auto, while direct requests, history and internal references remain intact. No suffix-based renaming or deletion is performed.
+Administrators create logins and grants together. Ordinary users manage their own keys and usage in My Space. User, key and ancestor permissions/budgets intersect; child keys cannot widen grants or bypass total budgets. Disabling a user blocks both login and API calls. Root keeps its separate security identity.
 
-For example, send the following to `POST /v1/responses` only if the current account catalog offers this model and effort. A supported `service_tier` is a separate top-level field, not inferred from reasoning effort.
+The overview exposes request metrics, active progress and type/source/model/client groups. Usage and Billing separates prices, budgets and per-attempt records. Each retry/fallback reserves and settles against the actual source. Token accounting is separate from request-unit Search/Fetch accounting. Missing usage is not zero, unpriced is not free, and a gateway calculation is not the provider's final invoice. Cumulative monetary budgets are not monthly Token packages or a multi-instance quota service. See [accounts](account-login.md) and [identity/metering](identity-metering.md).
 
-```json
-{"model":"gpt-6-luna","stream":true,"store":false,"reasoning":{"effort":"low"},"input":[{"role":"user","content":"Hello"}]}
-```
+## Diagnostics and Other Services
 
-## Accounts, Keys and Observability
+[Custom probes](custom-probes.md) target supported source types manually or periodically; saving does not dispatch immediately. Diagnostic costs have a separate ledger and do not debit user budgets. A passing probe is not blanket business-path acceptance.
 
-New users receive a generated initial password. Reveal/hide changes the eye icon while retaining the button background. After successful creation, the panel attempts to copy the username, display name and password to the system clipboard; failures have a visible retry path.
-
-Pass-through services have a separate CRUD page and an authorized user directory. User and Key `allowed_services` scopes intersect with ancestor restrictions and live route checks; legacy per-Key ACLs retain their original meaning. Ordinary users cannot grant themselves services or read upstream credentials through the directory. See [service authorization](passthrough-user-access.md).
-
-Login uses a username, password and same-origin HttpOnly cookie. The initial root administrator is `admin`; changing its name or password requires the current password and revokes sessions. The unified Users page creates an ordinary user, login credentials and permissions together. Existing users can gain login without changing Key or ledger ownership. Owners manage their own Keys and usage after browser login; disabling a user blocks both login and API calls. Root retains its independent security identity.
-
-Multiple VKeys per user support model/connection/paid-source permissions, quotas and ancestor restrictions. Ordered fallback respects those controls and budgets. A stream may fail over before output is committed; committed output is never replayed on another source. See [identity and metering](identity-metering.md) and [logical routing](logical-routing.md).
-
-The overview shows real request metrics, active progress and grouping by type, connection, model and client. Billing exposes immutable prices, budgets and per-attempt ledgers. The current dashboard emphasizes metrics and detail lists; it is not a complete cost-trend charting or general BI suite. Token and request-unit billing remain separate, and missing usage or unpriced costs are not displayed as known zero.
-
-## Verification Boundaries
-
-Native protocol support is not semantic equivalence across providers. Text/client-function conversion and representable plaintext reasoning/request fields are limited subsets; signatures, encrypted reasoning, opaque state and role differences remain constrained. See [protocols](protocols.md), including DeepSeek's native compatibility differences and the OAuth preview's field restrictions.
-
-Standalone DeepSeek Search/Fetch has limited real-request and request-unit accounting verification. It does not automatically implement CLI hosted search, and configured ledger prices do not replace the provider's final invoice. Independent OpenAI OAuth has actual authorization, catalog, limited text, controlled single-tool CLI and specific converted-stream verification. Those results do not certify every account, model, effort, parameter or all Claude Code/Codex features. This provider/effort UI update uses isolated browser fixtures and catalog metadata, with no additional paid inference.
-
-## Features
-
-- Configure upstream URLs, credentials, model aliases and custom request headers.
-- Explicit provider grouping, independent connections, catalog metadata and non-destructive model switches.
-- Priority routing, retries, failover, recovery, automatic selection and channel concurrency limits.
-- Separate non-streaming completion deadlines and streaming inactivity timeouts.
-- Route image input only to channels marked as capable; do not silently discard images.
-- Unified Users, point-and-click user/Key policies, browser self-service Keys, cookie login and encrypted upstream secrets.
-- Request/attempt accounting, running-request progress, runtime logs and retention controls.
-- Track missing usage separately from explicitly reported zero usage.
-- Administrator console and scoped user portal, with responsive light/dark layouts and a separate diagnostic log entry.
-- User/key/ancestor permissions and quotas, immutable token/request prices, durable settlement and unknown-cost reporting.
-- Independent OAuth enrollment and rotating encrypted credentials; standalone Search/Fetch with request-unit accounting.
+[Standalone Search/Fetch](deepseek-search-fetch.md) does not automatically replace a CLI's hosted tools. [HTTP pass-through](passthrough.md) adds authorized native services, preserving opaque bodies within its contract rather than claiming every asynchronous resource chain. Users see only granted services and receive no upstream credentials; see [service access](passthrough-user-access.md).
 
 ## Build From Source
 
@@ -122,12 +111,10 @@ TOKENGO_LOG_DIR=./logs \
 
 Open http://127.0.0.1:3160/ui/ and initialize your administrator password before making the service public. A persistent master key is created on first startup; the process must be able to write it. Preserve it with the database.
 
-1. Complete first-time setup and safely save the once-displayed gateway key. An omitted display name uses the administrator default.
-2. Create a provider in Channels. Explicitly assign old connections or add a connection under its advanced settings; its name identifies a connection, not a second provider. Set the URL for its actual native protocol and supply credentials.
-3. Fetch catalog metadata and enable the desired standard model names. Configure upstream aliases when needed. The provider, connection and model must all be enabled.
-4. Configure purpose, input capability and native defaults only from actual declarations or explicit confirmation; unknown capability is not guessed from a name.
-5. In Users, create a login name, display name and initial password, select model/connection permissions and limits, and optionally set a monetary cap. Configure real source prices before using monetary budgets. Enable login within an existing user when needed. Ordinary users then sign in to My Usage and Keys to create their own Keys within their user permissions and budget.
-6. Point the client at `http://127.0.0.1:3160/v1` with a VKey and an allowed configured model name.
+1. Complete setup and save the once-displayed gateway key before exposing the service.
+2. Follow [Start With a Source](#start-with-a-source) for family, authentication, models and parameter review. Add backup credentials through the existing channel's Manage Upstream Keys action.
+3. Ensure provider, source and model are enabled; configure users, real source prices and optional monetary budgets.
+4. Users create their own keys. OpenAI-compatible clients normally use `http://127.0.0.1:3160/v1`, a gateway key and an allowed public model name. Messages clients should follow their base-URL convention for `/v1/messages` without duplicating `/v1`.
 
 ## Environment Variables
 
@@ -138,7 +125,7 @@ Open http://127.0.0.1:3160/ui/ and initialize your administrator password before
 | TOKENGO_MASTER_KEY_FILE | master.key | Persistent encryption key file |
 | TOKENGO_WEB_DIR | Auto-discovery | Built panel directory; set explicitly in production |
 | TOKENGO_LOG_DIR | ./logs in server entry point | Runtime file log directory |
-| TOKENGO_OPENAI_PROXY | Default HTTP client behavior when unset | Dedicated OpenAI OAuth/subscription proxy; does not change ordinary source clients |
+| TOKENGO_OPENAI_PROXY | Default HTTP client behavior when unset | Legacy OpenAI inheritance baseline; explicit panel direct/proxy policies take priority, with other sources governed by their network policies |
 
 Relative paths resolve against the working directory. Routing, retention and timeout settings are managed through the panel, not an invented configuration file. Default routing values in this snapshot include 3 retries after the initial attempt, a 30-second attempt/stream-idle timeout and a 120-second non-streaming deadline; saved settings can override them. These are not a guarantee that every request lasts exactly this long.
 
@@ -260,35 +247,3 @@ Report bugs through GitHub Issues with version, reproducible steps and redacted 
 ## License and Attribution
 
 MIT; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). FreeLLMAPI informed compatibility behavior. Only connect upstream services you are authorized to use and respect their terms and quotas.
-
-## Protocol matrix and next phases
-
-See the [protocol routing matrix and fallback diagram](protocol-routing-matrix.md) for native selection, bounded bridging and explicit rejection. The first unified-user phase implements atomic user/login creation, browser self-service Keys and point-and-click policies. It adds no schema, user expiry or self-service toggle; browser self-service creation has a fixed 32-active-Key cap. Monetary caps are not raw Token packages. Monthly entitlements and cumulative Token quota remain future work. Administrator-owned [custom probes](custom-probes.md) now support API, OpenAI OAuth Responses, and explicitly enabled standalone Search/Fetch targets with system diagnostic accounting, without charging user budgets. See [requirements coverage](requirements-status.md), the [phased plan](unified-user-and-quota-plan.md) and [acceptance status](acceptance-status.md) for implementation and verification boundaries.
-
-
-## Provider Key pools and private virtual models
-
-Online provider channels use one API base URL with multiple upstream credentials and models. Explicit local providers support multiple API URLs, including the same IP on different ports, with separate credentials and model mappings per endpoint. Local models are not copied across ports and grouping is never inferred from IP. Ordered or concurrent allocation preserves user affinity across downstream VKeys, with explicit 429/400 switches. Users can create private virtual model names with ordered targets or weekly schedules (UTC or Asia/Shanghai); every attempt rechecks real target permissions, pricing and budget. Native session pins take precedence and committed streams are never replayed. Multi-target embeddings and reranking require server-issued, source-bound compatibility evidence. Saving a strategy probes every authorized source; verified chains can fall back on transport, timeout, server and malformed-output faults, without artificial virtual-model input caps; source-bound evidence expires and renews independently. The 300 × 4096-character workload is a verification sample, not an input limit. See [native capacity and verification](vector-model-capabilities.md). See [vector fallback](vector-fallback.md). See the [behavior contract and flow diagram](provider-key-pools.md) and [acceptance boundaries](acceptance-status.md); source implementation, CI artifacts, Releases and production deployment are verified separately.
-
-Compatibility evidence starts automatic renewal after 18 hours, with a 24-hour hard validity window. Renewal isolates a failed or incompatible source while independently renewing unchanged, verified healthy sources; one unavailable cloud target does not disable a healthy GPU target. Initial verification and manual strategy saves still require the complete chain. All-source failure or invalid global evidence rejects calls with explicit diagnostics rather than silently bypassing checks.
-
-Administrators can grant [shared virtual entry points](shared-virtual-models.md) and mark backing models internal-only. Internal-only access blocks direct calls and private-strategy bypasses; compatibility hiding alone only affects discovery. Shared and private entries support trash/restore, retain history and audit, and remain disabled after restoration. Real target access, pricing, budgets, native session ownership and committed-stream protections still apply.
-
-The previous published [v0.34.0-qiwolf.3](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.3) native and container assets both use runtime commit `f2943d9707e16b231af7e291d4688f3e307ccc4f`; CI, actual image import/lifecycle and target native upgrade were verified. Later documentation-only commits do not replace those binaries.
-
-Upstream Key management lists existing credentials first; leaving the replacement secret blank preserves it. Discover the selected Key's model catalog, search and select multiple models, or enter names manually. Enter the upstream model first and an optional local mapping name second; a blank new mapping uses the upstream name. Existing local names retain their identity and permissions. Catalog discovery sends no inference request.
-
-The published [v0.34.0-qiwolf.4](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.4) adds focused dialogs, separate Key/model editing, explicit credential reveal/copy, cascade deletion of live provider configuration while preserving history, user archival, visible-only new grants with separately retained historical grants, and bounded custom probes. Feature commit `febb2c91ff51516716a4a40c502d7b41316796f9` passed limited live OAuth/Search/Fetch and browser acceptance; release source `15c11c00fa31d3a498a5f86e16d23e20f2bb6503` passed Rust/WASM CI (944 passed, 0 failed, 2 ignored), Linux AMD64 native/container packaging, anonymous GHCR pull and isolated lifecycle checks including recreation with the same volume. Native and offline image downloads plus checksums are attached to the Release; the version image is `ghcr.io/qiwolf/tokengo:v0.34.0-qiwolf.4`.
-
-
-The previous [v0.34.0-qiwolf.5](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.5) introduced independent operations tokens for trusted deployment agents: one fixed `site_operations` permission, a 90-day default (1–365 days), at most 20 active tokens, one-time secret display, revocation, root security reset and separate audit identity. The token grants broad application management access; it does not provide a host shell or deployment control. The runtime capability endpoint lists 90 registered method/path actions. See [operations token usage](operations-tokens.md). Pass-through route management and manual diagnostics require root and are not added to that action list.
-
-The qiwolf.6 feature release migrated schema 38 to 39; qiwolf.7 retained schema39 and fixed container delivery configuration. The qiwolf.8 feature set uses schema40 for shared virtual models. Operations tokens were introduced in schema38. Back up the database, master key, application, Web assets and service configuration together before upgrading. Rollback requires the matching pre-upgrade database snapshot and old application; do not run an old binary against the upgraded database or silently discard writes made after upgrading.
-
-## Local node rotation and OAuth output controls (qiwolf.16)
-
-Local embedding/rerank routes can opt into `local_strategy: "round_robin"`. Only authorized local candidates rotate; cursors are scoped by entrypoint, owner, provider and target model. Cloud/OAuth affinity remains unchanged. Read and preserve the whole policy before replacing it, and refresh vector compatibility evidence after source identities change. See the [contract](maintenance/local-vector-balancing.md).
-
-Chat structured formats use `response_format`, mapped to Responses `text.format`. OAuth uses `max_output_tokens`; Responses also accepts `max_tokens` and `max_completion_tokens` aliases when all supplied values agree. Caps include reasoning, must be integers of at least16 and stay within configured source and pricing ceilings. Truncation retains actual usage and length/incomplete reasons. Unknown subscription cost remains unpriced. See [OAuth](openai-oauth.md).
-
-Temporary runtime logging levels use generations so an old timer cannot overwrite a newer setting. Machine operations tokens still require live permissions and successful durable audit before changing logging. Log byte budgets are not a fixed total service memory claim.
