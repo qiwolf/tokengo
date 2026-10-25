@@ -589,18 +589,107 @@ pub(super) fn chat_response_format(format: &Value) -> Result<Value, String> {
     }
 }
 
+/// Responses carries the same schema controls flat under text.format.
+/// Reuse the forward validator to keep both directions equally strict.
+fn responses_response_format(format: &Value) -> Result<Value, String> {
+    match string(format, "type")?.as_str() {
+        "text" | "json_object" => {
+            fields(format, &["type"])?;
+            Ok(format.clone())
+        }
+        "json_schema" => {
+            fields(format, &["type", "name", "description", "schema", "strict"])?;
+            let mut schema = format.clone();
+            schema.as_object_mut().ok_or("Expected JSON schema format object")?.remove("type");
+            let chat = json!({"type":"json_schema","json_schema":schema});
+            chat_response_format(&chat)?;
+            Ok(chat)
+        }
+        _ => Err("Unsupported text.format type in Responses-to-Chat conversion".into()),
+    }
+}
+
+fn validate_verbosity(value: &Value) -> Result<(), String> {
+    if value.is_null() || matches!(value.as_str(), Some("low" | "medium" | "high")) {
+        Ok(())
+    } else {
+        Err("verbosity must be low, medium, high or null".into())
+    }
+}
+
+// These request controls have matching names and semantics on Chat/Responses.
+// They are not aliases for one another, and do not establish gateway cache state.
+const SHARED_REQUEST_CONTROLS: &[&str] = &[
+    "safety_identifier", "user", "prompt_cache_key", "prompt_cache_options", "prompt_cache_retention",
+];
+fn validate_shared_request_controls(from: Protocol, to: Protocol, body: &Value) -> Result<(), String> {
+    for name in SHARED_REQUEST_CONTROLS {
+        let Some(value) = body.get(*name) else { continue; };
+        if from == Protocol::Messages || to == Protocol::Messages {
+            return Err(format!("{name} has no lossless Messages mapping; use a native source protocol"));
+        }
+        match *name {
+            "safety_identifier" | "user" => {
+                if !value.is_null() && !value.is_string() {
+                    return Err(format!("{name} must be a string or null"));
+                }
+            }
+            "prompt_cache_key" => {
+                if !value.is_null() && value.as_str().is_none_or(|s| s.len() > 512 || s.chars().any(char::is_control)) {
+                    return Err("prompt_cache_key must be a string up to 512 bytes or null".into());
+                }
+            }
+            "prompt_cache_retention" => {
+                if !value.is_null() && !matches!(value.as_str(), Some("in_memory" | "24h")) {
+                    return Err("prompt_cache_retention must be in_memory, 24h or null".into());
+                }
+            }
+            "prompt_cache_options" => {
+                // Chat has no comparison_response_id/prewarm equivalent. Retention
+                // is a maximum policy and ttl a minimum; never rename between them.
+                fields(value, &["mode", "ttl"])?;
+                if value.get("mode").is_some_and(|v| !matches!(v.as_str(), Some("implicit" | "explicit"))) {
+                    return Err("prompt_cache_options.mode must be implicit or explicit".into());
+                }
+                if value.get("ttl").is_some_and(|v| !matches!(v.as_str(), Some("30m" | "12h"))) {
+                    return Err("prompt_cache_options.ttl must be 30m or 12h; source support remains conditional".into());
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    Ok(())
+}
+
 pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Value, String> {
     if from == to {
         return Ok(body.clone());
     }
-    let format = if from == Protocol::Chat {
-        match body.get("response_format") {
-            Some(value) if to == Protocol::Responses => Some(chat_response_format(value)?),
-            Some(_) => return Err("response_format conversion requires a Responses target".into()),
-            None => None,
+    let (format, verbosity) = match from {
+        Protocol::Chat => {
+            let format = match body.get("response_format") {
+                Some(value) if to == Protocol::Responses => Some(chat_response_format(value)?),
+                Some(_) => return Err("response_format conversion requires a Responses target".into()),
+                None => None,
+            };
+            let verbosity = body.get("verbosity").cloned();
+            if let Some(value) = &verbosity {
+                if to != Protocol::Responses { return Err("verbosity has no lossless Messages mapping".into()); }
+                validate_verbosity(value)?;
+            }
+            (format, verbosity)
         }
-    } else {
-        None
+        Protocol::Responses => {
+            if let Some(text) = body.get("text") {
+                if to != Protocol::Chat { return Err("Responses text controls require a Chat target or native protocol".into()); }
+                fields(text, &["format", "verbosity"])?;
+                let format = text.get("format").map(responses_response_format).transpose()?;
+                let verbosity = text.get("verbosity").cloned();
+                if let Some(value) = &verbosity { validate_verbosity(value)?; }
+                (format, verbosity)
+            } else { (None, None) }
+        }
+        Protocol::Messages => (None, None),
     };
     let alias = if from == Protocol::Chat && to == Protocol::Responses {
         chat_reasoning_effort_alias(body)?
@@ -629,6 +718,12 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "reasoning_effort",
                 "service_tier",
                 "response_format",
+                "verbosity",
+                "safety_identifier",
+                "user",
+                "prompt_cache_key",
+                "prompt_cache_options",
+                "prompt_cache_retention",
             ],
             Protocol::Responses => &[
                 "model",
@@ -648,6 +743,11 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
                 "reasoning",
                 "include",
                 "service_tier",
+                "text",
+                "safety_identifier",
+                "user",
+                "prompt_cache_options",
+                "prompt_cache_retention",
             ],
             Protocol::Messages => &[
                 "model",
@@ -666,6 +766,7 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
         },
     )?;
     validate_cli_hints(from, to, body)?;
+    validate_shared_request_controls(from, to, body)?;
     if has_image(from, body) {
         return Err("Image conversion is not supported; use native protocol".into());
     }
@@ -695,7 +796,17 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
     let mut result = json!({"model":string(body,"model")?});
     encode_messages(to, &messages, &mut result)?;
     if let Some(format) = format {
-        result["text"] = json!({"format":format});
+        if to == Protocol::Responses { result["text"] = json!({"format":format}); }
+        else { result["response_format"] = format; }
+    }
+    if let Some(verbosity) = verbosity {
+        if to == Protocol::Responses {
+            if result.get("text").is_none() { result["text"] = json!({}); }
+            result["text"]["verbosity"] = verbosity;
+        } else { result["verbosity"] = verbosity; }
+    }
+    for name in SHARED_REQUEST_CONTROLS {
+        if let Some(value) = body.get(*name) { result[*name] = value.clone(); }
     }
     if to == Protocol::Responses {
         result["store"] = json!(false);
@@ -719,9 +830,21 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
         }
     } else if from == Protocol::Responses && to == Protocol::Chat {
         if let Some(effort) = body.get("reasoning").and_then(|v| v.get("effort")) {
-            // Preserve the existing disabled CLI normalization contract.
-            if effort != "none" {
-                result["reasoning_effort"] = effort.clone();
+            // Explicit disabling must not fall back to the source model default.
+            result["reasoning_effort"] = effort.clone();
+        }
+    }
+    if from == Protocol::Messages {
+        if let Some(config) = body.get("output_config") {
+            if config.get("effort").is_some_and(|effort| effort == "none") {
+                if to == Protocol::Chat {
+                    result["reasoning_effort"] = json!("none");
+                } else if to == Protocol::Responses {
+                    result["reasoning"] = json!({"effort":"none"});
+                }
+            }
+            if to == Protocol::Responses && config.get("format").is_some_and(|format| !format.is_null()) {
+                result["text"] = json!({"format":config["format"]});
             }
         }
     }
@@ -735,7 +858,7 @@ pub fn convert_request(from: Protocol, to: Protocol, body: &Value) -> Result<Val
     }
     let mut cap = None;
     for key in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
-        if let Some(v) = body.get(key) {
+        if let Some(v) = body.get(key).filter(|v| !v.is_null()) {
             let n = v
                 .as_u64()
                 .filter(|n| *n > 0)
@@ -847,12 +970,12 @@ mod modern_cli_tests {
         assert_eq!(result["messages"][0]["content"], "hello");
         for field in [
             "client_metadata",
-            "prompt_cache_key",
             "reasoning",
             "include",
         ] {
             assert!(result.get(field).is_none());
         }
+        assert_eq!(result["prompt_cache_key"], body["prompt_cache_key"]);
         let notes = normalization_notes(Protocol::Responses, Protocol::Chat, &body).join(";");
         assert!(notes.contains("cache") && notes.contains("opaque"));
         assert!(!notes.contains("private-tracing-id"));
@@ -908,6 +1031,11 @@ mod modern_cli_tests {
             let body = json!({"model":"M","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"output_config":config});
             let converted = convert_request(Protocol::Messages, Protocol::Chat, &body).unwrap();
             assert!(converted.get("output_config").is_none());
+            if config.get("effort").is_some() {
+                assert_eq!(converted["reasoning_effort"], "none");
+            } else {
+                assert!(converted.get("reasoning_effort").is_none());
+            }
         }
         for config in [
             json!({"effort":"high"}),
@@ -960,14 +1088,6 @@ fn validate_cli_hints(from: Protocol, to: Protocol, body: &Value) -> Result<(), 
     if from == Protocol::Responses {
         if let Some(value) = body.get("client_metadata") {
             object(value)?;
-        }
-        if let Some(value) = body.get("prompt_cache_key") {
-            if value
-                .as_str()
-                .is_none_or(|s| s.len() > 512 || s.chars().any(char::is_control))
-            {
-                return Err("prompt_cache_key must be an advisory string up to 512 bytes".into());
-            }
         }
         let mut explicitly_disabled = false;
         if let Some(value) = body.get("reasoning") {
@@ -1039,10 +1159,8 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
         if body.get("client_metadata").is_some() {
             notes.push("client_metadata tracing omitted; values not forwarded or retained");
         }
-        if body.get("prompt_cache_key").is_some() {
-            notes.push(
-                "prompt_cache_key hint omitted; gateway does not implement or claim cache affinity",
-            );
+        if body.get("prompt_cache_key").is_some() && to == Protocol::Chat {
+            notes.push("prompt_cache_key preserved as a provider hint; gateway does not implement or claim cache affinity");
         }
         if body
             .get("reasoning")
@@ -1066,7 +1184,21 @@ pub fn normalization_notes(from: Protocol, to: Protocol, body: &Value) -> Vec<&'
         }
     }
     if from == Protocol::Messages && body.get("output_config").is_some() {
-        notes.push("plain-text/disabled-effort output_config normalized; active reasoning effort and structured formats are unsupported");
+        notes.push("plain-text output_config normalized and explicit disabled effort preserved; active reasoning effort and structured formats are unsupported");
     }
     notes
+
+}
+
+#[cfg(test)]
+mod nullable_cap_tests {
+    use super::*;
+    #[test]
+    fn null_output_cap_is_omitted_in_protocol_conversion() {
+        let body=json!({"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":null,"max_completion_tokens":null});
+        let response=convert_request(Protocol::Chat,Protocol::Responses,&body).unwrap();
+        assert!(response.get("max_output_tokens").is_none());
+        let messages=convert_request(Protocol::Chat,Protocol::Messages,&body).unwrap();
+        assert_eq!(messages["max_tokens"],4096);
+    }
 }

@@ -565,12 +565,13 @@ fn choices_count(body:&Value)->Result<i64,ApiError> {
 /// Responses clients sometimes send Chat cap names. Normalize only these
 /// explicit aliases, preserving every other field and rejecting ambiguity.
 fn normalize_responses_output_caps(body: &mut Value) -> Result<(), ApiError> {
-    if body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() {
+    crate::parameter_budgets::normalize_null_caps(body);
+    if crate::parameter_budgets::cap_value(body,"max_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_none() {
         return Ok(());
     }
     let mut cap = None;
     for field in ["max_output_tokens", "max_completion_tokens", "max_tokens"] {
-        if let Some(value) = body.get(field) {
+        if let Some(value) = crate::parameter_budgets::cap_value(body,field) {
             let value = value.as_i64().filter(|n| *n > 0)
                 .ok_or_else(|| ApiError::bad_request("Output token limit must be a positive integer"))?;
             if cap.is_some_and(|old| old != value) {
@@ -586,18 +587,24 @@ fn normalize_responses_output_caps(body: &mut Value) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn parameter_context<'a>(channel:&'a Channel,model:&'a str,protocol:crate::protocol::Protocol,caps:&'a crate::protocol_config::Capabilities,is_oauth:bool)->crate::parameter_contracts::Context<'a> {
+    let api_version=channel.headers.iter().find(|(name,_)|name.eq_ignore_ascii_case("anthropic-version"))
+        .map(|(_,value)|value.as_str()).or(if protocol==crate::protocol::Protocol::Messages{Some("2023-06-01")}else{None});
+    crate::parameter_contracts::Context {base_url:&channel.base_url,model,protocol,api_version,is_oauth,profile_override:caps.parameter_profile.as_deref()}
+}
+
 fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
     if !endpoint.is_generation() {return Ok(0);}
     let wrong_cap=match endpoint {
-        EndpointKind::Responses=>body.get("max_tokens").is_some()||body.get("max_completion_tokens").is_some(),
-        EndpointKind::Messages=>body.get("max_output_tokens").is_some()||body.get("max_completion_tokens").is_some(),
-        EndpointKind::Chat=>body.get("max_output_tokens").is_some(),_=>false,
+        EndpointKind::Responses=>crate::parameter_budgets::cap_value(body,"max_tokens").is_some()||crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_some(),
+        EndpointKind::Messages=>crate::parameter_budgets::cap_value(body,"max_output_tokens").is_some()||crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_some(),
+        EndpointKind::Chat=>crate::parameter_budgets::cap_value(body,"max_output_tokens").is_some(),_=>false,
     };
     if wrong_cap {return Err(ApiError::bad_request("Output cap field does not belong to the requested protocol"));}
     let mut bound=None;
     let keys:&[&str]=match endpoint {EndpointKind::Responses=>&["max_output_tokens"],EndpointKind::Messages=>&["max_tokens"],_=>&["max_tokens","max_completion_tokens"]};
     for key in keys {
-        if let Some(value)=body.get(key) {
+        if let Some(value)=crate::parameter_budgets::cap_value(body,key) {
             let n=value.as_i64().filter(|n|*n>0).ok_or_else(||ApiError::bad_request("Output token limit must be a positive integer"))?;
             if bound.is_some_and(|old|old!=n) {return Err(ApiError::bad_request("Conflicting output token limits"));}
             bound=Some(n);
@@ -607,7 +614,10 @@ fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
         .ok_or_else(||ApiError::bad_request("Total output token bound overflow"))
 }
 fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError> {
-    if endpoint.tool_kind().is_some() {return Ok((0,0));}
+    Ok((admission_input_bound(body,endpoint)?,output_bound(body,endpoint)?))
+}
+fn admission_input_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
+    if endpoint.tool_kind().is_some() {return Ok(0);}
     let bytes = serde_json::to_vec(body).map_err(|e|ApiError::bad_request(e.to_string()))?.len();
     // Cross encoders process the query once per document. Counting it once can
     // under-reserve both TPM and money even inside a bounded fallback domain.
@@ -617,7 +627,7 @@ fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError
     } else { Some(0) }.ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
     let input=i64::try_from(bytes.checked_add(extra).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?)
         .ok().and_then(|n|n.checked_add(256)).ok_or_else(||ApiError::bad_request("Request token bound overflow"))?;
-    Ok((input,output_bound(body,endpoint)?))
+    Ok(input)
 }
 
 #[cfg(test)]
@@ -704,31 +714,45 @@ fn billing_bound(
 }
 
 fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
-    let (mut input,mut output)=admission_bound(body,endpoint)?;
+    billing_bound_with_contract(body,endpoint,price,context,None)
+}
+fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
+    let mut input=admission_input_bound(body,endpoint)?;
+    let mut output=if let Some(contract)=contract {
+        crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
+    } else {output_bound(body,endpoint)?};
     if has_input_audio(body) || endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
         input=context.map(|v|v.0).or(price.map(|p|p.max_input_tokens)).filter(|n|*n>0)
             .ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history or audio requires a configured maximum input context bound"))?;
     }
     if endpoint.has_image(body) {if let Some((max_input,_))=context {input=max_input;}}
-    if price.is_none() && endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
+    if price.is_none() && endpoint.is_generation() && crate::parameter_budgets::cap_value(body,"max_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_output_tokens").is_none() {
         let choices=if endpoint==EndpointKind::Chat {choices_count(body)?}else{1};
         let per_choice=4096.min(context.map(|v|v.1/choices).unwrap_or(4096));
         if per_choice<=0 {return Err(ApiError::bad_request("Source configuration needs a positive output cap"));}
         output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
-        body[if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"}]=Value::from(per_choice);
+        let field=contract.map(crate::parameter_budgets::default_output_key).unwrap_or(if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"});
+        body[field]=Value::from(per_choice);
     }
     if let Some(p)=price {
-        if endpoint.is_generation() && body.get("max_tokens").is_none() && body.get("max_completion_tokens").is_none() && body.get("max_output_tokens").is_none() {
+        if endpoint.is_generation() && crate::parameter_budgets::cap_value(body,"max_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_output_tokens").is_none() {
             let choices=if endpoint==EndpointKind::Chat {choices_count(body)?} else {1};
             let per_choice=4096.min(p.max_output_tokens.min(context.map(|v|v.1).unwrap_or(i64::MAX))/choices);
             if per_choice<=0 {return Err(ApiError::bad_request("Pricing configuration needs a positive output cap"));}
             output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
-            body[if endpoint==EndpointKind::Responses {"max_output_tokens"} else {"max_tokens"}]=Value::from(per_choice);
+            let field=contract.map(crate::parameter_budgets::default_output_key).unwrap_or(if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"});
+            body[field]=Value::from(per_choice);
+        }
+        if let Some(contract)=contract {
+            output=crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
         }
         if endpoint.has_image(body) {input=context.map(|v|v.0).unwrap_or(p.max_input_tokens);}
         if input>p.max_input_tokens || output>p.max_output_tokens {
             return Err(ApiError::new(StatusCode::BAD_REQUEST,"billing_token_limit","Request exceeds configured billing token bounds"));
         }
+    }
+    if let Some(contract)=contract {
+        output=crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
     }
     if let Some((max_input,max_output))=context {
         if input>max_input || output>max_output {return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","Request exceeds configured source token bounds"));}
@@ -741,7 +765,7 @@ fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option
 fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (max_input,max_output)=context.filter(|(i,o)|*i>0&&*o>0).ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"source_limits_required","ChatGPT plan requests require verified full provider context and output bounds"))?;
     let (mut input,_)=admission_bound(body,EndpointKind::Responses)?;
-    let output=if body.get("max_output_tokens").is_some() {
+    let output=if crate::parameter_budgets::cap_value(body,"max_output_tokens").is_some() {
         let cap=output_bound(body,EndpointKind::Responses)?;
         if cap<16 {return Err(ApiError::bad_request("ChatGPT plan max_output_tokens must be at least 16"));}
         cap
@@ -760,6 +784,7 @@ fn validate_native_cost_and_state(endpoint:EndpointKind,body:&Value)->Result<(),
             _=>false,
         }
     }
+    crate::parameter_contracts::validate_executor_controls(body).map_err(ApiError::bad_request)?;
     if has_input_audio(body) {validate_input_audio(body)?;}
     if body.get("audio").is_some_and(|v|!v.is_null()) || body.get("modalities").and_then(Value::as_array).is_some_and(|m|m.iter().any(|v|v!="text")){return Err(ApiError::bad_request("Only text output is enabled; media output requires separate capabilities and metering"));}
     if unsupported_media(body,endpoint==EndpointKind::Chat) {return Err(ApiError::bad_request("File, document, audio and video blocks require dedicated capability and token accounting; this route currently supports text, images and client tools"));}
@@ -1294,6 +1319,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
     record_client_app(&state, request_id, req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
+    crate::parameter_budgets::normalize_null_caps(&mut req.body);
     if req.endpoint == EndpointKind::Responses {
         normalize_responses_output_caps(&mut req.body).map_err(|error| {
             guard.reject(&error);
@@ -1302,56 +1328,88 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     }
 
     let mut admitted_input = None;
+    let mut admitted_output = None;
     if let Some(auth) = &req.auth {
-        let (mut input, mut output) =
-            admission_bound(&req.body, req.endpoint).map_err(|error| {
-                guard.reject(&error);
-                error
-            })?;
+        let mut input = admission_input_bound(&req.body, req.endpoint).map_err(|error| {
+            guard.reject(&error); error
+        })?;
+        let mut output = 0;
         // Predict the per-source default without borrowing mutable price caps.
         // OAuth uses an explicit cap, or its full binding ceiling when omitted.
         let default_output = req.endpoint.is_generation()
             && ["max_tokens", "max_completion_tokens", "max_output_tokens"]
                 .iter()
-                .all(|key| req.body.get(*key).is_none());
+                .all(|key| crate::parameter_budgets::cap_value(&req.body,*key).is_none());
         let choices = if req.endpoint == EndpointKind::Chat {
             choices_count(&req.body)?
         } else {
             1
         };
         let mut planned_output = None;
+        let mut output_contract_error = None;
         for candidate in &plan.entries {
             let c = state.conn();
             let oauth_bound = crate::oauth::context_bounds(&c, candidate.channel.id.0)
                 .map_err(|_| ApiError::internal("OAuth source context unavailable"))?;
-            let has_oauth: bool = c
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",
-                    [candidate.channel.id.0],
-                    |r| r.get(0),
-                )
-                .map_err(crate::db::DbError::from)?;
-            let candidate_output = if !req.endpoint.is_generation() {
-                0
-            } else if has_oauth && default_output {
-                oauth_bound.map(|v| v.1).unwrap_or(output)
-            } else if default_output {
-                4096.min(
-                    candidate
-                        .protocols
-                        .context_bounds()
-                        .map(|v| v.1 / choices)
-                        .unwrap_or(4096),
-                )
-                .checked_mul(choices)
-                .ok_or_else(|| ApiError::bad_request("Total output token bound overflow"))?
-            } else {
-                output
-            };
+            let has_oauth: bool = c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",
+                [candidate.channel.id.0], |r| r.get(0),
+            ).map_err(crate::db::DbError::from)?;
+            let candidate_output = if let Some(protocol) = req.endpoint.protocol() {
+                let native = match candidate.protocols.select(protocol) {Some(native)=>native,None=>continue};
+                let contract = parameter_context(&candidate.channel,
+                    candidate.channel.upstream_model(&candidate.name), native, &candidate.protocols, has_oauth);
+                // Budget projection contains controls only, never a clone of a large
+                // user message/image body for each route candidate.
+                let mut projection=Value::Object(serde_json::Map::new());
+                for key in ["max_tokens","max_completion_tokens","max_output_tokens","n","reasoning_effort","reasoning","output_config","thinking","thinking_budget","enable_thinking","think","chat_template_kwargs"] {
+                    if let Some(value)=req.body.get(key) {projection[key]=value.clone();}
+                }
+                if protocol!=native {
+                    let effort=match protocol {crate::protocol::Protocol::Chat=>req.body.get("reasoning_effort"),crate::protocol::Protocol::Responses=>req.body.pointer("/reasoning/effort"),crate::protocol::Protocol::Messages=>req.body.pointer("/output_config/effort")};
+                    if let Some(effort)=effort {match native {
+                        crate::protocol::Protocol::Chat=>projection["reasoning_effort"]=effort.clone(),
+                        crate::protocol::Protocol::Responses=>projection["reasoning"]=serde_json::json!({"effort":effort}),
+                        crate::protocol::Protocol::Messages=>projection["output_config"]=serde_json::json!({"effort":effort}),
+                    }}
+                }
+                let effort_present=match native {crate::protocol::Protocol::Chat=>projection.get("reasoning_effort").is_some(),crate::protocol::Protocol::Responses=>projection.pointer("/reasoning/effort").is_some(),crate::protocol::Protocol::Messages=>projection.pointer("/output_config/effort").is_some()};
+                if !effort_present && !crate::parameter_budgets::native_thinking_override(&contract,&projection) {
+                    if let Ok(caps)=crate::reasoning_capabilities::for_mapping(&c,candidate.channel.id.0,&candidate.name) {
+                        if let Some(default)=caps.default_effort.filter(|_|caps.configured_default) {match native {
+                            crate::protocol::Protocol::Chat=>projection["reasoning_effort"]=Value::String(default),
+                            crate::protocol::Protocol::Responses=>projection["reasoning"]=serde_json::json!({"effort":default}),
+                            crate::protocol::Protocol::Messages=>projection["output_config"]=serde_json::json!({"effort":default}),
+                        }}
+                    }
+                }
+                let ceiling = if has_oauth { oauth_bound } else { candidate.protocols.context_bounds() };
+                let bound = if has_oauth && default_output {
+                    ceiling.map(|v|v.1).ok_or_else(|| "OAuth source requires verified full context/output bounds".to_owned())
+                } else if protocol!=native && !default_output {
+                    // Converted client caps express a total; the outbound adapter
+                    // must use an inclusive source field or explicitly reject it.
+                    output_bound(&req.body,req.endpoint).map_err(|error|error.message)
+                } else {
+                    crate::parameter_budgets::output_bound(&contract,&projection,ceiling.map(|v|v.1),choices)
+                };
+                match bound {
+                    Ok(value) => {
+                        // Only a total-output default can be shortened to a verified
+                        // source ceiling; answer-only defaults include reasoning.
+                        if default_output && !has_oauth
+                            && matches!(crate::parameter_contracts_china::output_semantics(&contract,&projection),crate::parameter_contracts_china::OutputSemantics::Total) {
+                            value.min(ceiling.map(|v|v.1).unwrap_or(value))
+                        } else { value }
+                    }
+                    Err(note) => { output_contract_error = Some(note); continue; }
+                }
+            } else { 0 };
             planned_output = Some(planned_output.unwrap_or(0).max(candidate_output));
         }
-        if let Some(planned) = planned_output {
-            output = planned;
+        if let Some(planned) = planned_output { output = planned; }
+        else if let Some(note) = output_contract_error {
+            let error = ApiError::bad_request(note); guard.reject(&error); return Err(error);
         }
         let opaque_input = req
             .endpoint
@@ -1424,6 +1482,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             )?,
         );
         admitted_input = Some(input);
+        admitted_output = Some(output);
     }
     let global_cfg = state.routing().cfg.clone();
     let cfg = crate::db::route_policy::effective(&state.conn(), &plan.route, global_cfg)?;
@@ -1854,6 +1913,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             // 先按这条渠道「这个模型名」的清单把不认的字段丢掉，再换模型名。
             // 顺序无所谓（丢的是顶层字段、换的也是顶层字段），但别把 `model` 写进清单里 ——
             // 那样等于把模型名连同别的字段一起删掉，上游会以为没带模型。
+            if let Err(note)=crate::parameter_contracts::protect_explicit_controls(&req.body,&channel.drop_fields) {
+                last_policy_error=Some(ApiError::bad_request(note)); continue 'channels;
+            }
             let adapted = tokengo_shared::strip_fields(&prepared, &channel.drop_fields);
             let mut body = if let Some(kind) = req.endpoint.tool_kind() {
                 crate::search_tools::normalize_request(kind, &adapted)
@@ -1861,7 +1923,17 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             } else {
                 rewrite_model(&adapted, &sent_model)
             };
-            let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id));
+            if let (Some(from),Some(to))=(req.endpoint.protocol(),upstream_protocol) {
+                let contract=parameter_context(channel,&sent_model,to,protocols,false);
+                if let Err(note)=crate::parameter_budgets::preserve_converted_total_cap(&contract,from,&mut body) {
+                    last_policy_error=Some(ApiError::bad_request(note)); continue 'channels;
+                }
+            }
+            let explicit_output_cap=crate::parameter_budgets::explicit_cap(&req.body);
+            let output_contract_is_total=upstream_protocol.is_some_and(|native|
+                matches!(crate::parameter_contracts_china::output_semantics(&parameter_context(channel,&sent_model,native,protocols,false),&body),crate::parameter_contracts_china::OutputSemantics::Total));
+            let output_contract_identity=crate::reasoning_capabilities::fingerprint(&state.conn(),channel.id.0)?;
+            let cap_key = output_cap_key(channel, &sent_model, plan.secret(channel.id),&output_contract_identity);
             let cached_cap = crate::db::settings::get(&state.conn(), &cap_key)
                 .ok()
                 .flatten()
@@ -1871,8 +1943,17 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 _ => vec![],
             };
             let mut adaptation_note = (!notes.is_empty()).then(|| notes.join("; "));
-            if let Some(cap) = cached_cap {
-                if clamp_output(&mut body, cap) {
+            let removed_extensions=channel.drop_fields.iter().filter(|key|req.body.get(key.as_str()).is_some()).cloned().collect::<Vec<_>>();
+            if !removed_extensions.is_empty() {
+                let note=format!("Administrator explicitly removed legacy extension fields: {}",removed_extensions.join(", "));
+                adaptation_note=Some(adaptation_note.map(|previous|format!("{previous}; {note}")).unwrap_or(note));
+            }
+            if let Some(cap) = cached_cap.filter(|_|output_contract_is_total) {
+                if explicit_output_cap && ["max_tokens","max_completion_tokens","max_output_tokens"].iter().any(|key|body.get(*key).and_then(Value::as_u64).is_some_and(|n|n>cap)) {
+                    last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"source_output_limit",format!("Requested output cap exceeds this source's observed limit ({cap}); the client limit was not modified")));
+                    continue 'channels;
+                }
+                if !explicit_output_cap && clamp_output(&mut body, cap) {
                     let cap_note = format!("按此渠道已知输出上限收窄至 {cap} tokens");
                     adaptation_note = Some(match adaptation_note.take() {
                         Some(previous) => format!("{previous}; {cap_note}"),
@@ -1947,7 +2028,28 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         continue 'channels;
                     }
                 };
-                let mapping_reasoning_defaults = if let Some(native) = upstream_protocol {
+                let mut source_parameter_changed=false;
+                if let Some(native)=upstream_protocol {
+                    let contract=parameter_context(channel,&sent_model,native,protocols,oauth.is_some());
+                    let explicit_effort=match native {
+                        crate::protocol::Protocol::Chat=>body.get("reasoning_effort"),
+                        crate::protocol::Protocol::Responses=>body.pointer("/reasoning/effort"),
+                        crate::protocol::Protocol::Messages=>body.pointer("/output_config/effort"),
+                    }.and_then(Value::as_str);
+                    if let Some(effort)=explicit_effort {
+                        let caps=crate::reasoning_capabilities::for_mapping(&state.conn(),channel.id.0,name)?;
+                        if caps.status=="unsupported" || caps.manual_levels.as_ref().is_some_and(|levels|!levels.iter().any(|level|level==effort)) {
+                            last_policy_error=Some(ApiError::bad_request("Explicit reasoning parameter is excluded by this mapping's declared/manual capability")); continue 'channels;
+                        }
+                    }
+                    match if contract.is_oauth { Ok(false) } else { crate::parameter_contracts_china::adapt(&contract,&mut body) } {
+                        Ok(changed)=>source_parameter_changed=changed,
+                        Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
+                    }
+                }
+                let native_override=upstream_protocol.is_some_and(|native|!oauth.is_some()
+                    && crate::parameter_budgets::native_thinking_override(&parameter_context(channel,&sent_model,native,protocols,false),&body));
+                let mapping_reasoning_defaults = if let Some(native) = upstream_protocol.filter(|_|!native_override) {
                     match crate::reasoning_capabilities::apply_defaults_and_validate(
                         &state.conn(),
                         channel.id.0,
@@ -1965,7 +2067,19 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 } else {
                     false
                 };
-                if mapping_reasoning_defaults {
+                if let Some(native)=upstream_protocol {
+                    let contract=parameter_context(channel,&sent_model,native,protocols,oauth.is_some());
+                    match if contract.is_oauth { Ok(false) } else { crate::parameter_contracts_china::adapt(&contract,&mut body) } {
+                        Ok(changed)=>source_parameter_changed|=changed,
+                        Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
+                    }
+                    if let Err(note)=crate::parameter_contracts::validate(&contract,&body)
+                        .and_then(|_|crate::parameter_contracts_china::validate(&contract,&body))
+                        .and_then(|_|crate::parameter_budgets::validate_warmup(&contract,req.endpoint.protocol().unwrap_or(native),&body)) {
+                        last_policy_error=Some(ApiError::bad_request(note));continue 'channels;
+                    }
+                }
+                if mapping_reasoning_defaults || source_parameter_changed {
                     body_bytes = Bytes::from(
                         serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?,
                     );
@@ -2182,7 +2296,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     } else if oauth.is_some() {
                         subscription_bound(&body, price.as_ref(), context)
                     } else {
-                        billing_bound_with_context(
+                        let parameter_contract=upstream_protocol.map(|native|parameter_context(channel,&sent_model,native,protocols,false));
+                        billing_bound_with_contract(
                             &mut body,
                             match upstream_protocol {
                                 Some(crate::protocol::Protocol::Responses) => {
@@ -2194,12 +2309,18 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             },
                             price.as_ref(),
                             context,
+                            parameter_contract.as_ref(),
                         )
                     };
-                    let (input, output) = bounds.map_err(|error| {
-                        guard.reject(&error);
-                        error
-                    })?;
+                    let (input, output) = match bounds {
+                        Ok(bounds)=>bounds,
+                        Err(error) if error.kind=="source_parameter_budget"=>{last_policy_error=Some(error);continue 'channels;}
+                        Err(error)=>{guard.reject(&error);return Err(error);}
+                    };
+                    if admitted_output.is_some_and(|reserved| output > reserved) {
+                        last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"source_output_changed","Source output exceeds the admitted reservation; retry with current configuration"));
+                        continue 'channels;
+                    }
                     if full_context_input && admitted_input.is_some_and(|reserved| input > reserved)
                     {
                         let error=ApiError::new(StatusCode::BAD_REQUEST,"source_context_changed","Source context exceeds the admitted input reservation; retry with current configuration");
@@ -2638,6 +2759,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                     .zip(candidate_pin.as_ref())
                                     .map(|(owner, pin)| (&state, owner, pin)),
                                 plan.vector_contract().map(|contract| (contract, &req.body)),
+                                upstream_protocol.is_some_and(|native|native==crate::protocol::Protocol::Messages
+                                    && req.endpoint.protocol()==Some(native) && crate::parameter_budgets::cap_value(&body,"max_tokens").and_then(Value::as_i64)==Some(0)
+                                    && crate::parameter_budgets::allows_zero(&parameter_context(channel,&sent_model,native,protocols,false))),
                             )
                             .await
                         };
@@ -2982,6 +3106,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         if req.endpoint == EndpointKind::Chat
                             && matches!(status, 400 | 422)
                             && !learned_this_request
+                            && !explicit_output_cap
+                            && output_contract_is_total
+                            && upstream_protocol==Some(crate::protocol::Protocol::Chat)
                         {
                             if let Some(cap) = output_ceiling(&err.text) {
                                 if clamp_output(&mut body, cap) {
@@ -3583,11 +3710,11 @@ fn clamp_output(body: &mut Value, cap: u64) -> bool {
     changed
 }
 
-fn output_cap_key(channel: &Channel, model: &str, secret: Option<&str>) -> String {
+fn output_cap_key(channel: &Channel, model: &str, secret: Option<&str>, contract_identity: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    (channel.id.0, &channel.base_url, model, secret).hash(&mut h);
-    format!("learned_output_cap:{:016x}", h.finish())
+    (channel.id.0, &channel.base_url, model, secret, contract_identity).hash(&mut h);
+    format!("learned_output_cap:v2:{:016x}", h.finish())
 }
 
 fn gateway_timeout(plan: &Plan, model: &str) -> Response {
@@ -3781,6 +3908,7 @@ async fn buffer_passthrough(
     protocols: Option<(crate::protocol::Protocol,crate::protocol::Protocol)>,
     provenance:Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
     vector: Option<(&crate::vector_compat::Contract, &Value)>,
+    cache_warmup: bool,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
     let bytes = match if vector.is_some() { read_vector_body(resp).await }
@@ -3808,7 +3936,10 @@ async fn buffer_passthrough(
                     let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
                 }
             }
-            let validity=match protocols {Some((source,_))=>crate::protocol::validate_response(source,&validated),None=>crate::upstream::validate_response(&validated,"embeddings")};
+            let validity=if cache_warmup {
+                if crate::parameter_budgets::valid_warmup_response(&validated) && usage.input.is_some() && usage.output==Some(0) { Ok(()) }
+                else { Err("Invalid zero-output cache-warming response or usage".into()) }
+            } else {match protocols {Some((source,_))=>crate::protocol::validate_response(source,&validated),None=>crate::upstream::validate_response(&validated,"embeddings")}};
             if let Err(note) = validity {
                 let mut invalid=invalid_buffer(format!("上游回了 200 但一句话都没说或响应不完整：{note}")); invalid.4=usage; return invalid;
             }
@@ -4782,6 +4913,56 @@ pub fn status_code_of(resp: &reqwest::Response) -> u16 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn explicit_source_cap_is_rejected_without_clamping_and_warmup_keeps_zero() {
+        let c=crate::parameter_contracts::Context {base_url:"https://api.openai.com/v1",model:"gpt-6-luna",protocol:crate::protocol::Protocol::Chat,api_version:None,is_oauth:false,profile_override:None};
+        let mut body=json!({"messages":[],"max_completion_tokens":129});
+        let original=body.clone();
+        assert!(billing_bound_with_contract(&mut body,EndpointKind::Chat,None,Some((4096,128)),Some(&c)).is_err());
+        assert_eq!(body,original);
+        let c=crate::parameter_contracts::Context {base_url:"https://api.anthropic.com",model:"claude-sonnet-5-5",protocol:crate::protocol::Protocol::Messages,api_version:Some("2023-06-01"),is_oauth:false,profile_override:Some("anthropic")};
+        let mut warm=json!({"messages":[],"max_tokens":0});
+        let (input,output)=billing_bound_with_contract(&mut warm,EndpointKind::Messages,None,Some((4096,128)),Some(&c)).unwrap();
+        assert!(input>0); assert_eq!(output,0); assert_eq!(warm["max_tokens"],0);
+    }
+
+    #[test]
+    fn nullable_caps_normalize_and_default_before_budgeting() {
+        let mut b=json!({"max_tokens":null,"max_completion_tokens":null,"max_output_tokens":null});
+        normalize_responses_output_caps(&mut b).unwrap(); assert_eq!(b,json!({}));
+        assert_eq!(subscription_bound(&b,None,Some((131072,32768))).unwrap().1,32768);
+        let mut b=json!({"max_tokens":null,"max_output_tokens":32});
+        normalize_responses_output_caps(&mut b).unwrap(); assert_eq!(b,json!({"max_output_tokens":32}));
+        let mut b=json!({"max_output_tokens":null});
+        let (_,bound)=billing_bound(&mut b,EndpointKind::Responses,None).unwrap();
+        assert_eq!(bound,4096); assert_eq!(b["max_output_tokens"],4096);
+        assert_eq!(output_bound(&json!({"max_tokens":null}),EndpointKind::Chat).unwrap(),4096);
+    }
+
+    #[test]
+    fn execution_and_accounting_guards_reject_only_enabled_controls() {
+        for extra in [
+            json!({"background":true}),
+            json!({"prompt":{"id":"stored-prompt"}}),
+            json!({"context_management":[]}),
+            json!({"prompt_cache_options":{"prewarm":true}}),
+        ] {
+            let mut body=json!({"model":"m","input":"hello"});
+            body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            assert!(validate_native_cost_and_state(EndpointKind::Responses,&body).is_err());
+        }
+        for extra in [
+            json!({}),
+            json!({"background":false}),
+            json!({"prompt_cache_options":{"prewarm":false}}),
+            json!({"background":false,"prompt_cache_options":{"prewarm":false}}),
+        ] {
+            let mut body=json!({"model":"m","input":"hello"});
+            body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            assert!(validate_native_cost_and_state(EndpointKind::Responses,&body).is_ok());
+        }
+    }
 
     #[test]
     fn only_the_model_field_is_rewritten() {

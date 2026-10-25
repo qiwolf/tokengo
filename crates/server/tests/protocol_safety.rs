@@ -189,6 +189,7 @@ impl Fixture {
                 &c,
                 id.0,
                 &tokengo_server::protocol_config::Capabilities {
+                    parameter_profile: None,
                     native: vec![tokengo_server::protocol::Protocol::Messages],
                     allow_conversion: false,
                     native_input_audio: false,
@@ -523,6 +524,7 @@ async fn local_artifact_storage_failure_never_falls_back_or_cools_sources() {
                 &c,
                 id.0,
                 &tokengo_server::protocol_config::Capabilities {
+                    parameter_profile: None,
                     native: vec![tokengo_server::protocol::Protocol::Messages],
                     allow_conversion: false,
                     native_input_audio: false,

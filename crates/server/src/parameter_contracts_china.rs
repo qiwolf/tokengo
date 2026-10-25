@@ -1,0 +1,655 @@
+//! Documentary provider contracts. Native extensions are retained, not filtered.
+//! These rules do not establish account availability or live-inference acceptance.
+use crate::{parameter_contracts::{provider, Context}, protocol::Protocol};
+use serde_json::{json, Value};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputSemantics {
+    Total,
+    AnswerOnly { reasoning_budget: Option<i64> },
+}
+
+const QWEN_HYBRID: &[&str] = &[
+    "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-flash", "qwen3.8-27b",
+    "qwen3.7-max", "qwen3.7-plus", "qwen3.7-flash", "qwen3.6-plus", "qwen3.6-flash",
+    "qwen3.5-plus", "qwen3.5-flash", "qwen3-vl-plus", "qwen3.8-omni-flash",
+    "qwen3.5-omni-plus", "qwen3.5-omni-flash",
+];
+const QWEN_EFFORT_BUDGET: &[&str] = &[
+    "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-flash", "qwen3.8-27b",
+];
+const QWEN_TOTAL_CAP: &[&str] = &[
+    "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
+    "glm-5.3",
+];
+const QWEN_INCLUSIVE_CAP: &[&str] = &[
+    "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus",
+    "qwen3.7-flash", "qwen3.6-plus", "qwen3.6-flash", "qwen3.5-plus", "qwen3.5-flash",
+    "glm-5.2", "glm-5.3", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
+];
+const KIMI_K3: &[&str] = &["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3"];
+const KIMI_CODE: &[&str] = &["kimi-k2.7-code", "kimi-k2.7-code-highspeed"];
+const GLM_MODELS: &[&str] = &["glm-5.3", "glm-5.2", "glm-5.1", "glm-5", "glm-4.7", "glm-4.6"];
+const ARK_SEED: &[&str] = &[
+    "doubao-seed-evolving", "doubao-seed-2-1-pro-260915", "doubao-seed-2-1-lite-260915",
+    "doubao-seed-2-1-pro-260628", "doubao-seed-2-1-turbo-260628",
+    "doubao-seed-2-0-lite-260428", "doubao-seed-2-0-mini-260428", "doubao-seed-character-260628",
+];
+const SF_MODELS: &[&str] = &[
+    "deepseek-ai/DeepSeek-V4-Flash", "Pro/zai-org/GLM-5.2", "moonshotai/Kimi-K2.7-Code", "Qwen/Qwen3.8-27B",
+];
+const SF_SWITCH_MODELS: &[&str] = &["Qwen/Qwen3.8-27B"];
+const MIMO_MODELS: &[&str] = &["mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed"];
+
+fn present<'a>(body: &'a Value, path: &str) -> Option<&'a Value> {
+    body.pointer(path).filter(|v| !v.is_null())
+}
+fn invalid(path: &str, message: &str) -> String {
+    format!("Parameter {path}: {message}")
+}
+fn number(body: &Value, path: &str, min: f64, max: f64) -> Result<(), String> {
+    if let Some(value) = present(body, path) {
+        let value = value.as_f64().ok_or_else(|| invalid(path, "must be a number"))?;
+        if !value.is_finite() || value < min || value > max {
+            return Err(invalid(path, &format!("must be in [{min}, {max}]")));
+        }
+    }
+    Ok(())
+}
+fn integer(body: &Value, path: &str, min: i64, max: i64) -> Result<(), String> {
+    if let Some(value) = present(body, path) {
+        let value = value.as_i64().ok_or_else(|| invalid(path, "must be an integer"))?;
+        if value < min || value > max { return Err(invalid(path, &format!("must be in [{min}, {max}]"))); }
+    }
+    Ok(())
+}
+fn boolean(body: &Value, path: &str) -> Result<(), String> {
+    if present(body, path).is_some_and(|v| !v.is_boolean()) { return Err(invalid(path, "must be boolean")); }
+    Ok(())
+}
+fn object(body: &Value, path: &str) -> Result<(), String> {
+    if present(body, path).is_some_and(|v| !v.is_object()) { return Err(invalid(path, "must be an object")); }
+    Ok(())
+}
+fn one_of(body: &Value, path: &str, values: &[&str]) -> Result<(), String> {
+    if let Some(value) = present(body, path) {
+        if value.as_str().is_none_or(|value| !values.contains(&value)) {
+            return Err(invalid(path, &format!("must be one of {}", values.join(", "))));
+        }
+    }
+    Ok(())
+}
+fn fixed(body: &Value, path: &str, expected: f64) -> Result<(), String> {
+    if let Some(value) = present(body, path) {
+        if value.as_f64() != Some(expected) {
+            return Err(invalid(path, &format!("is fixed at {expected} for this exact model")));
+        }
+    }
+    Ok(())
+}
+fn effort_path(protocol: Protocol) -> &'static str {
+    match protocol { Protocol::Chat => "/reasoning_effort", Protocol::Responses => "/reasoning/effort", Protocol::Messages => "/output_config/effort" }
+}
+fn effort<'a>(ctx: &Context<'_>, body: &'a Value) -> Option<&'a str> {
+    body.pointer(effort_path(ctx.protocol)).and_then(Value::as_str)
+}
+fn disabled(ctx: &Context<'_>, body: &Value) -> bool {
+    let toggle = body.get("enable_thinking") == Some(&json!(false))
+        || body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled");
+    let off_effort = effort(ctx, body) == Some("none");
+    match provider(ctx) {
+        "siliconflow" => SF_SWITCH_MODELS.contains(&ctx.model) && (toggle || off_effort),
+        "dashscope" => known(ctx) && ctx.model != "glm-5.3" && (toggle || off_effort),
+        "moonshot" => ctx.model == "kimi-k2.6" && (toggle || off_effort),
+        "minimax" => ctx.model == "MiniMax-M3" && (toggle || off_effort),
+        "ark" => ARK_SEED.contains(&ctx.model) && (toggle || off_effort || effort(ctx, body) == Some("minimal")),
+        "zai" => GLM_MODELS.contains(&ctx.model) && ctx.model != "glm-5.3"
+            && (toggle || off_effort || (ctx.model == "glm-5.2" && effort(ctx, body) == Some("minimal"))),
+        _ => false,
+    }
+}
+fn known(ctx: &Context<'_>) -> bool {
+    match provider(ctx) {
+        "dashscope" => QWEN_HYBRID.contains(&ctx.model) || QWEN_TOTAL_CAP.contains(&ctx.model) || ctx.model == "glm-5.2",
+        "moonshot" => KIMI_K3.contains(&ctx.model) || KIMI_CODE.contains(&ctx.model) || ctx.model == "kimi-k2.6",
+        "zai" => GLM_MODELS.contains(&ctx.model),
+        "minimax" => ["MiniMax-M3", "MiniMax-M3.1-Flash"].contains(&ctx.model),
+        "mimo" => MIMO_MODELS.contains(&ctx.model),
+        "ark" => ARK_SEED.contains(&ctx.model),
+        "siliconflow" => SF_MODELS.contains(&ctx.model),
+        "ollama" | "vllm" => true, // Explicit profile; model capabilities remain runtime-defined.
+        _ => false,
+    }
+}
+
+/// Checks only documented controls for a known source/model pair. It does not
+/// remove unknown native parameters, normalize defaults or clean thinking history.
+pub fn validate(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    if !known(ctx) { return Ok(()); }
+    match provider(ctx) {
+        "mimo" => validate_mimo(ctx, body),
+        "moonshot" if ctx.protocol == Protocol::Chat => validate_kimi(ctx, body),
+        "zai" if ctx.protocol == Protocol::Chat => validate_glm(ctx, body),
+        "minimax" if matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => validate_minimax(ctx, body),
+        "dashscope" if matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => validate_dashscope(ctx, body),
+        "ark" => validate_ark(ctx, body),
+        "siliconflow" if ctx.protocol == Protocol::Chat => validate_siliconflow(ctx, body),
+        "ollama" => validate_ollama(ctx, body),
+        "vllm" => validate_vllm(body),
+        _ => Ok(()),
+    }
+}
+fn validate_mimo(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    number(body, "/temperature", 0.0, 1.5)?;
+    number(body, "/top_p", 0.01, 1.0)?;
+    boolean(body, "/stream")?;
+    let cap = match ctx.protocol {
+        Protocol::Chat => "/max_completion_tokens",
+        Protocol::Responses => "/max_output_tokens",
+        Protocol::Messages => "/max_tokens",
+    };
+    integer(body, cap, 1, 131072)?;
+    if ctx.protocol == Protocol::Responses {
+        object(body, "/reasoning")?;
+        one_of(body, "/reasoning/effort", &["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])?;
+        for path in ["/background", "/previous_response_id", "/context_management"] {
+            if present(body, path).is_some() { return Err(invalid(path, "MiMo Responses does not support this stateful/background control")); }
+        }
+        one_of(body, "/text/format/type", &["text", "json_object"])?;
+    } else {
+        object(body, "/thinking")?;
+        one_of(body, "/thinking/type", &["enabled", "disabled"])?;
+        if present(body, effort_path(ctx.protocol)).is_some() {
+            return Err(invalid(effort_path(ctx.protocol), "this MiMo protocol uses thinking.type; only explicit none has a lossless adapter"));
+        }
+    }
+    let choice = if ctx.protocol == Protocol::Messages { "/tool_choice/type" } else { "/tool_choice" };
+    if present(body, choice).is_some_and(|v| v.as_str() != Some("auto")) {
+        return Err(invalid(choice, "MiMo silently converts non-auto choices to auto; the gateway rejects this loss of tool-selection intent"));
+    }
+    if ctx.protocol == Protocol::Messages {
+        boolean(body, "/tool_choice/disable_parallel_tool_use")?;
+    }
+    if ctx.protocol == Protocol::Chat {
+        number(body, "/frequency_penalty", -2.0, 2.0)?;
+        number(body, "/presence_penalty", -2.0, 2.0)?;
+        one_of(body, "/response_format/type", &["text", "json_object"])?;
+        if let Some(stop) = present(body, "/stop") {
+            if !stop.is_string() && !stop.as_array().is_some_and(|a| a.len() <= 4 && a.iter().all(Value::is_string)) {
+                return Err(invalid("stop", "must be a string or at most four strings"));
+            }
+        }
+    }
+    Ok(())
+}
+fn validate_kimi(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    let k3 = KIMI_K3.contains(&ctx.model);
+    let code = KIMI_CODE.contains(&ctx.model);
+    if k3 {
+        one_of(body, "/reasoning_effort", &["low", "high", "max"])?;
+        if present(body, "/thinking").is_some() { return Err(invalid("thinking", "K3 uses reasoning_effort, not the K2 thinking control")); }
+    } else {
+        if present(body, "/reasoning_effort").is_some() { return Err(invalid("reasoning_effort", "not a native parameter for this K2 model; use thinking")); }
+        object(body, "/thinking")?;
+        one_of(body, "/thinking/type", if code { &["enabled"] } else { &["enabled", "disabled"] })?;
+        one_of(body, "/thinking/keep", &["all"])?;
+        if code && present(body, "/thinking").is_some()
+            && (body.pointer("/thinking/type").and_then(Value::as_str) != Some("enabled")
+                || body.pointer("/thinking/keep").and_then(Value::as_str) != Some("all")) {
+            return Err(invalid("thinking", "K2.7 Code accepts only enabled with keep=all"));
+        }
+    }
+    fixed(body, "/temperature", if !k3 && !code && disabled(ctx, body) { 0.6 } else { 1.0 })?;
+    fixed(body, "/top_p", 0.95)?;
+    fixed(body, "/n", 1.0)?;
+    fixed(body, "/presence_penalty", 0.0)?;
+    fixed(body, "/frequency_penalty", 0.0)?;
+    if !k3 && body.get("tool_choice").and_then(Value::as_str) == Some("required") {
+        return Err(invalid("tool_choice", "required is not supported by this exact K2 model"));
+    }
+    integer(body, "/top_logprobs", 0, 20)?;
+    if present(body, "/top_logprobs").is_some() && body.get("logprobs") != Some(&json!(true)) {
+        return Err(invalid("top_logprobs", "requires logprobs=true"));
+    }
+    if let Some(stop) = present(body, "/stop") {
+        if let Some(items) = stop.as_array() {
+            if items.len() > 5 || items.iter().any(|v| v.as_str().is_none_or(|s| s.len() > 32)) {
+                return Err(invalid("stop", "accepts at most five strings of at most 32 bytes"));
+            }
+        } else if stop.as_str().is_none_or(|s| s.len() > 32) {
+            return Err(invalid("stop", "must be a string or array of strings"));
+        }
+    }
+    object(body, "/prompt_cache_options")?;
+    one_of(body, "/prompt_cache_options/mode", &["implicit"])?;
+    one_of(body, "/prompt_cache_options/ttl", &["5m", "1h"])?;
+    Ok(())
+}
+fn validate_glm(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    object(body, "/thinking")?;
+    one_of(body, "/thinking/type", if ctx.model == "glm-5.3" { &["enabled"] } else { &["enabled", "disabled"] })?;
+    boolean(body, "/thinking/clear_thinking")?;
+    boolean(body, "/do_sample")?;
+    boolean(body, "/tool_stream")?;
+    number(body, "/temperature", 0.0, 1.0)?;
+    number(body, "/top_p", 0.01, 1.0)?;
+    integer(body, "/max_tokens", 1, 131072)?;
+    if ctx.model == "glm-5.3" {
+        one_of(body, "/reasoning_effort", &["low", "high", "max"])?;
+    } else if ctx.model == "glm-5.2" {
+        one_of(body, "/reasoning_effort", &["none", "minimal", "low", "medium", "high", "xhigh", "max"])?;
+    }
+    if let Some(items) = present(body, "/stop") {
+        if items.as_array().is_none_or(|items| items.len() > 4 || items.iter().any(|v| !v.is_string())) {
+            return Err(invalid("stop", "must be an array of at most four strings"));
+        }
+    }
+    Ok(())
+}
+fn validate_minimax(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    object(body, "/thinking")?;
+    one_of(body, "/thinking/type", &["adaptive", "disabled"])?;
+    let flash = ctx.model == "MiniMax-M3.1-Flash";
+    if flash {
+        if body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled") {
+            return Err(invalid("thinking.type", "MiniMax-M3.1-Flash requires thinking; it cannot be disabled"));
+        }
+        one_of(body, effort_path(ctx.protocol), &["low", "medium", "high", "xhigh", "max"])?;
+        if ctx.protocol == Protocol::Chat && body.get("reasoning_split") == Some(&json!(false)) {
+            return Err(invalid("reasoning_split", "false is not supported by MiniMax-M3.1-Flash"));
+        }
+        if present(body, "/service_tier").is_some() {
+            return Err(invalid("service_tier", "not supported by MiniMax-M3.1-Flash"));
+        }
+    } else {
+        one_of(body, "/service_tier", &["standard", "priority"])?;
+    }
+    // Temperature is accepted but ignored; preserving it is more honest than
+    // rejecting it as if it were a fixed-value schema. top_p still has a range.
+    if let Some(value) = present(body, "/top_p") {
+        if value.as_f64().is_none_or(|n| n <= 0.0 || n > 1.0) { return Err(invalid("top_p", "must be in (0, 1]")); }
+    }
+    Ok(())
+}
+fn validate_dashscope(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    boolean(body, "/enable_thinking")?;
+    object(body, "/thinking")?;
+    boolean(body, "/tool_stream")?;
+    if QWEN_EFFORT_BUDGET.contains(&ctx.model) || ctx.model == "qwen3.8-omni-flash" {
+        integer(body, if ctx.protocol == Protocol::Messages { "/thinking/budget_tokens" } else { "/thinking_budget" }, 0,
+            if QWEN_EFFORT_BUDGET.contains(&ctx.model) { 262144 } else { i64::MAX })?;
+        if ctx.protocol == Protocol::Chat && present(body, "/reasoning_effort").is_some() && present(body, "/thinking_budget").is_some() {
+            return Err(invalid("reasoning_effort", "cannot be combined with thinking_budget for this Qwen3.8 model"));
+        }
+        if ctx.protocol == Protocol::Chat {
+            one_of(body, "/reasoning_effort", &["none", "minimal", "low", "medium", "high", "xhigh", "max"])?;
+        }
+    }
+    if ctx.protocol == Protocol::Chat {
+        integer(body, "/seed", 0, 2_147_483_647)?;
+        integer(body, "/top_logprobs", 0, 5)?;
+        if present(body, "/top_logprobs").is_some() && body.get("logprobs") != Some(&json!(true)) {
+            return Err(invalid("top_logprobs", "requires logprobs=true"));
+        }
+        if let Some(stop) = present(body, "/stop").and_then(Value::as_array) {
+            let strings = stop.iter().any(Value::is_string);
+            let integers = stop.iter().any(Value::is_i64);
+            if strings && integers { return Err(invalid("stop", "must not mix strings and token IDs")); }
+        }
+    }
+    if ctx.model == "glm-5.3" {
+        if body.get("enable_thinking") == Some(&json!(false)) || body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled") {
+            return Err(invalid("thinking", "glm-5.3 is a thinking-only model"));
+        }
+        one_of(body, effort_path(ctx.protocol), &["low", "high", "max"])?;
+    }
+    // Both output-cap fields may represent different scopes: never compare them
+    // as aliases or rewrite one into the other in this provider contract.
+    Ok(())
+}
+fn validate_ark(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    object(body, "/thinking")?;
+    one_of(body, "/thinking/type", &["enabled", "disabled"])?;
+    one_of(body, effort_path(ctx.protocol), &["none", "minimal", "low", "medium", "high", "xhigh", "max"])?;
+    if body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled")
+        && effort(ctx, body).is_some_and(|v| !["none", "minimal"].contains(&v)) {
+        return Err(invalid(effort_path(ctx.protocol), "disabled thinking accepts only the documented off effort (minimal/none)"));
+    }
+    // enabled+minimal is explicitly a provider off configuration, not a conflict.
+    Ok(())
+}
+fn validate_siliconflow(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    boolean(body, "/enable_thinking")?;
+    integer(body, "/thinking_budget", 128, 32768)?;
+    if ["deepseek-ai/DeepSeek-V4-Flash", "Pro/zai-org/GLM-5.2"].contains(&ctx.model) {
+        one_of(body, "/reasoning_effort", &["low", "medium", "high", "xhigh", "max"])?;
+    }
+    number(body, "/temperature", 0.0, 2.0)?;
+    number(body, "/top_p", 0.0, 1.0)?;
+    number(body, "/frequency_penalty", -2.0, 2.0)?;
+    if let Some(v) = present(body, "/top_k") {
+        if v.as_f64().is_none_or(|n| n > 100.0) { return Err(invalid("top_k", "must be numeric and at most 100")); }
+    }
+    if let Some(stop) = present(body, "/stop").and_then(Value::as_array) {
+        if stop.len() > 4 || stop.iter().any(|v| !v.is_string()) { return Err(invalid("stop", "accepts at most four strings")); }
+    }
+    Ok(())
+}
+fn validate_ollama(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    if ctx.protocol == Protocol::Responses {
+        for path in ["/previous_response_id", "/conversation"] {
+            if present(body, path).is_some() { return Err(invalid(path, "Ollama Responses does not support stateful continuation")); }
+        }
+    }
+    if let Some(think) = present(body, "/think") {
+        if !think.is_boolean() && !think.is_string() { return Err(invalid("think", "must be boolean, a model-defined string, or null")); }
+    }
+    Ok(())
+}
+fn validate_vllm(body: &Value) -> Result<(), String> {
+    for path in ["/chat_template_kwargs", "/structured_outputs", "/vllm_xargs", "/kv_transfer_params", "/ec_transfer_params"] { object(body, path)?; }
+    if body.get("continue_final_message") == Some(&json!(true)) && body.get("add_generation_prompt") == Some(&json!(true)) {
+        return Err(invalid("continue_final_message", "cannot be combined with add_generation_prompt=true"));
+    }
+    if let Some(salt) = present(body, "/cache_salt") {
+        if salt.as_str().is_none_or(|s| s.is_empty() || s.len() > 1024) { return Err(invalid("cache_salt", "must be a nonempty string of at most 1024 bytes")); }
+    }
+    Ok(())
+}
+
+fn budget(body: &Value, protocol: Protocol) -> Option<i64> {
+    let path = if protocol == Protocol::Messages { "/thinking/budget_tokens" } else { "/thinking_budget" };
+    body.pointer(path).and_then(Value::as_i64).filter(|v| *v > 0)
+}
+/// An inclusive Chat field is a versioned provider/model capability, not a
+/// blanket DashScope convention. OAuth uses its own authenticated transport.
+pub fn has_inclusive_chat_cap(ctx: &Context<'_>) -> bool {
+    !ctx.is_oauth && ctx.protocol == Protocol::Chat
+        && ((provider(ctx) == "dashscope" && QWEN_INCLUSIVE_CAP.contains(&ctx.model))
+            || (provider(ctx) == "mimo" && MIMO_MODELS.contains(&ctx.model)))
+}
+/// No provider default is invented. Answer-only budgets without an explicit,
+/// verified reasoning ceiling require the caller's conservative total reservation.
+pub fn output_semantics(ctx: &Context<'_>, body: &Value) -> OutputSemantics {
+    if disabled(ctx, body) || !matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) {
+        return OutputSemantics::Total;
+    }
+    match provider(ctx) {
+        "siliconflow" => OutputSemantics::AnswerOnly {
+            reasoning_budget: if SF_SWITCH_MODELS.contains(&ctx.model) { budget(body, ctx.protocol) } else { None },
+        },
+        "dashscope" if ctx.protocol == Protocol::Chat && QWEN_INCLUSIVE_CAP.contains(&ctx.model)
+            && present(body, "/max_completion_tokens").is_some() => OutputSemantics::Total,
+        "dashscope" if ctx.model == "glm-5.2" => {
+            if budget(body, ctx.protocol).is_some() { OutputSemantics::AnswerOnly { reasoning_budget: budget(body, ctx.protocol) } }
+            else { OutputSemantics::Total }
+        }
+        "dashscope" if QWEN_TOTAL_CAP.contains(&ctx.model) => OutputSemantics::Total,
+        "dashscope" if ctx.model == "qwen3-vl-plus" && present(body, "/enable_thinking").is_none() => OutputSemantics::Total,
+        "dashscope" => {
+            let explicit = (if QWEN_HYBRID.contains(&ctx.model) { budget(body, ctx.protocol) } else { None }).or_else(|| {
+                if ctx.protocol != Protocol::Chat || !QWEN_EFFORT_BUDGET.contains(&ctx.model) { return None; }
+                match effort(ctx, body) {
+                    Some("minimal" | "low") => Some(4096),
+                    Some("medium") => Some(16384),
+                    Some("high" | "xhigh" | "max") => Some(262144),
+                    _ => None,
+                }
+            });
+            OutputSemantics::AnswerOnly { reasoning_budget: explicit }
+        },
+        _ => OutputSemantics::Total,
+    }
+}
+
+fn remove_effort(protocol: Protocol, body: &mut Value) {
+    let key = match protocol { Protocol::Chat => "reasoning_effort", Protocol::Responses => "reasoning", Protocol::Messages => "output_config" };
+    if protocol == Protocol::Chat { body.as_object_mut().unwrap().remove(key); }
+    else if let Some(object) = body.get_mut(key).and_then(Value::as_object_mut) {
+        object.remove("effort");
+        if object.is_empty() { body.as_object_mut().unwrap().remove(key); }
+    }
+}
+fn thinking_off(body: &mut Value) -> Result<(), String> {
+    if let Some(old) = body.get("thinking") {
+        if old != &json!({"type":"disabled"}) { return Err(invalid("thinking", "explicit none conflicts with existing thinking controls; no fields were discarded")); }
+    }
+    body["thinking"] = json!({"type":"disabled"});
+    Ok(())
+}
+/// Applies only lossless, explicit off controls with a documented source contract.
+/// Unknown fields and history are never scrubbed. On error the body is unchanged.
+pub fn adapt(ctx: &Context<'_>, body: &mut Value) -> Result<bool, String> {
+    if !known(ctx) || effort(ctx, body) != Some("none") { return Ok(false); }
+    if provider(ctx) == "dashscope" && ctx.protocol == Protocol::Chat
+        && (QWEN_EFFORT_BUDGET.contains(&ctx.model) || ctx.model == "qwen3.8-omni-flash")
+        && present(body, "/reasoning_effort").is_some() && present(body, "/thinking_budget").is_some()
+    {
+        return Err(invalid("reasoning_effort", "cannot be combined with thinking_budget; none adaptation does not erase this conflict"));
+    }
+    let mut changed = body.clone();
+    match provider(ctx) {
+        "dashscope" if ctx.model != "glm-5.3" && matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => {
+            if ctx.protocol == Protocol::Chat {
+                if present(&changed, "/enable_thinking").is_some_and(|v| v != &json!(false)) {
+                    return Err(invalid("enable_thinking", "explicit none conflicts with enabled thinking"));
+                }
+                changed["enable_thinking"] = json!(false);
+            } else { thinking_off(&mut changed)?; }
+            remove_effort(ctx.protocol, &mut changed);
+        }
+        "siliconflow" if ctx.protocol == Protocol::Chat && SF_SWITCH_MODELS.contains(&ctx.model) => {
+            if present(&changed, "/enable_thinking").is_some_and(|v| v != &json!(false)) {
+                return Err(invalid("enable_thinking", "explicit none conflicts with enabled thinking"));
+            }
+            changed["enable_thinking"] = json!(false);
+            remove_effort(ctx.protocol, &mut changed);
+        }
+        "mimo" if matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => {
+            thinking_off(&mut changed)?;
+            remove_effort(ctx.protocol, &mut changed);
+        }
+        "moonshot" if ctx.protocol == Protocol::Chat && ctx.model == "kimi-k2.6" => {
+            thinking_off(&mut changed)?;
+            remove_effort(ctx.protocol, &mut changed);
+        }
+        "minimax" if ctx.model == "MiniMax-M3" && matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => {
+            thinking_off(&mut changed)?;
+            remove_effort(ctx.protocol, &mut changed);
+        }
+        "ark" => {
+            // This exact Seed contract defines minimal as off (not low effort).
+            match ctx.protocol {
+                Protocol::Chat => changed["reasoning_effort"] = json!("minimal"),
+                Protocol::Responses => changed["reasoning"]["effort"] = json!("minimal"),
+                Protocol::Messages => changed["output_config"]["effort"] = json!("minimal"),
+            }
+        }
+        _ => return Ok(false),
+    }
+    validate(ctx, &changed)?;
+    *body = changed;
+    Ok(true)
+}
+
+pub fn describe(ctx: &Context<'_>) -> Value {
+    let p = provider(ctx);
+    let runtime_profile = matches!(p, "ollama" | "vllm");
+    let specific = known(ctx) && !runtime_profile;
+    let urls: &[&str] = match p {
+        "mimo" => &["https://mimo.mi.com/docs/en-US/api/chat/openai-api", "https://mimo.mi.com/docs/en-US/api/chat/responses", "https://mimo.mi.com/docs/en-US/api/chat/anthropic-api"],
+        "dashscope" => &["https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions", "https://help.aliyun.com/en/model-studio/anthropic-api-messages"],
+        "moonshot" => &["https://platform.kimi.ai/docs/models", "https://platform.kimi.ai/docs/api/models-overview", "https://platform.kimi.ai/docs/api/chat"],
+        "zai" => &["https://docs.bigmodel.cn/api-reference/模型-api/对话补全", "https://docs.z.ai/api-reference/llm/chat-completion"],
+        "minimax" => &["https://platform.minimax.io/docs/api-reference/text-openai-api", "https://platform.minimax.io/docs/api-reference/text-anthropic-api"],
+        "ark" => &["https://docs.volcengine.com/docs/ark/model-deprecation-migration-guide?lang=en", "https://docs.volcengine.com/docs/ark/context-management?lang=en"],
+        "siliconflow" => &["https://docs.siliconflow.cn/docs/api/chat-completions-post", "https://docs.siliconflow.cn/docs/api/messages-post", "https://docs.siliconflow.cn/docs/usercases/use-siliconcloud-in-yan"],
+        "ollama" => &["https://docs.ollama.com/api/openai-compatibility"],
+        "vllm" => &["https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/"],
+        _ => &[],
+    };
+    let notes = match p {
+        "mimo" => "V2.6 defaults to thinking enabled. Responses none disables it; every other valid effort enables the same reasoning behavior. Chat and Messages use thinking.type. Thinking overrides sampling to temperature=1/top_p=.95; retained values need not be effective. Non-auto tool choice and JSON Schema output are rejected rather than promising unsupported behavior. Preserve full reasoning/tool history, multimodal usage and cache breakdown. Chat/Responses output caps include reasoning; Messages uses its documented generation maximum.",
+        "dashscope" => "Exact model and supplying vendor matter. max_completion_tokens includes thinking; max_tokens may count answer only and is not a universal alias. No automatic budget default is inserted.",
+        "moonshot" => "K3 always thinks; K2.7 Code only supports preserved thinking; K2.6 has an off mode. Fixed sampling values are errors when changed. Preserve full assistant/reasoning/tool history and cache read/write breakdown.",
+        "zai" => "GLM-5.3 cannot disable thinking. clear_thinking controls historical reasoning only, not current thinking. do_sample=false is not a temperature=0 rewrite. Native MCP/retrieval and usage stay intact.",
+        "minimax" => "M3.1-Flash cannot turn thinking off. M3 Chat defaults to thinking on, but M3 Messages defaults off: omission is not cross-protocol equivalence. Temperature and several Messages controls may be ignored, not effective. Preserve whole thinking/tool history.",
+        "ark" => "For the listed Seed versions minimal means off, unlike OpenAI minimal. Opaque thinking and stateful continuation are not plaintext equivalents; gateway ownership rules remain separate.",
+        "siliconflow" => "Platform contract differs from original-model vendor. max_tokens excludes chain of thought; thinking_budget is separate. Missing budget remains unknown and requires a conservative verified total ceiling.",
+        "ollama" => "Thinking levels/defaults are runtime model metadata from /api/show. Only a subset of OpenAI is supported; stateless Responses only. Do not infer deployment identity from a model name or localhost port.",
+        "vllm" => "Server version, generation_config, chat template and parsers determine capabilities/defaults. Preserve native extensions/cache_salt; cache salt is not authorization identity. Profile must be explicit for self-hosted deployments.",
+        _ => "No Chinese-provider or local-engine contract selected; native fields are retained for the source to decide.",
+    };
+    json!({"provider":p,"model":ctx.model,"known_model":specific,"runtime_profile":runtime_profile,"model_capabilities":if runtime_profile{"runtime_metadata_required"}else if specific{"documented_exact_model"}else{"unknown"},"evidence":"official_documentation","observed_date":"2026-10-25","native_unknown_fields":"preserved","automatic_drop_params":false,"budget_scope_confidence":if runtime_profile{"runtime_model_unknown"}else if p=="dashscope"||p=="siliconflow"{"documented_provider_contract_model_dependent"}else if specific{"documented_exact_model_or_runtime_profile"}else{"unknown_legacy_default"},"notes":notes,"references":urls,"live_inference_verified":false})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn ctx<'a>(profile: &'a str, model: &'a str, protocol: Protocol) -> Context<'a> {
+        Context { base_url: "https://proxy.example.test/v1", model, protocol, api_version: None, is_oauth: false, profile_override: Some(profile) }
+    }
+    #[test]
+    fn unknown_model_and_unknown_native_extensions_are_not_removed_or_rejected() {
+        let c = ctx("moonshot", "future-model", Protocol::Chat);
+        let b = json!({"thinking":{"type":"future"},"future_vendor_field":{"x":false}});
+        assert!(validate(&c,&b).is_ok());
+        assert!(!adapt(&c,&mut b.clone()).unwrap());
+    }
+    #[test]
+    fn kimi_k3_fixed_sampling_and_thinking_only_are_not_silently_downgraded() {
+        let c = ctx("moonshot", "kimi-k3.1-pro", Protocol::Chat);
+        for b in [json!({"reasoning_effort":"none"}),json!({"thinking":{"type":"disabled"}}),json!({"temperature":0.7}),json!({"top_p":1.0}),json!({"n":2})] { assert!(validate(&c,&b).is_err()); }
+        assert!(validate(&c,&json!({"reasoning_effort":"max","temperature":1.0,"top_p":0.95,"unknown":{"keep":1}})).is_ok());
+    }
+    #[test]
+    fn kimi_code_preserved_thinking_is_not_an_off_switch() {
+        let c = ctx("moonshot", "kimi-k2.7-code", Protocol::Chat);
+        assert!(validate(&c,&json!({"thinking":{"type":"enabled","keep":"all"}})).is_ok());
+        assert!(validate(&c,&json!({"thinking":{"type":"disabled"}})).is_err());
+        assert!(validate(&c,&json!({"tool_choice":"required"})).is_err());
+    }
+    #[test]
+    fn kimi_k26_none_maps_only_to_its_documented_off_control() {
+        let c = ctx("moonshot", "kimi-k2.6", Protocol::Chat);
+        let mut b = json!({"reasoning_effort":"none","temperature":0.6,"other":7});
+        assert!(adapt(&c,&mut b).unwrap());
+        assert_eq!(b,json!({"thinking":{"type":"disabled"},"temperature":0.6,"other":7}));
+        let mut conflict = json!({"reasoning_effort":"none","thinking":{"type":"enabled","keep":"all"}});
+        let before = conflict.clone(); assert!(adapt(&c,&mut conflict).is_err()); assert_eq!(before,conflict);
+    }
+    #[test]
+    fn glm_history_switch_is_preserved_and_53_cannot_turn_thinking_off() {
+        let c = ctx("zai", "glm-5.3", Protocol::Chat);
+        assert!(validate(&c,&json!({"thinking":{"type":"enabled","clear_thinking":false},"reasoning_effort":"high"})).is_ok());
+        assert!(validate(&c,&json!({"thinking":{"type":"disabled"}})).is_err());
+        assert!(validate(&c,&json!({"reasoning_effort":"none"})).is_err());
+        let c = ctx("zai", "glm-5.2", Protocol::Chat);
+        assert!(validate(&c,&json!({"reasoning_effort":"none","thinking":{"clear_thinking":false}})).is_ok());
+    }
+    #[test]
+    fn minimax_models_and_protocol_defaults_are_not_collapsed() {
+        for protocol in [Protocol::Chat,Protocol::Messages] {
+            let c = ctx("minimax", "MiniMax-M3.1-Flash", protocol);
+            assert!(validate(&c,&json!({"thinking":{"type":"disabled"}})).is_err());
+            assert!(validate(&c,&json!({"service_tier":"priority"})).is_err());
+            let c = ctx("minimax", "MiniMax-M3", protocol);
+            assert!(validate(&c,&json!({"temperature":0.2,"service_tier":"priority"})).is_ok());
+            let mut b = if protocol==Protocol::Chat {json!({"reasoning_effort":"none"})}else{json!({"output_config":{"effort":"none","format":{"type":"text"}}})};
+            assert!(adapt(&c,&mut b).unwrap()); assert_eq!(b["thinking"],json!({"type":"disabled"}));
+            if protocol==Protocol::Messages { assert_eq!(b["output_config"]["format"],json!({"type":"text"})); }
+        }
+    }
+    #[test]
+    fn dashscope_caps_have_distinct_scopes_and_missing_budget_is_unknown() {
+        let c = ctx("dashscope", "qwen3.8-max", Protocol::Chat);
+        let b = json!({"max_tokens":32,"max_completion_tokens":128,"thinking_budget":64});
+        assert!(validate(&c,&b).is_ok()); assert_eq!(output_semantics(&c,&b),OutputSemantics::Total);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"thinking_budget":64})),OutputSemantics::AnswerOnly{reasoning_budget:Some(64)});
+        assert_eq!(output_semantics(&c,&json!({})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"enable_thinking":false})),OutputSemantics::Total);
+    }
+    #[test]
+    fn qwen_explicit_effort_budget_is_documented_but_omission_is_not_invented() {
+        let c=ctx("dashscope","qwen3.8-max",Protocol::Chat);
+        assert!(validate(&c,&json!({"reasoning_effort":"low","thinking_budget":4096})).is_err());
+        let mut conflict=json!({"reasoning_effort":"none","thinking_budget":4096});
+        let before=conflict.clone(); assert!(adapt(&c,&mut conflict).is_err()); assert_eq!(before,conflict);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"reasoning_effort":"low"})),OutputSemantics::AnswerOnly{reasoning_budget:Some(4096)});
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"reasoning_effort":"medium"})),OutputSemantics::AnswerOnly{reasoning_budget:Some(16384)});
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+    }
+    #[test]
+    fn siliconflow_unknown_switches_and_undocumented_aliases_do_not_shrink_reservation() {
+        let c=ctx("siliconflow","moonshotai/Kimi-K2.7-Code",Protocol::Chat);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"enable_thinking":false})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+        let c=ctx("siliconflow","deepseek-ai/DeepSeek-V4-Flash",Protocol::Chat);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"max_completion_tokens":64})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+    }
+    #[test]
+    fn dashscope_glm52_changes_scope_only_with_explicit_budget() {
+        let c = ctx("dashscope", "glm-5.2", Protocol::Chat);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32})),OutputSemantics::Total);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"thinking_budget":64})),OutputSemantics::AnswerOnly{reasoning_budget:Some(64)});
+        let c = ctx("dashscope", "glm-5.3", Protocol::Chat);
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"thinking_budget":64})),OutputSemantics::Total);
+    }
+    #[test]
+    fn siliconflow_answer_only_limits_are_not_total_caps() {
+        let c = ctx("siliconflow", "Qwen/Qwen3.8-27B", Protocol::Chat);
+        assert_eq!(output_semantics(&c,&json!({})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+        assert_eq!(output_semantics(&c,&json!({"max_tokens":32,"thinking_budget":128})),OutputSemantics::AnswerOnly{reasoning_budget:Some(128)});
+        assert!(validate(&c,&json!({"thinking_budget":127})).is_err());
+        let mut b=json!({"reasoning_effort":"none","other":"keep"}); assert!(adapt(&c,&mut b).unwrap());
+        assert_eq!(b,json!({"enable_thinking":false,"other":"keep"}));
+    }
+    #[test]
+    fn ark_minimal_is_off_not_low_and_explicit_off_constraints_are_checked() {
+        let c = ctx("ark", "doubao-seed-evolving", Protocol::Responses);
+        let mut b=json!({"reasoning":{"effort":"none","summary":"auto"},"thinking":{"type":"enabled"}});
+        assert!(adapt(&c,&mut b).unwrap()); assert_eq!(b["reasoning"],json!({"effort":"minimal","summary":"auto"}));
+        assert!(validate(&c,&json!({"reasoning":{"effort":"high"},"thinking":{"type":"disabled"}})).is_err());
+    }
+    #[test]
+    fn local_serving_capabilities_are_not_inferred_from_model_brand() {
+        let c=ctx("ollama","qwen3:8b",Protocol::Responses);
+        assert!(validate(&c,&json!({"previous_response_id":"resp_x"})).is_err());
+        assert!(validate(&c,&json!({"think":"model-defined","future":true})).is_ok());
+        let c=ctx("vllm","custom",Protocol::Chat);
+        assert!(validate(&c,&json!({"continue_final_message":true,"add_generation_prompt":true})).is_err());
+        assert!(validate(&c,&json!({"cache_salt":"owner-random-salt","chat_template_kwargs":{"enable_thinking":false}})).is_ok());
+    }
+    #[test]
+    fn explicit_nulls_are_never_rewritten_as_defaults() {
+        let c=ctx("minimax","MiniMax-M3",Protocol::Messages);
+        let b=json!({"temperature":null,"thinking":null,"other":null});
+        assert!(validate(&c,&b).is_ok()); assert!(!adapt(&c,&mut b.clone()).unwrap());
+    }
+    #[test]
+    fn unknown_dashscope_budget_is_not_a_verified_reasoning_ceiling() {
+        let c = ctx("dashscope", "future-model", Protocol::Chat);
+        assert_eq!(output_semantics(&c,&json!({"thinking_budget":64})),OutputSemantics::AnswerOnly{reasoning_budget:None});
+        let c = ctx("siliconflow", "Qwen/Qwen3.8-27B", Protocol::Messages);
+        assert_eq!(output_semantics(&c,&json!({"thinking":{"budget_tokens":128}})),OutputSemantics::AnswerOnly{reasoning_budget:Some(128)});
+    }
+    #[test]
+    fn mimo_none_is_off_but_other_efforts_are_not_differentiated() {
+        let c = ctx("mimo", "mimo-v2.6-pro", Protocol::Chat);
+        let mut b = json!({"reasoning_effort":"none","max_completion_tokens":128,"temperature":0.2,"messages":[{"role":"assistant","reasoning_content":"original"}]});
+        assert_eq!(adapt(&c,&mut b),Ok(true));
+        assert_eq!(b["thinking"],json!({"type":"disabled"}));
+        assert_eq!(b["temperature"],json!(0.2));
+        assert_eq!(b["messages"][0]["reasoning_content"],json!("original"));
+        assert!(validate(&c,&json!({"tool_choice":"required"})).is_err());
+        assert!(validate(&c,&json!({"response_format":{"type":"json_schema"}})).is_err());
+        assert!(validate(&c,&json!({"max_completion_tokens":131073})).is_err());
+        let r = ctx("mimo", "mimo-v2.6-pro", Protocol::Responses);
+        assert!(validate(&r,&json!({"reasoning":{"effort":"none"}})).is_ok());
+        assert!(validate(&r,&json!({"reasoning":{"effort":"ultra"}})).is_ok());
+        assert!(validate(&r,&json!({"previous_response_id":"abc"})).is_err());
+        assert_eq!(output_semantics(&r,&json!({"max_output_tokens":32})),OutputSemantics::Total);
+    }
+
+}

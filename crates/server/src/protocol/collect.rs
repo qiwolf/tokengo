@@ -13,6 +13,7 @@ pub fn prepare_request(
     effort: Option<&str>,
     tier: Option<&str>,
 ) -> Result<(), String> {
+    crate::parameter_budgets::normalize_null_caps(body);
     let map = body
         .as_object_mut()
         .ok_or("Expected OAuth Responses request object")?;
@@ -385,7 +386,7 @@ mod tests {
             prepare_request(&mut body,None,None).unwrap();
             assert_eq!(body["max_output_tokens"],cap);
         }
-        for cap in [json!(15),json!(0),json!(-1),json!("32"),json!(32.5),Value::Null] {
+        for cap in [json!(15),json!(0),json!(-1),json!("32"),json!(32.5)] {
             let mut body=json!({"input":"hello","max_output_tokens":cap});
             assert!(prepare_request(&mut body,None,None).is_err());
         }
@@ -442,4 +443,12 @@ mod tests {
         );
         assert_eq!(v["input"][1], call);
     }
+    #[test]
+    fn oauth_null_caps_are_omitted_without_zero_limit() {
+        let mut body=json!({"input":"hello","max_output_tokens":null,"max_tokens":null,"max_completion_tokens":null});
+        prepare_request(&mut body,None,None).unwrap();
+        assert!(!crate::parameter_budgets::explicit_cap(&body));
+        assert!(body.get("max_output_tokens").is_none());
+    }
+
 }

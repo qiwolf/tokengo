@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
+    /// Explicit provider contract for compatible proxies/self-hosted endpoints.
+    /// None uses only verified endpoint recognition and preserves old fingerprints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameter_profile: Option<String>,
     pub native: Vec<Protocol>,
     #[serde(default)]
     pub allow_conversion: bool,
@@ -28,6 +32,7 @@ fn is_false(v: &bool) -> bool {
 impl Default for Capabilities {
     fn default() -> Self {
         Self {
+            parameter_profile: None,
             native: vec![Protocol::Chat],
             allow_conversion: false,
             native_input_audio: false,
@@ -39,6 +44,9 @@ impl Default for Capabilities {
 }
 impl Capabilities {
     pub fn validate(&self) -> Result<(), String> {
+        if self.parameter_profile.as_deref().is_some_and(|profile| !crate::parameter_contracts::profile_supported(profile)) {
+            return Err("Unknown parameter_profile; select a documented provider contract".into());
+        }
         match (self.max_input_tokens,self.max_output_tokens) {
             (None,None)=>{},
             (Some(input),Some(output)) if input>0 && output>0=>{},
@@ -106,6 +114,7 @@ mod tests {
         assert_eq!(caps.select(Protocol::Chat), Some(Protocol::Chat));
         assert_eq!(caps.select(Protocol::Responses), None);
         let chosen = Capabilities {
+            parameter_profile: None,
             native: vec![Protocol::Messages],
             allow_conversion: true,
             native_input_audio: false,
@@ -122,6 +131,7 @@ mod tests {
     #[test]
     fn malformed_capabilities_fail_closed() {
         assert!(Capabilities {
+            parameter_profile: None,
             native: vec![],
             allow_conversion: true,
             native_input_audio: false,
@@ -132,6 +142,7 @@ mod tests {
         .validate()
         .is_err());
         assert!(Capabilities {
+            parameter_profile: None,
             native: vec![Protocol::Chat, Protocol::Chat],
             allow_conversion: true,
             native_input_audio: false,
@@ -268,5 +279,24 @@ mod generation_tests {
             load(&c, id).unwrap().context_bounds(),
             Some((1048576, 393216))
         );
+    }
+}
+
+#[cfg(test)]
+mod parameter_profile_tests {
+    use super::*;
+    #[test]
+    fn old_sources_keep_the_exact_serialized_protocol_identity() {
+        assert_eq!(serde_json::to_string(&Capabilities::default()).unwrap(), r#"{"native":["chat"],"allow_conversion":false}"#);
+        let legacy: Capabilities = serde_json::from_str(r#"{"native":["chat"],"allow_conversion":false}"#).unwrap();
+        assert!(legacy.parameter_profile.is_none());
+    }
+    #[test]
+    fn compatible_proxy_profile_is_explicit_and_bounded() {
+        let mut caps = Capabilities::default();
+        caps.parameter_profile = Some("dashscope".into());
+        assert!(caps.validate().is_ok());
+        caps.parameter_profile = Some("drop_everything".into());
+        assert!(caps.validate().is_err());
     }
 }

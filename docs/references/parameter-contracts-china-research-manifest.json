@@ -1,0 +1,10 @@
+{
+  "observed_date": "2026-10-25",
+  "status": "documentation_only_no_build_tests_or_live_inference",
+  "artifacts": {
+    "research-china.md": "c6fbd739ab82a9e58a733f8cbd44cc21e76ef4af0fc9c4172bb32ddd405b6a63",
+    "matrix-china.json": "84fd081535020f9de587b7629b30c8f477013745ef2ec84b93eba7b557b41404"
+  },
+  "provider_count": 10,
+  "source_count": 26
+}

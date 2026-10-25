@@ -28,7 +28,7 @@ pub struct HeaderPair {
 }
 
 #[derive(Debug,Clone,PartialEq,Default,Deserialize)]
-pub struct ReasoningCapability {#[serde(default)]pub status:String,#[serde(default)]pub levels:Vec<String>,pub default_effort:Option<String>,#[serde(default)]pub upstream_default:Option<String>,#[serde(default)]pub configured_default:bool,pub manual_levels:Option<Vec<String>>,#[serde(default)]pub source:String,#[serde(default)]pub reason:String}
+pub struct ReasoningCapability {#[serde(default)]pub status:String,#[serde(default)]pub levels:Vec<String>,#[serde(default)]pub thinking_modes:Vec<String>,#[serde(default)]pub effort_wire:Option<String>,pub default_effort:Option<String>,#[serde(default)]pub upstream_default:Option<String>,#[serde(default)]pub configured_default:bool,pub manual_levels:Option<Vec<String>>,#[serde(default)]pub source:String,#[serde(default)]pub reason:String}
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ModelPair {

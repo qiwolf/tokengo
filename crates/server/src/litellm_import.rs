@@ -597,6 +597,7 @@ async fn apply(
                 c,
                 id.0,
                 &Capabilities {
+                    parameter_profile: None,
                     native: vec![d.protocol],
                     allow_conversion: false,
                     native_input_audio: false,

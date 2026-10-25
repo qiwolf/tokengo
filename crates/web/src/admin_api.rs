@@ -191,9 +191,9 @@ pub fn protocols(raw: &str) -> Result<Value, String> {
     let v = object(raw)?;
     if v.as_object().is_some_and(|o| {
         o.keys()
-            .any(|k| k != "native" && k != "allow_conversion" && k != "native_input_audio")
+            .any(|k| !matches!(k.as_str(), "native" | "allow_conversion" | "native_input_audio" | "chat_reasoning_replay" | "max_input_tokens" | "max_output_tokens" | "parameter_profile"))
     }) {
-        return Err("协议配置仅支持 native、allow_conversion 与 native_input_audio".into());
+        return Err("协议配置包含未知字段；请检查原生协议、转换、音频、推理回放、上下文上限与参数适配配置".into());
     }
     let native = v["native"].as_array().ok_or("native 必须是协议数组")?;
     if native.is_empty()
@@ -205,7 +205,7 @@ pub fn protocols(raw: &str) -> Result<Value, String> {
     {
         return Err("native 需填写 1..3 个不重复的 chat / responses / messages".into());
     }
-    for flag in ["allow_conversion", "native_input_audio"] {
+    for flag in ["allow_conversion", "native_input_audio", "chat_reasoning_replay"] {
         if v.get(flag).is_some_and(|x| !x.is_boolean()) {
             return Err(format!("{flag} 必须是布尔值"));
         }
@@ -213,12 +213,44 @@ pub fn protocols(raw: &str) -> Result<Value, String> {
     if v["native_input_audio"] == true && !native.iter().any(|p| p == "chat") {
         return Err("native_input_audio 需要原生 chat".into());
     }
+    if v["chat_reasoning_replay"] == true && !native.iter().any(|p| p == "chat") {
+        return Err("chat_reasoning_replay 需要原生 chat".into());
+    }
+    if let Some(profile) = v.get("parameter_profile").filter(|value| !value.is_null()) {
+        if !matches!(profile.as_str(), Some("openai" | "anthropic" | "gemini" | "deepseek" | "dashscope" | "moonshot" | "zai" | "minimax" | "ark" | "siliconflow" | "mimo" | "ollama" | "vllm" | "native")) {
+            return Err("parameter_profile 必须是已支持的服务商适配配置".into());
+        }
+    }
+    let input = v.get("max_input_tokens").filter(|value| !value.is_null());
+    let output = v.get("max_output_tokens").filter(|value| !value.is_null());
+    match (input, output) {
+        (None, None) => {},
+        (Some(input), Some(output)) if input.as_i64().is_some_and(|n| n > 0) && output.as_i64().is_some_and(|n| n > 0) => {},
+        _ => return Err("max_input_tokens 与 max_output_tokens 须同时填写正整数上限".into()),
+    }
     Ok(v)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn protocol_editor_preserves_supported_contract_and_context_fields() {
+        let raw = r#"{"native":["chat","responses"],"allow_conversion":true,"native_input_audio":false,"chat_reasoning_replay":true,"parameter_profile":"deepseek","max_input_tokens":128000,"max_output_tokens":64000}"#;
+        assert_eq!(protocols(raw).unwrap(), serde_json::from_str::<Value>(raw).unwrap());
+        assert!(protocols(r#"{"native":["responses"],"parameter_profile":null,"max_input_tokens":null,"max_output_tokens":null,"chat_reasoning_replay":false}"#).is_ok());
+        for raw in [
+            r#"{"native":["chat"],"parameter_profile":"made-up"}"#,
+            r#"{"native":["chat"],"parameter_profile":true}"#,
+            r#"{"native":["responses"],"chat_reasoning_replay":true}"#,
+            r#"{"native":["chat"],"chat_reasoning_replay":null}"#,
+            r#"{"native":["chat"],"max_input_tokens":1}"#,
+            r#"{"native":["chat"],"max_input_tokens":1,"max_output_tokens":0}"#,
+            r#"{"native":["chat"],"max_input_tokens":1,"max_output_tokens":1.5}"#,
+            r#"{"native":["chat"],"max_input_tokens":"1","max_output_tokens":1}"#,
+            r#"{"native":["chat"],"max_input_tokens":9223372036854775808,"max_output_tokens":1}"#,
+        ] { assert!(protocols(raw).is_err(), "{raw}"); }
+    }
     #[test]
     fn monetary_inputs_keep_integer_precision_and_reject_overflow() {
         assert_eq!(

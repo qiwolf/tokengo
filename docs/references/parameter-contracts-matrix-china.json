@@ -1,0 +1,910 @@
+{
+  "observed_date": "2026-10-25",
+  "evidence_status": "official_documentation_observed_not_live_inference",
+  "scope": "China model providers and common local serving; parameter families plus explicit exceptions, not exhaustive every nested future schema",
+  "source_policy": "Only official pages. Supplier/model/version/endpoint identity must select contracts; no global drop_params.",
+  "sources": {
+    "DS_CHAT": {
+      "url": "https://api-docs.deepseek.com/api/create-chat-completion/",
+      "observed_date": "2026-10-25"
+    },
+    "DS_THINK": {
+      "url": "https://api-docs.deepseek.com/guides/thinking_mode/",
+      "observed_date": "2026-10-25"
+    },
+    "DS_MODELS": {
+      "url": "https://api-docs.deepseek.com/api/list-models/",
+      "observed_date": "2026-10-25"
+    },
+    "QWEN_CHAT": {
+      "url": "https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions",
+      "observed_date": "2026-10-25"
+    },
+    "QWEN_MESSAGES": {
+      "url": "https://help.aliyun.com/en/model-studio/anthropic-api-messages",
+      "observed_date": "2026-10-25"
+    },
+    "QWEN_MODELS": {
+      "url": "https://help.aliyun.com/en/model-studio/text-generation-model/",
+      "observed_date": "2026-10-25"
+    },
+    "KIMI_MODELS": {
+      "url": "https://platform.kimi.ai/docs/models",
+      "observed_date": "2026-10-25"
+    },
+    "KIMI_PARAMS": {
+      "url": "https://platform.kimi.ai/docs/api/models-overview",
+      "observed_date": "2026-10-25"
+    },
+    "KIMI_CHAT": {
+      "url": "https://platform.kimi.ai/docs/api/chat",
+      "observed_date": "2026-10-25"
+    },
+    "GLM_CHAT": {
+      "url": "https://docs.bigmodel.cn/api-reference/模型-api/对话补全",
+      "observed_date": "2026-10-25"
+    },
+    "GLM_INTL": {
+      "url": "https://docs.z.ai/api-reference/llm/chat-completion",
+      "observed_date": "2026-10-25"
+    },
+    "MINIMAX_CHAT": {
+      "url": "https://platform.minimax.io/docs/api-reference/text-openai-api",
+      "observed_date": "2026-10-25"
+    },
+    "MINIMAX_MODEL": {
+      "url": "https://www.minimax.io/blog/minimax-m3",
+      "observed_date": "2026-10-25"
+    },
+    "ARK_MODELS": {
+      "url": "https://docs.volcengine.com/docs/82379/1330310?lang=en",
+      "observed_date": "2026-10-25"
+    },
+    "ARK_THINK": {
+      "url": "https://docs.volcengine.com/docs/ark/deep-thinking?lang=en",
+      "observed_date": "2026-10-25"
+    },
+    "ARK_MIGRATION": {
+      "url": "https://docs.volcengine.com/docs/ark/model-deprecation-migration-guide?lang=en",
+      "observed_date": "2026-10-25"
+    },
+    "ARK_CONTEXT": {
+      "url": "https://docs.volcengine.com/docs/ark/context-management?lang=en",
+      "observed_date": "2026-10-25"
+    },
+    "SF_CHAT": {
+      "url": "https://docs.siliconflow.cn/docs/api/chat-completions-post",
+      "observed_date": "2026-10-25"
+    },
+    "OLLAMA": {
+      "url": "https://docs.ollama.com/api/openai-compatibility",
+      "observed_date": "2026-10-25"
+    },
+    "VLLM": {
+      "url": "https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/",
+      "observed_date": "2026-10-25"
+    },
+    "MIMO_CHAT": {
+      "url": "https://mimo.mi.com/docs/en-US/api/chat/openai-api",
+      "observed_date": "2026-10-25"
+    },
+    "MIMO_RESPONSES": {
+      "url": "https://mimo.mi.com/docs/en-US/api/chat/responses",
+      "observed_date": "2026-10-25"
+    },
+    "MIMO_MESSAGES": {
+      "url": "https://mimo.mi.com/docs/en-US/api/chat/anthropic-api",
+      "observed_date": "2026-10-25"
+    },
+    "MIMO_SAMPLING": {
+      "url": "https://mimo.mi.com/docs/en-US/api/guidance/model-hyperparameters",
+      "observed_date": "2026-10-25"
+    },
+    "MIMO_MODELS": {
+      "url": "https://mimo.mi.com/docs/en-US/api/model/list-models",
+      "observed_date": "2026-10-25"
+    },
+    "SF_MESSAGES": {
+      "url": "https://docs.siliconflow.cn/docs/api/messages-post",
+      "observed_date": "2026-10-25"
+    }
+  },
+  "providers": [
+    {
+      "provider": "deepseek_official",
+      "models": [
+        "deepseek-flash",
+        "deepseek-v4-pro"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "thinking.type",
+            "reasoning_effort",
+            "reasoning.effort",
+            "output_config.effort"
+          ],
+          "policy": "provider_and_protocol_specific",
+          "notes": "Chat API当前明确none可关闭；指南另列thinking开关。保留两类原生请求，冲突拒绝。minimal→low、medium/xhigh→high；ultra在指南中映射max，需记录页面差异。",
+          "evidence": [
+            "DS_CHAT",
+            "DS_THINK"
+          ]
+        },
+        {
+          "category": "sampling",
+          "parameters": [
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty"
+          ],
+          "policy": "native_preserve_warn_ignored",
+          "notes": "thinking下temperature无效；penalties废弃无效；top_p按精确型号/模式不同，不删改成统一采样。",
+          "evidence": [
+            "DS_THINK"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "max_tokens",
+            "stop",
+            "stream",
+            "stream_options.include_usage",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "logprobs",
+            "top_logprobs",
+            "user_id"
+          ],
+          "policy": "native_preserve_validate_exact_contract",
+          "notes": "cap 1..393216含总上下文限制；stop最多16；stream_options须stream=true；top_logprobs需logprobs；thinking拒绝required/命名tool_choice；JSON text/json_object，strict工具为Beta。",
+          "evidence": [
+            "DS_CHAT"
+          ]
+        },
+        {
+          "category": "state_usage",
+          "parameters": [
+            "messages.reasoning_content",
+            "usage.prompt_cache_hit_tokens",
+            "usage.prompt_cache_miss_tokens"
+          ],
+          "policy": "native_preserve_reject_lossy_conversion",
+          "notes": "工具多轮需原样回放推理。流式末内容chunk携带usage和finish_reason，不能只等待choices=[]计量。",
+          "evidence": [
+            "DS_THINK",
+            "DS_CHAT"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "dashscope",
+      "models": [
+        "qwen3.8-max",
+        "qwen3.8-flash",
+        "qwen3.7-plus",
+        "qwen3.6-plus",
+        "qwen3.5-plus"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages",
+        "dashscope_native"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "enable_thinking",
+            "thinking_budget",
+            "reasoning_effort",
+            "thinking.type",
+            "thinking.budget_tokens"
+          ],
+          "policy": "source_model_specific",
+          "notes": "同品牌可由不同供应方直供；thinking-only不能off；MiniMax直供用thinking而非enable_thinking。不能对品牌一概映射。",
+          "evidence": [
+            "QWEN_CHAT",
+            "QWEN_MODELS"
+          ]
+        },
+        {
+          "category": "caps",
+          "parameters": [
+            "max_tokens",
+            "max_completion_tokens"
+          ],
+          "policy": "not_universal_aliases",
+          "notes": "max_completion_tokens总含CoT+回答。max_tokens随型号/是否budget而变；GLM5.2带budget时仅回答。保留显式字段，不等值合并为总上限。",
+          "evidence": [
+            "QWEN_CHAT"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "temperature",
+            "top_p",
+            "top_k",
+            "presence_penalty",
+            "repetition_penalty",
+            "n",
+            "seed",
+            "logprobs",
+            "top_logprobs",
+            "stop",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "response_format"
+          ],
+          "policy": "native_preserve_validate_model_support",
+          "notes": "seed 0..2^31-1，top_logprobs0..5需logprobs；stop可token_ids但不可与字符串混合。工具/JSON Schema按模型支持，不模拟成提示词。",
+          "evidence": [
+            "QWEN_CHAT"
+          ]
+        },
+        {
+          "category": "extensions",
+          "parameters": [
+            "enable_search",
+            "search_options",
+            "enable_code_interpreter",
+            "tool_stream",
+            "modalities",
+            "audio",
+            "vl_high_resolution_images"
+          ],
+          "policy": "native_only_until_explicit_mapping",
+          "notes": "工具、媒体、搜索/收费能力不可当普通字段跨协议复制；必须完整对应或拒绝。",
+          "evidence": [
+            "QWEN_CHAT"
+          ]
+        },
+        {
+          "category": "messages",
+          "parameters": [
+            "cache_control",
+            "system",
+            "thinking.budget_tokens",
+            "max_tokens"
+          ],
+          "policy": "native_preserve_reject_budget_equivalence",
+          "notes": "system是顶层；部分型号cap只算回答、budget独立，不等于Anthropic所有模型总输出cap。",
+          "evidence": [
+            "QWEN_MESSAGES"
+          ]
+        },
+        {
+          "category": "wire_and_modal",
+          "parameters": [
+            "stream_options.include_usage",
+            "messages.content.input_audio",
+            "messages.content.max_pixels",
+            "messages.content.min_pixels",
+            "use_multichannel"
+          ],
+          "policy": "native_preserve",
+          "notes": "SDK extra_body在客户端展开为顶层字段，不应把SDK包装对象当HTTP wire字段；多模态预算、像素和音频空间参数不能当文本控制跨协议重写。",
+          "evidence": [
+            "QWEN_CHAT"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "kimi_moonshot",
+      "models": [
+        "kimi-k3.1-pro",
+        "kimi-k3.1-pro-highspeed",
+        "kimi-k3",
+        "kimi-k2.7-code",
+        "kimi-k2.7-code-highspeed",
+        "kimi-k2.6"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "thinking.type",
+            "thinking.keep",
+            "reasoning_effort"
+          ],
+          "policy": "model_specific",
+          "notes": "K3 always-think，low/high/max默认max；K2.7-code只能enabled+keep all；K2.6可disabled。不得一律提供none。",
+          "evidence": [
+            "KIMI_MODELS",
+            "KIMI_PARAMS"
+          ]
+        },
+        {
+          "category": "sampling",
+          "parameters": [
+            "temperature",
+            "top_p",
+            "n",
+            "presence_penalty",
+            "frequency_penalty"
+          ],
+          "policy": "fixed_values_reject_conflict",
+          "notes": "K3/K2.7固定1/.95/1/0/0；K2.6温度thinking1/nonthinking.6。其他显式值错误，不可静默删除。",
+          "evidence": [
+            "KIMI_PARAMS"
+          ]
+        },
+        {
+          "category": "tools_formats",
+          "parameters": [
+            "tools",
+            "tool_choice",
+            "response_format",
+            "max_tokens",
+            "max_completion_tokens",
+            "stream",
+            "stream_options.include_usage",
+            "messages.partial",
+            "logprobs",
+            "top_logprobs",
+            "prediction",
+            "stop",
+            "safety_identifier"
+          ],
+          "policy": "native_preserve",
+          "notes": "K3支持required；K2.6/K2.7不支持required。JSON Schema、partial及多模态保留原生语义。 新K3 cap默认131072/最大1048576；stop最多5串、每串32字节；top_logprobs0..20需logprobs。",
+          "evidence": [
+            "KIMI_PARAMS",
+            "KIMI_CHAT"
+          ]
+        },
+        {
+          "category": "cache_state",
+          "parameters": [
+            "prompt_cache_key",
+            "prompt_cache_options.mode",
+            "prompt_cache_options.ttl",
+            "messages.reasoning_content",
+            "usage.prompt_tokens_details.cached_tokens",
+            "usage.prompt_tokens_details.cache_write_tokens"
+          ],
+          "policy": "native_preserve_reject_lossy_conversion",
+          "notes": "K3缓存implicit TTL5m/1h；拒绝显式breakpoint；读写均已含prompt总量，不重复加。完整assistant含reasoning/tool_calls回放。",
+          "evidence": [
+            "KIMI_CHAT"
+          ]
+        }
+      ],
+      "model_lifecycle": {
+        "kimi-k2.5": "official docs state discontinued 2026-08-31",
+        "K2_series_new_accounts": "unavailable starting 2026-10-31; existing users not affected; planned retirement 2026-12-end",
+        "evidence": [
+          "KIMI_MODELS"
+        ]
+      }
+    },
+    {
+      "provider": "bigmodel_zai",
+      "models": [
+        "glm-5.3",
+        "glm-5.2",
+        "glm-5.1",
+        "glm-5",
+        "glm-4.7",
+        "glm-4.6"
+      ],
+      "protocols": [
+        "chat",
+        "messages_compatibility_requires_separate_contract"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "thinking.type",
+            "reasoning_effort"
+          ],
+          "policy": "model_specific",
+          "notes": "GLM5.3只low/high/max；GLM5.2 none/minimal关闭，low/medium→high，xhigh→max。型号决定能否off。",
+          "evidence": [
+            "GLM_CHAT"
+          ]
+        },
+        {
+          "category": "sampling",
+          "parameters": [
+            "do_sample",
+            "temperature",
+            "top_p"
+          ],
+          "policy": "native_preserve",
+          "notes": "do_sample=false时温度/top_p不生效；temperature0..1、top_p .01..1。勿把do_sample当temperature0。",
+          "evidence": [
+            "GLM_CHAT"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "max_tokens",
+            "stream",
+            "tool_stream",
+            "tools",
+            "tool_choice",
+            "stop",
+            "response_format",
+            "request_id",
+            "user_id"
+          ],
+          "policy": "native_preserve",
+          "notes": "max_tokens1..131072(指定新版族)；tool_stream供应商扩展；stop最多4；tool_choice当前API表仅auto；request_id6..64、user_id6..128。",
+          "evidence": [
+            "GLM_CHAT"
+          ]
+        },
+        {
+          "category": "special",
+          "parameters": [
+            "messages.audio",
+            "messages.video",
+            "tools.web_search",
+            "tools.mcp",
+            "usage.prompt_tokens_details.cached_tokens"
+          ],
+          "policy": "native_only",
+          "notes": "多模态/检索/MCP不能丢成普通function；保留厂商计量与过滤字段。",
+          "evidence": [
+            "GLM_INTL"
+          ]
+        },
+        {
+          "category": "history",
+          "parameters": [
+            "thinking.clear_thinking",
+            "messages.reasoning_content"
+          ],
+          "policy": "native_preserve",
+          "notes": "clear_thinking默认true，只控制历史推理清理；false须原样顺序回放，不控制本轮是否推理，不能映射none。",
+          "evidence": [
+            "GLM_INTL"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "minimax_official",
+      "models": [
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3"
+      ],
+      "protocols": [
+        "chat",
+        "messages"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "thinking.type",
+            "reasoning_effort",
+            "reasoning_split"
+          ],
+          "policy": "model_specific",
+          "notes": "M3.1始终thinking；disabled/none报400；effort low/medium/high/xhigh/max默认max。M3支持disabled；M2.x接受disabled但忽略。reasoning_split false对M3.1不支持。",
+          "evidence": [
+            "MINIMAX_CHAT"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "max_tokens",
+            "max_completion_tokens",
+            "stream_options.include_usage",
+            "tools",
+            "service_tier",
+            "temperature",
+            "top_p"
+          ],
+          "policy": "native_preserve",
+          "notes": "新集成用max_completion_tokens；含thinking。M3 service_tier standard/priority，M3.1不支持。采样固定temperature1/top_p.95；显式top_p仍须(0,1]。",
+          "evidence": [
+            "MINIMAX_CHAT"
+          ]
+        },
+        {
+          "category": "media_state",
+          "parameters": [
+            "messages.reasoning_content",
+            "messages.content.think",
+            "image_url.detail",
+            "image_url.max_long_side_pixel",
+            "video_url.fps"
+          ],
+          "policy": "native_only_preserve_history",
+          "notes": "完整assistant必须回放，含think标签、reasoning_content和工具。原生image/video扩展不得无损声称跨协议可转。",
+          "evidence": [
+            "MINIMAX_CHAT"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "doubao_ark",
+      "models": [
+        "doubao-seed-evolving",
+        "doubao-seed-2-1-pro-260915",
+        "doubao-seed-2-1-lite-260915",
+        "doubao-seed-2-1-turbo-260628"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "thinking.type",
+            "reasoning_effort",
+            "reasoning.effort",
+            "output_config.effort"
+          ],
+          "policy": "version_specific",
+          "notes": "Seed2.x的minimal表示关闭，不等于OpenAI轻度推理；none可映射minimal。关闭时effort约束按精确版本，不能将7档全给所有模型。",
+          "evidence": [
+            "ARK_MODELS",
+            "ARK_MIGRATION",
+            "ARK_CONTEXT"
+          ]
+        },
+        {
+          "category": "state",
+          "parameters": [
+            "previous_response_id",
+            "store",
+            "encrypted_content",
+            "reasoning_content",
+            "reasoning.summary"
+          ],
+          "policy": "native_preserve_reject_opaque_conversion",
+          "notes": "平台支持保存上下文，但这与TokenGo自身权限/会话合同不同；加密推理须完整回传，摘要不等于原始链路。",
+          "evidence": [
+            "ARK_THINK"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "max_tokens",
+            "max_completion_tokens",
+            "max_output_tokens",
+            "temperature",
+            "top_p",
+            "service_tier",
+            "tools",
+            "response_format"
+          ],
+          "policy": "requires_exact_version_contract",
+          "notes": "同协议也按精确版本和服务档位声明；不以managed-agent表代替HTTP schema。输出cap应显式且含推理计量，采样可被固定。",
+          "evidence": [
+            "ARK_CONTEXT",
+            "ARK_MIGRATION"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "siliconflow",
+      "models": [
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "moonshotai/Kimi-K2.7-Code",
+        "Pro/zai-org/GLM-5.2"
+      ],
+      "protocols": [
+        "chat",
+        "messages"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "enable_thinking",
+            "thinking_budget",
+            "reasoning_effort"
+          ],
+          "policy": "source_model_specific",
+          "notes": "thinking_budget128..32768；某些DS/GLM只high/max并按官方平台规则映射。不能用模型原厂endpoint规则替代SF契约。",
+          "evidence": [
+            "SF_CHAT"
+          ]
+        },
+        {
+          "category": "caps",
+          "parameters": [
+            "max_tokens"
+          ],
+          "policy": "answer_only_scope",
+          "notes": "当前API说明明确不含CoT；不能等价合并到OpenAI总输出cap，预算需考虑单独thinking。",
+          "evidence": [
+            "SF_CHAT"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "min_p",
+            "stop",
+            "temperature",
+            "top_p",
+            "top_k",
+            "frequency_penalty",
+            "n",
+            "response_format",
+            "tools",
+            "stream"
+          ],
+          "policy": "native_preserve",
+          "notes": "stop最多4；top_k<=100；frequency_penalty[-2,2]；function最多128。JSON Schema仅支持型号生效。",
+          "evidence": [
+            "SF_CHAT"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "ollama",
+      "models": [
+        "model_catalog_runtime",
+        "gemma4:31b",
+        "gpt-oss:20b",
+        "qwen3:8b"
+      ],
+      "protocols": [
+        "chat",
+        "responses_stateless"
+      ],
+      "rows": [
+        {
+          "category": "discovery",
+          "parameters": [
+            "reasoning_effort",
+            "reasoning.effort",
+            "think"
+          ],
+          "policy": "runtime_metadata",
+          "notes": "用/api/show读取本地模型支持值/默认；不按品牌名猜。boolean与named effort有不同处理，unknown effort可能回退模型默认。",
+          "evidence": [
+            "OLLAMA"
+          ]
+        },
+        {
+          "category": "generation",
+          "parameters": [
+            "frequency_penalty",
+            "presence_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "stream",
+            "stream_options.include_usage",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "tools",
+            "tool_choice",
+            "logit_bias",
+            "user",
+            "n"
+          ],
+          "policy": "native_preserve",
+          "notes": "仅OpenAI子集。Responses使用max_output_tokens/truncation；不能把本地Modelfile num_ctx猜成请求参数。",
+          "evidence": [
+            "OLLAMA"
+          ]
+        },
+        {
+          "category": "state_media",
+          "parameters": [
+            "previous_response_id",
+            "conversation",
+            "messages.image_url",
+            "dimensions",
+            "encoding_format"
+          ],
+          "policy": "reject_stateful_or_lossy_mapping",
+          "notes": "Responses无stateful支持；图像/embedding仅按端点原生合同，通用Responses外观不代表云端完整功能。",
+          "evidence": [
+            "OLLAMA"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "vllm",
+      "models": [
+        "deployment_defined"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "completions",
+        "embedding",
+        "rerank"
+      ],
+      "rows": [
+        {
+          "category": "sampling",
+          "parameters": [
+            "top_k",
+            "min_p",
+            "repetition_penalty",
+            "seed",
+            "stop",
+            "ignore_eos",
+            "min_tokens",
+            "allowed_token_ids",
+            "stop_token_ids"
+          ],
+          "policy": "deployment_native_preserve",
+          "notes": "服务端版本、模型generation_config和chat模板决定支持及默认，不自动归一到OpenAI标准字段。",
+          "evidence": [
+            "VLLM"
+          ]
+        },
+        {
+          "category": "template_cache",
+          "parameters": [
+            "chat_template_kwargs",
+            "cache_salt",
+            "vllm_xargs",
+            "kv_transfer_params",
+            "ec_transfer_params"
+          ],
+          "policy": "native_only",
+          "notes": "这些是模板/缓存隔离/分离部署控制，不能删除或当跨来源通用参数；cache_salt不是用户授权身份。",
+          "evidence": [
+            "VLLM"
+          ]
+        },
+        {
+          "category": "tools_structure",
+          "parameters": [
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "structured_outputs",
+            "response_format"
+          ],
+          "policy": "runtime_capability",
+          "notes": "工具解析器和结构化后端需服务端启用；API版本有差异，不能从模型名确认。",
+          "evidence": [
+            "VLLM"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "xiaomi_mimo_official",
+      "family": "MiMo",
+      "profile_id": "mimo",
+      "models": [
+        "mimo-v2.6-flash",
+        "mimo-v2.6-pro",
+        "mimo-v2.6-pro-ultraspeed"
+      ],
+      "base_urls": {
+        "chat": "https://api.xiaomimimo.com/v1",
+        "responses": "https://api.xiaomimimo.com/v1",
+        "messages": "https://api.xiaomimimo.com/anthropic/v1"
+      },
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "rows": [
+        {
+          "category": "reasoning",
+          "parameters": [
+            "thinking.type",
+            "reasoning.effort"
+          ],
+          "policy": "exact_protocol_off_adapter",
+          "notes": "Chat/Messages thinking enabled/disabled默认enabled。Responses none关闭，其余valid努力档实际同enabled，不承诺强度差异。仅none可以无损转thinking.disabled；其他Chat努力档显式拒绝。",
+          "evidence": [
+            "MIMO_CHAT",
+            "MIMO_MESSAGES",
+            "MIMO_RESPONSES"
+          ]
+        },
+        {
+          "category": "sampling",
+          "parameters": [
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty"
+          ],
+          "policy": "native_preserve_warn_ignored",
+          "notes": "temperature0..1.5，top_p .01..1；thinking强制1/.95，不删用户字段但描述不生效。Chat penalties -2..2。",
+          "evidence": [
+            "MIMO_SAMPLING",
+            "MIMO_CHAT"
+          ]
+        },
+        {
+          "category": "output_limits",
+          "parameters": [
+            "max_completion_tokens",
+            "max_output_tokens",
+            "max_tokens"
+          ],
+          "policy": "protocol_specific_total_cap",
+          "notes": "Chat max_completion_tokens / Responses max_output_tokens明确含推理；Messages max_tokens文档为绝对generation maximum。三个协议cap1..131072，默认131072。Chat max_tokens不是已证明原生字段。",
+          "evidence": [
+            "MIMO_CHAT",
+            "MIMO_RESPONSES",
+            "MIMO_MESSAGES"
+          ]
+        },
+        {
+          "category": "tools_json",
+          "parameters": [
+            "tool_choice",
+            "tools",
+            "response_format",
+            "text.format"
+          ],
+          "policy": "explicit_reject_semantic_loss",
+          "notes": "tool_choice仅auto有效，其他上游会退化auto，产品拒绝避免误承诺；JSON输出当前列text/json_object，不能等同json_schema。工具strict JSON Schema与输出JSONschema分开。",
+          "evidence": [
+            "MIMO_CHAT",
+            "MIMO_RESPONSES",
+            "MIMO_MESSAGES"
+          ]
+        },
+        {
+          "category": "state_multimodal_usage",
+          "parameters": [
+            "messages.reasoning_content",
+            "input",
+            "previous_response_id",
+            "background",
+            "context_management",
+            "usage"
+          ],
+          "policy": "native_preserve_stateful_reject",
+          "notes": "保留全部历史推理/工具和图音视频输入、缓存/模态用量。Responses不支持background/previous_response_id/context_management；流式结束和incomplete/max-output reason原样保留。",
+          "evidence": [
+            "MIMO_CHAT",
+            "MIMO_RESPONSES",
+            "MIMO_MESSAGES"
+          ]
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    "DeepSeek current Chat reference accepts reasoning_effort none while thinking guide emphasizes separate thinking switch; preserve both documented forms and version evidence.",
+    "Output cap scopes differ: total tokens vs answer-only. Alias syntax does not prove equal budget semantics.",
+    "Same model name on first-party, DashScope, SiliconFlow, or local engines does not establish equal request controls.",
+    "All findings are documentary; no build, test run, package, push, deployment, or vendor inference was performed.",
+    "DeepSeek current Chat page does not specify precedence when thinking and reasoning_effort conflict. A gateway conflict rejection is a local ambiguity policy, not proof that upstream returns 400."
+  ]
+}

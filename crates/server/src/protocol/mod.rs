@@ -109,6 +109,162 @@ mod tests {
         let body = json!({"model":"m","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{}}}});
         assert!(convert_request(Protocol::Chat, Protocol::Messages, &body).is_err());
     }
+    fn parameter_test_request(protocol: Protocol) -> Value {
+        match protocol {
+            Protocol::Chat => json!({"model":"m","messages":[{"role":"user","content":"hello"}]}),
+            Protocol::Responses => json!({"model":"m","input":"hello"}),
+            Protocol::Messages => json!({"model":"m","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}),
+        }
+    }
+    #[test]
+    fn structured_format_roundtrips_keep_schema_controls_and_explicit_null() {
+        let schema = json!({"type":"object","properties":{"a":{"type":["string","null"]}},"required":["a"],"additionalProperties":false,"$defs":{"nested":{"const":"中文"}}});
+        for strict in [None, Some(json!(false)), Some(json!(true)), Some(Value::Null)] {
+            let mut format = json!({"type":"json_schema","json_schema":{"name":"portable_schema","description":"","schema":schema}});
+            if let Some(strict) = strict { format["json_schema"]["strict"] = strict; }
+            let mut chat = parameter_test_request(Protocol::Chat);
+            chat["response_format"] = format.clone();
+            let original = chat.clone();
+            let response = convert_request(Protocol::Chat, Protocol::Responses, &chat).unwrap();
+            let roundtrip = convert_request(Protocol::Responses, Protocol::Chat, &response).unwrap();
+            assert_eq!(roundtrip["response_format"], format);
+            assert_eq!(chat, original);
+            let repeated = convert_request(Protocol::Chat, Protocol::Responses, &roundtrip).unwrap();
+            assert_eq!(repeated["text"], response["text"]);
+        }
+        for kind in ["text", "json_object"] {
+            let mut response = parameter_test_request(Protocol::Responses);
+            response["text"] = json!({"format":{"type":kind}});
+            let chat = convert_request(Protocol::Responses, Protocol::Chat, &response).unwrap();
+            assert_eq!(chat["response_format"], json!({"type":kind}));
+            assert_eq!(convert_request(Protocol::Chat, Protocol::Responses, &chat).unwrap()["text"], response["text"]);
+        }
+    }
+    #[test]
+    fn responses_text_rejects_unrepresentable_nested_controls_without_mutating_input() {
+        for text in [
+            Value::Null, json!({"format":null}), json!({"format":{"type":"future"}}),
+            json!({"format":{"type":"text","future":1}}),
+            json!({"format":{"type":"json_schema","name":"x","schema":{},"strict":"true"}}),
+            json!({"format":{"type":"json_schema","name":"x","schema":{},"description":null}}),
+            json!({"format":{"type":"json_schema","name":"x","schema":{},"future":true}}),
+            json!({"format":{"type":"json_schema","name":"x","schema":[]}}),
+            json!({"verbosity":"ultra"}), json!({"future":true}),
+        ] {
+            let mut body = parameter_test_request(Protocol::Responses);
+            body["text"] = text;
+            let original = body.clone();
+            assert!(convert_request(Protocol::Responses, Protocol::Chat, &body).is_err(), "{body}");
+            assert_eq!(body, original);
+            assert_eq!(convert_request(Protocol::Responses, Protocol::Responses, &body).unwrap(), original);
+        }
+    }
+    #[test]
+    fn verbosity_maps_both_directions_without_inventing_format_or_default() {
+        for value in [json!("low"), json!("medium"), json!("high"), Value::Null] {
+            let mut chat = parameter_test_request(Protocol::Chat);
+            chat["verbosity"] = value.clone();
+            let response = convert_request(Protocol::Chat, Protocol::Responses, &chat).unwrap();
+            assert_eq!(response["text"].get("verbosity"), Some(&value));
+            assert!(response["text"].get("format").is_none());
+            let converted = convert_request(Protocol::Responses, Protocol::Chat, &response).unwrap();
+            assert_eq!(converted.get("verbosity"), Some(&value));
+            assert!(converted.get("response_format").is_none());
+        }
+        let body = parameter_test_request(Protocol::Chat);
+        assert!(convert_request(Protocol::Chat, Protocol::Responses, &body).unwrap().get("text").is_none());
+        for value in [json!(false), json!(0), json!("HIGH"), json!({}), json!([])] {
+            let mut body = parameter_test_request(Protocol::Chat);
+            body["verbosity"] = value.clone();
+            assert!(convert_request(Protocol::Chat, Protocol::Responses, &body).is_err());
+            let mut response = parameter_test_request(Protocol::Responses);
+            response["text"] = json!({"verbosity":value});
+            assert!(convert_request(Protocol::Responses, Protocol::Chat, &response).is_err());
+        }
+    }
+    #[test]
+    fn format_and_verbosity_coexist_and_invalid_alias_shapes_do_not_override() {
+        let mut body = parameter_test_request(Protocol::Chat);
+        body["response_format"] = json!({"type":"json_object"});
+        body["verbosity"] = json!("low");
+        let response = convert_request(Protocol::Chat, Protocol::Responses, &body).unwrap();
+        assert_eq!(response["text"], json!({"format":{"type":"json_object"},"verbosity":"low"}));
+        body["text"] = json!({"format":{"type":"text"},"verbosity":"high"});
+        assert!(convert_request(Protocol::Chat, Protocol::Responses, &body).is_err());
+        let mut response = response;
+        response["response_format"] = json!({"type":"text"});
+        assert!(convert_request(Protocol::Responses, Protocol::Chat, &response).is_err());
+    }
+    #[test]
+    fn same_semantic_identity_and_cache_controls_survive_roundtrip_independently() {
+        for controls in [
+            json!({"user":"legacy-user","safety_identifier":"safe-hash","prompt_cache_key":"cache-bucket","prompt_cache_retention":"24h","prompt_cache_options":{"mode":"explicit","ttl":"12h"}}),
+            json!({"user":null,"safety_identifier":null,"prompt_cache_key":null,"prompt_cache_retention":null,"prompt_cache_options":{}}),
+            json!({"prompt_cache_retention":"in_memory","prompt_cache_options":{"mode":"implicit","ttl":"30m"}}),
+        ] {
+            for (from, to) in [(Protocol::Chat, Protocol::Responses), (Protocol::Responses, Protocol::Chat)] {
+                let mut body = parameter_test_request(from);
+                for (name, value) in controls.as_object().unwrap() { body[name] = value.clone(); }
+                let original = body.clone();
+                let converted = convert_request(from, to, &body).unwrap();
+                let roundtrip = convert_request(to, from, &converted).unwrap();
+                for (name, value) in controls.as_object().unwrap() {
+                    assert_eq!(converted.get(name), Some(value));
+                    assert_eq!(roundtrip.get(name), Some(value));
+                }
+                assert_eq!(body, original);
+            }
+        }
+    }
+    #[test]
+    fn shared_controls_validate_shapes_but_do_not_rename_retention_into_ttl() {
+        for controls in [
+            json!({"safety_identifier":7}), json!({"user":{}}),
+            json!({"prompt_cache_key":"x".repeat(513)}), json!({"prompt_cache_key":"unsafe\nkey"}),
+            json!({"prompt_cache_options":null}), json!({"prompt_cache_options":{"ttl":"24h"}}),
+            json!({"prompt_cache_options":{"mode":"future"}}), json!({"prompt_cache_options":{"mode":null}}),
+            json!({"prompt_cache_options":{"ttl":null}}), json!({"prompt_cache_options":{"prewarm":false}}),
+            json!({"prompt_cache_options":{"comparison_response_id":"resp_123"}}),
+            json!({"prompt_cache_options":{"future":1}}), json!({"prompt_cache_retention":"12h"}),
+        ] {
+            for (from,to) in [(Protocol::Chat,Protocol::Responses),(Protocol::Responses,Protocol::Chat)] {
+                let mut body = parameter_test_request(from);
+                for (key,value) in controls.as_object().unwrap() {body[key]=value.clone();}
+                let original = body.clone();
+                assert!(convert_request(from,to,&body).is_err(), "{body}");
+                assert_eq!(body,original);
+                assert_eq!(convert_request(from,from,&body).unwrap(),original);
+            }
+        }
+        let mut body = parameter_test_request(Protocol::Chat);
+        body["prompt_cache_retention"] = json!("24h");
+        let converted = convert_request(Protocol::Chat,Protocol::Responses,&body).unwrap();
+        assert_eq!(converted["prompt_cache_retention"],"24h");
+        assert!(converted.get("prompt_cache_options").is_none());
+    }
+    #[test]
+    fn new_controls_have_explicit_dispositions_for_all_six_protocol_pairs() {
+        for (from,to) in [
+            (Protocol::Chat,Protocol::Responses),(Protocol::Chat,Protocol::Messages),
+            (Protocol::Responses,Protocol::Chat),(Protocol::Responses,Protocol::Messages),
+            (Protocol::Messages,Protocol::Chat),(Protocol::Messages,Protocol::Responses),
+        ] {
+            for (name,value) in [("user",json!("u")),("safety_identifier",Value::Null),("prompt_cache_key",json!("k")),("prompt_cache_retention",json!("24h")),("prompt_cache_options",json!({"mode":"explicit","ttl":"30m"}))] {
+                let mut body = parameter_test_request(from);
+                body[name] = value;
+                let converted = convert_request(from,to,&body);
+                if from==Protocol::Messages || to==Protocol::Messages {
+                    assert!(converted.is_err(),"{from:?}->{to:?}: {name}");
+                } else {assert_eq!(converted.unwrap()[name],body[name]);}
+            }
+            let mut body=parameter_test_request(from);
+            match from {
+                Protocol::Responses=>body["text"]=json!({"verbosity":"low"}),
+                _=>body["verbosity"]=json!("low"),
+            }
+            assert_eq!(convert_request(from,to,&body).is_ok(),from!=Protocol::Messages&&to!=Protocol::Messages);
+        }
+    }
     #[test]
     fn native_keeps_opaque_fields() {
         let v = json!({"model":"m","thinking":{"signature":"opaque"},"unknown":[1]});
@@ -345,5 +501,39 @@ mod llama_conversion_tests {
         let converted=convert_response(Protocol::Chat, Protocol::Responses, &thinking).unwrap();
         assert_eq!(converted["output"][0]["content"][0]["text"], "nonempty native reasoning");
         assert!(convert_response(Protocol::Chat, Protocol::Messages, &thinking).is_err());
+    }
+}
+
+#[cfg(test)]
+mod explicit_disabled_reasoning_conversion_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn responses_explicit_none_survives_chat_roundtrip_without_becoming_default() {
+        let body = json!({"model":"unknown-source","input":"hello","reasoning":{"effort":"none"}});
+        let chat = convert_request(Protocol::Responses, Protocol::Chat, &body).unwrap();
+        assert_eq!(chat["reasoning_effort"], "none");
+        let responses = convert_request(Protocol::Chat, Protocol::Responses, &chat).unwrap();
+        assert_eq!(responses["reasoning"]["effort"], "none");
+        let omitted = json!({"model":"unknown-source","input":"hello"});
+        assert!(convert_request(Protocol::Responses, Protocol::Chat, &omitted).unwrap().get("reasoning_effort").is_none());
+        assert_eq!(convert_request(Protocol::Responses, Protocol::Responses, &body).unwrap(), body);
+    }
+
+    #[test]
+    fn messages_explicit_none_is_preserved_for_both_targets_and_active_effort_still_rejected() {
+        let body = json!({"model":"unknown-source","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"output_config":{"effort":"none","format":{"type":"text"}}});
+        let chat = convert_request(Protocol::Messages, Protocol::Chat, &body).unwrap();
+        assert_eq!(chat["reasoning_effort"], "none");
+        let responses = convert_request(Protocol::Messages, Protocol::Responses, &body).unwrap();
+        assert_eq!(responses["reasoning"]["effort"], "none");
+        assert_eq!(responses["text"]["format"], json!({"type":"text"}));
+        assert_eq!(convert_request(Protocol::Messages, Protocol::Messages, &body).unwrap(), body);
+        let mut active = body;
+        active["output_config"]["effort"] = json!("high");
+        for target in [Protocol::Chat, Protocol::Responses] {
+            assert!(convert_request(Protocol::Messages, target, &active).is_err());
+        }
     }
 }

@@ -79,3 +79,5 @@ Published versions are identified by the actual Release assets and their accepta
 TokenGo 基于 [shang1626/tokengo](https://github.com/shang1626/tokengo)，采用 [MIT 许可证](LICENSE)，归属见 [NOTICE](NOTICE)。
 
 Based on [shang1626/tokengo](https://github.com/shang1626/tokengo), distributed under the [MIT License](LICENSE); see [NOTICE](NOTICE) for attribution.
+
+参数匹配与认证线路的本地实现及未验收边界见 [模型家族与参数合同](docs/references/provider-parameter-contracts.md)。

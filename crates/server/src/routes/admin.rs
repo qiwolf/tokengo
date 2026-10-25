@@ -339,6 +339,9 @@ async fn auth_change_password(
 // ───────────────────────── 渠道 ─────────────────────────
 
 fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json::Value {
+    let protocol_config=crate::protocol_config::load(c,l.id.0).unwrap_or_default();
+    let is_oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[l.id.0],|row|row.get(0)).unwrap_or(false);
+    let api_version=l.headers.iter().find(|(name,_)|name.eq_ignore_ascii_case("anthropic-version")).map(|(_,value)|value.as_str());
     serde_json::json!({
         "id": l.id.0,
         "provider_id":l.provider_id,
@@ -359,6 +362,13 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
             "model": m.model,
             "enabled":m.enabled,
             "reasoning":crate::reasoning_capabilities::for_mapping(c,l.id.0,&m.model).ok(),
+            "parameter_contract": ({
+                let protocol=protocol_config.native.first().copied().unwrap_or(crate::protocol::Protocol::Chat);
+                let context=crate::parameter_contracts::Context {base_url:&l.base_url,model:m.upstream.as_deref().unwrap_or(&m.model),protocol,
+                    api_version:api_version.or(if protocol==crate::protocol::Protocol::Messages{Some("2023-06-01")}else{None}),
+                    is_oauth,profile_override:protocol_config.parameter_profile.as_deref()};
+                serde_json::json!({"core":crate::parameter_contracts::describe(&context),"provider":crate::parameter_contracts_china::describe(&context)})
+            }),
             "upstream": m.upstream,
             "vision": m.vision,
             "drop_fields": m.drop_fields_text(),
@@ -375,7 +385,11 @@ async fn channels_list(
     let conn = state.conn();
     let all = channels::list(&conn)?;
     Ok(Json(serde_json::json!({
-        "channels": all.iter().map(|l|channel_json(&conn,l)).collect::<Vec<_>>()
+        "channels": all.iter().map(|l|channel_json(&conn,l)).collect::<Vec<_>>(),
+        "parameter_inventory":crate::parameter_contracts::inventory(),
+        "model_family_choices":["gpt","claude","gemini","deepseek","qwen","kimi","glm","minimax","doubao","mimo","other"],
+        "parameter_profile_choices":["openai","anthropic","gemini","deepseek","dashscope","moonshot","zai","minimax","ark","siliconflow","mimo","ollama","vllm","native"],
+        "model_family_is_not_provider_contract":true
     })))
 }
 

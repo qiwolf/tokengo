@@ -10,6 +10,10 @@ use sha2::{Digest, Sha256};
 pub struct ReasoningCapabilities {
     pub status: String,
     pub levels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thinking_modes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_wire: Option<String>,
     pub default_effort: Option<String>,
     pub upstream_default: Option<String>,
     pub configured_default: bool,
@@ -27,6 +31,8 @@ impl ReasoningCapabilities {
         Self {
             status: "unknown".into(),
             levels: vec![],
+            thinking_modes: vec![],
+            effort_wire: None,
             default_effort: None,
             upstream_default: None,
             configured_default: false,
@@ -61,6 +67,30 @@ fn levels(v: &Value, objects: bool) -> Option<Vec<String>> {
     }
     Some(out)
 }
+/// Parse explicitly named per-value capability flags, never a generic boolean.
+/// A thinking-off type may be supported even when active thinking is not.
+fn named_supported_values(value: &Value, thinking: bool) -> Option<(Vec<String>, Option<bool>)> {
+    let object = value.as_object()?;
+    if object.len() > 17 { return None; }
+    let supported = match object.get("supported") {
+        Some(value) => Some(value.as_bool()?),
+        None => None,
+    };
+    let mut values = Vec::new();
+    for (name, row) in object {
+        if name == "supported" { continue; }
+        if !valid_level(name) || (!thinking && matches!(name.as_str(), "disabled" | "enabled" | "adaptive" | "between_tools")) {
+            return None;
+        }
+        let supported_value = row.as_object()?.get("supported")?.as_bool()?;
+        if supported_value { values.push(name.clone()); }
+    }
+    if supported == Some(false) && values.iter().any(|name| !thinking || name != "disabled") {
+        return None;
+    }
+    Some((values, supported))
+}
+
 /// Real SIWC shape and explicitly named compatible metadata fields only.
 pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
     let candidates = [
@@ -72,9 +102,10 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         (v.pointer("/effort/supported_levels"), false),
     ];
     let mut declared: Option<Vec<String>> = None;
+    let mut effort_wire: Option<String> = None;
     for (value, objects) in candidates {
         if let Some(value) = value {
-            let Some(current) = levels(value, objects) else {
+            let Some(current) = levels(value, objects).filter(|rows| !rows.iter().any(|name| matches!(name.as_str(), "disabled" | "enabled" | "adaptive" | "between_tools"))) else {
                 return ReasoningCapabilities::unknown("上游推理档位声明格式无效，未采用部分结果");
             };
             if declared.as_ref().is_some_and(|old| {
@@ -89,19 +120,75 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
             declared = Some(current);
         }
     }
+    if v.pointer("/effort/supported_levels").is_some() {
+        effort_wire = Some("reasoning_effort".into());
+    }
+    let mut explicitly_no_effort = false;
+    if let Some(value) = v.pointer("/capabilities/effort") {
+        let Some((current, supported)) = named_supported_values(value, false) else {
+            return ReasoningCapabilities::unknown("上游命名推理强度声明格式无效或相互矛盾");
+        };
+        if effort_wire.is_some() {
+            return ReasoningCapabilities::unknown("上游推理参数位置声明相互矛盾");
+        }
+        effort_wire = Some("output_config.effort".into());
+        explicitly_no_effort = supported == Some(false);
+        let named_rows = value.as_object().is_some_and(|rows| rows.keys().any(|key| key != "supported"));
+        if !current.is_empty() || explicitly_no_effort || named_rows {
+            if declared.as_ref().is_some_and(|old| {
+                let mut a = old.clone();
+                let mut b = current.clone();
+                a.sort(); b.sort(); a != b
+            }) {
+                return ReasoningCapabilities::unknown("上游推理档位声明相互矛盾");
+            }
+            declared = Some(current);
+        }
+    }
+    let mut thinking_modes = Vec::new();
+    let mut declared_thinking = false;
+    if let Some(value) = v.pointer("/capabilities/thinking") {
+        let Some(object) = value.as_object() else {
+            return ReasoningCapabilities::unknown("上游思考模式声明格式无效");
+        };
+        let supported = match object.get("supported") {
+            Some(value) => match value.as_bool() {
+                Some(value) => Some(value),
+                None => return ReasoningCapabilities::unknown("上游思考模式声明格式无效"),
+            },
+            None => None,
+        };
+        if let Some(types) = object.get("types") {
+            let Some((modes, _)) = named_supported_values(types, true) else {
+                return ReasoningCapabilities::unknown("上游思考模式声明格式无效或相互矛盾");
+            };
+            if supported == Some(false) && modes.iter().any(|mode| mode != "disabled") {
+                return ReasoningCapabilities::unknown("上游思考模式声明相互矛盾");
+            }
+            thinking_modes = modes;
+            declared_thinking = true;
+        }
+    }
     let unsupported = v.get("reasoning") == Some(&Value::Bool(false))
         || v.pointer("/capabilities/reasoning") == Some(&Value::Bool(false));
-    if unsupported && declared.is_some() {
+    if unsupported && (declared.as_ref().is_some_and(|rows| !rows.is_empty())
+        || thinking_modes.iter().any(|mode| mode != "disabled")) {
         return ReasoningCapabilities::unknown("上游推理能力声明相互矛盾");
     }
     let Some(levels) = declared else {
-        if unsupported {
-            let mut c = ReasoningCapabilities::unknown("上游明确声明不支持推理");
+        let mut c = ReasoningCapabilities::unknown(if declared_thinking {
+            "上游明确声明思考模式，但未声明推理强度档位；强度能力仍未知"
+        } else { "上游未声明具体推理档位" });
+        c.thinking_modes = thinking_modes;
+        c.effort_wire = effort_wire;
+        if unsupported && !declared_thinking {
             c.status = "unsupported".into();
             c.source = "upstream".into();
-            return c;
+            c.reason = "上游明确声明不支持推理".into();
+        } else if declared_thinking || c.effort_wire.is_some() {
+            c.source = "upstream".into();
         }
-        return ReasoningCapabilities::default();
+        return c;
     };
     let mut default: Option<String> = None;
     for value in [
@@ -109,9 +196,7 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         v.pointer("/capabilities/reasoning/default_effort"),
         v.pointer("/effort/default_level"),
     ].into_iter().flatten() {
-        if value.is_null() {
-            continue;
-        }
+        if value.is_null() { continue; }
         let Some(value) = value.as_str().filter(|s| levels.iter().any(|level| level == s)) else {
             return ReasoningCapabilities::unknown("上游默认推理档位不在其声明列表中");
         };
@@ -121,14 +206,16 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         default = Some(value.to_owned());
     }
     ReasoningCapabilities {
-        status: "supported".into(),
+        status: if explicitly_no_effort { "unsupported" } else if levels.is_empty() { "unknown" } else { "supported" }.into(),
         levels,
+        thinking_modes,
+        effort_wire,
         upstream_default: default.clone(),
         default_effort: default,
         configured_default: false,
         manual_levels: None,
         source: "upstream".into(),
-        reason: "上游模型目录明确声明；未执行付费推理探测".into(),
+        reason: "上游模型目录明确声明；思考模式与推理强度分别记录；未执行付费推理探测".into(),
     }
 }
 
@@ -213,7 +300,7 @@ pub(crate) fn for_model_with_identity(
         Some(CompatibilityProvider::DeepSeek) => true,
         Some(CompatibilityProvider::OpenAi) => upstream == "gpt-6-luna",
         None => false,
-    };
+    } || source_disable_adapter(c,id,upstream)?;
     if caps.status == "supported" && !caps.levels.is_empty()
         && !caps.levels.iter().any(|level| level == "none") && compatible
     {
@@ -240,9 +327,24 @@ fn compatibility_provider(c: &Connection, id: i64) -> db::Result<Option<Compatib
     })
 }
 
-/// Generic legacy normalization drops disabled effort on some conversions.
-/// Restore explicit off intent for this mapping only when its effective capability
-/// declares none. Known exclusions fail closed; unknown legacy contracts stay unchanged.
+/// A source-specific, documented off-switch mapping may supplement a list of
+/// active effort levels. Absence of a validator error alone is not proof of off.
+fn source_disable_adapter(c:&Connection,id:i64,upstream:&str)->db::Result<bool> {
+    let Some(channel)=db::channels::get(c,tokengo_shared::ChannelId(id))? else{return Ok(false);};
+    let config=crate::protocol_config::load(c,id)?;
+    let protocol=config.native.first().copied().unwrap_or(Protocol::Chat);
+    let context=crate::parameter_contracts::Context {base_url:&channel.base_url,model:upstream,protocol,
+        api_version:None,is_oauth:false,profile_override:config.parameter_profile.as_deref()};
+    let mut body=match protocol {Protocol::Chat=>serde_json::json!({"reasoning_effort":"none"}),
+        Protocol::Responses=>serde_json::json!({"reasoning":{"effort":"none"}}),Protocol::Messages=>serde_json::json!({"output_config":{"effort":"none"}})};
+    Ok(crate::parameter_contracts_china::adapt(&context,&mut body).is_ok_and(|changed|changed)
+        && crate::parameter_contracts::validate(&context,&body).is_ok()
+        && crate::parameter_contracts_china::validate(&context,&body).is_ok())
+}
+
+/// Validate explicit off intent against this mapping's effective capabilities.
+/// Current converters preserve none; restoring it also supports older callers.
+/// Known exclusions fail closed; unknown contracts retain the explicit request.
 pub(crate) fn restore_disable_intent(
     c: &Connection, id: i64, model: &str, from: Protocol, to: Protocol, original: &Value, body: &mut Value,
 ) -> Result<bool, String> {
@@ -906,7 +1008,7 @@ mod tests {
         let original = json!({"model":"public","input":"hello","reasoning":{"effort":"none"}});
         let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
         let mut converted = crate::protocol::convert_request(Protocol::Responses, Protocol::Chat, &original).unwrap();
-        assert!(converted.get("reasoning_effort").is_none(), "keep the generic legacy converter contract unchanged");
+        assert_eq!(converted["reasoning_effort"], "none", "the generic converter preserves explicit off intent");
         assert!(restore_disable_intent(&c, id, "public", Protocol::Responses, Protocol::Chat, &original, &mut converted).unwrap());
         assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut converted).unwrap());
         assert_eq!(converted["thinking"], json!({"type":"disabled"}));
@@ -975,7 +1077,134 @@ mod tests {
         let before = converted.clone();
         assert!(!restore_disable_intent(&c, id, "public", Protocol::Responses, Protocol::Chat, &original, &mut converted).unwrap());
         assert_eq!(converted, before);
-        assert!(converted.get("reasoning_effort").is_none(), "unknown capability retains the legacy CLI normalization, not a promise to disable upstream thinking");
+        assert_eq!(converted["reasoning_effort"], "none", "unknown capability is not permission to delete explicit off intent; the source may reject it");
     }
 
+}
+
+#[cfg(test)]
+mod named_metadata_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn claude_metadata() -> Value {
+        json!({"capabilities":{
+            "effort":{"supported":true,"low":{"supported":true},"high":{"supported":true},"max":{"supported":false}},
+            "thinking":{"supported":true,"types":{"adaptive":{"supported":true},"between_tools":{"supported":true},"disabled":{"supported":false},"enabled":{"supported":false}}}
+        },"default_reasoning_level":"high"})
+    }
+
+    #[test]
+    fn claude_named_boolean_support_keeps_modes_separate_from_strengths() {
+        let caps = from_metadata(&claude_metadata());
+        assert_eq!(caps.status, "supported");
+        assert_eq!(caps.levels.len(), 2);
+        assert!(caps.levels.contains(&"low".into()));
+        assert!(caps.levels.contains(&"high".into()));
+        assert!(!caps.levels.contains(&"max".into()));
+        assert_eq!(caps.thinking_modes.len(), 2);
+        assert!(caps.thinking_modes.contains(&"adaptive".into()));
+        assert!(caps.thinking_modes.contains(&"between_tools".into()));
+        assert!(!caps.thinking_modes.contains(&"disabled".into()));
+        assert!(caps.thinking_modes.iter().all(|mode| !caps.levels.contains(mode)));
+        assert_eq!(caps.effort_wire.as_deref(), Some("output_config.effort"));
+        assert_eq!(caps.default_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn modes_without_effort_do_not_claim_or_deny_strength_levels() {
+        for v in [
+            json!({"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":true},"disabled":{"supported":false}}}}}),
+            json!({"capabilities":{"thinking":{"supported":false,"types":{"disabled":{"supported":true},"enabled":{"supported":false}}}}}),
+        ] {
+            let caps = from_metadata(&v);
+            assert_eq!(caps.status, "unknown");
+            assert!(caps.levels.is_empty());
+            assert_eq!(caps.thinking_modes.len(), 1);
+            assert!(caps.reason.contains("强度"));
+            assert!(caps.effort_wire.is_none());
+        }
+        let caps = from_metadata(&json!({"capabilities":{"effort":{"supported":true},"thinking":{"supported":true}}}));
+        assert_eq!(caps.status, "unknown");
+        assert!(caps.levels.is_empty());
+    }
+
+    #[test]
+    fn named_metadata_invalid_types_and_conflicts_clear_partial_results() {
+        for v in [
+            json!({"capabilities":{"effort":{"high":{"supported":"true"}}}}),
+            json!({"capabilities":{"effort":{"high":true}}}),
+            json!({"capabilities":{"effort":{"supported":false,"high":{"supported":true}}}}),
+            json!({"capabilities":{"effort":{"adaptive":{"supported":true}}}}),
+            json!({"capabilities":{"effort":{"high":{"supported":true}},"thinking":{"types":{"disabled":{"supported":1}}}}}),
+            json!({"capabilities":{"thinking":{"supported":false,"types":{"adaptive":{"supported":true}}}}}),
+            json!({"capabilities":{"effort":{"high":{"supported":true}}},"reasoning_effort_levels":["low"]}),
+            json!({"capabilities":{"effort":{"high":{"supported":false}}},"reasoning_effort_levels":["high"]}),
+            json!({"capabilities":{"effort":{"high":{"supported":true}}},"effort":{"supported_levels":["high"]}}),
+            json!({"reasoning":false,"capabilities":{"effort":{"high":{"supported":true}}}}),
+            json!({"reasoning_effort_levels":["disabled","high"]}),
+            json!({"reasoning_effort_levels":["between_tools"]}),
+        ] {
+            let caps = from_metadata(&v);
+            assert_eq!(caps.status, "unknown", "{v}");
+            assert!(caps.levels.is_empty(), "{v}");
+            assert!(caps.thinking_modes.is_empty(), "{v}");
+            assert!(caps.effort_wire.is_none(), "{v}");
+        }
+    }
+
+    #[test]
+    fn false_and_omitted_flags_never_invent_supported_values() {
+        let caps = from_metadata(&json!({"capabilities":{"effort":{"supported":false,"high":{"supported":false}}}}));
+        assert_eq!(caps.status, "unsupported");
+        assert!(caps.levels.is_empty());
+        let caps = from_metadata(&json!({"capabilities":{"effort":{"high":{"supported":false}}}}));
+        assert_eq!(caps.status, "unknown");
+        assert!(caps.levels.is_empty());
+        assert!(from_metadata(&json!({"capabilities":{"thinking":{"types":{"adaptive":{}}}}})).thinking_modes.is_empty());
+    }
+
+    #[test]
+    fn origin_wire_is_only_assigned_for_documented_explicit_metadata_shapes() {
+        let caps = from_metadata(&json!({"effort":{"supported_levels":["low","high"],"default_level":"high"}}));
+        assert_eq!(caps.effort_wire.as_deref(), Some("reasoning_effort"));
+        assert_eq!(caps.upstream_default.as_deref(), Some("high"));
+        for v in [
+            json!({"supported_reasoning_levels":[{"effort":"high"}]}),
+            json!({"reasoning_effort_levels":["high"]}),
+            json!({"reasoning":true}),
+        ] {
+            assert!(from_metadata(&v).effort_wire.is_none());
+        }
+    }
+
+    #[test]
+    fn old_cache_deserializes_and_empty_new_fields_remain_omitted() {
+        let old = json!({"status":"supported","levels":["high"],"default_effort":"high","upstream_default":"high","configured_default":false,"manual_levels":null,"source":"upstream","reason":"old cache"});
+        let caps: ReasoningCapabilities = serde_json::from_value(old.clone()).unwrap();
+        assert!(caps.thinking_modes.is_empty());
+        assert!(caps.effort_wire.is_none());
+        assert_eq!(serde_json::to_value(caps).unwrap(), old);
+        let caps = from_metadata(&claude_metadata());
+        assert_eq!(serde_json::from_value::<ReasoningCapabilities>(serde_json::to_value(&caps).unwrap()).unwrap(), caps);
+    }
+
+    #[test]
+    fn manually_confirmed_levels_do_not_erase_source_modes_or_origin() {
+        let c = db::open_in_memory().unwrap();
+        let id = db::channels::create(&c, &db::channels::NewChannel {
+            name:"Named metadata source".into(),base_url:"https://api.anthropic.com/v1".into(),
+            enabled:true,unwrap_envelope:false,max_concurrent:0,
+        }).unwrap();
+        db::channels::set_models(&c,id,&[db::channels::ModelMapping::new("public",Some("exact-model".into()),false)]).unwrap();
+        let mut metadata = claude_metadata();
+        metadata["id"] = json!("exact-model");
+        let models = crate::upstream::parse_model_catalog(&json!({"data":[metadata]}).to_string());
+        store_catalog(&c,id.0,&models,1).unwrap();
+        configure(&c,id.0,"public",Some(&["low".into()]),None).unwrap();
+        let caps = for_mapping(&c,id.0,"public").unwrap();
+        assert_eq!(caps.levels, vec!["low"]);
+        assert_eq!(caps.thinking_modes.len(),2);
+        assert_eq!(caps.effort_wire.as_deref(),Some("output_config.effort"));
+    }
 }

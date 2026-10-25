@@ -638,6 +638,7 @@ pub fn bind(state: &SharedState, channel_id: i64, binding: &Binding) -> Result<(
             c,
             channel_id,
             &crate::protocol_config::Capabilities {
+                parameter_profile: None,
                 native: vec![Protocol::Responses],
                 allow_conversion: true,
                 native_input_audio: false,

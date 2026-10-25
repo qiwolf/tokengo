@@ -549,8 +549,8 @@ fn parse_body(body: &[u8], endpoint: EndpointKind) -> Result<(String, Value, boo
             if !value.get("messages").is_some_and(Value::is_array) {
                 return Err(ApiError::bad_request("Messages requires a messages array"));
             }
-            if value.get("max_tokens").and_then(Value::as_i64).is_none_or(|tokens|tokens<=0) {
-                return Err(ApiError::bad_request("Messages max_tokens must be a positive integer"));
+            if value.get("max_tokens").and_then(Value::as_i64).is_none_or(|tokens|tokens<0) {
+                return Err(ApiError::bad_request("Messages max_tokens must be a non-negative integer; zero requires a native cache-warming contract"));
             }
         }
         _ => {},
