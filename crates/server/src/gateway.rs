@@ -1660,7 +1660,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         match crate::protocol::convert_request(from, to, &req.body) {
                             Ok(mut body) => {
                                 if let Err(note) = crate::reasoning_capabilities::restore_disable_intent(
-                                    &state.conn(), channel.id.0, from, to, &req.body, &mut body,
+                                    &state.conn(), channel.id.0, name, from, to, &req.body, &mut body,
                                 ) {
                                     last_policy_error = Some(ApiError::bad_request(note));
                                     continue;

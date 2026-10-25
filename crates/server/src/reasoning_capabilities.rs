@@ -241,18 +241,25 @@ fn compatibility_provider(c: &Connection, id: i64) -> db::Result<Option<Compatib
 }
 
 /// Generic legacy normalization drops disabled effort on some conversions.
-/// Restore explicit off intent only for DeepSeek, whose default is thinking on.
+/// Restore explicit off intent for this mapping only when its effective capability
+/// declares none. Known exclusions fail closed; unknown legacy contracts stay unchanged.
 pub(crate) fn restore_disable_intent(
-    c: &Connection, id: i64, from: Protocol, to: Protocol, original: &Value, body: &mut Value,
+    c: &Connection, id: i64, model: &str, from: Protocol, to: Protocol, original: &Value, body: &mut Value,
 ) -> Result<bool, String> {
     let disabled = match from {
         Protocol::Responses => original.pointer("/reasoning/effort"),
         Protocol::Messages => original.pointer("/output_config/effort"),
         Protocol::Chat => None, // Chat->Responses already preserves its effort.
     }.and_then(Value::as_str) == Some("none");
-    if from == to || !disabled
-        || compatibility_provider(c, id).map_err(|_| "Cannot read source reasoning identity")? != Some(CompatibilityProvider::DeepSeek)
-    { return Ok(false); }
+    if from == to || !disabled { return Ok(false); }
+    let caps = for_mapping(c, id, model)
+        .map_err(|_| "Cannot read model reasoning configuration".to_owned())?;
+    if caps.status == "unsupported"
+        || (caps.status == "supported" && !caps.levels.iter().any(|level| level == "none"))
+    {
+        return Err("Requested reasoning none is not declared for this model on this connection".into());
+    }
+    if caps.status != "supported" { return Ok(false); }
     if to == Protocol::Chat {
         body["reasoning_effort"] = serde_json::json!("none");
     } else if to == Protocol::Responses {
@@ -883,7 +890,7 @@ mod tests {
         configure(&c, id, "public", None, Some("high")).unwrap();
         for to in [Protocol::Chat, Protocol::Responses] {
             let mut converted = crate::protocol::convert_request(Protocol::Messages, to, &original).unwrap();
-            assert!(restore_disable_intent(&c, id, Protocol::Messages, to, &original, &mut converted).unwrap());
+            assert!(restore_disable_intent(&c, id, "public", Protocol::Messages, to, &original, &mut converted).unwrap());
             apply_defaults_and_validate(&c, id, "public", "exact", to, &mut converted).unwrap();
             if to == Protocol::Chat {
                 assert_eq!(converted["thinking"], json!({"type":"disabled"}));
@@ -895,25 +902,80 @@ mod tests {
     }
 
     #[test]
-    fn responses_none_conversion_restores_deepseek_off_intent_only() {
+    fn responses_none_conversion_restores_declared_deepseek_off_intent() {
         let original = json!({"model":"public","input":"hello","reasoning":{"effort":"none"}});
         let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
         let mut converted = crate::protocol::convert_request(Protocol::Responses, Protocol::Chat, &original).unwrap();
         assert!(converted.get("reasoning_effort").is_none(), "keep the generic legacy converter contract unchanged");
-        assert!(restore_disable_intent(&c, id, Protocol::Responses, Protocol::Chat, &original, &mut converted).unwrap());
+        assert!(restore_disable_intent(&c, id, "public", Protocol::Responses, Protocol::Chat, &original, &mut converted).unwrap());
         assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Chat, &mut converted).unwrap());
         assert_eq!(converted["thinking"], json!({"type":"disabled"}));
         let mut messages = json!({"output_config":{"format":{"type":"text"}}});
-        assert!(restore_disable_intent(&c, id, Protocol::Responses, Protocol::Messages, &original, &mut messages).unwrap());
+        assert!(restore_disable_intent(&c, id, "public", Protocol::Responses, Protocol::Messages, &original, &mut messages).unwrap());
         apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Messages, &mut messages).unwrap();
         assert_eq!(messages["thinking"], json!({"type":"disabled"}));
         assert_eq!(messages["output_config"], json!({"format":{"type":"text"}}));
         let (other, oid) = portable_source("https://proxy.example.test/v1", "exact", deepseek_metadata());
         let mut body = json!({});
-        assert!(!restore_disable_intent(&other, oid, Protocol::Responses, Protocol::Chat, &original, &mut body).unwrap());
+        assert!(restore_disable_intent(&other, oid, "public", Protocol::Responses, Protocol::Chat, &original, &mut body).is_err(), "known third-party declaration excludes none");
         assert_eq!(body, json!({}));
-        assert!(!restore_disable_intent(&c, id, Protocol::Chat, Protocol::Chat, &json!({"reasoning_effort":"none"}), &mut body).unwrap());
+        assert!(!restore_disable_intent(&c, id, "public", Protocol::Chat, Protocol::Chat, &json!({"reasoning_effort":"none"}), &mut body).unwrap());
         assert_eq!(body, json!({}));
+    }
+
+
+    #[test]
+    fn cross_protocol_none_preserves_openai_and_explicit_third_party_capabilities() {
+        for (url, upstream, metadata) in [
+            ("https://api.openai.com/v1", "gpt-6-luna", deepseek_metadata()),
+            ("https://proxy.example.test/v1", "synthetic-model", json!({"reasoning_effort_levels":["none","high"],"default_reasoning_level":"high"})),
+        ] {
+            let (c, id) = portable_source(url, upstream, metadata);
+            configure(&c, id, "public", None, Some("high")).unwrap();
+            for (from, to, original) in [
+                (Protocol::Messages, Protocol::Responses, json!({"model":"public","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"output_config":{"effort":"none"}})),
+                (Protocol::Responses, Protocol::Chat, json!({"model":"public","max_output_tokens":32,"input":"hello","reasoning":{"effort":"none"}})),
+            ] {
+                let mut converted = crate::protocol::convert_request(from, to, &original).unwrap();
+                assert!(restore_disable_intent(&c, id, "public", from, to, &original, &mut converted).unwrap());
+                apply_defaults_and_validate(&c, id, "public", upstream, to, &mut converted).unwrap();
+                let effort = if to == Protocol::Chat { converted.get("reasoning_effort") } else { converted.pointer("/reasoning/effort") };
+                assert_eq!(effort.and_then(Value::as_str), Some("none"), "{url}");
+                assert!(converted.get("thinking").is_none(), "DeepSeek wire rules never apply to another source");
+            }
+            let mut messages = json!({"output_config":{"format":{"type":"text"}}});
+            assert!(restore_disable_intent(&c, id, "public", Protocol::Responses, Protocol::Messages,
+                &json!({"reasoning":{"effort":"none"}}), &mut messages).unwrap());
+            assert_eq!(messages["output_config"], json!({"effort":"none","format":{"type":"text"}}));
+        }
+    }
+
+    #[test]
+    fn cross_protocol_none_rejects_known_exclusions_and_preserves_unknown_legacy_contract() {
+        let original = json!({"model":"public","input":"hello","reasoning":{"effort":"none"}});
+        for (metadata, manual) in [
+            (json!({"reasoning":false}), false),
+            (json!({"reasoning_effort_levels":["high"]}), false),
+            (json!({"reasoning_effort_levels":["none","high"]}), true),
+        ] {
+            let (c, id) = portable_source("https://proxy.example.test/v1", "exact", metadata);
+            if manual { configure(&c, id, "public", Some(&["high".into()]), Some("high")).unwrap(); }
+            for to in [Protocol::Chat, Protocol::Messages] {
+                let mut converted = json!({"model":"exact"});
+                let before = converted.clone();
+                assert!(restore_disable_intent(&c, id, "public", Protocol::Responses, to, &original, &mut converted).is_err());
+                assert_eq!(converted, before, "rejection cannot replace none with a configured active effort");
+            }
+            let mut converted = json!({"model":"exact"});
+            assert!(restore_disable_intent(&c, id, "public", Protocol::Messages, Protocol::Responses,
+                &json!({"output_config":{"effort":"none"}}), &mut converted).is_err());
+        }
+        let (c, id) = portable_source("https://proxy.example.test/v1", "exact", json!({}));
+        let mut converted = crate::protocol::convert_request(Protocol::Responses, Protocol::Chat, &original).unwrap();
+        let before = converted.clone();
+        assert!(!restore_disable_intent(&c, id, "public", Protocol::Responses, Protocol::Chat, &original, &mut converted).unwrap());
+        assert_eq!(converted, before);
+        assert!(converted.get("reasoning_effort").is_none(), "unknown capability retains the legacy CLI normalization, not a promise to disable upstream thinking");
     }
 
 }

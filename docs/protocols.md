@@ -90,4 +90,4 @@ Hermes 等客户端使用 `store:false` 时，应在首轮即通过专用会话�
 
 ### 关闭推理的来源语义
 
-`none`与省略参数不同。内置来源规则、DeepSeek目录effort字段和Chat/Messages的`thinking.type=disabled`转换见[推理关闭兼容](reasoning-compatibility.md)。已知来源的Responses/Messages转换保留明确关闭意图；未知兼容服务不自动套用官方契约。
+`none`与省略参数不同。内置来源规则、DeepSeek目录effort字段和Chat/Messages的`thinking.type=disabled`转换见[推理关闭兼容](reasoning-compatibility.md)。Responses/Messages转换依据当前模型的有效none声明保留明确关闭意图，包括第三方明确声明的none；已知排除时拒绝。未知兼容服务不自动套用官方契约。
