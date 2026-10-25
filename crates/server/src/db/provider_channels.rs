@@ -48,10 +48,14 @@ pub fn model_switch(c: &Connection, ids: &[i64], model: &str, enabled: bool) -> 
     Ok(())
 }
 pub fn source_json(c: &Connection, name: &str) -> Result<Vec<Value>> {
+    source_json_from_channels(c, name, &super::channels::list(c)?)
+}
+/// Reuse the management request snapshot; never stored across requests.
+pub(crate) fn source_json_from_channels(c: &Connection, name: &str, chans: &[super::channels::ChannelRow]) -> Result<Vec<Value>> {
     let mut rows = Vec::new();
-    for ch in super::channels::list(c)? {
+    for ch in chans {
         if let Some(m) = ch.models.iter().find(|m| same_model_name(&m.model, name)) {
-            rows.push(json!({"connection_id":ch.id.0,"connection_name":ch.name,"provider_id":ch.provider_id,"provider_name":ch.provider_name,"provider_enabled":ch.provider_enabled,"connection_enabled":ch.enabled,"model_enabled":m.enabled,"reasoning":crate::reasoning_capabilities::for_mapping(c,ch.id.0,&m.model)?}));
+            rows.push(json!({"connection_id":ch.id.0,"connection_name":ch.name,"provider_id":ch.provider_id,"provider_name":ch.provider_name,"provider_enabled":ch.provider_enabled,"connection_enabled":ch.enabled,"model_enabled":m.enabled,"reasoning":crate::reasoning_capabilities::for_loaded_mapping(c,ch.id.0,m)?}));
         }
     }
     Ok(rows)

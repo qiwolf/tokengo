@@ -406,6 +406,8 @@ fn ProbeField(
 #[component]
 pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
     let probes = RwSignal::new(Vec::<Value>::new());
+    let probes_ready = RwSignal::new(false);
+    let channels_ready = RwSignal::new(false);
     let eligible = RwSignal::new(Vec::<i64>::new());
     let targets = RwSignal::new(BTreeMap::<i64, Value>::new());
     let model_kinds = RwSignal::new(BTreeMap::<String, String>::new());
@@ -419,55 +421,50 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
     let selected = RwSignal::new(None::<Value>);
     let draft = RwSignal::new(initial());
     let provider = RwSignal::new(String::new());
-    leptos::task::spawn_local(async move {
-        match (load().await, crate::api::channels().await) {
-            (Ok(p), Ok(c)) => {
-                let mut l = BTreeMap::new();
-                let mut ids: Vec<_> = c.iter().filter_map(|c| c.provider_id).collect();
-                ids.sort();
-                ids.dedup();
-                for id in ids {
-                    match api::request("GET", &format!("/api/providers/{id}/credentials"), None)
-                        .await
-                    {
-                        Ok(v) => {
-                            for (i, r) in api::rows(&v, "credentials").iter().enumerate() {
-                                if let Some(ids) = r["source_ids"].as_array() {
-                                    for id in ids.iter().filter_map(Value::as_i64) {
-                                        l.insert(id, crate::provider_api::credential_label(r, i));
+    let tasks = crate::page_tasks::PageTasks::new();
+    tasks.spawn(async move {
+        crate::page_tasks::parallel([
+            Box::pin(async move {
+                match load().await {
+                    Ok(p)=>{probes.set(p.0);eligible.set(p.1);targets.set(p.2);probes_ready.set(true);}
+                    Err(e)=>{ctx.note_err(&e);error.set(e.message);}
+                }
+            }) as crate::page_tasks::ReadTask,
+            Box::pin(async move {
+                match crate::api::channels().await {
+                    Ok(c)=>{
+                        let mut ids:Vec<_>=c.iter().filter_map(|c|c.provider_id).collect();
+                        ids.sort();ids.dedup();
+                        channels.set(c);
+                        channels_ready.set(true);
+                        // Credential names are independent across providers. Publish each as ready.
+                        futures_util::future::join_all(ids.into_iter().map(|id|async move {
+                            match api::request("GET",&format!("/api/providers/{id}/credentials"),None).await {
+                                Ok(v)=>{
+                                    let mut found=BTreeMap::new();
+                                    for (i,r) in api::rows(&v,"credentials").iter().enumerate(){
+                                        if let Some(ids)=r["source_ids"].as_array(){
+                                            for id in ids.iter().filter_map(Value::as_i64){
+                                                found.insert(id,crate::provider_api::credential_label(r,i));
+                                            }
+                                        }
                                     }
+                                    labels.update(|l|l.extend(found));
                                 }
+                                Err(e)=>{ctx.note_err(&e);error.set("部分 Key 备注读取失败，请刷新后再配置探针。".into());}
                             }
-                        }
-                        Err(e) => {
-                            ctx.note_err(&e);
-                            error.set("部分 Key 备注读取失败，请刷新后再配置探针。".into());
-                        }
+                        })).await;
                     }
+                    Err(e)=>{ctx.note_err(&e);error.set(e.message);}
                 }
+            }),
+            Box::pin(async move {
                 match crate::api::model_routes().await {
-                    Ok(v) => {
-                        model_kinds.set(v.models.into_iter().map(|r| (r.name, r.kind)).collect())
-                    }
-                    Err(e) => {
-                        ctx.note_err(&e);
-                        error.set(format!(
-                            "读取模型类型失败，请刷新页面再新增探针：{}",
-                            e.message
-                        ));
-                    }
+                    Ok(v)=>model_kinds.set(v.models.into_iter().map(|r|(r.name,r.kind)).collect()),
+                    Err(e)=>{ctx.note_err(&e);error.set(format!("读取模型类型失败，请刷新页面再新增探针：{}",e.message));}
                 }
-                labels.set(l);
-                channels.set(c);
-                probes.set(p.0);
-                eligible.set(p.1);
-                targets.set(p.2);
-            }
-            (Err(e), _) | (_, Err(e)) => {
-                ctx.note_err(&e);
-                error.set(e.message);
-            }
-        }
+            }),
+        ]).await;
         busy.set(false);
     });
     let edit = move |row: Option<Value>| {
@@ -547,7 +544,7 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
             .unwrap_or_else(|| "/api/custom-probes".into());
         busy.set(true);
         error.set(String::new());
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             match api::request(if row.is_some() { "PUT" } else { "POST" }, &path, Some(b)).await {
                 Ok(v) => {
                     if v["probe"].is_object() {
@@ -632,7 +629,7 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
         busy.set(true);
         error.set(String::new());
         notice.set(String::new());
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             match api::request(method, &path, body).await {
                 Ok(v) => {
                     notice.set(if operation == "run" {
@@ -680,9 +677,9 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
             busy.set(false);
         });
     };
-    view! {<section class="custom-probes card"><style>{include_str!("../../custom-probes.css")}</style><div class="custom-probe-head"><div><h2>"自定义探针"</h2><p class="muted small">"按指定凭据、模型和请求类型检查上游。系统诊断不扣用户额度，仍消耗上游资源；实际成本未知时会明确标注。"</p></div><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return;}busy.set(true);leptos::task::spawn_local(async move{match load().await{Ok(p)=>{probes.set(p.0);eligible.set(p.1);targets.set(p.2);error.set(String::new());},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>"刷新"</button><button class="primary" disabled=move||busy.get() on:click=move |_|edit(None)>"新增探针"</button></div></div>
+    view! {<section class="custom-probes card"><style>{include_str!("../../custom-probes.css")}</style><div class="custom-probe-head"><div><h2>"自定义探针"</h2><p class="muted small">"按指定凭据、模型和请求类型检查上游。系统诊断不扣用户额度，仍消耗上游资源；实际成本未知时会明确标注。"</p></div><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return;}busy.set(true);tasks.spawn(async move{match load().await{Ok(p)=>{probes.set(p.0);eligible.set(p.1);targets.set(p.2);error.set(String::new());},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>"刷新"</button><button class="primary" disabled=move||busy.get() on:click=move |_|edit(None)>"新增探针"</button></div></div>
     <p role="status" class="small">{move||notice.get()}</p><Show when=move||!error.get().is_empty()&&!open.get()&&!deleting.get()><p role="alert" class="error">{move||error.get()}</p></Show>
-    <div class="custom-probe-table-wrap"><table class="custom-probe-table"><thead><tr><th>"名称 / 定时状态"</th><th>"供应方 · Key · 模型"</th><th>"最近结果"</th><th>"执行间隔"</th><th>"操作"</th></tr></thead><tbody>{move||probes.get().into_iter().map(|row|{let e=row.clone();let t=row.clone();let r=row.clone();let d=row.clone();let sid=row["source_id"].as_i64().unwrap_or(0);let c=channels.get().into_iter().find(|c|c.id==sid);let target=c.as_ref().map(|c|format!("{} · {}",c.provider_name.as_deref().unwrap_or("未分组接入"),labels.get().get(&sid).cloned().unwrap_or_else(||c.base_url.clone()))).unwrap_or_else(||"原接入已移除，请编辑修复".into());let meta=targets.get().get(&sid).cloned().unwrap_or(Value::Null);let credential_type=type_label(&meta);let enabled=row["enabled"]==true;view!{<tr><td><strong>{api::text(&row,"name")}</strong><span class="muted small">{if enabled{"定时已启用"}else{"定时已停用"}}</span></td><td><span>{target}</span><span class="muted small">{credential_type}</span><span class="muted small">{format!("{} · {}",api::text(&row,"model"),kind_label(row["kind"].as_str().unwrap_or("")))}</span></td><td class="custom-probe-result"><span>{result_text(&row["last_result"])}</span><span class="muted small">{result_when(&row["last_result"])}</span><span class="muted small">{cost_text(&row["last_result"])}</span></td><td>{format!("{} 秒",row["interval_secs"].as_u64().unwrap_or(0))}</td><td><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|edit(Some(e.clone()))>"编辑"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(r.clone(),"run")>"执行一次"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(t.clone(),"toggle")>{if enabled{"停用"}else{"启用"}}</button><button class="danger" disabled=move||busy.get() on:click=move |_|{selected.set(Some(d.clone()));error.set(String::new());deleting.set(true);}>"删除"</button></div></td></tr>}}).collect_view()}</tbody></table></div><Show when=move||probes.get().is_empty()&&!busy.get()><p class="muted custom-probe-empty">"暂无探针。点击“新增探针”选择需要检查的上游。"</p></Show>
+    <div class="custom-probe-table-wrap"><table class="custom-probe-table"><thead><tr><th>"名称 / 定时状态"</th><th>"供应方 · Key · 模型"</th><th>"最近结果"</th><th>"执行间隔"</th><th>"操作"</th></tr></thead><tbody>{move||probes.get().into_iter().map(|row|{let e=row.clone();let t=row.clone();let r=row.clone();let d=row.clone();let sid=row["source_id"].as_i64().unwrap_or(0);let c=channels.get().into_iter().find(|c|c.id==sid);let target=c.as_ref().map(|c|format!("{} · {}",c.provider_name.as_deref().unwrap_or("未分组接入"),labels.get().get(&sid).cloned().unwrap_or_else(||c.base_url.clone()))).unwrap_or_else(||if channels_ready.get(){"原接入已移除，请编辑修复".into()}else{"接入资料读取中…".into()});let meta=targets.get().get(&sid).cloned().unwrap_or(Value::Null);let credential_type=type_label(&meta);let enabled=row["enabled"]==true;view!{<tr><td><strong>{api::text(&row,"name")}</strong><span class="muted small">{if enabled{"定时已启用"}else{"定时已停用"}}</span></td><td><span>{target}</span><span class="muted small">{credential_type}</span><span class="muted small">{format!("{} · {}",api::text(&row,"model"),kind_label(row["kind"].as_str().unwrap_or("")))}</span></td><td class="custom-probe-result"><span>{result_text(&row["last_result"])}</span><span class="muted small">{result_when(&row["last_result"])}</span><span class="muted small">{cost_text(&row["last_result"])}</span></td><td>{format!("{} 秒",row["interval_secs"].as_u64().unwrap_or(0))}</td><td><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|edit(Some(e.clone()))>"编辑"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(r.clone(),"run")>"执行一次"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(t.clone(),"toggle")>{if enabled{"停用"}else{"启用"}}</button><button class="danger" disabled=move||busy.get() on:click=move |_|{selected.set(Some(d.clone()));error.set(String::new());deleting.set(true);}>"删除"</button></div></td></tr>}}).collect_view()}</tbody></table></div><Show when=move||probes.get().is_empty()&&probes_ready.get()><p class="muted custom-probe-empty">"暂无探针。点击“新增探针”选择需要检查的上游。"</p></Show>
     <ModuleDialog open=open title="配置自定义探针".into() busy=busy><div class="custom-probe-form"><Show when=move||!error.get().is_empty()><p role="alert" class="error">{move||error.get()}</p></Show><fieldset disabled=move||busy.get()><legend>"检查目标"</legend><p class="muted small">"请求类型与所选凭据的真实能力一致。OAuth 使用已绑定账号；搜索和网页提取使用专用工具接口。"</p><div class="custom-probe-fields"><ProbeField draft=draft field="name" label="探针名称"/>
     <label>"供应方"<select prop:value=move||provider.get() on:change=move|e|{provider.set(event_target_value(&e));draft.update(|d|{d["source_id"]=json!(0);d["model"]=json!("");});}><option value="">"请选择供应方"</option>{move||{let mut map=BTreeMap::new();for c in channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)){map.insert(c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into()),c.provider_name.unwrap_or_else(||"未分组接入".into()));}map.into_iter().map(|(id,name)|view!{<option value=id>{name}</option>}).collect_view()}}</select></label>
     <label>"凭据 / API 地址"<select prop:value=move||draft.get()["source_id"].as_i64().unwrap_or(0).to_string() on:change=move|e|draft.update(|d|{let id=event_target_value(&e).parse::<i64>().unwrap_or(0);d["source_id"]=json!(id);d["model"]=json!("");d["kind"]=json!("");})><option value="0">"请选择接入"</option>{move||{let id=draft.get()["source_id"].as_i64().unwrap_or(0);(id>0&&!channels.get().iter().any(|c|c.id==id)).then(||view!{<option value=id.to_string()>"原接入已移除，请重新选择"</option>})}}{move||channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)).filter(|c|c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into())==provider.get()).map(|c|{let meta=targets.get().get(&c.id).cloned().unwrap_or(Value::Null);let label=source_option_label(&c,&meta,&labels.get().get(&c.id).cloned().unwrap_or_else(||"上游凭据".into()));view!{<option value=c.id.to_string()>{label}</option>}}).collect_view()}</select></label>

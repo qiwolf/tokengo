@@ -89,7 +89,7 @@ pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
 
 // One implementation preserves list and point-lookup routing semantics. Runtime
 // callers supply only channels/mappings for the requested normalized name.
-fn build_routes(conn: &Connection, chans: Vec<channels::ChannelRow>) -> Result<Vec<NameRoute>> {
+pub(crate) fn build_routes(conn: &Connection, chans: Vec<channels::ChannelRow>) -> Result<Vec<NameRoute>> {
     let kind_of = kinds::all(conn)?;
     let mut out: Vec<NameRoute> = Vec::new();
     for l in &chans {
@@ -326,6 +326,57 @@ pub fn auto_candidates(
     }
     scored.sort_by(|a,b|b.1.total_cmp(&a.1).then(a.2.cmp(&b.2)).then(a.0.cmp(&b.0)));
     Ok(scored.into_iter().map(|x| x.0).collect())
+}
+
+/// Management-only preview from a single request snapshot. Runtime selection still
+/// reads current authorization, cooldowns and source state on every execution.
+pub(crate) fn auto_preview(
+    conn: &Connection,
+    routes: &[NameRoute],
+    chans: &[channels::ChannelRow],
+    stats: &HashMap<String, super::scores::Score>,
+    want: ModelKind,
+    now: i64,
+    seq: u64,
+) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for r in routes {
+        if !visible(conn, &r.name)? || super::model_access::internal_only(conn, &r.name)?
+            || super::route_policy::load(conn, &r.name)?.include_in_auto == Some(false)
+            || !r.routed() || !kind_serves(r.kind, want) { continue; }
+        // Match the existing preview's channels_for + peek semantics, including
+        // configured disabled sources; routed() independently requires a live source.
+        let mut available = false;
+        for ch in chans {
+            if let Some(m) = ch.models.iter().find(|m| same_model_name(&m.model, &r.name)) {
+                let upstream = m.upstream.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(&r.name);
+                if super::policy::peek(conn, ch.id.0, &r.name, upstream, now)?.is_none() {
+                    available = true;
+                    break;
+                }
+            }
+        }
+        if available { names.push(r.name.clone()); }
+    }
+    // auto_candidates' score order is the tie breaker when saved order is partial.
+    names.sort_by(|a,b| {
+        let sa = stats.get(&normalize_model_name(a)).cloned().unwrap_or_default();
+        let sb = stats.get(&normalize_model_name(b)).cloned().unwrap_or_default();
+        sb.value().total_cmp(&sa.value()).then(sa.avg_ms.unwrap_or(i64::MAX).cmp(&sb.avg_ms.unwrap_or(i64::MAX))).then(a.cmp(b))
+    });
+    let saved: Vec<String> = super::settings::get(conn, "auto_order")?
+        .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut order: Vec<_> = routes.iter().map(|r| r.name.as_str()).collect();
+    order.sort_by_key(|n| saved.iter().position(|s| same_model_name(s,n)).unwrap_or(usize::MAX));
+    names.sort_by_key(|n| order.iter().position(|s| same_model_name(s,n)).unwrap_or(usize::MAX));
+    let policy = super::policy::get(conn)?;
+    match policy.strategy.as_str() {
+        "balanced" if !names.is_empty() => { let len=names.len(); names.rotate_left(seq as usize % len); }
+        "fastest" => names.sort_by_key(|n| {let s=stats.get(&normalize_model_name(n));(s.map(|s|s.samples<5).unwrap_or(true),s.and_then(|s|s.avg_first_byte_ms.or(s.avg_ms)).unwrap_or(i64::MAX))}),
+        "stable" => names.sort_by(|a,b| {let confidence=|n:&String|stats.get(&normalize_model_name(n)).map(|s|s.successes as f64/(s.samples+5) as f64).unwrap_or(-1.0);confidence(b).total_cmp(&confidence(a)).then_with(||stats.get(&normalize_model_name(a)).and_then(|s|s.avg_ms).unwrap_or(i64::MAX).cmp(&stats.get(&normalize_model_name(b)).and_then(|s|s.avg_ms).unwrap_or(i64::MAX)))}),
+        _ => {}
+    }
+    Ok(names)
 }
 
 /// `auto` 现在有没有可挑的模型（任意一类）。
@@ -712,5 +763,85 @@ mod tests {
             vec!["老账".to_string()],
             "窗口外的失败不该把它一直压在后面（它仍然在候选里）"
         );
+    }
+}
+
+#[cfg(test)]
+mod management_preview_tests {
+    use super::*;
+    #[test]
+    fn request_snapshot_preview_matches_live_candidate_order_and_cooldowns() {
+        let c = super::super::open_in_memory().unwrap();
+        for id in 1..=35 {
+            c.execute("INSERT INTO channels(id,name,base_url,enabled) VALUES(?1,?2,'http://fixture.invalid',1)",rusqlite::params![id,format!("source-{id}")]).unwrap();
+        }
+        for i in 0..47 {
+            c.execute("INSERT INTO channel_models(channel_id,model_name) VALUES(?1,?2)",rusqlite::params![i%35+1,format!("model-{i:02}")]).unwrap();
+        }
+        super::super::settings::set(&c,"auto_order",r#"["model-20","model-02","model-00"]"#).unwrap();
+        set_visible(&c,"model-01",false).unwrap();
+        c.execute("INSERT INTO model_cooldowns(channel_id,model_name,upstream_model,until_ms) VALUES(4,?1,'model-03',9999999999999)",[normalize_model_name("model-03")]).unwrap();
+        super::super::model_access::set_internal_only(&c,"model-21",true).unwrap();
+        super::super::route_policy::save(&c,"model-22",&super::super::route_policy::RoutePolicy {
+            include_in_auto:Some(false),..Default::default()
+        }).unwrap();
+        let seeded_at=super::super::now_ms();
+        // Meaningfully different distributions: minimum-sample bucket, first-byte
+        // versus total latency, confidence, complete ties and missing first-byte.
+        for (model, samples, successes, duration, first_byte) in [
+            (4,4,4,20,Some(10)),
+            (5,5,5,200,Some(80)),
+            (6,10,10,300,Some(20)),
+            (7,10,10,100,Some(60)),
+            (8,10,8,30,Some(5)),
+            (9,10,10,100,Some(60)),
+            (10,10,2,1,Some(1)),
+            (11,5,5,70,None),
+            (21,10,10,1,Some(1)),
+            (22,10,10,1,Some(1)),
+        ] {
+            let name=format!("model-{model:02}");
+            for ordinal in 0..samples {
+                let success=ordinal<successes;
+                c.execute("INSERT INTO requests(ts_ms,endpoint,model,served_model,status,channel_id) VALUES(?1,'/v1/chat/completions',?2,?2,?3,?4)",
+                    rusqlite::params![seeded_at,name,if success {"ok"} else {"failed"},model%35+1]).unwrap();
+                let request=c.last_insert_rowid();
+                c.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms,first_byte_ms,model_name) VALUES(?1,0,?2,?3,?4,?5,?6)",
+                    rusqlite::params![request,model%35+1,if success {"success"} else {"channel_fault"},duration,first_byte,name]).unwrap();
+            }
+        }
+        for strategy in ["sequence","balanced","fastest","stable","idle"] {
+            let p=super::super::policy::Policy {strategy:strategy.into(),explore:false};
+            super::super::policy::save(&c,&p).unwrap();
+            let channels=channels::list(&c).unwrap();
+            let routes=build_routes(&c,channels.clone()).unwrap();
+            let now=super::super::now_ms();
+            let scores=super::super::scores::all(&c,now).unwrap();
+            assert_eq!(scores[&normalize_model_name("model-04")].samples,4);
+            assert_eq!(scores[&normalize_model_name("model-05")].samples,5);
+            assert_eq!(scores[&normalize_model_name("model-08")].successes,8);
+            assert_eq!(scores[&normalize_model_name("model-11")].avg_first_byte_ms,None);
+            let mut expected=auto_candidates(&c,ModelKind::Chat,false,now).unwrap();
+            expected.retain(|n|channels_for(&c,n).unwrap().iter().any(|ch|super::super::policy::peek(&c,ch.id.0,n,ch.upstream_model(n),now).unwrap().is_none()));
+            super::super::policy::rank(&c,&mut expected,&p,7,99).unwrap();
+            assert!(!expected.iter().any(|n| ["model-01","model-03","model-21","model-22"].contains(&n.as_str())));
+            let position=|name:&str|expected.iter().position(|n|n==name).unwrap();
+            if strategy=="fastest" {
+                // Four samples stay below the five-sample bucket even when faster.
+                assert!(position("model-05")<position("model-04"));
+                assert!(position("model-06")<position("model-07"));
+                // First-byte absent: model-11 falls back to its 70ms total latency.
+                assert!(position("model-07")<position("model-11"));
+                assert!(position("model-11")<position("model-05"));
+                assert!(position("model-07")<position("model-09"));
+            }
+            if strategy=="stable" {
+                assert!(position("model-07")<position("model-06"));
+                assert!(position("model-06")<position("model-08"));
+                assert!(position("model-08")<position("model-10"));
+                assert!(position("model-07")<position("model-09"));
+            }
+            assert_eq!(auto_preview(&c,&routes,&channels,&scores,ModelKind::Chat,now,7).unwrap(),expected,"strategy={strategy}");
+        }
     }
 }

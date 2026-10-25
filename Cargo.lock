@@ -2643,6 +2643,7 @@ name = "tokengo-web"
 version = "0.34.0"
 dependencies = [
  "console_error_panic_hook",
+ "futures-util",
  "gloo-net",
  "js-sys",
  "leptos",

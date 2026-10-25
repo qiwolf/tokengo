@@ -366,7 +366,7 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
             "enabled":m.enabled,
-            "reasoning":crate::reasoning_capabilities::for_mapping(c,l.id.0,&m.model).ok(),
+            "reasoning":crate::reasoning_capabilities::for_loaded_mapping(c,l.id.0,m).ok(),
             "parameter_contract": ({
                 let protocol=protocol_config.native.first().copied().unwrap_or(crate::protocol::Protocol::Chat);
                 let context=crate::parameter_contracts::Context {base_url:&l.base_url,model:m.upstream.as_deref().unwrap_or(&m.model),protocol,
@@ -1463,60 +1463,39 @@ async fn model_routes_list(
     _auth: ManagementAuth,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let routes = {
+    // Load heavyweight metadata and score history only once per response.
+    let (routes, channels, scores, totals, auto) = {
         let conn = state.conn();
-        model_routes::list(&conn)?
-    };
-    let auto = {
-        let conn = state.conn();
-        let cand = |k: tokengo_shared::ModelKind| {
-            let mut names =
-                model_routes::auto_candidates(&conn, k, false, now_ms()).unwrap_or_default();
-            names.retain(|n| {
-                model_routes::channels_for(&conn, n)
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|c| {
-                        crate::db::policy::peek(&conn, c.id.0, n, c.upstream_model(n), now_ms())
-                            .ok()
-                            .flatten()
-                            .is_none()
-                    })
-            });
-            let mut p = crate::db::policy::get(&conn).unwrap_or_default();
-            p.explore = false;
-            let _ = crate::db::policy::rank(
-                &conn,
-                &mut names,
-                &p,
-                state
-                    .auto_sequence
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                99,
-            );
-            if p.strategy == "idle" {
+        let channels = channels::list(&conn)?;
+        let routes = model_routes::build_routes(&conn, channels.clone())?;
+        let scores = crate::db::scores::all(&conn, now_ms())?;
+        let totals = crate::db::scores::total_calls(&conn)?;
+        let cand = |kind| {
+            let mut names = model_routes::auto_preview(&conn, &routes, &channels, &scores, kind, now_ms(),
+                state.auto_sequence.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or_default();
+            if crate::db::policy::get(&conn).unwrap_or_default().strategy == "idle" {
                 state.model_loads.preview(&mut names);
             }
             names
         };
-        serde_json::json!({
-            // 一个勾选过的模型都没有 → 对外不显示 auto（用户口径）
-            "available": model_routes::auto_available(&conn)?,
+        let available = routes.iter().any(|r| r.routed()
+            && model_routes::visible(&conn, &r.name).unwrap_or(false)
+            && crate::db::route_policy::load(&conn, &r.name).is_ok_and(|p| p.include_in_auto != Some(false)));
+        let auto = serde_json::json!({"available": available,
             "chat": cand(tokengo_shared::ModelKind::Chat),
             "embeddings": cand(tokengo_shared::ModelKind::Embeddings),
-            "rerank": cand(tokengo_shared::ModelKind::Rerank),
-        })
-    };
-    let scores = {
-        let conn = state.conn();
-        crate::db::scores::all(&conn, now_ms())?
-    };
-    let totals = {
-        let conn = state.conn();
-        crate::db::scores::total_calls(&conn)?
+            "rerank": cand(tokengo_shared::ModelKind::Rerank)});
+        (routes, channels, scores, totals, auto)
     };
     // Snapshot route state before subsequent per-model DB queries.
     let route_states = state.routing().all_states().clone();
+    let exploration_counts: std::collections::HashMap<String,i64> = {
+        let c=state.conn();
+        let mut q=c.prepare("SELECT served_model,COUNT(*) FROM requests WHERE explored=1 AND served_model IS NOT NULL GROUP BY served_model").map_err(crate::db::DbError::from)?;
+        let rows = q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?))).map_err(crate::db::DbError::from)?
+            .collect::<rusqlite::Result<_>>().map_err(crate::db::DbError::from)?;
+        rows
+    };
     let rows = routes
         .iter()
         .map(|r| {
@@ -1532,12 +1511,12 @@ async fn model_routes_list(
                 "catalog_purpose_label": ({let c=state.conn();crate::db::model_access::catalog_purpose_label(&crate::db::model_access::catalog_purpose(&c,&r.name).unwrap_or_default())}),
                 "visible": ({let c=state.conn();model_routes::visible(&c,&r.name).unwrap_or(false)}),
                 "internal_only": ({let c=state.conn();crate::db::model_access::internal_only(&c,&r.name).unwrap_or(true)}),
-                "sources": ({let c=state.conn();crate::db::provider_channels::source_json(&c,&r.name).unwrap_or_default()}),
+                "sources": ({let c=state.conn();crate::db::provider_channels::source_json_from_channels(&c,&r.name,&channels).unwrap_or_default()}),
                 "enabled": r.enabled,
                 "total_calls": totals.get(&tokengo_shared::normalize_model_name(&r.name)).copied().unwrap_or(0),
                 "runtime": scores.get(&tokengo_shared::normalize_model_name(&r.name)).cloned().unwrap_or_default(),
                 "score_window_ms": crate::db::scores::WINDOW_MS,
-                "exploration_count": ({let c=state.conn();c.query_row("SELECT COUNT(*) FROM requests WHERE explored=1 AND served_model=?1",[&r.name],|r|r.get::<_,i64>(0)).unwrap_or(0)}),
+                "exploration_count": exploration_counts.get(&r.name).copied().unwrap_or(0),
                 "cooldowns": ({let c=state.conn();crate::db::policy::rows(&c,&r.name).unwrap_or_default()}),
                 "kind": r.kind.as_str(),
                 "kind_label": r.kind.label(),

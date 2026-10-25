@@ -326,6 +326,7 @@ pub struct UsageCoverage {
     pub unknown_output_requests: i64,
     pub legacy_requests: i64,
 }
+#[cfg(test)]
 fn coverage(conn: &Connection, since: i64, filter: &str, key: Option<&str>) -> Result<UsageCoverage> {
     let sql=format!("SELECT COALESCE(SUM(NOT(input_tokens_known AND output_tokens_known)),0), COALESCE(SUM(NOT input_tokens_known),0), COALESCE(SUM(NOT output_tokens_known),0), COALESCE(SUM(usage_source='legacy'),0) FROM requests WHERE ts_ms>=?1 AND {filter}");
     Ok(conn.query_row(&sql, params![since,key], |r| Ok(UsageCoverage { unknown_requests:r.get(0)?,unknown_input_requests:r.get(1)?,unknown_output_requests:r.get(2)?,legacy_requests:r.get(3)? }))?)
@@ -429,8 +430,240 @@ pub struct Stats {
     pub by_client: Vec<ClientStat>,
 }
 
-/// 汇总自 `since_ms` 起的账。
+/// Shared accumulator for the request-side dimensions. It is local to one call:
+/// no stale results or cross-user cache are introduced by the single-pass scan.
+#[derive(Default)]
+struct RequestAggregate {
+    requests: i64,
+    ok: i64,
+    failed: i64,
+    canceled: i64,
+    client_errors: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    usage: UsageCoverage,
+    // AVG ignores NULL, accepts negative latency, and converts its sum to double
+    // before division. A wide integer also handles sums beyond SQLite's i64 fast path.
+    latency_sum: i128,
+    latency_count: i64,
+}
+
+struct StatsSample<'a> {
+    status: &'a str,
+    input_tokens: i64,
+    output_tokens: i64,
+    latency: Option<i64>,
+    usage: UsageCoverage,
+}
+
+impl RequestAggregate {
+    fn add(&mut self, sample: &StatsSample<'_>) -> Result<()> {
+        self.requests += 1;
+        self.ok += i64::from(sample.status == "ok");
+        self.failed += i64::from(sample.status == "failed");
+        self.canceled += i64::from(sample.status == "canceled");
+        self.client_errors += i64::from(sample.status == "client_error");
+        // SQLite SUM(integer) reports overflow instead of wrapping or panicking.
+        self.input_tokens = self.input_tokens.checked_add(sample.input_tokens)
+            .ok_or_else(|| super::DbError::Other("integer overflow in input token sum".into()))?;
+        self.output_tokens = self.output_tokens.checked_add(sample.output_tokens)
+            .ok_or_else(|| super::DbError::Other("integer overflow in output token sum".into()))?;
+        self.usage.unknown_requests += sample.usage.unknown_requests;
+        self.usage.unknown_input_requests += sample.usage.unknown_input_requests;
+        self.usage.unknown_output_requests += sample.usage.unknown_output_requests;
+        self.usage.legacy_requests += sample.usage.legacy_requests;
+        if sample.status == "ok" {
+            if let Some(latency) = sample.latency {
+                self.latency_sum += i128::from(latency);
+                self.latency_count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn average_latency(&self) -> i64 {
+        if self.latency_count == 0 { 0 } else {
+            (self.latency_sum as f64 / self.latency_count as f64) as i64
+        }
+    }
+}
+
+fn add_stats_group(
+    groups: &mut std::collections::HashMap<String, RequestAggregate>,
+    key: &str,
+    sample: &StatsSample<'_>,
+) -> Result<()> {
+    if let Some(group) = groups.get_mut(key) {
+        group.add(sample)
+    } else {
+        let mut group = RequestAggregate::default();
+        group.add(sample)?;
+        groups.insert(key.to_owned(), group);
+        Ok(())
+    }
+}
+
+fn stats_text<'a>(row: &'a rusqlite::Row<'_>, index: usize) -> rusqlite::Result<&'a str> {
+    match row.get_ref(index)? {
+        rusqlite::types::ValueRef::Text(bytes) =>
+            std::str::from_utf8(bytes).map_err(|error| rusqlite::Error::Utf8Error(index, error)),
+        value => Err(rusqlite::Error::InvalidColumnType(index, index.to_string(), value.data_type())),
+    }
+}
+
+/// 汇总自 `since_ms` 起的账。请求只读取一遍，同时构建各维度的统计。
 pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
+    // Retry counts belong to attempted channels; token/coverage attribution belongs
+    // to the request's final channel. Channels without attempts remain absent.
+    let mut stmt = conn.prepare(
+        "SELECT a.channel_id, COUNT(*),
+                COALESCE(SUM(a.outcome = 'success'), 0),
+                COALESCE(SUM(a.outcome = 'channel_fault'), 0),
+                COALESCE(CAST(AVG(a.duration_ms) AS INTEGER), 0)
+           FROM attempts a JOIN requests rq ON rq.id = a.request_id
+          WHERE rq.ts_ms >= ?1
+          GROUP BY a.channel_id ORDER BY COUNT(*) DESC",
+    )?;
+    let mut by_channel = stmt.query_map([since_ms], |row| Ok(ChannelStat {
+        usage: UsageCoverage::default(), channel_id: row.get(0)?,
+        attempts: row.get(1)?, successes: row.get(2)?, channel_faults: row.get(3)?,
+        avg_ms: row.get(4)?, input_tokens: 0, output_tokens: 0,
+    }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    // Match the legacy output domain: final-channel SUM was evaluated only for
+    // channels represented by attempts, not every channel found on a request.
+    let attempted_channels = by_channel.iter().map(|row| row.channel_id)
+        .collect::<std::collections::HashSet<_>>();
+    let mut total = RequestAggregate::default();
+    let mut channel_usage = std::collections::HashMap::<i64, RequestAggregate>::new();
+    let mut models = std::collections::HashMap::new();
+    let mut clients = std::collections::HashMap::new();
+    let mut missing_client = RequestAggregate::default();
+    let mut endpoints = std::collections::HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT endpoint, status, channel_id, latency_ms, input_tokens, output_tokens, client_ip,
+                CASE WHEN TRIM(served_model)<>'' AND LOWER(TRIM(served_model))<>'auto' THEN served_model WHEN channel_id IS NULL THEN '未调用上游' WHEN LOWER(TRIM(model))='auto' THEN '实际模型未记录' ELSE model END,
+                NOT(input_tokens_known AND output_tokens_known), NOT input_tokens_known,
+                NOT output_tokens_known, usage_source='legacy'
+           FROM requests WHERE ts_ms>=?1",
+    )?;
+    let mut rows = stmt.query([since_ms])?;
+    while let Some(row) = rows.next()? {
+        // SQL retains its own TRIM/LOWER and three-valued boolean semantics;
+        // borrowed text avoids allocating the same grouping keys for every request.
+        let sample = StatsSample {
+            status: match row.get_ref(1)? {
+                rusqlite::types::ValueRef::Text(b"ok") => "ok",
+                rusqlite::types::ValueRef::Text(b"failed") => "failed",
+                rusqlite::types::ValueRef::Text(b"canceled") => "canceled",
+                rusqlite::types::ValueRef::Text(b"client_error") => "client_error",
+                _ => "",
+            },
+            input_tokens: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            output_tokens: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+            latency: row.get(3)?,
+            usage: UsageCoverage {
+                unknown_requests: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                unknown_input_requests: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                unknown_output_requests: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                legacy_requests: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+            },
+        };
+        total.add(&sample)?;
+        if let Some(channel) = row.get::<_, Option<i64>>(2)? {
+            if attempted_channels.contains(&channel) {
+                channel_usage.entry(channel).or_default().add(&sample)?;
+            }
+        }
+        add_stats_group(&mut models, stats_text(row, 7)?, &sample)?;
+        add_stats_group(&mut endpoints, stats_text(row, 0)?, &sample)?;
+        if row.get_ref(6)? == rusqlite::types::ValueRef::Null {
+            missing_client.add(&sample)?;
+        } else {
+            add_stats_group(&mut clients, stats_text(row, 6)?, &sample)?;
+        }
+    }
+
+    for row in &mut by_channel {
+        if let Some(usage) = channel_usage.get(&row.channel_id) {
+            row.input_tokens = usage.input_tokens;
+            row.output_tokens = usage.output_tokens;
+            row.usage = usage.usage.clone();
+        }
+    }
+
+    let mut by_model = models.into_iter().map(|(model, group)| ModelStat {
+        model, usage: group.usage, requests: group.requests, ok: group.ok,
+        failed: group.failed, client_errors: group.client_errors,
+        input_tokens: group.input_tokens, output_tokens: group.output_tokens,
+    }).collect::<Vec<_>>();
+    // Preserve the legacy bundled-SQLite result order: COUNT DESC ties emit
+    // BINARY keys descending. Apply it before selecting the top-50 boundary.
+    by_model.sort_unstable_by(|a, b| b.requests.cmp(&a.requests).then_with(|| b.model.cmp(&a.model)));
+    by_model.truncate(50);
+
+    let mut client_groups = clients.into_iter().map(|(ip, group)| (Some(ip), group)).collect::<Vec<_>>();
+    if missing_client.requests > 0 { client_groups.push((None, missing_client)); }
+    let mut by_client = client_groups.into_iter().map(|(client_ip, group)| ClientStat {
+        client_ip, usage: group.usage, requests: group.requests, ok: group.ok,
+        failed: group.failed, client_errors: group.client_errors,
+        input_tokens: group.input_tokens, output_tokens: group.output_tokens,
+    }).collect::<Vec<_>>();
+    by_client.sort_unstable_by(|a, b| b.requests.cmp(&a.requests).then_with(|| b.client_ip.cmp(&a.client_ip)));
+    by_client.truncate(50);
+
+    let zero = |kind: &str, label: &str| KindStat {
+        kind: kind.to_owned(), label: label.to_owned(), usage: UsageCoverage::default(),
+        requests: 0, ok: 0, failed: 0, client_errors: 0, canceled: 0,
+        input_tokens: 0, output_tokens: 0, avg_ms: 0,
+    };
+    let mut by_kind = vec![zero("chat", "对话"), zero("embeddings", "向量"), zero("rerank", "重排")];
+    let mut other = None;
+    let mut kind_usage = std::collections::HashMap::<&str, UsageCoverage>::new();
+    let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
+    endpoints.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    for (endpoint, group) in endpoints {
+        // Coverage's historical CASE does not trim, unlike display classification.
+        let coverage_kind = match endpoint.as_str() {
+            "/v1/chat/completions" => "chat", "/v1/embeddings" => "embeddings",
+            "/v1/rerank" => "rerank", _ => "",
+        };
+        let coverage = kind_usage.entry(coverage_kind).or_default();
+        coverage.unknown_requests += group.usage.unknown_requests;
+        coverage.unknown_input_requests += group.usage.unknown_input_requests;
+        coverage.unknown_output_requests += group.usage.unknown_output_requests;
+        coverage.legacy_requests += group.usage.legacy_requests;
+        let kind = KindStat::kind_of_endpoint(&endpoint).0;
+        let row = if kind.is_empty() { other.get_or_insert_with(|| zero("", "别的")) }
+            else { by_kind.iter_mut().find(|row| row.kind == kind).unwrap() };
+        row.requests += group.requests;
+        row.ok += group.ok;
+        row.failed += group.failed;
+        row.client_errors += group.client_errors;
+        row.canceled += group.canceled;
+        row.input_tokens = row.input_tokens.checked_add(group.input_tokens)
+            .ok_or_else(|| super::DbError::Other("integer overflow in kind input token sum".into()))?;
+        row.output_tokens = row.output_tokens.checked_add(group.output_tokens)
+            .ok_or_else(|| super::DbError::Other("integer overflow in kind output token sum".into()))?;
+        let avg = group.average_latency();
+        if avg > 0 && group.ok > 0 {
+            // Preserve per-exact-endpoint truncation and incremental weighted rounding.
+            // The wider intermediate prevents arithmetic overflow in the weighting.
+            row.avg_ms = ((i128::from(row.avg_ms) * i128::from(row.ok - group.ok)
+                + i128::from(avg) * i128::from(group.ok)) / i128::from(row.ok)).max(0) as i64;
+        }
+    }
+    if let Some(other) = other { by_kind.push(other); }
+    for row in &mut by_kind { row.usage = kind_usage.remove(row.kind.as_str()).unwrap_or_default(); }
+    Ok(Stats {
+        usage: total.usage, since_ms, total: total.requests, ok: total.ok,
+        failed: total.failed, canceled: total.canceled, client_errors: total.client_errors,
+        input_tokens: total.input_tokens, output_tokens: total.output_tokens,
+        by_channel, by_kind, by_model, by_client,
+    })
+}
+
+#[cfg(test)]
+fn stats_since_legacy(conn: &Connection, since_ms: i64) -> Result<Stats> {
     let (total, ok, failed, canceled, client_errors, inp, out): (i64, i64, i64, i64, i64, i64, i64) =
         conn.query_row(
         "SELECT COUNT(*),
@@ -654,6 +887,133 @@ pub fn prune_before(conn: &Connection, before_ms: i64) -> Result<usize> {
 mod tests {
     use super::*;
     use crate::db::open_in_memory;
+
+    fn seed_performance_history(conn: &Connection, count: i64) {
+        conn.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<?1)
+            INSERT INTO requests(id,ts_ms,endpoint,model,served_model,status,channel_id,latency_ms,input_tokens,output_tokens,input_tokens_known,output_tokens_known,usage_source,client_ip)
+            SELECT i,i,CASE i%5 WHEN 0 THEN '/v1/chat/completions' WHEN 1 THEN '/v1/embeddings' WHEN 2 THEN '/v1/rerank' WHEN 3 THEN ' /v1/chat/completions ' ELSE '/other' END,
+            CASE WHEN i%7=0 THEN 'auto' ELSE 'requested-'||(i%57) END,
+            CASE i%11 WHEN 0 THEN '' WHEN 1 THEN 'auto' ELSE 'served-'||(i%57) END,
+            CASE i%5 WHEN 0 THEN 'ok' WHEN 1 THEN 'failed' WHEN 2 THEN 'canceled' WHEN 3 THEN 'client_error' ELSE 'pending' END,
+            CASE WHEN i%13=0 THEN NULL ELSE i%23 END,i%997,i%37,i%19,i%2,(i/2)%2,
+            CASE WHEN i%3=0 THEN 'legacy' ELSE 'reported' END,
+            CASE WHEN i%17=0 THEN NULL ELSE '192.0.2.'||(i%63) END FROM n", [count]).unwrap();
+        conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms,model_name) SELECT id,0,id%23,CASE id%3 WHEN 0 THEN 'channel_fault' WHEN 1 THEN 'success' ELSE 'empty_reply' END,id%997,'served-'||(id%57) FROM requests", []).unwrap();
+        conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms,model_name) SELECT id,1,(id+1)%23,'success',id%101,'served-'||(id%57) FROM requests WHERE id%3=0", []).unwrap();
+    }
+
+    #[test]
+    fn batched_stats_match_legacy_with_retries_unknowns_and_missing_clients() {
+        let conn = open_in_memory().unwrap();
+        assert_eq!(stats_since(&conn, 0).unwrap(), stats_since_legacy(&conn, 0).unwrap());
+        seed_performance_history(&conn, 997);
+        for since in [0, 500, 997, 998] {
+            assert_eq!(stats_since(&conn, since).unwrap(), stats_since_legacy(&conn, since).unwrap(), "since={since}");
+        }
+    }
+
+    #[test]
+    fn single_pass_stats_preserve_binary_top50_and_sqlite_model_case_rules() {
+        let conn = open_in_memory().unwrap();
+        // More than 50 equally frequent groups: preserve both boundary selection
+        // and ordering, including non-ASCII keys, empty IP and a separate NULL IP.
+        for i in (0..70).rev() {
+            conn.execute("INSERT INTO requests(ts_ms,endpoint,model,served_model,status,channel_id,latency_ms,input_tokens,output_tokens,input_tokens_known,output_tokens_known,usage_source,client_ip) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", params![
+                i + 1,
+                [" /v1/chat/completions ", "/v1/chat/completions", "\t/v1/chat/completions", "/other"][i as usize % 4],
+                if i%11==0 { "  AuTo  ".to_string() } else { format!("requested-{i:02}") },
+                match i%7 { 0=>" AUTO ".to_string(), 1=>" \tauto\t ".to_string(), 2=>"".to_string(), 3=>"ÄUTO".to_string(), _=>format!("模型-{i:02}") },
+                ["ok", "failed", "canceled", "client_error", "pending"][i as usize % 5],
+                if i%13==0 {None} else {Some(i%3)},
+                if i%3==0 {-i} else {i}, i%5, i%7,
+                if i%2==0 {2} else {0}, if i%3==0 {-1} else {0},
+                if i%4==0 {"legacy"} else {"reported"},
+                if i==0 {None} else if i==1 {Some(String::new())} else {Some(format!("来源-{i:02}"))},
+            ]).unwrap();
+        }
+        // Equal request counts for every client force the top-50 tie boundary.
+        let actual = stats_since(&conn, 0).unwrap();
+        assert_eq!(actual, stats_since_legacy(&conn, 0).unwrap());
+        assert_eq!(actual.by_client.len(), 50);
+        assert_eq!(actual.by_client[0].client_ip.as_deref(), Some("来源-69"));
+        assert_eq!(actual.by_client[49].client_ip.as_deref(), Some("来源-20"));
+        assert!(actual.by_client.iter().all(|row| row.client_ip.as_deref().is_some_and(|ip| !ip.is_empty())));
+        assert!(actual.by_model.iter().any(|m| m.model == " \tauto\t "));
+        assert!(actual.by_model.iter().any(|m| m.model == "ÄUTO"));
+    }
+
+    #[test]
+    fn single_pass_stats_preserve_nullable_history_and_endpoint_average_rounding() {
+        // Current schema is NOT NULL for most meters. A minimal nullable legacy
+        // fixture also exercises SQL aggregate NULL semantics independently.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE requests(id INTEGER PRIMARY KEY,ts_ms INTEGER,endpoint TEXT,model TEXT,served_model TEXT,status TEXT,channel_id INTEGER,latency_ms INTEGER,input_tokens INTEGER,output_tokens INTEGER,input_tokens_known INTEGER,output_tokens_known INTEGER,usage_source TEXT,client_ip TEXT);
+            CREATE TABLE attempts(id INTEGER PRIMARY KEY,request_id INTEGER,channel_id INTEGER,outcome TEXT,duration_ms INTEGER);
+            INSERT INTO requests VALUES
+             (1,1,' /v1/chat/completions','auto',NULL,'ok',1,1,0,NULL,NULL,1,NULL,NULL),
+             (2,2,' /v1/chat/completions','auto','','ok',1,2,NULL,5,1,NULL,'legacy',NULL),
+             (3,3,'/v1/chat/completions','model','','ok',2,NULL,4,3,0,0,'legacy',''),
+             (4,4,'/v1/chat/completions','model','','ok',2,5,6,7,1,1,'reported',''),
+             (5,5,'/v1/chat/completions ','model','','ok',2,-9,-1,-2,1,1,'reported','ip'),
+             (6,6,'/v1/chat/completions ','model','','ok',2,0,3,4,1,1,'reported','ip'),
+             (7,7,'other','model','served',NULL,NULL,8,8,9,0,1,'legacy',NULL),
+             (8,8,'other','model','served','canceled',3,8,8,9,0,1,'legacy','ip');
+            INSERT INTO attempts VALUES(1,1,1,'channel_fault',10),(2,1,2,'success',NULL),(3,4,2,'success',-5),(4,8,3,'empty_reply',2);").unwrap();
+        for since in [0, 3, 5, 9] {
+            assert_eq!(stats_since(&conn, since).unwrap(), stats_since_legacy(&conn, since).unwrap(), "since={since}");
+        }
+    }
+
+    #[test]
+    fn single_pass_stats_skip_unused_final_channel_sums() {
+        let conn = open_in_memory().unwrap();
+        // Overall and exact-endpoint SUM succeed in timestamp-descending order.
+        // Channel 1 alone would overflow, but it has no attempts and therefore
+        // the legacy implementation never evaluates that unreported subtotal.
+        for (time, input, channel) in [(1, i64::MAX, 1), (2, i64::MAX, 1), (3, -i64::MAX, 2)] {
+            conn.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id,input_tokens,client_ip) VALUES(?1,'/v1/chat/completions',?2,'ok',?3,?4,?5)",
+                params![time, format!("model-{time}"), channel, input, format!("client-{time}")]).unwrap();
+        }
+        let expected = stats_since_legacy(&conn, 0).unwrap();
+        assert!(expected.by_channel.is_empty());
+        assert_eq!(stats_since(&conn, 0).unwrap(), expected);
+        // A different channel with an attempt must not make channel 1 reportable.
+        conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome) VALUES(3,0,2,'success')", []).unwrap();
+        assert_eq!(stats_since(&conn, 0).unwrap(), stats_since_legacy(&conn, 0).unwrap());
+    }
+
+    #[test]
+    fn single_pass_stats_report_integer_sum_overflow() {
+        let conn = open_in_memory().unwrap();
+        for input in [i64::MAX, 1] {
+            conn.execute("INSERT INTO requests(ts_ms,endpoint,model,status,input_tokens) VALUES(1,'/v1/chat/completions','model','ok',?1)", [input]).unwrap();
+        }
+        assert!(stats_since_legacy(&conn, 0).is_err());
+        assert!(stats_since(&conn, 0).is_err());
+    }
+
+    /// Run explicitly in release mode on build-test; the full old implementation
+    /// serves as a numeric oracle, including coverage, retry attribution and NULLs.
+    #[test]
+    #[ignore = "60k management performance benchmark; run in release mode"]
+    fn stats_60k_performance_and_legacy_oracle() {
+        let conn = open_in_memory().unwrap();
+        seed_performance_history(&conn, 60_000);
+        let before = std::time::Instant::now();
+        let expected = stats_since_legacy(&conn, 0).unwrap();
+        let old_ms = before.elapsed().as_secs_f64()*1000.0;
+        let mut timings = Vec::new();
+        for _ in 0..20 {
+            let start = std::time::Instant::now();
+            let actual = stats_since(&conn, 0).unwrap();
+            timings.push(start.elapsed().as_secs_f64()*1000.0);
+            assert_eq!(actual, expected);
+        }
+        timings.sort_by(f64::total_cmp);
+        let p95 = timings[18];
+        eprintln!("stats 60k requests/80k attempts: legacy={old_ms:.2}ms new_p50={:.2}ms new_p95={p95:.2}ms", timings[9]);
+        assert!(p95 < 300.0, "stats query P95 {p95:.2}ms exceeds 300ms");
+    }
 
     fn record(conn: &Connection, channels: &[(i64, &str)], status: Status) -> i64 {
         let id = start(conn, "/v1/chat/completions", "auto", Some("192.0.2.9"), false).unwrap();

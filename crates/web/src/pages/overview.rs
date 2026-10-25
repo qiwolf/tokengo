@@ -10,6 +10,7 @@ use crate::Ctx;
 
 #[component]
 pub fn Overview(ctx: Ctx) -> impl IntoView {
+    let tasks = crate::page_tasks::PageTasks::new();
     let (hours, set_hours) = signal(24i64);
     let stats = RwSignal::new(StatsResp::default());
     let callable = RwSignal::new(Vec::<NameRoute>::new());
@@ -32,35 +33,36 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     let reload = move || {
         if busy.get_untracked() { return; }
         busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             let h = hours.get_untracked();
-            match api::stats(h).await {
-                Ok(s) => {
-                    if !metric_open.get_untracked(){stats.set(s);}
-                    err.set(None);
-                }
-                Err(e) => {
-                    ctx.note_err(&e);
-                    err.set(Some(e.message));
-                }
-            }
-            match api::model_routes().await {
-                Ok(r) => {
-                    callable.set(r.models);
-                    auto_ready.set(r.auto.available);
-                }
-                Err(e) => ctx.note_err(&e),
-            }
-            if category.get_untracked()==0 { match api::logs(12).await {
-                Ok(v) => recent.set(v),
-                Err(e) => ctx.note_err(&e),
-            }
-            }
-            match api::channels().await {
-                Ok(v) => channels.set(v),
-                Err(e) => ctx.note_err(&e),
-            }
-            if let Ok(r)=api::model_cooldowns().await {faults.set(r.faults);cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);}
+            crate::page_tasks::parallel([
+                Box::pin(async move {
+                    match api::stats(h).await {
+                        Ok(s) => {if !metric_open.get_untracked() && hours.get_untracked()==h {stats.set(s);} err.set(None);}
+                        Err(e) => {ctx.note_err(&e);err.set(Some(e.message));}
+                    }
+                }) as crate::page_tasks::ReadTask,
+                Box::pin(async move {
+                    match api::model_routes().await {
+                        Ok(r) => {callable.set(r.models);auto_ready.set(r.auto.available);}
+                        Err(e) => ctx.note_err(&e),
+                    }
+                }),
+                Box::pin(async move {
+                    if category.get_untracked()==0 {
+                        match api::logs(12).await {Ok(v)=>recent.set(v),Err(e)=>ctx.note_err(&e)}
+                    }
+                }),
+                Box::pin(async move {
+                    match api::channels().await {Ok(v)=>channels.set(v),Err(e)=>ctx.note_err(&e)}
+                }),
+                Box::pin(async move {
+                    match api::model_cooldowns().await {
+                        Ok(r)=>{faults.set(r.faults);cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);}
+                        Err(e)=>ctx.note_err(&e),
+                    }
+                }),
+            ]).await;
             busy.set(false);
         });
     };
@@ -81,7 +83,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         detail.set(None);
         detail_error.set(None);
         detail_busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             let result = api::request_detail(id).await;
             if expanded.get_untracked() != Some(id) || detail_generation.get_untracked() != generation { return; }
             match result {
@@ -92,17 +94,17 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         });
     };
     let refresh_active = move || {
-        if busy.get_untracked() || recent_busy.get_untracked() { return; }
+        if !crate::page_tasks::foreground() || busy.get_untracked() || recent_busy.get_untracked() || metric_open.get_untracked() || request_open.get_untracked() { return; }
         recent_busy.set(true);
         let selected=category.get_untracked();
         let window=hours.get_untracked();
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             if selected==0 {
                 match api::logs(12).await { Ok(v)=>recent.set(v),Err(e)=>ctx.note_err(&e) }
             } else if selected==5 {
                 match api::model_cooldowns().await {Ok(r)=>{faults.set(r.faults);cooling.set(r.cooldowns);cooldown_now.set(r.now_ms);},Err(e)=>ctx.note_err(&e)}
             } else {
-                match api::stats(window).await { Ok(v)=>stats.set(v),Err(e)=>ctx.note_err(&e) }
+                match api::stats(window).await { Ok(v)=>{if hours.get_untracked()==window {stats.set(v);}},Err(e)=>ctx.note_err(&e) }
             }
             recent_busy.set(false);
         });
@@ -111,7 +113,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         if clear_busy.get_untracked(){return;}
         if !web_sys::window().and_then(|w|w.confirm_with_message("解除模型冷却？历史调用记录保持不变。").ok()).unwrap_or(false){return;}
         clear_busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             match api::clear_cooldowns(model,id).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}
             clear_busy.set(false);
         });
@@ -120,14 +122,22 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         if clear_busy.get_untracked(){return;}
         if !web_sys::window().and_then(|w|w.confirm_with_message("允许下一条真实调用恢复试用？").ok()).unwrap_or(false){return;}
         clear_busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move{match api::retry_account(id,model).await{Ok(())=>reload(),Err(e)=>ctx.say(e.message)}clear_busy.set(false);});
+        tasks.spawn(async move{match api::retry_account(id,model).await{Ok(())=>reload(),Err(e)=>ctx.say(e.message)}clear_busy.set(false);});
     };
     let refresh_timer = crate::every(5000, refresh_active);
     on_cleanup(move || crate::stop_timer(refresh_timer));
 
     let pick = move |h: i64| {
         set_hours.set(h);
-        reload();
+        if busy.get_untracked() {
+            // A window change must not get lost behind an unrelated initial read.
+            tasks.spawn(async move {
+                match api::stats(h).await {
+                    Ok(s)=>{if hours.get_untracked()==h && !metric_open.get_untracked(){stats.set(s);err.set(None);}},
+                    Err(e)=>{ctx.note_err(&e);if hours.get_untracked()==h {err.set(Some(e.message));}},
+                }
+            });
+        } else { reload(); }
     };
 
     let channel_name = move |id: Option<i64>| match id {

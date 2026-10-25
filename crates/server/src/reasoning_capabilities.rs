@@ -418,6 +418,11 @@ fn settings(c: &Connection, id: i64, model: &str) -> db::Result<Option<Settings>
 }
 pub fn for_mapping(c: &Connection, id: i64, model: &str) -> db::Result<ReasoningCapabilities> {
     let m = mapping(c, id, model)?;
+    for_loaded_mapping(c, id, &m)
+}
+/// The caller already loaded this mapping in the current connection snapshot.
+pub(crate) fn for_loaded_mapping(c: &Connection, id: i64, m: &db::channels::ModelMapping) -> db::Result<ReasoningCapabilities> {
+    let model = &m.model;
     let mut result = for_model(c, id, m.upstream.as_deref().unwrap_or(&m.model))?;
     if let Some((identity, upstream, manual, default)) = settings(c, id, model)? {
         if identity != fingerprint(c, id)? || upstream != m.upstream.as_deref().unwrap_or(&m.model)

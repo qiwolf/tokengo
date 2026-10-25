@@ -308,6 +308,7 @@ fn ModelPresentation(ctx:Ctx,name:String,display_name:String,dialog_id:String,on
 
 #[component]
 pub fn Models(ctx:Ctx)->impl IntoView {
+    let tasks = crate::page_tasks::PageTasks::new();
     let auto_policy_open=RwSignal::new(false);
     let route_policy_open=RwSignal::new(false);
     let route_policy_busy=RwSignal::new(false);
@@ -324,22 +325,35 @@ pub fn Models(ctx:Ctx)->impl IntoView {
     let visibility=RwSignal::new("enabled".to_string());let search=RwSignal::new(String::new());let tab=RwSignal::new("chat".to_string());
     let sort_score=RwSignal::new(false);let updated=RwSignal::new(0i64);
     let reload=move || {
-        if busy.get_untracked() || model_details_open(){return;} busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
-            let routing_result=api::model_routes().await;
-            let channels_result=api::channels().await;
-            let policy_result=api::auto_policy().await;
-            if model_details_open(){busy.set(false);return;}
-            match routing_result {Ok(r)=>{routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);err.set(None);},Err(e)=>{ctx.note_err(&e);err.set(Some(e.message));}}
-            if let Ok(c)=channels_result{chans.set(c);}
-            if let Ok(p)=policy_result{policy.set(p.policy);order.set(p.order);}
+        if busy.get_untracked() || model_details_open() || auto_policy_open.get_untracked() || route_policy_open.get_untracked() {return;}
+        busy.set(true);
+        tasks.spawn(async move {
+            crate::page_tasks::parallel([
+                Box::pin(async move {
+                    match api::model_routes().await {
+                        Ok(r)=>{if !model_details_open(){routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);err.set(None);}},
+                        Err(e)=>{ctx.note_err(&e);err.set(Some(e.message));}
+                    }
+                }) as crate::page_tasks::ReadTask,
+                Box::pin(async move {
+                    match api::channels().await {Ok(c)=>{if !model_details_open(){chans.set(c);}},Err(e)=>ctx.note_err(&e)}
+                }),
+                Box::pin(async move {
+                    match api::auto_policy().await {
+                        Ok(p)=>{if !auto_policy_open.get_untracked() && !policy_busy.get_untracked(){policy.set(p.policy);order.set(p.order);}},
+                        Err(e)=>ctx.note_err(&e),
+                    }
+                }),
+            ]).await;
             busy.set(false);
         });
     };
-    reload();let timer=crate::every(5000,reload);on_cleanup(move ||crate::stop_timer(timer));
+    reload();
+    let timer=crate::every(5000,move ||{if crate::page_tasks::foreground() && !ordering.get_untracked(){reload();}});
+    on_cleanup(move ||crate::stop_timer(timer));
     let save_policy=move |p:crate::model::AutoPolicy|{
         if policy_busy.get_untracked(){return;} policy_busy.set(true);policy_message.set(String::new());
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             match api::save_auto_policy(&p).await {
                 Ok(())=>{match api::auto_policy().await {Ok(saved)=>{policy.set(saved.policy);order.set(saved.order);policy_message.set("自动选择策略已保存，并重新读取确认。".into());},Err(e)=>{ctx.note_err(&e);policy_message.set(format!("已提交，重新读取确认失败：{}",e.message));}}
                     if let Ok(r)=api::model_routes().await{routes.set(r.models);auto.set(r.auto);updated.set(r.now_ms);}},
@@ -348,8 +362,8 @@ pub fn Models(ctx:Ctx)->impl IntoView {
             policy_busy.set(false);
         });
     };
-    let move_model=move |name:String,up:bool|{wasm_bindgen_futures::spawn_local(async move {match api::move_model(&name,up).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
-    let toggle_model=move |name:String,enabled:bool|{wasm_bindgen_futures::spawn_local(async move {match api::set_model_enabled(&name,enabled).await{Ok(())=>{ctx.say(if enabled{"模型已启用"}else{"模型已停用"});reload();},Err(e)=>ctx.say(e.message)}});};
+    let move_model=move |name:String,up:bool|{tasks.spawn(async move {match api::move_model(&name,up).await {Ok(())=>reload(),Err(e)=>ctx.say(e.message)}});};
+    let toggle_model=move |name:String,enabled:bool|{tasks.spawn(async move {match api::set_model_enabled(&name,enabled).await{Ok(())=>{ctx.say(if enabled{"模型已启用"}else{"模型已停用"});reload();},Err(e)=>ctx.say(e.message)}});};
     let channel_name=move |id:i64|chans.get().iter().find(|c|c.id==id).map(|c|c.name.clone()).unwrap_or_else(||format!("渠道 #{id}"));
     view!{
         <div class="page model-observatory">

@@ -4,6 +4,7 @@
 //! 后端是账号、网关状态与账本的唯一数据源，每次进入页面重新读取。
 
 pub mod api;
+pub(crate) mod page_tasks;
 pub mod account_api;
 pub mod provider_api;
 pub mod account_ui;

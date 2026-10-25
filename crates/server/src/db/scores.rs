@@ -36,14 +36,69 @@ pub fn for_channel(conn:&Connection,now:i64,channel:Option<i64>)->Result<HashMap
 pub fn all(conn:&Connection,now:i64)->Result<HashMap<String,Score>> {for_channel(conn,now,None)}
 /// Deduplicate retries and canonical spelling without coupling lifetime totals to retention.
 pub fn total_calls(conn:&Connection)->Result<HashMap<String,i64>> {
- let mut st=conn.prepare("SELECT request_id,model_name FROM model_invocations")?;
- let pairs=st.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?;
- let mut seen=std::collections::HashSet::new();let mut out=HashMap::new();
- for pair in pairs {let (id,name)=pair?;let key=normalize_model_name(&name);if seen.insert((id,key.clone())){*out.entry(key).or_insert(0)+=1;}}
+ // The primary key provides request order. Deduplication therefore needs only
+ // one request's canonical names, not a lifetime-sized set of (request, name).
+ // Normalize each distinct spelling once: provider suffix stripping is otherwise
+ // repeated for every historical invocation on every management-page load.
+ let mut st=conn.prepare("SELECT request_id,model_name FROM model_invocations ORDER BY request_id,model_name")?;
+ let mut rows=st.query([])?;
+ let mut names:HashMap<String,String>=HashMap::new();
+ let mut seen=std::collections::HashSet::new();
+ let mut previous=None;
+ let mut out=HashMap::new();
+ while let Some(row)=rows.next()? {
+  let id:i64=row.get(0)?;
+  if previous!=Some(id) {seen.clear();previous=Some(id);}
+  let name:String=row.get(1)?;
+  let key=names.entry(name).or_insert_with_key(|name|normalize_model_name(name));
+  if seen.insert(key.clone()) {*out.entry(key.clone()).or_insert(0)+=1;}
+ }
  Ok(out)
 }
 #[cfg(test)]mod tests{
  use super::*;
+ #[test]
+ #[ignore = "60k lifetime invocation benchmark; run in release mode"]
+ fn totals_60k_performance_and_legacy_oracle() {
+  let c=crate::db::open_in_memory().unwrap();
+  c.execute_batch("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<60000) INSERT INTO model_invocations SELECT (i+1)/2,CASE i%3 WHEN 0 THEN 'Model-'||((i+1)/2%57) WHEN 1 THEN 'model_'||((i+1)/2%57)||' (provider) free' ELSE 'MODEL '||((i+1)/2%57) END FROM n;").unwrap();
+  let start=std::time::Instant::now();
+  let mut expected=HashMap::new();let mut seen=std::collections::HashSet::new();
+  let mut st=c.prepare("SELECT request_id,model_name FROM model_invocations").unwrap();
+  for pair in st.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap() {
+   let(id,name)=pair.unwrap();let key=normalize_model_name(&name);
+   if seen.insert((id,key.clone())) {*expected.entry(key).or_insert(0)+=1;}
+  }
+  let old_ms=start.elapsed().as_secs_f64()*1000.0;
+  let mut timings=Vec::new();
+  for _ in 0..20 {
+   let start=std::time::Instant::now();let actual=total_calls(&c).unwrap();
+   timings.push(start.elapsed().as_secs_f64()*1000.0);assert_eq!(actual,expected);
+  }
+  timings.sort_by(f64::total_cmp);let p95=timings[18];
+  eprintln!("lifetime 60k invocation rows: legacy={old_ms:.2}ms new_p50={:.2}ms new_p95={p95:.2}ms",timings[9]);
+  assert!(p95<300.0,"lifetime totals P95 {p95:.2}ms exceeds 300ms");
+ }
+ #[test]
+ fn lifetime_totals_preserve_canonical_retry_deduplication() {
+  let c=crate::db::open_in_memory().unwrap();
+  let spellings=["DeepSeek-V4.1-Flash", "deepseek_v4.1_flash (provider) free", "DeepSeek V4.1 Flash", "command-r+", "command-r", "智谱新"];
+  for id in 1..=300 {
+   for (i,name) in spellings.iter().enumerate() {
+    if (id+i)%3!=0 {c.execute("INSERT INTO model_invocations VALUES(?1,?2)",rusqlite::params![id as i64,name]).unwrap();}
+   }
+  }
+  let mut expected=HashMap::new();
+  let mut seen=std::collections::HashSet::new();
+  let mut st=c.prepare("SELECT request_id,model_name FROM model_invocations").unwrap();
+  for pair in st.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap() {
+   let (id,name)=pair.unwrap();let key=normalize_model_name(&name);
+   if seen.insert((id,key.clone())) {*expected.entry(key).or_insert(0)+=1;}
+  }
+  assert_eq!(total_calls(&c).unwrap(),expected);
+  assert_eq!(expected["deepseek v4.1 flash"],300);
+  assert!(expected.contains_key("command r+"));assert!(expected.contains_key("command r"));
+ }
  #[test]fn totals_deduplicate_and_survive_pruning(){
  let c=crate::db::open_in_memory().unwrap();c.execute("INSERT INTO requests(ts_ms,endpoint,model,status) VALUES(1000,'chat','auto','ok')",[]).unwrap();
  for name in ["a","a","b"]{c.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,model_name) VALUES(1,0,3,'success',?1)",[name]).unwrap();}
