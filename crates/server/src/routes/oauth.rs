@@ -13,8 +13,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
+        .route("/api/oauth/providers", get(providers))
+        .route("/api/oauth/device/start", post(device_start))
+        .route("/api/oauth/device/{id}/poll", post(device_poll))
+        .route("/api/oauth/device/{id}/cancel", post(device_cancel))
         .route("/api/oauth/start", post(start))
         .route("/api/oauth/complete", post(complete))
+        .route("/api/oauth/cancel", post(cancel))
         .route("/api/oauth/accounts", get(accounts))
         .route(
             "/api/oauth/channels/{id}",
@@ -30,6 +35,7 @@ fn error(e: oauth::OAuthError) -> ApiError {
             | "oauth_storage_unavailable"
             | "oauth_refresh_too_early"
             | "oauth_reauthorization_required"
+            | "oauth_refresh_in_progress"
     ) {
         axum::http::StatusCode::SERVICE_UNAVAILABLE
     } else {
@@ -43,13 +49,15 @@ struct Start {
     label: String,
     redirect_uri: String,
     account_id: Option<i64>,
+    #[serde(default)]
+    provider_id: Option<i64>,
 }
 async fn start(
     _root: PanelAuth,
     State(state): State<SharedState>,
     Json(body): Json<Start>,
 ) -> Result<Json<oauth::Started>, ApiError> {
-    oauth::start(&state, body.label, body.redirect_uri, body.account_id)
+    oauth::start_with_origin(&state, body.label, body.redirect_uri, body.account_id,body.provider_id)
         .map(Json)
         .map_err(error)
 }
@@ -115,4 +123,28 @@ async fn models(
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
     oauth::models(&state, id).await.map(Json).map_err(error)
+}
+
+async fn providers(_root: PanelAuth, State(state): State<SharedState>) -> Result<Json<Value>,ApiError> {
+    crate::oauth_external::cleanup_pending(&state).map_err(error)?;
+    Ok(Json(crate::oauth_external::providers()))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeviceStart { provider: String, label: String, #[serde(default)] provider_id: Option<i64> }
+async fn device_start(_root: PanelAuth, State(state): State<SharedState>, Json(body): Json<DeviceStart>) -> Result<Json<crate::oauth_external::DeviceStarted>, ApiError> {
+    crate::oauth_external::start(&state,&body.provider,body.label,body.provider_id).await.map(Json).map_err(error)
+}
+async fn device_poll(_root: PanelAuth, State(state): State<SharedState>, Path(id): Path<String>) -> Result<Json<crate::oauth_external::DevicePoll>, ApiError> {
+    crate::oauth_external::poll(&state,id).await.map(Json).map_err(error)
+}
+async fn device_cancel(_root: PanelAuth, State(state): State<SharedState>, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
+    crate::oauth_external::cancel(&state,&id).map_err(error)?;Ok(Json(json!({"canceled":true})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Cancel { attempt_id:String }
+async fn cancel(_root:PanelAuth,State(state):State<SharedState>,Json(body):Json<Cancel>)->Result<Json<Value>,ApiError> {
+    oauth::cancel(&state,&body.attempt_id).map_err(error)?;Ok(Json(json!({"canceled":true})))
 }

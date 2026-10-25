@@ -74,6 +74,7 @@ fn router_inner() -> Router<SharedState> {
         .route("/auth/password", put(auth_change_password).layer(axum::middleware::map_response(super::accounts::json_errors)))
         .route("/channels", get(channels_list).post(channels_create))
         .route("/channels/{id}", put(channels_update).delete(channels_delete))
+        .route("/channels/{id}/protocols", put(channels_set_protocols))
         .route("/channels/{id}/enabled", put(channels_set_enabled))
         .route("/channels/{id}/probe", post(channels_probe))
         .route("/channels/{id}/models", post(channels_models))
@@ -340,7 +341,9 @@ async fn auth_change_password(
 
 fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json::Value {
     let protocol_config=crate::protocol_config::load(c,l.id.0).unwrap_or_default();
-    let is_oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",[l.id.0],|row|row.get(0)).unwrap_or(false);
+    let is_oauth=crate::oauth_external::channel_managed_openai(c,l.id.0).unwrap_or(false);
+    let oauth_provider=c.query_row("SELECT account_id FROM oauth_channel_bindings WHERE channel_id=?1",[l.id.0],|row|row.get::<_,i64>(0))
+        .ok().and_then(|account|crate::oauth_external::account_provider(c,account).ok());
     let api_version=l.headers.iter().find(|(name,_)|name.eq_ignore_ascii_case("anthropic-version")).map(|(_,value)|value.as_str());
     serde_json::json!({
         "id": l.id.0,
@@ -351,10 +354,12 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "base_url": l.base_url,
         "enabled": l.enabled,
         "has_secret": l.has_secret,
+        "authentication_line":oauth_provider.as_ref().map(|provider|serde_json::json!({"kind":"oauth","provider":provider,"managed_openai":is_oauth})).unwrap_or_else(||serde_json::json!({"kind":if l.has_secret{"api_key"}else{"anonymous"}})),
         "account_status": crate::db::faults::rows(c).unwrap_or_default().into_iter().find(|r|r.channel_id==l.id.0 && r.model.is_empty()).map(|r|if r.ready {"等待恢复试用".to_string()}else if r.lease_until>now_ms(){"恢复试用中".into()}else{r.reason}).unwrap_or_default(),
         "unwrap_envelope": l.unwrap_envelope,
         "max_concurrent": l.max_concurrent,
         "protocols": crate::protocol_config::load(c,l.id.0).ok(),
+        "binding_generation":c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[l.id.0],|row|row.get::<_,i64>(0)).ok(),
         // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
         "priority": l.priority,
         "headers": l.headers.iter().map(|(n, _)| serde_json::json!({"name": n, "original_name": n, "value": "********", "action": "keep"})).collect::<Vec<_>>(),
@@ -562,8 +567,10 @@ async fn channels_create(
                 channels::set_headers(c, &state.secrets, id, headers)?;
             }
         }
+        validate_oauth_model_set(c,id.0,&models)?;
         channels::set_models(c, id, &models)?;
         if let Some(p) = &body.protocols {
+            validate_bound_protocols(c,id.0,p)?;
             crate::protocol_config::save(c, id.0, p)?;
         }
         Ok(id)
@@ -572,6 +579,62 @@ async fn channels_create(
 
     let l = channels::get(&conn, id)?.ok_or_else(|| ApiError::internal("刚建的渠道读不回来"))?;
     Ok(Json(channel_json(&conn, &l)))
+}
+
+pub(crate) fn validate_oauth_model_set(c:&rusqlite::Connection,id:i64,models:&[channels::ModelMapping])->crate::db::Result<()> {
+    use rusqlite::OptionalExtension;
+    let account:Option<i64>=c.query_row("SELECT account_id FROM oauth_channel_bindings WHERE channel_id=?1",[id],|r|r.get(0)).optional()?;
+    if let Some(account)=account {
+        if models.iter().any(|m|!m.drop_fields.is_empty()){return Err(crate::db::DbError::Other("OAuth模型不能丢弃请求字段".into()));}
+        let names=models.iter().filter(|m|m.enabled).map(|m|m.upstream.as_deref().unwrap_or(&m.model).to_owned()).collect::<Vec<_>>();
+        crate::oauth_external::validate_bound_models(c,account,&names)
+            .map_err(|_|crate::db::DbError::Other("OAuth模型目录与供应方协议尚未确认，请更新目录后重试".into()))?;
+    }
+    Ok(())
+}
+
+fn validate_bound_protocols(c:&rusqlite::Connection,id:i64,caps:&crate::protocol_config::Capabilities)->crate::db::Result<()> {
+    use rusqlite::OptionalExtension;
+        let account:Option<i64>=c.query_row("SELECT account_id FROM oauth_channel_bindings WHERE channel_id=?1",[id],|r|r.get(0)).optional()?;
+        if let Some(account)=account {
+            let (_,native,managed)=crate::oauth_external::account_transport(c,account)
+                .map_err(|_|crate::db::DbError::Other("OAuth来源协议不可用".into()))?;
+            if caps.native!=vec![native] || caps.native_input_audio
+                || caps.chat_reasoning_replay
+                || caps.parameter_profile.as_deref().is_some_and(|p|!managed||p!="openai")
+                || caps.max_input_tokens.is_some() || caps.max_output_tokens.is_some()
+            {return Err(crate::db::DbError::Other("OAuth来源须保留账号的固定供应方协议；Token上限使用账号绑定配置".into()));}
+        }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProtocolUpdate {
+    protocols: crate::protocol_config::Capabilities,
+    expected_binding_generation: i64,
+}
+/// Changes protocol settings only; never writes model membership, headers or keys.
+async fn channels_set_protocols(
+    _auth: ManagementAuth,
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+    Json(body): Json<ProtocolUpdate>,
+) -> Result<Json<serde_json::Value>,ApiError> {
+    body.protocols.validate().map_err(ApiError::bad_request)?;
+    let c=state.conn();
+    let cid=tokengo_shared::ChannelId(id);
+    if channels::get(&c,cid)?.is_none(){return Err(ApiError::not_found("连接不存在"));}
+    crate::db::in_tx(&c,|c| {
+        let generation:i64=c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get(0))?;
+        if generation!=body.expected_binding_generation {return Err(crate::db::DbError::Other("source_changed".into()));}
+        validate_bound_protocols(c,id,&body.protocols)?;
+        crate::protocol_config::save(c,id,&body.protocols)?;
+        crate::db::identity::audit(c,None,"channel.protocols","channel",id,serde_json::json!({"native":body.protocols.native,"allow_conversion":body.protocols.allow_conversion}))?;
+        Ok(())
+    }).map_err(|e|ApiError::new(StatusCode::CONFLICT,"source_protocol_conflict",e.to_string()))?;
+    let row=channels::get(&c,cid)?.ok_or_else(||ApiError::not_found("连接不存在"))?;
+    Ok(Json(channel_json(&c,&row)))
 }
 
 async fn channels_update(
@@ -640,8 +703,10 @@ async fn channels_update(
             if managed {crate::db::provider_pool::update_non_auth_headers(c,&state.secrets,id.0,headers)?;}
             else {channels::set_headers(c, &state.secrets, id, headers)?;}
         }
+        validate_oauth_model_set(c,id.0,&models)?;
         channels::set_models(c, id, &models)?;
         if let Some(p) = &body.protocols {
+            validate_bound_protocols(c,id.0,p)?;
             crate::protocol_config::save(c, id.0, p)?;
         }
         Ok(())

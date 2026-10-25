@@ -65,6 +65,7 @@ pub struct Upstream {
     client: reqwest::Client,
     subscription_client:reqwest::Client,
     models_client: reqwest::Client,
+    state:std::sync::Arc<std::sync::OnceLock<std::sync::Weak<crate::AppState>>>,
 }
 
 impl Upstream {
@@ -76,17 +77,30 @@ impl Upstream {
             // 不设全局超时：每次尝试的超时由面板参数决定，逐请求传入
             .pool_idle_timeout(Duration::from_secs(90))
             .build()?;
-        let subscription_client=crate::openai_transport::configure(reqwest::Client::builder()
+        // Policy-aware clients are built lazily after the database is attached;
+        // an overridden legacy proxy must not prevent application startup.
+        let subscription_client=reqwest::Client::builder()
             .user_agent(concat!("tokengo/",env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none()).tcp_nodelay(true)
-            .connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(90)))
-            .map_err(anyhow::Error::msg)?.build().map_err(|_|anyhow::anyhow!("OpenAI inference client configuration failed"))?;
+            .connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(90))
+            .build().map_err(|_|anyhow::anyhow!("OpenAI inference client configuration failed"))?;
         let models_client = reqwest::Client::builder()
             .user_agent(concat!("tokengo/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .tcp_nodelay(true).connect_timeout(Duration::from_secs(10))
             .pool_idle_timeout(Duration::from_secs(90)).build()?;
-        Ok(Self { client,subscription_client,models_client })
+        Ok(Self { client,subscription_client,models_client,state:Default::default() })
+    }
+
+    pub(crate) fn attach_state(&self,state:std::sync::Weak<crate::AppState>){let _=self.state.set(state);}
+    fn egress_client(&self,channel:&Channel,purpose:crate::egress::Purpose)->Result<reqwest::Client,ChannelFault>{
+        if let Some(state)=self.state.get().and_then(std::sync::Weak::upgrade){return crate::egress::source_client(&state,channel,purpose).map_err(|_|ChannelFault{message:"Outbound proxy policy is unavailable; request was not sent".into()});}
+        // Standalone transport fixtures have no application/database policy.
+        if purpose==crate::egress::Purpose::Subscription && std::env::var_os("TOKENGO_OPENAI_PROXY").is_some(){
+            return crate::openai_transport::configure(reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(10)))
+                .map_err(|_|ChannelFault{message:"OpenAI proxy configuration unavailable".into()})?.build().map_err(|_|ChannelFault{message:"OpenAI client unavailable".into()});
+        }
+        Ok(match purpose{crate::egress::Purpose::Subscription=>self.subscription_client.clone(),crate::egress::Purpose::Catalog=>self.models_client.clone(),_=>self.client.clone()})
     }
 
     /// 往一条渠道上发一次请求。
@@ -121,7 +135,7 @@ impl Upstream {
         }
         let body = fixed_embedding_dimensions(&channel.base_url, path, body);
         let url = join_url(&channel.base_url, path);
-        let client=if subscription {&self.subscription_client}else{&self.client};
+        let client=self.egress_client(channel,if subscription{crate::egress::Purpose::Subscription}else{crate::egress::Purpose::Inference})?;
         let mut rb = client
             .post(&url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -172,17 +186,25 @@ impl Upstream {
             if !headers.iter().any(|(name,_)|name.eq_ignore_ascii_case("anthropic-version")){headers.push(("anthropic-version".into(),"2023-06-01".into()));}
         }
         let fault=||ChannelFault{message:"custom probe transport failed".into()};
-        let mut request=self.models_client.post(join_url(&channel.base_url,path)).header(reqwest::header::CONTENT_TYPE,"application/json").header(reqwest::header::ACCEPT,"application/json").body(body).timeout(timeout);
+        let client=self.egress_client(channel,crate::egress::Purpose::Catalog)?;
+        let mut request=client.post(join_url(&channel.base_url,path)).header(reqwest::header::CONTENT_TYPE,"application/json").header(reqwest::header::ACCEPT,"application/json").body(body).timeout(timeout);
         for(name,value)in headers {let mut value=reqwest::header::HeaderValue::from_str(&value).map_err(|_|fault())?;value.set_sensitive(true);request=request.header(name,value);}
         let mut response=request.send().await.map_err(|_|fault())?;let status=response.status().as_u16();let mut bytes=Vec::new();
         while let Some(chunk)=response.chunk().await.map_err(|_|fault())? {if chunk.len()>limit.saturating_sub(bytes.len()){return Err(fault());}bytes.extend_from_slice(&chunk);}
         Ok((status,Bytes::from(bytes)))
     }
 
-    /// OAuth diagnostics use the same subscription transport and native SSE collector as routing.
+    /// Managed OpenAI diagnostics use its native SSE collector. Other OAuth
+    /// providers retain their fixed native protocol and bounded JSON response.
     pub async fn custom_probe_oauth_request(&self,source:&Channel,credential:&crate::oauth::OAuthCredential,body:Bytes,timeout:Duration,limit:usize)->Result<(u16,Bytes),ChannelFault> {
         let mut channel=source.clone();channel.base_url=credential.api_base.clone();channel.headers=crate::oauth::inference_headers(credential);
         let fault=||ChannelFault{message:"OAuth diagnostic response unavailable".into()};
+        let path=oauth_diagnostic_path(credential)?;
+        if !credential.managed_openai {
+            let value:serde_json::Value=serde_json::from_slice(&body).map_err(|_|fault())?;
+            if !value.is_object() || value.get("stream")==Some(&serde_json::Value::Bool(true)) {return Err(fault());}
+            return self.custom_probe_request(&channel,Some(&credential.access_token),path,body,timeout,limit).await;
+        }
         let mut response=self.call_via(&channel,Some(&credential.access_token),"responses",body,true,timeout,&new_uuid(),crate::db::now_ms(),None,true).await.map_err(|_|fault())?;
         let code=response.status().as_u16();
         let mime=response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v|v.to_str().ok()).map(str::to_ascii_lowercase);
@@ -301,8 +323,8 @@ impl Upstream {
         now_ms: i64,
     ) -> Result<(u16, String), ChannelFault> {
         let url = join_url(&channel.base_url, "models");
-        let mut rb = self
-            .models_client
+        let client=self.egress_client(channel,crate::egress::Purpose::Catalog)?;
+        let mut rb = client
             .get(&url)
             .timeout(timeout)
             .header(reqwest::header::ACCEPT, "application/json");
@@ -829,8 +851,35 @@ fn probe_error_note(bytes:&[u8],redactions:&[&str])->Option<String> {
     Some(safe.chars().filter(|c|!c.is_control()||*c==' ').take(512).collect())
 }
 
+/// Resolve from the source-bound provider specification, never a user supplied URL.
+fn oauth_diagnostic_path(credential:&crate::oauth::OAuthCredential)->Result<&'static str,ChannelFault> {
+    let invalid=||ChannelFault{message:"Invalid OAuth diagnostic source protocol".into()};
+    if credential.managed_openai {
+        if credential.provider!=crate::protocol::Protocol::Responses {return Err(invalid());}
+        return Ok("responses");
+    }
+    let p=crate::oauth_external::provider(&credential.oauth_provider).ok_or_else(invalid)?;
+    if !p.inference_available || p.api_base!=credential.api_base || p.native_protocol!=credential.provider {return Err(invalid());}
+    Ok(match credential.provider {
+        crate::protocol::Protocol::Chat=>"chat/completions",
+        crate::protocol::Protocol::Responses=>"responses",
+        crate::protocol::Protocol::Messages=>"messages",
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oauth_diagnostic_destination_uses_provider_identity_not_responses_for_every_account() {
+        let mut c=crate::oauth::OAuthCredential{access_token:"test-only".into(),account_id:1,credential_revision:1,binding_generation:1,expires_at:i64::MAX,api_base:"https://agent.minimax.cn/mavis/api/v1/llm/v1".into(),provider:crate::protocol::Protocol::Messages,reasoning_effort:None,service_tier:None,max_input_tokens:Some(100),max_output_tokens:Some(16),account_header:None,managed_openai:false,oauth_provider:"minimax-cn".into()};
+        assert_eq!(super::oauth_diagnostic_path(&c).unwrap(),"messages");
+        c.provider=crate::protocol::Protocol::Responses;
+        assert!(super::oauth_diagnostic_path(&c).is_err());
+        c.provider=crate::protocol::Protocol::Messages;c.api_base="https://example.invalid".into();
+        assert!(super::oauth_diagnostic_path(&c).is_err());
+        c.managed_openai=true;c.provider=crate::protocol::Protocol::Responses;
+        assert_eq!(super::oauth_diagnostic_path(&c).unwrap(),"responses");
+    }
     #[test]
     fn siliconflow_bge_native_dimensions_are_omitted_without_changing_payload() {
         let original = serde_json::json!({"model":"BAAI/bge-m3","input":["test","文本"],

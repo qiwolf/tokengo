@@ -88,6 +88,7 @@ impl ModelLoads {
 pub struct AppState {
     pub tool_rates: crate::source_rates::SourceRates,
     pub oauth: crate::oauth::OAuthRuntime,
+    pub egress: crate::egress::Runtime,
     pub admission: crate::admission::AdmissionState,
     pub panel_login_gate: crate::routes::accounts::LoginGate,
     pub auth_slots: Arc<tokio::sync::Semaphore>,
@@ -274,6 +275,7 @@ impl AppState {
         let state = Arc::new(Self {
             tool_rates: Default::default(),
             oauth: crate::oauth::OAuthRuntime::new()?,
+            egress: crate::egress::Runtime::default(),
             admission: crate::admission::AdmissionState::default(),
             panel_login_gate: Default::default(),
             auth_slots: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -294,6 +296,7 @@ impl AppState {
             log_file: OnceLock::new(),
             log_control: OnceLock::new(),
         });
+        state.upstream.attach_state(Arc::downgrade(&state));
         if tokio::runtime::Handle::try_current().is_ok() {
             crate::billing_writer::spawn_retry(Arc::downgrade(&state));
         }

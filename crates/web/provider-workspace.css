@@ -269,3 +269,50 @@
   .console-content .gateway-keys .gateway-key-record { grid-template-columns:minmax(0,1fr); gap:12px; }
   .console-content .gateway-keys .gateway-key-actions { justify-self:end; }
 }
+
+/* Approved family/authorization picker; the selected extra family remains in two rows. */
+.family-picker { border:0; padding:0; margin:0 0 24px; min-width:0; }
+.family-picker legend { font-weight:600; padding:0; margin-bottom:14px; }
+.family-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.family-card { display:none; position:relative; min-height:74px; align-items:center; gap:12px; padding:16px; text-align:left; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); color:var(--fg); }
+.family-card.desktop-visible { display:flex; }
+.family-card:hover { background:var(--surface-2); border-color:var(--line-strong); }
+.family-card.is-selected { border-color:var(--accent); background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
+.family-card img { flex:none; width:30px; height:30px; object-fit:contain; border-radius:4px; background:#fff; padding:2px; }
+.family-card > span:not(.family-selected-mark):not(.family-other) { min-width:0; font-size:13px; font-weight:550; overflow-wrap:anywhere; }
+.family-selected-mark { position:absolute; top:4px; right:7px; color:var(--accent); font-size:12px; }
+.family-more { display:flex; align-items:center; justify-content:center; gap:8px; margin:10px auto 0; padding:8px 16px; min-height:44px; border:0; background:transparent; color:var(--fg-2); }
+.family-more:hover { background:var(--surface-2); }
+.family-more svg.is-expanded { transform:rotate(180deg); }
+.family-other { display:grid; grid-template-columns:repeat(2,9px); grid-template-rows:repeat(2,9px); gap:3px; place-content:center; width:30px; height:30px; flex:none; }
+.family-other i { border:1.5px solid var(--fg-2); border-radius:2px; }
+.provider-auth-choices { display:flex; gap:12px; margin:10px 0; }
+.provider-auth-choice { flex:1; min-height:74px; padding:14px 16px; text-align:left; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); color:var(--fg); }
+.provider-auth-choice span { display:block; font-size:12px; color:var(--fg-2); margin-top:5px; }
+.provider-auth-choice.is-selected { border-color:var(--fg); box-shadow:inset 0 0 0 1px var(--fg); }
+.oauth-enrollment { display:grid; gap:16px; margin:16px 0; }
+.oauth-source-list { display:grid; gap:12px; }
+.oauth-source { border:1px solid var(--line); border-radius:12px; padding:16px; }
+.oauth-source.is-selected { border-color:var(--line-strong); }
+.oauth-source-head { display:flex; align-items:center; gap:12px; margin:0; }
+.oauth-source-head strong { flex:1; }
+.oauth-source-head input { min-height:0; width:17px; height:17px; margin:0; accent-color:var(--fg); }
+.oauth-source a { font-size:12px; text-underline-offset:3px; }
+.oauth-pending { display:grid; gap:12px; padding:16px; border:1px solid var(--line-strong); border-radius:12px; background:var(--surface-2); }
+.oauth-pending code { font-size:20px; font-weight:650; overflow-wrap:anywhere; }
+.oauth-open { display:inline-flex; align-items:center; min-height:44px; width:fit-content; }
+@media(max-width:600px) {
+ .family-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+ .family-card.desktop-visible { display:none; }
+ .family-card.mobile-visible { display:flex; }
+ .family-card { min-height:70px; padding:14px; }
+ .family-card img { width:28px; height:28px; }
+ .provider-auth-choices { gap:8px; }
+ .provider-auth-choice { padding:12px; }
+}
+.provider-enrollment-steps { display:flex; gap:8px; margin:16px 0; }
+.provider-enrollment-steps button { flex:1; min-height:44px; border:0; border-bottom:2px solid var(--line); border-radius:0; text-align:left; background:transparent; color:var(--fg-2); }
+.provider-enrollment-steps button.is-active { border-bottom-color:var(--fg); color:var(--fg); font-weight:600; }
+.connection-parameters { display:grid; gap:18px; }
+.connection-parameters form { margin:0; }
+@media(max-width:600px) { .provider-enrollment-steps { gap:4px; }.provider-enrollment-steps button { font-size:12px; padding:8px 4px; } }

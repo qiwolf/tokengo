@@ -107,7 +107,8 @@ fn ready(c:&Connection,state:&SharedState,cfg:&Config,require_enabled:bool)->Res
     let tools=crate::search_tools::load(c,cfg.source_id).map_err(|_|"无法读取工具能力")?;
     let endpoint=endpoint(&cfg.kind).ok_or("探针类型无效")?;
     if oauth {
-        if cfg.kind!="responses" {return Err("OAuth 订阅仅支持 Responses 原生探针".into());}
+        let managed=crate::oauth_external::channel_managed_openai(c,cfg.source_id).map_err(|_|"无法读取 OAuth 来源类型")?;
+        if managed && cfg.kind!="responses" {return Err("OpenAI 订阅仅支持 Responses 原生探针".into());}
         let active:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings b JOIN oauth_accounts a ON a.id=b.account_id WHERE b.channel_id=?1 AND a.status='active')",[cfg.source_id],|r|r.get(0)).map_err(|_|"无法读取 OAuth 账号状态")?;
         if !active {return Err("OAuth 账号未绑定、已撤销或需要重新授权".into());}
     }
@@ -144,12 +145,13 @@ async fn index(_root:ManagementAuth,State(state):State<SharedState>)->Result<Jso
         let tools=crate::search_tools::load(&c,row.id.0)?;let protocol=crate::protocol_config::load(&c,row.id.0)?;
         let native=protocol.native.iter().map(|p|serde_json::to_value(p).unwrap_or(Value::Null)).collect::<Vec<_>>();
         let oauth=identity.kind=="oauth";
+        let managed_openai=oauth && crate::oauth_external::channel_managed_openai(&c,row.id.0).map_err(|_|ApiError::internal("无法读取 OAuth 来源类型"))?;
         let account:Option<(String,String)>=if oauth {c.query_row("SELECT a.label,a.status FROM oauth_channel_bindings b JOIN oauth_accounts a ON a.id=b.account_id WHERE b.channel_id=?1",[row.id.0],|r|Ok((r.get(0)?,r.get(1)?))).ok()}else{None};
         let available=row.enabled&&row.provider_enabled&&cred.enabled&&(!oauth||account.as_ref().is_some_and(|(_,s)|s=="active"));
         if available{eligible.push(row.id.0);}
         let kinds=db::kinds::all(&c)?;
         let models=row.models.iter().filter(|m|m.enabled&&db::model_routes::enabled(&c,&m.model).unwrap_or(false)).map(|m|json!({"name":m.model,"kind":kinds.iter().find(|k|same_model_name(&k.name,&m.model)).map(|k|k.kind)})).collect::<Vec<_>>();
-        targets.push(json!({"source_id":row.id.0,"provider_name":row.provider_name,"credential_kind":identity.kind,"credential_label":identity.label,"account_label":account.as_ref().map(|(l,_)|l),"native_kinds":native,"models":models,"search":tools.search,"fetch":tools.fetch,"available":available,"availability_note":if available{"可用于系统诊断"}else{"渠道、Key 或账号不可用，请修复后重试"},"cost_note":if oauth{"订阅用量记录为系统诊断，USD 成本未知；输出受超时与响应大小保护"}else{"实际用量与来源价格记录为系统诊断，不扣用户额度；缺少价格时成本未知"}}));
+        targets.push(json!({"source_id":row.id.0,"provider_name":row.provider_name,"credential_kind":identity.kind,"managed_openai":managed_openai,"credential_label":identity.label,"account_label":account.as_ref().map(|(l,_)|l),"native_kinds":native,"models":models,"search":tools.search,"fetch":tools.fetch,"available":available,"availability_note":if available{"可用于系统诊断"}else{"渠道、Key 或账号不可用，请修复后重试"},"cost_note":if oauth{"订阅用量记录为系统诊断，USD 成本未知；按来源原生协议与输出边界检查"}else{"实际用量与来源价格记录为系统诊断，不扣用户额度；缺少价格时成本未知"}}));
     }
     Ok(Json(json!({"probes":list(&c)?,"eligible_source_ids":eligible,"targets":targets})))
 }
@@ -185,6 +187,12 @@ fn tool_body(cfg:&Config)->Result<Value,String> {
     let mut value=if cfg.kind=="search" {json!({"query":cfg.input,"count":cfg.search_count,"need_content":cfg.need_content,"localization":cfg.localization.as_deref().unwrap_or("")})}else{json!({"url":cfg.input})};
     if let Some(question)=&cfg.ori_question {value["ori_question"]=json!(question);}
     crate::search_tools::normalize_request(kind,&value)
+}
+fn validate_oauth_probe_protocol(managed_openai:bool,native:crate::protocol::Protocol,requested:Option<crate::protocol::Protocol>)->Result<(),&'static str> {
+    if requested!=Some(native) || (managed_openai && native!=crate::protocol::Protocol::Responses) {
+        return Err("OAuth 探针协议与已绑定来源不匹配，未发送请求");
+    }
+    Ok(())
 }
 fn body(cfg:&Config,model:&str)->bytes::Bytes {
     let value=match cfg.kind.as_str(){
@@ -283,6 +291,9 @@ async fn execute_actor(state:&SharedState,id:&str,background:bool,now:i64,actor:
         if let Some(credential)=&oauth {if !crate::oauth::credentials_current(state,probe.config.source_id,credential).map_err(|_|"OAuth 绑定不可用")?{return Err("OAuth 绑定或账号已变化，未发送请求")}}
         let mut payload=body(&probe.config,&live.upstream_model);
         if let Some(credential)=&oauth {
+            validate_oauth_probe_protocol(credential.managed_openai,credential.provider,live.endpoint.protocol())?;
+        }
+        if let Some(credential)=oauth.as_ref().filter(|credential|credential.managed_openai) {
             let mut value=json!({"model":live.upstream_model,"input":probe.config.input,"stream":true,"store":false});
             crate::protocol::collect::prepare_request(&mut value,credential.reasoning_effort.as_deref(),credential.service_tier.as_deref()).map_err(|_|"OAuth 请求参数不受支持，未发送请求")?;
             payload=bytes::Bytes::from(value.to_string());
@@ -322,4 +333,28 @@ pub async fn tick(state:&SharedState,now:i64)->usize {
 }
 pub fn spawn(state:SharedState)->tokio::task::JoinHandle<()> {
     tokio::spawn(async move {let mut timer=tokio::time::interval(Duration::from_secs(1));timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);loop{timer.tick().await;tick(&state,db::now_ms()).await;}})
+}
+
+#[cfg(test)]
+mod oauth_native_probe_tests {
+    use super::*;
+    use crate::protocol::Protocol;
+    #[test]
+    fn external_oauth_probes_use_the_bound_native_protocol() {
+        assert!(validate_oauth_probe_protocol(false,Protocol::Messages,Some(Protocol::Messages)).is_ok());
+        assert!(validate_oauth_probe_protocol(false,Protocol::Chat,Some(Protocol::Chat)).is_ok());
+        assert!(validate_oauth_probe_protocol(false,Protocol::Messages,Some(Protocol::Responses)).is_err());
+        assert!(validate_oauth_probe_protocol(true,Protocol::Chat,Some(Protocol::Chat)).is_err());
+        assert!(validate_oauth_probe_protocol(true,Protocol::Responses,Some(Protocol::Responses)).is_ok());
+    }
+    #[test]
+    fn native_messages_diagnostic_keeps_its_cap_and_nonstream_body() {
+        let config:Config=serde_json::from_value(json!({"name":"native","source_id":1,"model":"example","kind":"messages","input":"ping","max_tokens":16,"expected_status":200,"contains":null,"expected_dimensions":null,"timeout_ms":1000,"max_latency_ms":null,"interval_secs":60,"enabled":false})).unwrap();
+        let value:Value=serde_json::from_slice(&body(&config,"upstream")).unwrap();
+        assert_eq!(value["max_tokens"],16);
+        assert_eq!(value["stream"],false);
+        assert_eq!(value["messages"][0]["content"],"ping");
+        assert!(value.get("input").is_none());
+        assert!(value.get("instructions").is_none());
+    }
 }

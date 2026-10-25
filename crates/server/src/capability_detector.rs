@@ -55,6 +55,10 @@ pub async fn tick(state: &SharedState) -> db::Result<()> {
         )?;
         let mut job = None;
         for row in channels::list(&conn)? {
+            // Account OAuth catalogs require that account's credential and protocol
+            // discriminator. A generic unauthenticated /models response must never
+            // replace source-bound metadata or infer subscription capabilities.
+            if !crate::protocol_config::background_probe_allowed(&conn,row.id.0)? {continue;}
             if !row.enabled || !row.provider_enabled || row.base_url.trim().is_empty() || !row.models.iter().any(|m|m.enabled) || crate::db::faults::has_fault(&conn,row.id.0,None)? {
                 continue;
             }

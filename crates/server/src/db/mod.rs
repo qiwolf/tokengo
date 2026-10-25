@@ -206,6 +206,7 @@ mod tests {
             "oauth_hosts",
             "oauth_accounts",
             "oauth_pending",
+            "oauth_device_pending",
             "oauth_channel_bindings",
         ];
         let actual: std::collections::BTreeSet<_> = got.iter().map(String::as_str).collect();

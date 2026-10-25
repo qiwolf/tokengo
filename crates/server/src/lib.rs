@@ -2,6 +2,8 @@
 //! 方便集成测试直接构建整套 app。
 
 pub mod oauth;
+pub mod oauth_external;
+pub mod egress;
 pub mod passthrough;
 pub mod reasoning_capabilities;
 pub mod search_tools;
@@ -69,6 +71,7 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::model_routing::router())
         .merge(routes::identity::router())
         .merge(routes::oauth::router())
+        .merge(routes::network::router())
         .merge(search_tools::router())
         .merge(routes::billing::router())
         .merge(litellm_import::router())

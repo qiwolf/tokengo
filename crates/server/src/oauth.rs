@@ -50,7 +50,6 @@ impl Default for Endpoints {
     }
 }
 pub struct OAuthRuntime {
-    client: reqwest::Client,
     endpoints: Mutex<Endpoints>,
     locks: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
     #[cfg(test)]
@@ -64,13 +63,6 @@ impl Default for OAuthRuntime {
 impl OAuthRuntime {
     pub fn new()->anyhow::Result<Self> {
         Ok(Self {
-            client: crate::openai_transport::configure(reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(Duration::from_secs(5))
-                .timeout(Duration::from_secs(20)))
-                .map_err(anyhow::Error::msg)?
-                .build()
-                .map_err(|_|anyhow::anyhow!("OpenAI OAuth HTTP client configuration failed"))?,
             endpoints: Mutex::new(Endpoints::default()),
             locks: Mutex::new(HashMap::new()),
             #[cfg(test)]
@@ -127,10 +119,13 @@ pub struct OAuthCredential {
     pub service_tier: Option<String>,
     pub max_input_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
-    account_header: Option<String>,
+    pub(crate) account_header: Option<String>,
+    pub managed_openai: bool,
+    pub oauth_provider: String,
 }
 /// Account headers come only from an ID token verified before encrypted storage.
 pub fn inference_headers(credential:&OAuthCredential)->Vec<(String,String)> {
+    if !credential.managed_openai { return crate::oauth_external::inference_headers(credential); }
     let mut headers=vec![("originator".into(),"tokengo".into())];
     if let Some(account)=&credential.account_header {headers.push(("chatgpt-account-id".into(),account.clone()));}
     headers
@@ -145,11 +140,13 @@ fn account_header(id_token:&str)->Result<Option<String>> {
     Ok(Some(value.into()))
 }
 pub fn credentials_current(state:&SharedState,channel:i64,credential:&OAuthCredential)->Result<bool> {
+    if !credential.managed_openai {return crate::oauth_external::credentials_current(state,channel,credential);}
     let c=state.conn();let current:Option<(i64,i64,i64,String,i64)>=storage(c.query_row("SELECT b.account_id,c.binding_generation,a.credential_revision,a.status,a.expires_at FROM oauth_channel_bindings b JOIN channels c ON c.id=b.channel_id JOIN oauth_accounts a ON a.id=b.account_id WHERE b.channel_id=?1",[channel],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional())?;
     Ok(current.is_some_and(|(account,generation,revision,status,expiry)|account==credential.account_id&&generation==credential.binding_generation&&revision==credential.credential_revision&&status=="active"&&expiry>db::now_ms())&&storage(clean_source(&c,channel))?)
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Account {
+    pub provider: String,
     pub id: i64,
     pub label: String,
     pub issuer: String,
@@ -164,6 +161,8 @@ pub struct Account {
 }
 #[derive(Serialize, Deserialize)]
 struct Tokens {
+    #[serde(default)]
+    origin_provider_id: Option<i64>,
     access_token: String,
     refresh_token: String,
     id_token: String,
@@ -184,6 +183,8 @@ struct TokenReply {
 }
 #[derive(Serialize, Deserialize)]
 struct Pending {
+    #[serde(default)]
+    origin_provider_id: Option<i64>,
     label: String,
     redirect_uri: String,
     verifier: String,
@@ -220,10 +221,11 @@ fn host_id(c: &rusqlite::Connection) -> Result<String> {
         }),
     )
 }
-fn account(c: &rusqlite::Connection, id: i64) -> Result<Account> {
-    let row=storage(c.query_row("SELECT id,label,issuer,subject,client_id,email,status,scopes_json,expires_at,earliest_refresh_at,credential_revision FROM oauth_accounts WHERE id=?1",[id],|r|Ok((Account{id:r.get(0)?,label:r.get(1)?,issuer:r.get(2)?,subject:r.get(3)?,client_id:r.get(4)?,email:r.get(5)?,status:r.get(6)?,scopes:vec![],expires_at:r.get(8)?,earliest_refresh_at:r.get(9)?,credential_revision:r.get(10)?},r.get::<_,String>(7)?))).optional())?.ok_or(OAuthError("oauth_account_not_found"))?;
+pub(crate) fn account(c: &rusqlite::Connection, id: i64) -> Result<Account> {
+    let row=storage(c.query_row("SELECT id,label,issuer,subject,client_id,email,status,scopes_json,expires_at,earliest_refresh_at,credential_revision FROM oauth_accounts WHERE id=?1",[id],|r|Ok((Account{provider:String::new(),id:r.get(0)?,label:r.get(1)?,issuer:r.get(2)?,subject:r.get(3)?,client_id:r.get(4)?,email:r.get(5)?,status:r.get(6)?,scopes:vec![],expires_at:r.get(8)?,earliest_refresh_at:r.get(9)?,credential_revision:r.get(10)?},r.get::<_,String>(7)?))).optional())?.ok_or(OAuthError("oauth_account_not_found"))?;
     let (mut a, scopes) = row;
     a.scopes = storage(serde_json::from_str(&scopes))?;
+    a.provider = crate::oauth_external::account_provider(c,id)?;
     Ok(a)
 }
 pub fn accounts(state: &SharedState) -> Result<Vec<Account>> {
@@ -264,12 +266,22 @@ pub fn start(
     redirect_uri: String,
     account_id: Option<i64>,
 ) -> Result<Started> {
+    start_with_origin(state,label,redirect_uri,account_id,None)
+}
+pub fn start_with_origin(state:&SharedState,label:String,redirect_uri:String,account_id:Option<i64>,origin_provider_id:Option<i64>)->Result<Started> {
+    if let Some(provider)=origin_provider_id {
+        let c=state.conn();
+        let valid:bool=storage(c.query_row("SELECT EXISTS(SELECT 1 FROM provider_channels WHERE id=?1 AND enabled=1 AND canonical_state='canonical' AND base_url=?2)",params![provider,API_BASE],|r|r.get(0)))?;
+        if !valid{return Err(OAuthError("oauth_provider_source_mismatch"));}
+    }
     db::identity::validate_name(&label).map_err(|_| OAuthError("oauth_invalid_label"))?;
     callback_uri(&redirect_uri)?;
     let c = state.conn();
     let host = host_id(&c)?;
     let selected = account_id.map(|id| account(&c, id)).transpose()?;
+    if selected.as_ref().is_some_and(|a|a.provider!="openai"){return Err(OAuthError("oauth_invalid_source"));}
     let mut pending = Pending {
+        origin_provider_id,
         label: label.trim().into(),
         redirect_uri: redirect_uri.clone(),
         verifier: random(),
@@ -354,10 +366,11 @@ async fn bounded_json(mut response: reqwest::Response, limit: usize) -> Result<s
     }
     serde_json::from_slice(&out).map_err(|_| OAuthError("oauth_invalid_result"))
 }
-async fn exchange(state: &SharedState, form: &[(&str, &str)]) -> Result<TokenReply> {
-    let response = state
-        .oauth
-        .client
+fn http_client(state:&SharedState,account_id:Option<i64>,origin:Option<i64>)->Result<reqwest::Client> {
+    crate::egress::oauth_client(state,"openai",account_id,origin).map_err(|_|OAuthError("oauth_egress_unavailable"))
+}
+async fn exchange(state: &SharedState, form: &[(&str, &str)],account_id:Option<i64>,origin:Option<i64>) -> Result<TokenReply> {
+    let response = http_client(state,account_id,origin)?
         .post(state.oauth.endpoints().token)
         .form(form)
         .send()
@@ -379,6 +392,8 @@ async fn verify(
     id_token: &str,
     client_id: &str,
     nonce: Option<&str>,
+    account_id:Option<i64>,
+    origin:Option<i64>,
 ) -> Result<Claims> {
     if id_token.len() > 32768 {
         return invalid();
@@ -391,9 +406,7 @@ async fn verify(
         .kid
         .filter(|k| !k.is_empty() && k.len() <= 256)
         .ok_or(OAuthError("oauth_invalid_identity"))?;
-    let r = state
-        .oauth
-        .client
+    let r = http_client(state,account_id,origin)?
         .get(state.oauth.endpoints().jwks)
         .send()
         .await
@@ -478,6 +491,7 @@ fn checked_reply(reply: TokenReply, old: Option<&Tokens>) -> Result<(Tokens, i64
         .unwrap_or(now);
     Ok((
         Tokens {
+            origin_provider_id:old.and_then(|t|t.origin_provider_id),
             access_token: reply.access_token,
             refresh_token: reply.refresh_token,
             id_token,
@@ -496,7 +510,19 @@ pub struct Completion {
     pub client_id: Option<String>,
     pub error: Option<String>,
 }
+pub fn cancel(state:&SharedState,attempt_id:&str)->Result<()> {
+    if attempt_id.is_empty()||attempt_id.len()>64{return Err(OAuthError("oauth_invalid_state"));}
+    storage(state.conn().execute("DELETE FROM oauth_pending WHERE id=?1",[attempt_id]))?;Ok(())
+}
+struct PendingCleanup { state:SharedState, id:String }
+impl Drop for PendingCleanup {
+    fn drop(&mut self) {let _=self.state.conn().execute("DELETE FROM oauth_pending WHERE id=?1 AND consumed=1",[&self.id]);}
+}
 pub async fn complete(state: &SharedState, result: Completion) -> Result<Account> {
+    let state=state.clone();
+    tokio::spawn(async move{complete_inner(&state,result).await}).await.map_err(|_|OAuthError("oauth_unavailable"))?
+}
+async fn complete_inner(state: &SharedState, result: Completion) -> Result<Account> {
     if result.attempt_id.len() > 64 || result.state.len() > 128 {
         return invalid();
     }
@@ -505,6 +531,7 @@ pub async fn complete(state: &SharedState, result: Completion) -> Result<Account
         storage(db::in_tx(&c,|c|{let row:Option<(Vec<u8>,Vec<u8>)>=c.query_row("SELECT nonce,cipher FROM oauth_pending WHERE id=?1 AND state_digest=?2 AND expires_at>?3 AND consumed=0",params![result.attempt_id,digest(&result.state),db::now_ms()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;if row.is_some(){c.execute("UPDATE oauth_pending SET consumed=1 WHERE id=?1",[&result.attempt_id])?;}Ok(row)}))?.ok_or(OAuthError("oauth_invalid_state"))?
     };
     let (n, b) = pending;
+    let _cleanup=PendingCleanup{state:state.clone(),id:result.attempt_id.clone()};
     let pending: Pending = storage(serde_json::from_str(&storage(state.secrets.open(&n, &b))?))?;
     if result.error.is_some() {
         return Err(OAuthError("oauth_authorization_denied"));
@@ -544,21 +571,26 @@ pub async fn complete(state: &SharedState, result: Completion) -> Result<Account
             ("redirect_uri", &pending.redirect_uri),
             ("resource", API_BASE),
         ],
+        pending.account_id,pending.origin_provider_id,
     )
     .await?;
     let id = reply
         .id_token
         .as_deref()
         .ok_or(OAuthError("oauth_invalid_identity"))?;
-    let claims = verify(state, id, &client, Some(&pending.nonce)).await?;
+    let claims = verify(state, id, &client, Some(&pending.nonce),pending.account_id,pending.origin_provider_id).await?;
     if pending.subject.as_ref().is_some_and(|v| v != &claims.sub) {
         return Err(OAuthError("oauth_account_mismatch"));
     }
-    let (bundle, expiry, earliest) = checked_reply(reply, None)?;
+    let (mut bundle, expiry, earliest) = checked_reply(reply, None)?;
+    bundle.origin_provider_id=pending.origin_provider_id;
     let (n, b) = seal(state, &bundle)?;
     let scopes = storage(serde_json::to_string(&bundle.scopes))?;
     let c = state.conn();
-    let id = storage(db::in_tx(&c, |c| {
+    let id = db::in_tx(&c, |c| {
+        // Cancellation or expiry during token/JWKS requests invalidates completion.
+        let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_pending WHERE id=?1 AND consumed=1 AND expires_at>?2)",params![result.attempt_id,db::now_ms()],|r|r.get(0))?;
+        if !valid{return Err(db::DbError::Other("authorization canceled or expired".into()));}
         let id = if let Some(id) = pending.account_id {
             let changed=c.execute("UPDATE oauth_accounts SET email=?2,status='active',scopes_json=?3,expires_at=?4,earliest_refresh_at=?5,nonce=?6,cipher=?7,credential_revision=credential_revision+1,refresh_owner=NULL,refresh_lease_until=0 WHERE id=?1 AND subject=?8 AND client_id=?9 AND credential_revision=?10",params![id,claims.email,scopes,expiry,earliest,n,b,claims.sub,client,pending.revision])?;
             if changed != 1 {
@@ -577,8 +609,9 @@ pub async fn complete(state: &SharedState, result: Completion) -> Result<Account
             id,
             serde_json::json!({}),
         )?;
+        c.execute("DELETE FROM oauth_pending WHERE id=?1",[&result.attempt_id])?;
         Ok(id)
-    }))?;
+    }).map_err(|e|match e {db::DbError::Other(message) if message=="authorization canceled or expired"=>OAuthError("oauth_authorization_canceled"),_=>OAuthError("oauth_storage_unavailable")})?;
     account(&c, id)
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -605,6 +638,7 @@ fn clean_source(c: &rusqlite::Connection, channel_id: i64) -> db::Result<bool> {
     )
 }
 pub fn bind(state: &SharedState, channel_id: i64, binding: &Binding) -> Result<()> {
+    if crate::oauth_external::account_provider(&state.conn(),binding.account_id)? != "openai" { return crate::oauth_external::bind(state,channel_id,binding); }
     if [binding.max_input_tokens, binding.max_output_tokens]
         .into_iter()
         .flatten()
@@ -693,6 +727,7 @@ pub async fn credentials(state: &SharedState, channel_id: i64) -> Result<Option<
     let Some((initial, _)) = binding(state, channel_id)? else {
         return Ok(None);
     };
+    if crate::oauth_external::account_provider(&state.conn(),initial.account_id)? != "openai" { return crate::oauth_external::credentials(state,channel_id).await; }
     // OAuth refresh is a credential transaction, not a model request. Dropping the
     // waiting request must not cancel a rotating token after the provider consumed it.
     ensure_session(state, initial.account_id).await?;
@@ -727,6 +762,8 @@ pub async fn credentials(state: &SharedState, channel_id: i64) -> Result<Option<
         max_input_tokens: current.max_input_tokens,
         max_output_tokens: current.max_output_tokens,
         account_header: account_header(&bundle.id_token)?,
+        managed_openai: true,
+        oauth_provider: "openai".into(),
     }))
 }
 async fn ensure_session(state: &SharedState, account_id: i64) -> Result<()> {
@@ -741,6 +778,7 @@ async fn ensure_session(state: &SharedState, account_id: i64) -> Result<()> {
 }
 /// Account-specific official model catalog. No token or arbitrary endpoint is accepted from callers.
 pub async fn models(state: &SharedState, account_id: i64) -> Result<serde_json::Value> {
+    if crate::oauth_external::account_provider(&state.conn(),account_id)? != "openai" { return crate::oauth_external::models(state,account_id).await; }
     ensure_session(state, account_id).await?;
     let source_snapshots = storage((|| -> db::Result<Vec<(i64,String)>> {
         let c=state.conn();
@@ -748,10 +786,9 @@ pub async fn models(state: &SharedState, account_id: i64) -> Result<serde_json::
         let ids=query.query_map([account_id],|r|r.get::<_,i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         ids.into_iter().map(|id|Ok((id,crate::reasoning_capabilities::fingerprint(&c,id)?))).collect()
     })())?;
-    let bearer = tokens(state, account_id)?.access_token;
-    let response = state
-        .oauth
-        .client
+    let bundle=tokens(state, account_id)?;
+    let bearer = bundle.access_token;
+    let response = http_client(state,Some(account_id),bundle.origin_provider_id)?
         .get(format!(
             "{}/models",
             state.oauth.api_base().trim_end_matches('/')
@@ -919,6 +956,7 @@ async fn refresh_claimed(state: &SharedState, a: &Account, owner: &str) -> Resul
             ("refresh_token", &old.refresh_token),
             ("resource", API_BASE),
         ],
+        Some(a.id),old.origin_provider_id,
     )
     .await
     {
@@ -931,7 +969,7 @@ async fn refresh_claimed(state: &SharedState, a: &Account, owner: &str) -> Resul
         }
     };
     if let Some(id) = reply.id_token.as_deref() {
-        let claims = verify(state, id, &a.client_id, None).await?;
+        let claims = verify(state, id, &a.client_id, None,Some(a.id),old.origin_provider_id).await?;
         if claims.sub != a.subject {
             return Err(OAuthError("oauth_account_mismatch"));
         }
@@ -951,7 +989,8 @@ pub struct Revoked {
     pub remote_revocation_confirmed: bool,
 }
 pub async fn revoke(state: &SharedState, id: i64) -> Result<Revoked> {
-    let (client, token) = {
+    if crate::oauth_external::account_provider(&state.conn(),id)? != "openai" { return crate::oauth_external::revoke(state,id).await; }
+    let (client, token, origin) = {
         let c = state.conn();
         let a = account(&c, id)?;
         let pair: Option<(Vec<u8>, Vec<u8>)> = storage(
@@ -964,7 +1003,7 @@ pub async fn revoke(state: &SharedState, id: i64) -> Result<Revoked> {
         )?;
         let token = if let Some((n, b)) = pair {
             let t: Tokens = storage(serde_json::from_str(&storage(state.secrets.open(&n, &b))?))?;
-            Some(t.refresh_token)
+            Some((t.refresh_token,t.origin_provider_id))
         } else {
             None
         };
@@ -980,10 +1019,11 @@ pub async fn revoke(state: &SharedState, id: i64) -> Result<Revoked> {
             )?;
             Ok(())
         }))?;
-        (a.client_id, token)
+        let (token,origin)=token.map(|(t,o)|(Some(t),o)).unwrap_or((None,None));
+        (a.client_id, token, origin)
     };
     let confirmed = if let Some(token) = token {
-        remote_revoke(state, &client, &token).await.unwrap_or(false)
+        remote_revoke(state, &client, &token,Some(id),origin).await.unwrap_or(false)
     } else {
         false
     };
@@ -993,10 +1033,8 @@ pub async fn revoke(state: &SharedState, id: i64) -> Result<Revoked> {
         remote_revocation_confirmed: confirmed,
     })
 }
-async fn remote_revoke(state: &SharedState, client: &str, token: &str) -> Result<bool> {
-    let response = state
-        .oauth
-        .client
+async fn remote_revoke(state: &SharedState, client: &str, token: &str,account_id:Option<i64>,origin:Option<i64>) -> Result<bool> {
+    let response = http_client(state,account_id,origin)?
         .get(state.oauth.endpoints().discovery)
         .send()
         .await
@@ -1033,9 +1071,7 @@ async fn remote_revoke(state: &SharedState, client: &str, token: &str) -> Result
         return Ok(false);
     }
     for attempt in 0..2 {
-        match state
-            .oauth
-            .client
+        match http_client(state,account_id,origin)?
             .post(endpoint)
             .form(&[
                 ("token", token),
@@ -1141,6 +1177,9 @@ mod tests {
         assert_eq!(form["client_id"], "oaiapp_test");
         assert_eq!(form["resource"], API_BASE);
         let refresh = form["grant_type"] == "refresh_token";
+        if !refresh && mock.hold.load(Ordering::SeqCst) {
+            mock.entered.notify_one();mock.release.notified().await;
+        }
         if refresh {
             assert!(!form.contains_key("scope"));
             mock.refreshes.fetch_add(1, Ordering::SeqCst);
@@ -1411,6 +1450,21 @@ mod tests {
         assert!(clear.contains("SYNTHETIC-ACCESS-0"));
     }
     #[tokio::test]
+    async fn canceled_pkce_attempt_cannot_create_an_account_after_token_exchange() {
+        let f=Fixture::new().await;
+        let (started,result)=f.begin(None);
+        f.mock.hold.store(true,Ordering::SeqCst);
+        let state=f.state.clone();
+        let work=tokio::spawn(async move{complete(&state,result).await});
+        f.mock.entered.notified().await;
+        cancel(&f.state,&started.attempt_id).unwrap();
+        f.mock.release.notify_one();
+        assert_eq!(work.await.unwrap().unwrap_err().0,"oauth_authorization_canceled");
+        assert!(accounts(&f.state).unwrap().is_empty());
+        let n:i64=f.state.conn().query_row("SELECT count(*) FROM oauth_pending",[],|r|r.get(0)).unwrap();
+        assert_eq!(n,0);
+    }
+    #[tokio::test]
     async fn authorization_audit_failure_rolls_back_credentials_atomically() {
         let f = Fixture::new().await;
         f.state.conn().execute_batch("CREATE TRIGGER deny_oauth_audit BEFORE INSERT ON audit_events WHEN NEW.action='oauth.authorize' BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END;").unwrap();
@@ -1426,7 +1480,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 0, "consumed authorization secrets are erased after failure");
     }
     #[tokio::test]
     async fn rejects_jwt_signature_issuer_audience_expiry_nonce_subject_and_wrong_account() {

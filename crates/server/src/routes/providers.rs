@@ -229,8 +229,12 @@ async fn update(
         }
         let old_url:Option<String>=c.query_row("SELECT base_url FROM provider_channels WHERE id=?1",[id],|r|r.get(0))?;
         if let Some(url)=&url {
-            let oauth:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings o JOIN provider_connections p ON p.channel_id=o.channel_id WHERE p.provider_id=?1)",[id],|r|r.get(0))?;
-            if oauth && url!=crate::oauth::API_BASE{return Err(db::DbError::Other("OAuth渠道必须保留官方API入口".into()));}
+            let mut query=c.prepare("SELECT DISTINCT o.account_id FROM oauth_channel_bindings o JOIN provider_connections p ON p.channel_id=o.channel_id WHERE p.provider_id=?1")?;
+            let accounts=query.query_map([id],|r|r.get::<_,i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            for account in accounts {
+                let (expected,_,_)=crate::oauth_external::account_transport(c,account).map_err(|_|db::DbError::Other("OAuth来源协议暂不可用".into()))?;
+                if url.trim_end_matches('/')!=expected.trim_end_matches('/') {return Err(db::DbError::Other("OAuth渠道必须保留该授权来源的官方API入口".into()));}
+            }
             if old_url.as_ref()!=Some(url){c.execute("UPDATE channels SET base_url=?2 WHERE id IN (SELECT channel_id FROM provider_connections WHERE provider_id=?1)",rusqlite::params![id,url])?;}
             c.execute("UPDATE provider_channels SET base_url=?2,canonical_state='canonical' WHERE id=?1",rusqlite::params![id,url])?;
         }
@@ -318,6 +322,10 @@ async fn group_model(
     }
     db::in_tx(&c, |c| {
         providers::model_switch(c, &b.connection_ids, &name, b.enabled)?;
+        if b.enabled {for source in &b.connection_ids {
+            let row=channels::get(c,ChannelId(*source))?.ok_or_else(||db::DbError::Other("来源不存在".into()))?;
+            super::admin::validate_oauth_model_set(c,*source,&row.models)?;
+        }}
         reset(c, std::slice::from_ref(&name))
     })?;
     drop(c);
@@ -341,6 +349,7 @@ async fn connection_model(
     }
     db::in_tx(&c, |c| {
         providers::model_switch(c, &[id], &name, b.enabled)?;
+        if b.enabled {let row=channels::get(c,ChannelId(id))?.ok_or_else(||db::DbError::Other("来源不存在".into()))?;super::admin::validate_oauth_model_set(c,id,&row.models)?;}
         reset(c, std::slice::from_ref(&name))
     })?;
     drop(c);
@@ -535,7 +544,7 @@ async fn credentials_create(
         return Err(ApiError::bad_request("最多配置256个模型"));
     }
     let account = if kind == "oauth" {
-        if url != crate::oauth::API_BASE || models.iter().any(|m| !m.drop_fields.is_empty()) {
+        if models.iter().any(|m| !m.drop_fields.is_empty()) {
             return Err(ApiError::bad_request(
                 "OAuth凭据必须使用官方入口且不能丢弃字段",
             ));
@@ -543,6 +552,11 @@ async fn credentials_create(
         let account = body
             .oauth_account_id
             .ok_or_else(|| ApiError::bad_request("请选择已授权OAuth账号"))?;
+        let (expected,_,_)=crate::oauth_external::account_transport(&c,account)
+            .map_err(|_|ApiError::bad_request("该OAuth账号尚未具备可绑定的供应方推理接口，请确认授权线路和客户端注册配置"))?;
+        if url.trim_end_matches('/')!=expected.trim_end_matches('/') {
+            return Err(ApiError::bad_request("此供应方API URL与所选OAuth账号不匹配，请为该授权线路单独建立接入"));
+        }
         let active:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_accounts WHERE id=?1 AND status='active' AND cipher IS NOT NULL)",[account],|r|r.get(0)).map_err(db::DbError::from)?;
         if !active {
             return Err(ApiError::bad_request("OAuth账号不可用"));
@@ -585,6 +599,10 @@ async fn credentials_create(
         .collect::<std::collections::HashSet<_>>();
     let (source,credential)=db::in_tx(&c,|c|{
   c.execute("UPDATE provider_channels SET adapter_kind=?2 WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM provider_credentials WHERE provider_id=?1)",rusqlite::params![id,requested_adapter])?;
+  if let Some(account)=account {
+   let names=models.iter().filter(|m|m.enabled).map(|m|m.upstream.as_deref().unwrap_or(&m.model).to_owned()).collect::<Vec<_>>();
+   crate::oauth_external::validate_bound_models(c,account,&names).map_err(|_|db::DbError::Other("此OAuth账号目录尚未确认所选模型的供应方协议，请更新目录或选择已支持型号".into()))?;
+  }
   let source=channels::create(c,&channels::NewChannel{name:label.clone(),base_url:url.clone(),enabled:true,unwrap_envelope:false,max_concurrent:0})?;
   if let Some(key)=&body.key{channels::set_secret(c,&s.secrets,source,key)?;}
   channels::set_models(c,source,&models)?;providers::set_membership(c,source.0,Some(id))?;
@@ -592,7 +610,8 @@ async fn credentials_create(
   let first:Option<i64>=c.query_row("SELECT channel_id FROM provider_connections WHERE provider_id=?1 AND channel_id<>?2 AND (?3=0 OR channel_id IN (SELECT id FROM channels WHERE base_url=?4)) ORDER BY channel_id LIMIT 1",rusqlite::params![id,source.0,is_local,url],|r|r.get(0)).optional()?;
   if let Some(template)=first{crate::protocol_config::save(c,source.0,&crate::protocol_config::load(c,template)?)?;}
   if let Some(account)=account{
-   crate::protocol_config::save(c,source.0,&crate::protocol_config::Capabilities{native:vec![crate::protocol::Protocol::Responses],allow_conversion:true,..Default::default()})?;
+   let (_,native,_)=crate::oauth_external::account_transport(c,account).map_err(|_|db::DbError::Other("OAuth来源协议不可用".into()))?;
+   crate::protocol_config::save(c,source.0,&crate::protocol_config::Capabilities{native:vec![native],allow_conversion:true,..Default::default()})?;
    c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id,max_input_tokens,max_output_tokens) VALUES(?1,?2,?3,?4)",rusqlite::params![source.0,account,bounds.0,bounds.1])?;
   }
   if let Some(tools)=&body.tools {
@@ -747,6 +766,11 @@ async fn credentials_update(
                     if let Some(fields) = &m.drop_fields {
                         target.drop_fields = channels::ModelMapping::drop_fields_from_text(fields);
                     }
+                    if let Some(account)=original.oauth_account_id {
+                        if mappings.iter().any(|m|!m.drop_fields.is_empty()) {return Err(db::DbError::Other("OAuth模型不得配置丢弃字段".into()));}
+                        let names=mappings.iter().filter(|m|m.enabled).map(|m|m.upstream.as_deref().unwrap_or(&m.model).to_owned()).collect::<Vec<_>>();
+                        crate::oauth_external::validate_bound_models(c,account,&names).map_err(|_|db::DbError::Other("OAuth模型目录与供应方协议尚未匹配，请重新读取目录".into()))?;
+                    }
                     channels::set_models(c, source.id, &mappings)?;
                 }
             }
@@ -858,7 +882,9 @@ async fn credential_catalog(
                     )
                     .optional()
                     .map_err(db::DbError::from)?;
-                if binding != Some(account) || source.base_url != crate::oauth::API_BASE {
+                let (expected,_,_)=crate::oauth_external::account_transport(&c,account)
+                    .map_err(|_|ApiError::bad_request("该OAuth账号的供应方模型目录尚不可用"))?;
+                if binding != Some(account) || source.base_url.trim_end_matches('/') != expected.trim_end_matches('/') {
                     return Err(ApiError::bad_request(
                         "OAuth凭据绑定或官方地址已改变，请重新确认账号配置",
                     ));

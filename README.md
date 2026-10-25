@@ -81,3 +81,5 @@ TokenGo 基于 [shang1626/tokengo](https://github.com/shang1626/tokengo)，采�
 Based on [shang1626/tokengo](https://github.com/shang1626/tokengo), distributed under the [MIT License](LICENSE); see [NOTICE](NOTICE) for attribution.
 
 参数匹配与认证线路的本地实现及未验收边界见 [模型家族与参数合同](docs/references/provider-parameter-contracts.md)。
+
+已批准的家族 Logo 卡片、三步接入和真实账号授权流程已进入本地代码；[OAuth 来源与配置](docs/oauth-providers.md)、[渠道与家族代理](docs/outbound-proxy.md)记录当前实现与未验收范围。

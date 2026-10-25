@@ -1355,10 +1355,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 "SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)",
                 [candidate.channel.id.0], |r| r.get(0),
             ).map_err(crate::db::DbError::from)?;
+            let managed_openai=crate::oauth_external::channel_managed_openai(&c,candidate.channel.id.0)
+                .map_err(|_|ApiError::internal("OAuth source identity unavailable"))?;
             let candidate_output = if let Some(protocol) = req.endpoint.protocol() {
                 let native = match candidate.protocols.select(protocol) {Some(native)=>native,None=>continue};
                 let contract = parameter_context(&candidate.channel,
-                    candidate.channel.upstream_model(&candidate.name), native, &candidate.protocols, has_oauth);
+                    candidate.channel.upstream_model(&candidate.name), native, &candidate.protocols, managed_openai);
                 // Budget projection contains controls only, never a clone of a large
                 // user message/image body for each route candidate.
                 let mut projection=Value::Object(serde_json::Map::new());
@@ -1384,7 +1386,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     }
                 }
                 let ceiling = if has_oauth { oauth_bound } else { candidate.protocols.context_bounds() };
-                let bound = if has_oauth && default_output {
+                let bound = if managed_openai && default_output {
                     ceiling.map(|v|v.1).ok_or_else(|| "OAuth source requires verified full context/output bounds".to_owned())
                 } else if protocol!=native && !default_output {
                     // Converted client caps express a total; the outbound adapter
@@ -1397,7 +1399,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     Ok(value) => {
                         // Only a total-output default can be shortened to a verified
                         // source ceiling; answer-only defaults include reasoning.
-                        if default_output && !has_oauth
+                        if default_output && !managed_openai
                             && matches!(crate::parameter_contracts_china::output_semantics(&contract,&projection),crate::parameter_contracts_china::OutputSemantics::Total) {
                             value.min(ceiling.map(|v|v.1).unwrap_or(value))
                         } else { value }
@@ -2024,13 +2026,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 {
                     Ok(Ok(value)) => value,
                     _ => {
-                        last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"oauth_unavailable","ChatGPT authorization is unavailable; reauthorize this account in administration"));
+                        last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"oauth_unavailable","Provider authorization is unavailable; reauthorize this account in administration"));
                         continue 'channels;
                     }
                 };
+                let managed_openai=oauth.as_ref().is_some_and(|credential|credential.managed_openai);
                 let mut source_parameter_changed=false;
                 if let Some(native)=upstream_protocol {
-                    let contract=parameter_context(channel,&sent_model,native,protocols,oauth.is_some());
+                    let contract=parameter_context(channel,&sent_model,native,protocols,managed_openai);
                     let explicit_effort=match native {
                         crate::protocol::Protocol::Chat=>body.get("reasoning_effort"),
                         crate::protocol::Protocol::Responses=>body.pointer("/reasoning/effort"),
@@ -2047,7 +2050,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
                     }
                 }
-                let native_override=upstream_protocol.is_some_and(|native|!oauth.is_some()
+                let native_override=upstream_protocol.is_some_and(|native|!managed_openai
                     && crate::parameter_budgets::native_thinking_override(&parameter_context(channel,&sent_model,native,protocols,false),&body));
                 let mapping_reasoning_defaults = if let Some(native) = upstream_protocol.filter(|_|!native_override) {
                     match crate::reasoning_capabilities::apply_defaults_and_validate(
@@ -2068,7 +2071,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     false
                 };
                 if let Some(native)=upstream_protocol {
-                    let contract=parameter_context(channel,&sent_model,native,protocols,oauth.is_some());
+                    let contract=parameter_context(channel,&sent_model,native,protocols,managed_openai);
                     match if contract.is_oauth { Ok(false) } else { crate::parameter_contracts_china::adapt(&contract,&mut body) } {
                         Ok(changed)=>source_parameter_changed|=changed,
                         Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
@@ -2085,7 +2088,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     );
                 }
                 if let Some(credential) = &oauth {
-                    if upstream_protocol != Some(crate::protocol::Protocol::Responses)
+                    if upstream_protocol != Some(credential.provider)
                         || credential.binding_generation != *binding_generation
                     {
                         let error = ApiError::bad_request(
@@ -2094,6 +2097,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         guard.reject(&error);
                         return Err(error);
                     }
+                    if let Err(error)=crate::oauth_external::validate_bound_models(&state.conn(),credential.account_id,std::slice::from_ref(&sent_model)) {
+                        last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"oauth_model_protocol",error.0));
+                        continue 'channels;
+                    }
+                    if credential.managed_openai {
                     crate::protocol::collect::prepare_request(
                         &mut body,
                         if mapping_reasoning_defaults {
@@ -2108,6 +2116,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         guard.reject(&error);
                         error
                     })?;
+                    }
                 }
                 let live_generation: i64 = state
                     .conn()
@@ -2293,7 +2302,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         || (image_input && (tpm_limited || context.is_some() || price.is_some()));
                     let bounds = if req.endpoint.tool_kind().is_some() {
                         Ok((0, 0))
-                    } else if oauth.is_some() {
+                    } else if managed_openai {
                         subscription_bound(&body, price.as_ref(), context)
                     } else {
                         let parameter_contract=upstream_protocol.map(|native|parameter_context(channel,&sent_model,native,protocols,false));
@@ -2478,14 +2487,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         outbound_secret,
                         upstream_path,
                         body_bytes.clone(),
-                        req.stream || oauth.is_some(),
+                        req.stream || managed_openai,
                         attempt_timeout.min(Duration::from_millis(
                             (cfg.request_budget_ms as i64 - (now_ms() - started_ms)).max(1) as u64,
                         )),
                         &uuid,
                         now_ms(),
                         session.as_deref(),
-                        oauth.is_some(),
+                        managed_openai,
                     )
                     .await;
 
@@ -2724,7 +2733,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             let (response, units, error) = buffer_tool_response(resp, kind).await;
                             guard.request_units = units;
                             (response, 0, 0, error, Usage::default())
-                        } else if oauth.is_some() {
+                        } else if managed_openai {
                             let left = attempt_ms
                                 .saturating_sub((now_ms() - t0).max(0) as u64)
                                 .min(
