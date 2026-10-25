@@ -1,0 +1,165 @@
+{
+  "executed_at_utc": "20261025T032752Z",
+  "runtime_sha256": "8d29a13654b9390eb5d56517d89fb65b6e3c19a70194da2c7107e799a439facc",
+  "changes": [
+    {
+      "table": "channels",
+      "id": 23,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 24,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 25,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 26,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 27,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 28,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 29,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 30,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 31,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 32,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 33,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 34,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 35,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "channels",
+      "id": 36,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "provider_credentials",
+      "id": 2,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "provider_credentials",
+      "id": 5,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "provider_credentials",
+      "id": 25,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    },
+    {
+      "table": "provider_credentials",
+      "id": 26,
+      "field": "max_concurrent",
+      "before": 1,
+      "after": 0
+    }
+  ],
+  "verification": {
+    "remaining_llm_sources_at_one": 0,
+    "remaining_credentials_at_one": 0,
+    "non_capacity_fields_unchanged": true,
+    "health": {
+      "http_status": 200,
+      "body": {
+        "checks": {
+          "database": "ok",
+          "gateway_key_set": true,
+          "panel_password_set": true,
+          "routing_models_tracked": 43
+        },
+        "status": "ok"
+      }
+    },
+    "service_restarted": false
+  },
+  "backup_directory": "/var/backups/tokengo/concurrency-unlimit-20261025T032752Z",
+  "excluded_passthrough_channels": [
+    {
+      "id": 50,
+      "max_concurrent": 4
+    },
+    {
+      "id": 51,
+      "max_concurrent": 4
+    },
+    {
+      "id": 52,
+      "max_concurrent": 1
+    }
+  ]
+}
