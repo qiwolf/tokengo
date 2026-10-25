@@ -14,6 +14,9 @@ Current stable release: **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/
 
 当前正式版：**[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)** · [版本说明](docs/releases/v0.34.0-qiwolf.17.md) · [发布记录](docs/acceptance/2026-10-25-qiwolf17-release/README.md)。
 
+<!-- qiwolf18-publication-status -->
+准备发行 / In preparation：**v0.34.0-qiwolf.18** · [版本说明 / Release notes](docs/releases/v0.34.0-qiwolf.18.md) · [发行进度 / Publication status](docs/acceptance/2026-10-25-qiwolf18-release/README.md)。上方正式版链接在公开资产验收后更新。
+
 ## Meet TokenGo in 60 seconds · 60 秒认识 TokenGo
 
 https://github.com/user-attachments/assets/82866974-b13c-4f5c-8606-c03348bd94d1

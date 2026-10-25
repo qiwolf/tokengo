@@ -14,6 +14,9 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 Current stable release: **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)** · [Release notes](docs/releases/v0.34.0-qiwolf.17.md) · [Publication record](docs/acceptance/2026-10-25-qiwolf17-release/README.md).
 
+<!-- qiwolf18-publication-status -->
+准备发行 / In preparation：**v0.34.0-qiwolf.18** · [版本说明 / Release notes](docs/releases/v0.34.0-qiwolf.18.md) · [发行进度 / Publication status](docs/acceptance/2026-10-25-qiwolf18-release/README.md)。上方正式版链接在公开资产验收后更新。
+
 ## 60 秒认识 TokenGo · Meet TokenGo in 60 seconds
 
 https://github.com/user-attachments/assets/82866974-b13c-4f5c-8606-c03348bd94d1
@@ -80,6 +83,6 @@ TokenGo 基于 [shang1626/tokengo](https://github.com/shang1626/tokengo)，采�
 
 Based on [shang1626/tokengo](https://github.com/shang1626/tokengo), distributed under the [MIT License](LICENSE); see [NOTICE](NOTICE) for attribution.
 
-参数匹配与认证线路的本地实现及未验收边界见 [模型家族与参数合同](docs/references/provider-parameter-contracts.md)。
+参数匹配、认证线路与逐来源验收边界见 [模型家族与参数合同](docs/references/provider-parameter-contracts.md)。
 
-已批准的家族 Logo 卡片、三步接入和真实账号授权流程已进入本地代码；[OAuth 来源与配置](docs/oauth-providers.md)、[渠道与家族代理](docs/outbound-proxy.md)记录当前实现与未验收范围。
+“新建渠道”直接进入家族 Logo、认证、模型与参数流程；[OAuth 来源与配置](docs/oauth-providers.md)、[渠道与家族代理](docs/outbound-proxy.md)记录公开客户端默认配置、已验证步骤和真实账号验收边界。

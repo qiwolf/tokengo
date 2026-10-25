@@ -1,0 +1,43 @@
+{
+  "status": "preparing",
+  "published": false,
+  "tag": "v0.34.0-qiwolf.18",
+  "repository": "qiwolf/tokengo",
+  "source_commit": null,
+  "implementation_baseline": "e281c510d54322879b3c7cda28f83ad83e92d11f",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18",
+  "cargo_version": "0.34.0",
+  "schema": 41,
+  "platform": "linux/amd64",
+  "main_ci": {
+    "status": "pending"
+  },
+  "release_workflow": {
+    "status": "pending"
+  },
+  "implementation_validation": {
+    "host": "build-test",
+    "server_lib_passed": 469,
+    "web_passed": 145,
+    "targeted_integration_passed": 73,
+    "total_targeted_passed": 687,
+    "real_device_flows_start_poll_cancel": 4,
+    "real_user_login": false,
+    "real_user_token_refresh": false,
+    "real_upstream_inference": false
+  },
+  "public_artifact_acceptance": {
+    "status": "pending"
+  },
+  "database_portability_audit": {
+    "status": "passed",
+    "schema": 41,
+    "sql_objects_compared": 157,
+    "fresh_vs_live_differences": 0,
+    "schema40_to41_fixture_passed": true,
+    "recorded_files_scanned": 1419,
+    "sql_files_reviewed": 50,
+    "new_or_changed_records_classified": 8,
+    "limits": "No raw production database or credentials are distributed; review covers recorded artifacts, not all unrecorded historical operations."
+  }
+}
