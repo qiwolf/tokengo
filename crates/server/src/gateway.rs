@@ -2306,20 +2306,26 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         subscription_bound(&body, price.as_ref(), context)
                     } else {
                         let parameter_contract=upstream_protocol.map(|native|parameter_context(channel,&sent_model,native,protocols,false));
-                        billing_bound_with_contract(
-                            &mut body,
-                            match upstream_protocol {
-                                Some(crate::protocol::Protocol::Responses) => {
-                                    EndpointKind::Responses
+                        let outgoing_endpoint=match upstream_protocol {
+                            Some(crate::protocol::Protocol::Responses)=>EndpointKind::Responses,
+                            Some(crate::protocol::Protocol::Messages)=>EndpointKind::Messages,
+                            Some(crate::protocol::Protocol::Chat)=>EndpointKind::Chat,
+                            None=>req.endpoint,
+                        };
+                        let mut source_bounds=billing_bound_with_contract(&mut body,outgoing_endpoint,price.as_ref(),context,parameter_contract.as_ref());
+                        // The bound calculation materializes an omitted output default.
+                        // Apply this source's observed ceiling to that default before
+                        // serializing or reserving funds; explicit client caps stay intact.
+                        if source_bounds.is_ok() && !explicit_output_cap && output_contract_is_total {
+                            if let Some(cap)=cached_cap {
+                                if clamp_output(&mut body,cap) {
+                                    let note=format!("按此渠道已知输出上限收窄默认值至 {cap} tokens");
+                                    adaptation_note=Some(adaptation_note.take().map(|previous|format!("{previous}; {note}")).unwrap_or(note));
+                                    source_bounds=billing_bound_with_contract(&mut body,outgoing_endpoint,price.as_ref(),context,parameter_contract.as_ref());
                                 }
-                                Some(crate::protocol::Protocol::Messages) => EndpointKind::Messages,
-                                Some(crate::protocol::Protocol::Chat) => EndpointKind::Chat,
-                                None => req.endpoint,
-                            },
-                            price.as_ref(),
-                            context,
-                            parameter_contract.as_ref(),
-                        )
+                            }
+                        }
+                        source_bounds
                     };
                     let (input, output) = match bounds {
                         Ok(bounds)=>bounds,

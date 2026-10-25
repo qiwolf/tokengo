@@ -596,7 +596,7 @@ impl ChannelSpec {
         self
     }
 
-    /// 给某个模型名配「要丢的字段」。链式用：`.with_drop_fields("beam-free", &["reasoning_effort"])`
+    /// 给某个模型名配「要丢的字段」。链式用：`.with_drop_fields("beam-free", &["legacy_vendor_extension"])`
     fn with_drop_fields(mut self, model: &str, fields: &[&str]) -> Self {
         self.drop_fields
             .push((model.into(), fields.iter().map(|f| (*f).to_string()).collect()));
@@ -1136,38 +1136,77 @@ async fn a_malformed_body_is_a_400() {
 // ───────────────────────── 流式 ─────────────────────────
 
 #[tokio::test]
-async fn output_caps_are_learned_per_channel_and_context_errors_can_fall_back() {
-    let f = fixture(); f.with_key();
+async fn learned_output_caps_only_bound_omitted_defaults_and_context_errors_still_fall_back() {
+    let f = fixture();
+    f.with_key();
     let small = start_mock(Reply::Ok).await;
-    small.inner.replies.lock().unwrap().push_back(Reply::Status(400,
-        r#"{"error":{"message":"max_tokens must be less than or equal to 64"}}"#));
     let a = f.add_channel("small", &small.base, ChannelSpec::default());
     f.serve("caps", &[a]);
-    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"caps","messages":[],"max_tokens":256})).await;
-    assert_eq!(status,StatusCode::OK);
-    assert_eq!(small.seen()[0].body["max_tokens"],256);
-    assert_eq!(small.seen()[1].body["max_tokens"],64);
-    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"caps","messages":[],"max_tokens":256})).await;
-    assert_eq!(status,StatusCode::OK);
-    assert_eq!(small.seen()[2].body["max_tokens"],64);
+    let learned_count = || f.state.conn().query_row(
+        "SELECT count(*) FROM settings WHERE key LIKE 'learned_output_cap:v2:%'", [],
+        |row| row.get::<_, i64>(0),
+    ).unwrap();
+
+    // An upstream cap error never permits changing a client's explicit limit.
+    small.inner.replies.lock().unwrap().push_back(Reply::Status(400,
+        r#"{"error":{"message":"max_tokens must be less than or equal to 64"}}"#));
+    let (status, _, _) = post(&f, CHAT, Some(KEY), json!({"model":"caps","messages":[],"max_tokens":256})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(small.count(), 1, "explicit 256 must not be retried as 64");
+    assert_eq!(small.seen()[0].body["max_tokens"], 256);
+    assert_eq!(learned_count(), 0, "explicit requests must not silently establish a retry cap");
+
+    // Only the gateway's omitted-limit default may be bounded and retried.
+    small.inner.replies.lock().unwrap().push_back(Reply::Status(400,
+        r#"{"error":{"message":"max_tokens must be less than or equal to 64"}}"#));
+    let (status, _, _) = post(&f, CHAT, Some(KEY), json!({"model":"caps","messages":[]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(small.count(), 3);
+    assert_eq!(small.seen()[1].body["max_tokens"], 4096);
+    assert_eq!(small.seen()[2].body["max_tokens"], 64);
+    assert_eq!(learned_count(), 1);
+    let (status, _, _) = post(&f, CHAT, Some(KEY), json!({"model":"caps","messages":[]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(small.count(), 4);
+    assert_eq!(small.seen()[3].body["max_tokens"], 64, "known limits must bound subsequent omitted defaults");
+
+    // Once known, an explicit over-limit request is refused before dispatch.
+    f.flush_diagnostic_writes().await;
+    let attempts_before = f.attempts().len();
+    let (status, body, _) = post(&f, CHAT, Some(KEY), json!({"model":"caps","messages":[],"max_tokens":256})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let error: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error["error"]["type"], "source_output_limit");
+    assert_eq!(small.count(), 4);
+    f.flush_diagnostic_writes().await;
+    assert_eq!(f.attempts().len(), attempts_before, "pre-dispatch rejection must not create an upstream attempt");
+    let (status, _, _) = post(&f, CHAT, Some(KEY), json!({"model":"caps","messages":[],"max_tokens":64})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(small.seen()[4].body["max_tokens"], 64, "an allowed explicit cap remains unchanged");
+
     let wide = start_mock(Reply::Ok).await;
     let b = f.add_channel("wide", &wide.base, ChannelSpec::default());
     f.serve("other", &[b]);
-    let _ = post(&f,CHAT,Some(KEY),json!({"model":"other","messages":[],"max_tokens":256})).await;
-    assert_eq!(wide.seen()[0].body["max_tokens"],256,"cap must not leak to another channel");
+    let (status, _, _) = post(&f, CHAT, Some(KEY), json!({"model":"other","messages":[],"max_tokens":256})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(wide.seen()[0].body["max_tokens"], 256, "learned caps must not leak to another channel");
+
+    // A context failure still moves to another declared source, without
+    // retrying the first source or copying its learned output cap.
     small.inner.replies.lock().unwrap().push_back(Reply::Status(400,
         r#"{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}"#));
-    for id in [a,b] {
+    for id in [a, b] {
         let conn = f.state.conn();
         let mut mappings = tokengo_server::db::channels::get(&conn,id).unwrap().unwrap().models;
         mappings.push(tokengo_server::db::channels::ModelMapping::new("long",None,false));
         tokengo_server::db::channels::set_models(&conn,id,&mappings).unwrap();
     }
     f.serve("long", &[a,b]);
-    let (status,_,_) = post(&f,CHAT,Some(KEY),json!({"model":"long","messages":[]})).await;
-    assert_eq!(status,StatusCode::OK);
-    assert_eq!(small.count(),4,"context rejection is not retried on the same channel");
-    assert_eq!(wide.count(),2);
+    let (status, _, _) = post(&f, CHAT, Some(KEY), json!({"model":"long","messages":[]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(small.count(), 6, "context rejection is not retried on the same channel");
+    assert_eq!(wide.count(), 2);
+    assert_eq!(wide.seen()[1].body["max_tokens"], 4096);
 }
 
 #[tokio::test]
@@ -2188,66 +2227,56 @@ async fn vision_test_says_what_the_model_actually_answered() {
 
 // ───────── 渠道级请求/响应适配：把两条 python 中转（3157 / 3158）的活接过来 ─────────
 
-/// 「要丢的字段」：**只在声明了它的那条渠道的那个模型名上**丢，别的渠道一个字节都不许动。
-///
-/// 依据是现网的账：opencode 的 `beam-free` 不认 `reasoning_effort`（Hermes 默认发
-/// high），4 天里 28 次请求就这么整条失败 —— 现在只能靠外挂 python 中转替它剥。
+/// Explicit controls cannot be erased by a legacy drop_fields mapping.
+/// Ordinary extension fields are removed only for their declared model/source.
 #[tokio::test]
-async fn an_unwanted_field_is_dropped_only_where_the_channel_declares_it() {
+async fn explicit_reasoning_is_never_dropped_and_legacy_extensions_follow_the_declared_mapping() {
     let f = fixture();
     f.with_key();
     let m = start_mock(Reply::Ok).await;
-
-    // 甲渠道：给 beam-free 这个模型名声明「要丢 reasoning_effort」
     let a = f.add_channel(
-        "声明了要丢字段的渠道",
-        &m.base,
-        ChannelSpec {
-            models: vec![("beam-free".into(), None)],
-            ..Default::default()
-        }
-        .with_drop_fields("beam-free", &["reasoning_effort"]),
+        "声明旧扩展兼容的渠道", &m.base,
+        ChannelSpec {models:vec![("beam-free".into(),None)],..Default::default()}
+            .with_drop_fields("beam-free", &["reasoning_effort", "legacy_vendor_extension"]),
     );
     f.serve("beam-free", &[a]);
-    // 乙渠道：同一个上游，一个字都没声明
     let b = f.add_channel(
-        "没声明任何字段的渠道",
-        &m.base,
-        ChannelSpec {
-            models: vec![("deepseek-v4.1-flash".into(), None)],
-            ..Default::default()
-        },
+        "未声明丢弃字段的渠道", &m.base,
+        ChannelSpec {models:vec![("deepseek-v4.1-flash".into(),None)],..Default::default()},
     );
     f.serve("deepseek-v4.1-flash", &[b]);
-
     let body = json!({
-        "model": "beam-free",
-        "reasoning_effort": "high",
-        "max_tokens": 64,
-        "messages": [{"role": "user", "content": "你好"}]
+        "model":"beam-free", "reasoning_effort":"high", "max_tokens":64,
+        "legacy_vendor_extension":"opaque-value",
+        "messages":[{"role":"user","content":"你好"}],
     });
-    let (s, _, _) = post(&f, CHAT, Some(KEY), body.clone()).await;
-    assert_eq!(s, StatusCode::OK);
-    let sent = m.seen().last().cloned().unwrap();
-    assert!(
-        sent.body.get("reasoning_effort").is_none(),
-        "声明了要丢的字段必须真丢掉：{:?}",
-        sent.body
-    );
-    assert_eq!(sent.body["max_tokens"], 64, "别的字段一个都不许动：{:?}", sent.body);
+    let (status, error, _) = post(&f, CHAT, Some(KEY), body.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let error:Value=serde_json::from_slice(&error).unwrap();
+    assert!(error["error"]["message"].as_str().unwrap().contains("reasoning_effort"));
+    assert_eq!(m.count(), 0, "a protected explicit control must fail before dispatch");
+    assert!(f.attempts().is_empty());
+
+    let mut extension_only = body.clone();
+    extension_only.as_object_mut().unwrap().remove("reasoning_effort");
+    let (status, _, _) = post(&f, CHAT, Some(KEY), extension_only).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(m.count(), 1);
+    let sent = m.seen()[0].clone();
+    assert!(sent.body.get("legacy_vendor_extension").is_none());
+    assert_eq!(sent.body["max_tokens"], 64);
     assert_eq!(sent.model, "beam-free");
 
-    // 反证：没声明的渠道照原样发（这是「按渠道 + 模型名」的能力，不是全局开关）
-    let mut other = body.clone();
+    let mut other = body;
     other["model"] = json!("deepseek-v4.1-flash");
-    let (s, _, _) = post(&f, CHAT, Some(KEY), other).await;
-    assert_eq!(s, StatusCode::OK);
-    let sent = m.seen().last().cloned().unwrap();
-    assert_eq!(
-        sent.body["reasoning_effort"], "high",
-        "没声明的渠道不许替用户删字段：{:?}",
-        sent.body
-    );
+    let (status, _, _) = post(&f, CHAT, Some(KEY), other).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(m.count(), 2);
+    let sent = m.seen()[1].clone();
+    assert_eq!(sent.body["reasoning_effort"], "high");
+    assert_eq!(sent.body["legacy_vendor_extension"], "opaque-value");
+    assert_eq!(sent.body["max_tokens"], 64);
+    assert_eq!(sent.model, "deepseek-v4.1-flash");
 }
 
 /// `{{session_id}}`：同一段对话的每次请求带同一个值，换一段对话必须换
