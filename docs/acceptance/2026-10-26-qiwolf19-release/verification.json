@@ -1,0 +1,20 @@
+{
+  "result": "passed",
+  "tag": "v0.34.0-qiwolf.19",
+  "source_commit": "9a2276d96f6a5656545e4eb025947b0577c0167c",
+  "assets": 9,
+  "anonymous_downloads": true,
+  "anonymous_digest_pull": true,
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:e8bc13cca3e2957bb46378a5135e05635ec5e4736839419c5211ac76e36b8b2b",
+  "native_schema": 41,
+  "native_key_lifecycle": true,
+  "container_smoke": true,
+  "production_access": false,
+  "created_release": false,
+  "retained": [
+    "public assets",
+    "evidence",
+    "pulled digest image"
+  ],
+  "limits": "Offline image archive verified, not Docker-loaded or Compose-started; supplied trusted smoke.py exercises digest-pulled image."
+}

@@ -1,0 +1,30 @@
+{
+  "result": "passed",
+  "tag": "v0.34.0-qiwolf.19",
+  "source_commit": "9a2276d96f6a5656545e4eb025947b0577c0167c",
+  "assets_rehashed": 9,
+  "native_schema": 41,
+  "native_key_lifecycle": true,
+  "anonymous_digest_pull_and_smoke": true,
+  "dedicated_temporary_directories_remaining": 0,
+  "native_processes_remaining": 0,
+  "production_access": false,
+  "smoke_resources": {
+    "containers": [
+      "tokengo-smoke-78666c1bd8a1",
+      "tokengo-smoke-78666c1bd8a1-recreated"
+    ],
+    "volumes": [
+      "tokengo-smoke-78666c1bd8a1-data"
+    ]
+  },
+  "smoke_cleanup_recheck": {
+    "containers_remaining": [],
+    "volumes_remaining": [],
+    "read_only": true,
+    "scope": "exact recorded names from this smoke invocation"
+  },
+  "immutable_helpers_verified": true,
+  "wasm_exact_bundle_bytes": true,
+  "scope": "Read-only absence checks for exact smoke receipt names; no Docker objects deleted by harness or audit."
+}

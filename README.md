@@ -10,9 +10,9 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)** · [版本说明](docs/releases/v0.34.0-qiwolf.18.md) · [发布记录](docs/acceptance/2026-10-25-qiwolf18-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.19](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.19)** · [版本说明](docs/releases/v0.34.0-qiwolf.19.md) · [发布记录](docs/acceptance/2026-10-26-qiwolf19-release/README.md)。
 
-Current stable release: **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)** · [Release notes](docs/releases/v0.34.0-qiwolf.18.md) · [Publication record](docs/acceptance/2026-10-25-qiwolf18-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.19](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.19)** · [Release notes](docs/releases/v0.34.0-qiwolf.19.md) · [Publication record](docs/acceptance/2026-10-26-qiwolf19-release/README.md).
 
 ## 84 秒认识 TokenGo · Meet TokenGo in 84 seconds
 

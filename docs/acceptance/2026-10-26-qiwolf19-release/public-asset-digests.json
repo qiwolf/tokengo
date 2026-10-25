@@ -1,0 +1,56 @@
+[
+  {
+    "name": "compose.yaml",
+    "size": 797,
+    "sha256": "sha256:de0d464c6b1a396af256f91e9694eb1326e6c86bb83bb6b5692f9ea117c61c6a",
+    "anonymous": true
+  },
+  {
+    "name": "container-deployment.md",
+    "size": 15317,
+    "sha256": "sha256:0b244bfccf77a36ef7a5160b9386dc7909dfd81e21905d3e06929ed5bb094ff7",
+    "anonymous": true
+  },
+  {
+    "name": "container.env.example",
+    "size": 316,
+    "sha256": "sha256:5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+    "anonymous": true
+  },
+  {
+    "name": "image-manifest.json",
+    "size": 199,
+    "sha256": "sha256:c574321e9c4b4f63897f75aa378a5b130768c234ef36482a6b68bfac0d89ffce",
+    "anonymous": true
+  },
+  {
+    "name": "image-SHA256SUMS",
+    "size": 564,
+    "sha256": "sha256:058142f591ac007db0b07087a8e206373bf4e2814354f1f8c5f7716ed9a2023d",
+    "anonymous": true
+  },
+  {
+    "name": "registry-image.txt",
+    "size": 95,
+    "sha256": "sha256:cc021ae0aa5ce13ea582068fea5af7adabbcab44df448a0eff86e3e0bc56c607",
+    "anonymous": true
+  },
+  {
+    "name": "tokengo-9a2276d96f6a-linux-x86_64.tar.gz",
+    "size": 21367254,
+    "sha256": "sha256:9e60f2a7e59f577aa4f159ce7d4cc3851eb868d6c3aa27d3c698d4257dc7b50f",
+    "anonymous": true
+  },
+  {
+    "name": "tokengo-9a2276d96f6a-linux-x86_64.tar.gz.sha256",
+    "size": 107,
+    "sha256": "sha256:87d13490f52119257afb513a6ec3613f34c2a0874755d4e70560270527cfb769",
+    "anonymous": true
+  },
+  {
+    "name": "tokengo-9a2276d96f6a5656545e4eb025947b0577c0167c-linux-amd64.tar.gz",
+    "size": 40490853,
+    "sha256": "sha256:0ea5b0ecd8567e68f1b7a787af947055e6a77df38849fafe5eaadffbddc5d51e",
+    "anonymous": true
+  }
+]

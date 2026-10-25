@@ -1,8 +1,8 @@
 # TokenGo User Guide
 
-[Project home](../README.en.md) · [中文指南](guide.zh-CN.md) · [Release notes](releases/v0.34.0-qiwolf.18.md) · [Publication receipt](acceptance/2026-10-25-qiwolf18-release/README.md)
+[Project home](../README.en.md) · [中文指南](guide.zh-CN.md) · [Release notes](releases/v0.34.0-qiwolf.19.md) · [Publication receipt](acceptance/2026-10-26-qiwolf19-release/README.md)
 
-This guide covers **v0.34.0-qiwolf.18**, Cargo **0.34.0**, database schema **41**. The release is public; use [GitHub Releases](https://github.com/qiwolf/tokengo/releases) and the [receipt](acceptance/2026-10-25-qiwolf18-release/README.md) for exact source and artifact identity. Historical changes remain in the [changelog](../CHANGELOG.md) and [release notes](releases/). Tagged package documentation is a build-time snapshot; later receipts live on main without moving the tag.
+This guide covers **v0.34.0-qiwolf.19**, Cargo **0.34.0**, database schema **41**. The release is public; use [GitHub Releases](https://github.com/qiwolf/tokengo/releases) and the [receipt](acceptance/2026-10-26-qiwolf19-release/README.md) for exact source and artifact identity. Historical changes remain in the [changelog](../CHANGELOG.md) and [release notes](releases/). Tagged package documentation is a build-time snapshot; later receipts live on main without moving the tag.
 
 TokenGo brings API providers, supported subscription accounts and local models into one self-hosted gateway. The Rust/Axum server uses SQLite, with a Leptos/WebAssembly console. Native and container deployments need no Node.js runtime or separate database service. Current public packages target Linux AMD64; “lightweight” describes this architecture, without a fixed memory, latency or throughput claim.
 
@@ -64,9 +64,11 @@ Before a new channel exists, OAuth's initial network family follows the authenti
 
 An online channel's upstream credentials use ordered selection or user-sticky allocation, not duplicate inference fan-out. A user's downstream keys share upstream affinity; native session ownership takes precedence. Explicit 429/400 switches control credential changes. A parameter error does not automatically establish a bad key.
 
-Users can define private virtual models with ordered targets or weekly UTC/Asia-Shanghai schedules. Administrators can grant shared entries and restrict direct calls to backing models. Every attempt still checks actual target permissions, current policy, prices and budgets. Committed streams are not replayed. Virtual names cannot expand access. Disabling retains configuration; deletion removes live configuration while retaining request, price and financial history, and is refused during active/unsettled work. See [key pools and private strategies](provider-key-pools.md), [shared entries](shared-virtual-models.md) and [routing](logical-routing.md).
+Users can define private virtual models with ordered targets or weekly UTC/Asia-Shanghai schedules. Administrators can grant shared entries and restrict direct calls to backing models. Every attempt still checks actual target permissions, current policy, prices and budgets. Committed streams are not replayed. Virtual names cannot expand access. Disabling retains configuration. Virtual-model trash retains configuration/history and restores entries disabled; channel deletion retains request, price and financial history and is refused during active/unsettled work. See [key pools and private strategies](provider-key-pools.md), [shared entries](shared-virtual-models.md) and [routing](logical-routing.md).
 
-Multi-target embedding/rerank fallback verifies numeric/output compatibility per source. Evidence is source-bound, expires and renews independently; equal model names are insufficient. Local routes can choose `local_strategy: "round_robin"` to rotate their start while preserving cloud/OAuth affinity. This is not a distributed load-balancing or equal-GPU-utilization guarantee. See [vector fallback](vector-fallback.md), [capacity](vector-model-capabilities.md) and [local node rotation](maintenance/local-vector-balancing.md).
+Numeric/output compatibility checks for multi-target embedding/rerank are optional, manual diagnostics. Missing, failed or expired evidence never gates saving, normal calls or configured fallback. Production does not automatically renew it or schedule GPU compatibility probes. Local routes can choose `local_strategy: "round_robin"` to rotate their start while preserving cloud/OAuth affinity. This is not a distributed load-balancing or equal-GPU-utilization guarantee. See [vector fallback](vector-fallback.md), [capacity](vector-model-capabilities.md) and [local node rotation](maintenance/local-vector-balancing.md).
+
+Configure provider credentials and mappings first, then credential allocation or local node rotation, and finally the virtual target chain and grants. The three layers combine: targets follow their configured order/schedule, with Key/node selection inside each target. For long calls, adjust global waiting and fallback budgets under System Settings → Request Waiting Time. The model-routing editor/PUT only accepts real logical models; virtual-name timeout overrides currently have no supported configuration entrypoint. See the linked configuration guides.
 
 ## Accounts, Usage and Accounting
 
@@ -129,7 +131,7 @@ Open http://127.0.0.1:3160/ui/ and initialize your administrator password before
 | TOKENGO_LOG_DIR | ./logs in server entry point | Runtime file log directory |
 | TOKENGO_OPENAI_PROXY | Default HTTP client behavior when unset | Legacy OpenAI inheritance baseline; explicit panel direct/proxy policies take priority, with other sources governed by their network policies |
 
-Relative paths resolve against the working directory. Routing, retention and timeout settings are managed through the panel, not an invented configuration file. Default routing values in this snapshot include 3 retries after the initial attempt, a 30-second attempt/stream-idle timeout and a 120-second non-streaming deadline; saved settings can override them. These are not a guarantee that every request lasts exactly this long.
+Relative paths resolve against the working directory. Routing, retention and timeout settings are managed through the panel, not an invented configuration file. Default waiting values include a 30-second attempt/stream-idle timeout and a 120-second non-streaming deadline; saved settings can override them. Actual retry counts are also bounded by cooldown and target rules, so the retry setting is not a promise of that many additional sends. Virtual chains dispatch once per target before applying their switch conditions. These values do not guarantee a fixed total request duration.
 
 ## Client Examples
 

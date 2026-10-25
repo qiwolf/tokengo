@@ -1,8 +1,8 @@
 # TokenGo 中文使用指南
 
-[项目首页](../README.md) · [English guide](guide.en.md) · [版本说明](releases/v0.34.0-qiwolf.18.md) · [发行与验收](acceptance/2026-10-25-qiwolf18-release/README.md)
+[项目首页](../README.md) · [English guide](guide.en.md) · [版本说明](releases/v0.34.0-qiwolf.19.md) · [发行与验收](acceptance/2026-10-26-qiwolf19-release/README.md)
 
-本文面向 **v0.34.0-qiwolf.18**：Cargo **0.34.0**、数据库 schema **41**。本版已公开发行；固定版本下载、精确源码与验收结果以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 和[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)为准。旧版变更保存在 [CHANGELOG](../CHANGELOG.md) 与[历史版本说明](releases/)，不必先读历史回执才能开始使用。
+本文面向 **v0.34.0-qiwolf.19**：Cargo **0.34.0**、数据库 schema **41**。本版已公开发行；固定版本下载、精确源码与验收结果以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 和[发行收据](acceptance/2026-10-26-qiwolf19-release/README.md)为准。旧版变更保存在 [CHANGELOG](../CHANGELOG.md) 与[历史版本说明](releases/)，不必先读历史回执才能开始使用。
 
 TokenGo 将 API 服务、可接入的订阅账号与本地模型放进同一个自托管网关。Rust/Axum 服务端使用 SQLite，Leptos/WebAssembly 控制台无需 Node.js 运行时。可使用原生包或容器部署；当前公开产物为 Linux AMD64。“轻量”指部署结构，不代表固定内存、延迟或吞吐保证。
 
@@ -62,9 +62,11 @@ Kimi、MiniMax 中国/Global、Copilot 的有出处公开客户端标识随镜�
 
 在线渠道的多个上游 Key 可逐个切换或按用户粘性分配；后者不是同时发送多份推理。同一用户的多个下游 Key 共享上游粘性，原生会话归属优先。429/400 切换由明确开关控制，参数错误不自动等于坏 Key。
 
-用户可创建私有虚拟模型名、配置目标顺序或北京时间/UTC 周时段；管理员可授予共享虚拟入口并限制底层模型直接访问。每次尝试仍检查真实来源权限、价格、预算与当前策略。已提交的流不在另一来源重放，虚拟名字不扩大授权。停用保留配置；删除可变配置保留请求、价格版本与财务历史，进行中或未结算时拒绝删除。见[Key 池与私有策略](provider-key-pools.md)、[共享虚拟模型](shared-virtual-models.md)。
+用户可创建私有虚拟模型名、配置目标顺序或北京时间/UTC 周时段；管理员可授予共享虚拟入口并限制底层模型直接访问。每次尝试仍检查真实来源权限、价格、预算与当前策略。已提交的流不在另一来源重放，虚拟名字不扩大授权。停用保留配置。虚拟模型移入回收站后保留配置与历史，恢复后保持停用；渠道删除保留请求、价格版本与财务历史，进行中或未结算时拒绝删除。见[Key 池与私有策略](provider-key-pools.md)、[共享虚拟模型](shared-virtual-models.md)。
 
 向量与重排的数值/输出兼容验证是可选排错诊断，只在你主动启动时执行，不会定时探测GPU。未验证、失败或过期不影响保存、正常调用和按配置回退。本地来源可选择 `local_strategy: "round_robin"` 轮转起点，云端/OAuth 粘性不变；不承诺多实例分布式负载均衡或相同 GPU 利用率。见[向量回退](vector-fallback.md)和[本地节点合同](maintenance/local-vector-balancing.md)。
+
+配置顺序为：先准备渠道凭据与模型，再配置 Key 分配或本地节点轮询，最后创建虚拟目标链并授权。三层策略可以组合；虚拟目标按所选顺序或时段执行，目标内部再分配 Key/节点。长请求由“系统设置 → 请求等待时间”调整全局等待与切换预算；当前模型路由编辑器/API只支持真实逻辑模型，不能按虚拟名保存独立超时。详见上述配置文档。
 
 ## 用户、用量和账务
 
@@ -140,7 +142,7 @@ curl -N http://127.0.0.1:3160/v1/chat/completions \
 
 相对路径以工作目录为准；生产使用绝对路径。路由、超时和数据保留通过面板设置，不是额外的 YAML 配置。
 
-源码默认首次请求后最多重试 3 次，尝试/流式空闲超时 30 秒，非流式完整响应期限 120 秒；已保存配置可覆盖默认值。这不是每次请求总耗时的固定承诺。
+源码默认尝试/流式空闲超时 30 秒，非流式完整响应期限 120 秒；已保存配置可覆盖默认值。实际重试次数由路由配置、冷却及目标类型共同约束，不能把配置中的重试值直接理解为额外发送次数；虚拟链每个目标单次派发，随后按其切换条件继续。这不是每次请求总耗时的固定承诺。
 
 ### 部署、备份与升级
 

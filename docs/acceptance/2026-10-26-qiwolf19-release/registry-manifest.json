@@ -1,0 +1,12 @@
+{
+  "result": "passed",
+  "image": "ghcr.io/qiwolf/tokengo@sha256:e8bc13cca3e2957bb46378a5135e05635ec5e4736839419c5211ac76e36b8b2b",
+  "source_commit": "9a2276d96f6a5656545e4eb025947b0577c0167c",
+  "image_id": "sha256:308f0278a8b947af644de3fb618f754a35ab7d52b5a28a2abed4cfee890d2be0",
+  "anonymous": true,
+  "tags": {
+    "v0.34.0-qiwolf.19": "sha256:e8bc13cca3e2957bb46378a5135e05635ec5e4736839419c5211ac76e36b8b2b",
+    "sha-9a2276d96f6a5656545e4eb025947b0577c0167c": "sha256:e8bc13cca3e2957bb46378a5135e05635ec5e4736839419c5211ac76e36b8b2b",
+    "latest": "sha256:e8bc13cca3e2957bb46378a5135e05635ec5e4736839419c5211ac76e36b8b2b"
+  }
+}
