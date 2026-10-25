@@ -132,21 +132,6 @@ pub fn preflight(
     vr::preflight_shared(c, v)?;
     name_available(c, &v.name, except)
 }
-fn compatibility(
-    c: &Connection,
-    targets: &[vr::Target],
-) -> Result<Option<Contract>, vr::VirtualError> {
-    if targets.len() < 2 {
-        return Ok(None);
-    }
-    let kind = model_routes::routes_for(c, &targets[0].logical_model)?
-        .ok_or_else(|| err("virtual_target_forbidden", "目标模型已不存在"))?
-        .kind;
-    if matches!(kind, ModelKind::Embeddings | ModelKind::Rerank) {
-        return crate::vector_compat::require(c, 0, targets, kind).map(Some);
-    }
-    Ok(None)
-}
 fn audit(
     c: &Connection,
     id: i64,
@@ -259,6 +244,7 @@ fn live(
     }
     name_available(c, &r.config.name, Some(r.id))?;
     vr::validate_shape(&r.config)?;
+    vr::validate_target_kinds(c, &r.config.targets)?;
     Ok(())
 }
 pub fn resolve(
@@ -272,7 +258,6 @@ pub fn resolve(
     };
     let auth = fresh(c, auth)?;
     live(c, &auth, &r)?;
-    let contract = compatibility(c, &r.config.targets)?;
     let mut targets = Vec::new();
     for position in vr::time_positions(&r.config, now)? {
         let t = &r.config.targets[position - 1];
@@ -299,7 +284,7 @@ pub fn resolve(
         name: r.config.name,
         version: r.version,
         targets,
-        compatibility: contract,
+        compatibility: None,
         shared: true,
     }))
 }
@@ -332,7 +317,7 @@ pub fn validate_current(
     if vr::allowed_sources_shared(c, &auth, t)?.is_empty() {
         return Err(err("virtual_target_forbidden", "共享模型目标已撤权或停用"));
     }
-    compatibility(c, &r.config.targets)
+    Ok(None)
 }
 pub fn alias_names(
     c: &Connection,

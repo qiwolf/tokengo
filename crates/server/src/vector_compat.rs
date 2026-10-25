@@ -794,6 +794,9 @@ pub fn validate_request(
     kind: ModelKind,
     body: &Value,
 ) -> Result<(), vr::VirtualError> {
+    validate_request_shape(kind, body)
+}
+fn validate_request_shape(kind: ModelKind, body: &Value) -> Result<(), vr::VirtualError> {
     if !body.is_object() { return Err(unverified("请求必须是 JSON 对象")); }
     if kind == ModelKind::Embeddings {
         embedding_input_count(&body["input"]).map_err(unverified)?;
@@ -860,6 +863,14 @@ fn embedding_vectors(
     count: usize,
     dimension: Option<usize>,
 ) -> Result<Vec<Vec<f64>>, String> {
+    embedding_vectors_shape(output, count, dimension, true)
+}
+fn embedding_vectors_shape(
+    output: &Value,
+    count: usize,
+    dimension: Option<usize>,
+    diagnostic: bool,
+) -> Result<Vec<Vec<f64>>, String> {
     let rows = output["data"]
         .as_array()
         .filter(|a| a.len() == count)
@@ -880,7 +891,7 @@ fn embedding_vectors(
             .filter(|a| !a.is_empty())
             .ok_or("向量响应必须是非空float数组")?;
         if dim.is_some_and(|d| d != array.len()) {
-            return Err("向量响应维度与兼容合同不一致".into());
+            return Err("向量响应维度与声明维度或同批次向量不一致".into());
         }
         dim = Some(array.len());
         let vector = array
@@ -891,9 +902,11 @@ fn embedding_vectors(
                     .ok_or("向量响应含无效数值")
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let norm = vector.iter().map(|x| x * x).sum::<f64>();
-        if !norm.is_finite() || norm <= 0.0 {
-            return Err("向量响应为零向量或数值溢出".into());
+        if diagnostic {
+            let norm = vector.iter().map(|x| x * x).sum::<f64>();
+            if !norm.is_finite() || norm <= 0.0 {
+                return Err("向量响应为零向量或数值溢出".into());
+            }
         }
         indexed[index] = Some(vector);
     }
@@ -979,6 +992,9 @@ fn compare_workload_vectors(a: &[Vec<f64>], ar: &[Vec<f64>], b: &[Vec<f64>], br:
     Ok(json!({"items":a.len(),"source_a_max_repeat_l2":noise_a,"source_b_max_repeat_l2":noise_b,"source_a_mean_repeat_cosine":self_cos_a/n,"source_b_mean_repeat_cosine":self_cos_b/n,"cross_worst_pair_mean_cosine":mean_cosine,"max_cross_source_l2":max_cross,"budget_l2":budget,"max_budget_utilization":max_cross/budget}))
 }
 fn ranks(output: &Value, documents: usize, count: usize) -> Result<Vec<(usize, f64)>, String> {
+    ranks_shape(output, documents, count, true)
+}
+fn ranks_shape(output: &Value, documents: usize, count: usize, diagnostic: bool) -> Result<Vec<(usize, f64)>, String> {
     let rows = output["results"]
         .as_array()
         .filter(|a| a.len() == count)
@@ -998,7 +1014,7 @@ fn ranks(output: &Value, documents: usize, count: usize) -> Result<Vec<(usize, f
             .as_f64()
             .filter(|n| n.is_finite())
             .ok_or("重排评分无效")?;
-        if result.last().is_some_and(|(_, previous)| *previous < score) {
+        if diagnostic && result.last().is_some_and(|(_, previous)| *previous < score) {
             return Err("重排响应未按评分降序排列".into());
         }
         result.push((index, score));
@@ -1011,24 +1027,42 @@ pub fn validate_output(
     body: &Value,
     output: &Value,
 ) -> Result<(), String> {
+    validate_output_shape(kind, body, output, contract.dimensions, true)
+}
+/// Validate only this request and response, without diagnostic history or empirical limits.
+/// Model dimensions are inferred from this batch unless the caller explicitly requests them.
+pub fn validate_runtime_request(kind: ModelKind, body: &Value) -> Result<(), String> {
+    validate_request_shape(kind, body).map_err(|error| error.message)
+}
+pub fn validate_runtime_output(kind: ModelKind, body: &Value, output: &Value) -> Result<(), String> {
+    validate_runtime_request(kind, body)?;
+    validate_output_shape(kind, body, output, None, false)
+}
+fn validate_output_shape(
+    kind: ModelKind,
+    body: &Value,
+    output: &Value,
+    diagnostic_dimension: Option<usize>,
+    diagnostic: bool,
+) -> Result<(), String> {
     if kind == ModelKind::Embeddings {
         let count = embedding_input_count(&body["input"]).map_err(str::to_owned)?;
-        let dimension = body.get("dimensions").and_then(Value::as_u64).and_then(|n|usize::try_from(n).ok()).or(contract.dimensions);
+        let dimension = body.get("dimensions").and_then(Value::as_u64).and_then(|n|usize::try_from(n).ok()).or(diagnostic_dimension);
         let decoded;
         let output = if body["encoding_format"] == "base64" {
             decoded = decode_base64_embeddings(output)?;
             &decoded
         } else { output };
-        // The live result must preserve shape and finite, nonzero vectors. Normalization
-        // is recorded by certification probes, not imposed on valid provider extensions.
-        embedding_vectors(output, count, dimension)?;
+        // Runtime checks use this response's shape and finite values only. Optional
+        // diagnostic checks retain their reference dimension and nonzero-vector guard.
+        embedding_vectors_shape(output, count, dimension, diagnostic)?;
     } else if kind == ModelKind::Rerank {
         let docs = body["documents"].as_array().ok_or("重排文档无效")?;
         let count = body
             .get("top_n")
             .and_then(Value::as_u64)
             .map_or(docs.len(), |n|usize::try_from(n).unwrap_or(usize::MAX).min(docs.len()));
-        ranks(output, docs.len(), count)?;
+        ranks_shape(output, docs.len(), count, diagnostic)?;
         if body["return_documents"] == true {
             for row in output["results"].as_array().ok_or("重排结果无效")? {
                 let i = row["index"].as_u64().ok_or("重排索引无效")? as usize;
@@ -1099,6 +1133,65 @@ mod tests {
         ] {
             assert!(validate_output(&c, ModelKind::Embeddings, &body, &out).is_err());
         }
+    }
+    #[test]
+    fn runtime_embeddings_do_not_inherit_diagnostic_dimension_or_numeric_space() {
+        let body = json!({"input":["a","b"]});
+        let output = json!({"data":[
+            {"index":0,"embedding":[0.0,0.0,0.0]},
+            {"index":1,"embedding":[f64::MAX,0.0,0.0]}
+        ]});
+        assert!(validate_runtime_output(ModelKind::Embeddings, &body, &output).is_ok());
+        assert!(validate_output(&contract(), ModelKind::Embeddings, &body, &output).is_err(),
+            "diagnostics must still report their reference dimension/numeric discrepancy");
+        let explicit = json!({"input":["a","b"],"dimensions":2});
+        assert!(validate_runtime_output(ModelKind::Embeddings, &explicit, &output).is_err(),
+            "an explicit client dimension remains part of this request's contract");
+    }
+    #[test]
+    fn runtime_embeddings_reject_bad_cardinality_indexes_dimensions_and_values() {
+        let body = json!({"input":["a","b"]});
+        for output in [
+            json!({"data":[{"index":0,"embedding":[1,0]}]}),
+            json!({"data":[{"index":0,"embedding":[1,0]},{"index":0,"embedding":[1,0]}]}),
+            json!({"data":[{"index":0,"embedding":[1,0]},{"index":2,"embedding":[1,0]}]}),
+            json!({"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[1]}]}),
+            json!({"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[null,0]}]}),
+        ] {
+            assert!(validate_runtime_output(ModelKind::Embeddings, &body, &output).is_err(), "{output}");
+        }
+    }
+    #[test]
+    fn runtime_base64_embeddings_validate_finite_values_and_requested_dimension() {
+        use base64::Engine;
+        let body = json!({"input":"a","encoding_format":"base64"});
+        let output = |value: f32| json!({"data":[{"index":0,
+            "embedding":base64::engine::general_purpose::STANDARD.encode(value.to_le_bytes())}]});
+        assert!(validate_runtime_output(ModelKind::Embeddings, &body, &output(0.0)).is_ok());
+        for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            assert!(validate_runtime_output(ModelKind::Embeddings, &body, &output(value)).is_err());
+        }
+        assert!(validate_runtime_output(ModelKind::Embeddings,
+            &json!({"input":"a","encoding_format":"base64","dimensions":2}), &output(1.0)).is_err());
+    }
+    #[test]
+    fn runtime_rerank_accepts_different_order_but_checks_result_shape_and_documents() {
+        let body = json!({"query":"q","documents":["a",{"text":"b"}],"top_n":2,"return_documents":true});
+        let output = json!({"results":[
+            {"index":0,"relevance_score":0.1,"document":{"text":"a"}},
+            {"index":1,"relevance_score":0.9,"document":"b"}
+        ]});
+        assert!(validate_runtime_output(ModelKind::Rerank, &body, &output).is_ok());
+        assert!(validate_output(&contract(), ModelKind::Rerank, &body, &output).is_err(),
+            "ranking order remains a diagnostic finding");
+        for (field, value) in [("document", json!("wrong")), ("index", json!(0)),
+            ("index", json!(2)), ("relevance_score", Value::Null)] {
+            let mut malformed = output.clone();
+            malformed["results"][1][field] = value;
+            assert!(validate_runtime_output(ModelKind::Rerank, &body, &malformed).is_err(), "{malformed}");
+        }
+        assert!(validate_runtime_output(ModelKind::Rerank, &body,
+            &json!({"results":[output["results"][0].clone()]})).is_err());
     }
     #[test]
     fn certification_size_is_evidence_not_a_user_request_limit() {

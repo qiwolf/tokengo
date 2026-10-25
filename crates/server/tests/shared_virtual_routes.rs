@@ -415,7 +415,7 @@ async fn in_flight_shared_route_rechecks_caller_key_acl_budget_and_admin_version
 }
 
 #[tokio::test]
-async fn incompatible_shared_vectors_save_but_are_not_certified_or_callable() {
+async fn incompatible_shared_vectors_remain_callable_after_diagnostic_failure() {
     let f=Fixture::new(ModelKind::Embeddings).await;
     f.upstreams[1].set(Behavior::Dimension);
     let (status,body)=f.admin("POST","/api/shared-virtual-models",serde_json::to_value(&f.config).unwrap()).await;
@@ -424,11 +424,104 @@ async fn incompatible_shared_vectors_save_but_are_not_certified_or_callable() {
     let actor=db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;
     assert!(tokengo_server::vector_compat::verify_shared(&f.state,&f.config,actor).await.is_err());
     f.clear();
-    assert!(!f.call("shared-model").await.0.is_success());
-    assert_eq!(f.count(),0,"uncertified chain must fail before any user inference");
+    let (status, output) = f.call("shared-model").await;
+    assert_eq!(status, StatusCode::OK, "diagnostic failure must not gate shared calls: {output}");
+    assert_eq!(f.upstreams[0].count(), 1);
+    assert_eq!(f.upstreams[1].count(), 0);
     let (status,list)=f.admin("GET","/api/shared-virtual-models",Value::Null).await;
     assert_eq!(status,StatusCode::OK,"{list}");
     assert_eq!(list["virtual_models"].as_array().unwrap().len(),1);
+}
+
+#[tokio::test]
+async fn shared_vectors_without_or_with_bad_evidence_call_and_follow_configured_fallback() {
+    for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+        for evidence in ["missing", "expired", "corrupt", "failed"] {
+            let f = Fixture::new(kind).await;
+            let (status, saved) = f.admin("POST", "/api/shared-virtual-models", serde_json::to_value(&f.config).unwrap()).await;
+            assert_eq!(status, StatusCode::OK, "{saved}");
+            if evidence != "missing" {
+                let actor = db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;
+                if evidence == "failed" {
+                    f.upstreams[1].set(Behavior::Status(503));
+                    assert!(tokengo_server::vector_compat::verify_shared(&f.state, &f.config, actor).await.is_err());
+                    f.upstreams[1].set(Behavior::Good);
+                } else {
+                    tokengo_server::vector_compat::verify_shared(&f.state, &f.config, actor).await.unwrap();
+                    let c = f.state.conn();
+                    for (key, raw) in db::settings::all(&c).unwrap() {
+                        if key.starts_with("internal_vector_compat_v1:0:") {
+                            let raw = if evidence == "corrupt" { "{broken diagnostic evidence".into() } else {
+                                let mut value: Value = serde_json::from_str(&raw).unwrap();
+                                value["verified_at_ms"] = json!(db::now_ms() - 25 * 60 * 60 * 1000);
+                                value.to_string()
+                            };
+                            db::settings::set(&c, &key, &raw).unwrap();
+                        }
+                    }
+                }
+            }
+            f.clear();
+            let (status, output) = f.call("shared-model").await;
+            assert_eq!(status, StatusCode::OK, "{kind:?}, evidence={evidence}: {output}");
+            assert_eq!(f.upstreams[0].count(), 1);
+            assert_eq!(f.upstreams[1].count(), 0);
+            f.clear();
+            f.upstreams[0].set(Behavior::Status(503));
+            let (status, output) = f.call("shared-model").await;
+            assert_eq!(status, StatusCode::OK, "fallback {kind:?}, evidence={evidence}: {output}");
+            assert_eq!(f.upstreams[0].count(), 1);
+            assert_eq!(f.upstreams[1].count(), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn vector_diagnostics_checking_does_not_block_shared_or_private_calls() {
+    for shared in [false, true] {
+        for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+            let f = Fixture::new(kind).await;
+            let cookie = if shared { f.root.clone() } else { f.cookie() };
+            let base = if shared { "/api/shared-virtual-models" } else { "/api/account/virtual-models" };
+            let (status, saved) = f.request("POST", base, None, Some(&cookie), serde_json::to_value(&f.config).unwrap()).await;
+            assert_eq!(status, StatusCode::OK, "{saved}");
+            let row = &saved["virtual_model"];
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            *f.upstreams[0].state.hold.lock().unwrap() = Some((entered.clone(), release.clone()));
+            let (status, started) = f.request("POST", &format!("{base}/{}/verify", row["id"].as_i64().unwrap()), None, Some(&cookie), json!({"version":row["version"]})).await;
+            assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+            tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await.expect("diagnostic probe started");
+            // The diagnostic already cloned its hold. New user calls can proceed independently.
+            *f.upstreams[0].state.hold.lock().unwrap() = None;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(3), f.call("shared-model")).await;
+            let backup_calls_while_checking = f.upstreams[1].count();
+            release.notify_one();
+            let (status, output) = result.expect("normal call must not wait for diagnostics");
+            assert_eq!(status, StatusCode::OK, "shared={shared}, {kind:?}: {output}");
+            assert_eq!(backup_calls_while_checking, 0, "user request should use configured first source while diagnosis waits");
+            f.flush().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn shared_vectors_without_evidence_preserve_400_and_429_switches() {
+    for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
+        for (code, allow) in [(400, false), (400, true), (429, false), (429, true)] {
+            let mut f = Fixture::new(kind).await;
+            f.config.targets[0].switch_on_400 = allow;
+            f.config.targets[0].switch_on_429 = allow;
+            let (status, output) = f.admin("POST", "/api/shared-virtual-models", serde_json::to_value(&f.config).unwrap()).await;
+            assert_eq!(status, StatusCode::OK, "{output}");
+            f.upstreams[0].set(Behavior::Status(code));
+            let (status, output) = f.call("shared-model").await;
+            assert_eq!(status.is_success(), allow, "{kind:?}, code={code}, allow={allow}: {output}");
+            if !allow { assert_eq!(status.as_u16(), code); }
+            assert_eq!(f.upstreams[0].count(), 1);
+            assert_eq!(f.upstreams[1].count(), usize::from(allow));
+        }
+    }
 }
 
 #[tokio::test]
@@ -878,7 +971,7 @@ async fn explicit_chain_verification_runs_in_background_and_does_not_block_save(
 }
 
 #[tokio::test]
-async fn saved_pending_chain_waits_for_explicit_verification_and_can_become_callable() {
+async fn saved_pending_chain_is_callable_before_and_after_explicit_verification() {
     for shared in [true,false] {
         let f=Fixture::new(ModelKind::Embeddings).await;
         let cookie=if shared{f.root.clone()}else{f.cookie()};
@@ -888,8 +981,10 @@ async fn saved_pending_chain_waits_for_explicit_verification_and_can_become_call
         let row=&saved["virtual_model"];let id=row["id"].as_i64().unwrap();
         tokengo_server::vector_renewal::tick(&f.state).await.unwrap();
         assert_eq!(f.count(),0,"background maintenance must not start a new full workload after save");
-        assert!(!f.call(&f.config.name).await.0.is_success(),"uncertified multi-target invocation must fail closed");
-        assert_eq!(f.count(),0);
+        let (status, output) = f.call(&f.config.name).await;
+        assert_eq!(status, StatusCode::OK, "pending diagnostics must not block invocation: {output}");
+        assert_eq!(f.count(), 1);
+        f.clear();
         let (status,result)=f.request("POST",&format!("{base}/{id}/verify"),None,Some(&cookie),json!({"version":row["version"]})).await;
         assert_eq!(status,StatusCode::ACCEPTED,"{result}");
         let verified=tokio::time::timeout(std::time::Duration::from_secs(10),async {

@@ -746,7 +746,7 @@ async fn missing_reference_skips_automatic_load_and_explicit_verification_backfi
             }
             vector_renewal::tick(&f.state).await.unwrap();
             assert_eq!(f.count(), 0, "automatic maintenance must not rebuild a missing reference with a full workload");
-            assert!(f.status(shared)["message"].as_str().unwrap().contains("自动续验已跳过"), "{}", f.status(shared));
+            assert!(f.status(shared)["message"].as_str().unwrap().contains("不影响配置保存、正常调用或按配置回退"), "{}", f.status(shared));
             assert!(!db::settings::all(&f.state.conn()).unwrap().iter().any(|(key, _)| key.starts_with("internal_vector_reference_v1:")));
             if shared {
                 let actor=db::accounts::root(&f.state.conn()).unwrap().unwrap().account.id;

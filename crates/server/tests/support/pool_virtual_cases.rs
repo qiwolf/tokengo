@@ -981,7 +981,7 @@ async fn embedding_endpoint_rejects_unknown_kind_multi_target_alias() {
         json!({"model":"my-private-model","input":"x"}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::FORBIDDEN, "undeclared model kind remains forbidden independently of diagnostics");
     assert_eq!(a_mock.count() + b_mock.count(), 0);
 }
 

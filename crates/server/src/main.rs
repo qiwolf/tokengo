@@ -41,7 +41,7 @@ async fn run() -> anyhow::Result<()> {
     tokengo_server::type_detector::spawn(state.clone());
     tokengo_server::vision_detector::spawn(state.clone());
     tokengo_server::capability_detector::spawn(state.clone());
-    tokengo_server::vector_renewal::spawn(state.clone());
+    // Vector compatibility diagnostics run only when explicitly requested; never on a timer.
 
     // 后台清扫员：按保留天数清掉旧账（默认 30 天），并每周把腾出来的空间还给磁盘。
     // 不跑它的话，账目只进不出，一年能长 3–4 GB。

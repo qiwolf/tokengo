@@ -320,20 +320,25 @@ pub fn preflight_shared(c: &Connection, v: &Config) -> Result<ModelKind, Virtual
     Ok(kind.unwrap_or_default())
 }
 
-fn compatibility(
-    c: &Connection,
-    user_id: i64,
-    targets: &[Target],
-) -> Result<Option<crate::vector_compat::Contract>, VirtualError> {
-    if targets.len() < 2 {
-        return Ok(None);
+/// Runtime routing validates model kinds independently from optional diagnostic evidence.
+pub(crate) fn validate_target_kinds(c: &Connection, targets: &[Target]) -> Result<(), VirtualError> {
+    let mut kind = None;
+    let mut first: Option<&str> = None;
+    for target in targets {
+        let route = model_routes::routes_for(c, &target.logical_model)?
+            .ok_or_else(|| error("virtual_target_forbidden", "目标模型已不存在"))?;
+        if kind.is_some_and(|previous| previous != route.kind) {
+            return Err(invalid("同一虚拟链的模型用途必须一致"));
+        }
+        if route.kind == ModelKind::Unknown
+            && first.is_some_and(|name| !same_model_name(name, &target.logical_model))
+        {
+            return Err(invalid("不同模型的未知用途不能证明兼容，请先由管理员确认用途"));
+        }
+        kind = Some(route.kind);
+        first = Some(&target.logical_model);
     }
-    let kind = model_routes::routes_for(c, &targets[0].logical_model)?
-        .map(|r| r.kind).unwrap_or_default();
-    if matches!(kind, ModelKind::Embeddings | ModelKind::Rerank) {
-        return crate::vector_compat::require(c, user_id, targets, kind).map(Some);
-    }
-    Ok(None)
+    Ok(())
 }
 pub fn deleted_at(c: &Connection, user_id: i64, id: i64) -> super::Result<Option<i64>> {
     super::settings::get(c, &trash_key(user_id,id))?.map(|raw|raw.parse::<i64>().map_err(|_|DbError::Other("Invalid virtual model trash marker".into()))).transpose()
@@ -612,7 +617,7 @@ pub fn resolve(
         ));
     }
     let indices = time_positions(&r.config, now_ms)?;
-    let compatibility = compatibility(c, user_id, &r.config.targets)?;
+    validate_target_kinds(c, &r.config.targets)?;
     let targets = indices
         .into_iter()
         .map(|position| {
@@ -633,7 +638,7 @@ pub fn resolve(
         name: r.config.name,
         version: r.version,
         targets,
-        compatibility,
+        compatibility: None,
     }))
 }
 pub fn validate_current(
@@ -660,7 +665,7 @@ pub fn validate_current(
     if !time_positions(&r.config, now_ms)?.contains(&position) {
         return Err(error("route_time_unavailable", "该目标当前时段不再可用"));
     }
-    let compatibility = compatibility(c, user_id, &r.config.targets)?;
+    validate_target_kinds(c, &r.config.targets)?;
     let t = r
         .config
         .targets
@@ -673,7 +678,7 @@ pub fn validate_current(
     if allowed_sources(c, &auth, t)?.is_empty() {
         return Err(error("virtual_target_forbidden", "目标已撤权或停用"));
     }
-    Ok(compatibility)
+    Ok(None)
 }
 pub fn alias_names(
     c: &Connection,

@@ -64,7 +64,7 @@ Kimi、MiniMax 中国/Global、Copilot 的有出处公开客户端标识随镜�
 
 用户可创建私有虚拟模型名、配置目标顺序或北京时间/UTC 周时段；管理员可授予共享虚拟入口并限制底层模型直接访问。每次尝试仍检查真实来源权限、价格、预算与当前策略。已提交的流不在另一来源重放，虚拟名字不扩大授权。停用保留配置；删除可变配置保留请求、价格版本与财务历史，进行中或未结算时拒绝删除。见[Key 池与私有策略](provider-key-pools.md)、[共享虚拟模型](shared-virtual-models.md)。
 
-向量与重排多目标回退先验证各来源数值/输出兼容性；证据按来源身份绑定、到期并自动续验，不能以相同模型名代替验证。本地来源可选择 `local_strategy: "round_robin"` 轮转起点，云端/OAuth 粘性不变；不承诺多实例分布式负载均衡或相同 GPU 利用率。见[向量回退](vector-fallback.md)和[本地节点合同](maintenance/local-vector-balancing.md)。
+向量与重排的数值/输出兼容验证是可选排错诊断，只在你主动启动时执行，不会定时探测GPU。未验证、失败或过期不影响保存、正常调用和按配置回退。本地来源可选择 `local_strategy: "round_robin"` 轮转起点，云端/OAuth 粘性不变；不承诺多实例分布式负载均衡或相同 GPU 利用率。见[向量回退](vector-fallback.md)和[本地节点合同](maintenance/local-vector-balancing.md)。
 
 ## 用户、用量和账务
 

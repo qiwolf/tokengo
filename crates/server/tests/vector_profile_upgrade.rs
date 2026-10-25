@@ -444,7 +444,7 @@ async fn failed_workload_upgrade_preserves_old_profile_and_complete_degraded_sou
             assert_eq!(status["state"], "degraded");
             assert_eq!(status["available_sources"], 1);
             assert_eq!(status["profile_upgrade_error"], "vector_source_unavailable");
-            assert!(status["message"].as_str().unwrap().contains("新负载范围校验未通过"));
+            assert!(status["message"].as_str().unwrap().contains("上次完整负载诊断未通过"));
             f.upstreams[1].set(Behavior::Good);
             manual(&f, shared).await.unwrap();
             assert_eq!(compatibility(&f, shared).1["version"], 4);

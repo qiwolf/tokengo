@@ -444,23 +444,26 @@ async fn single_target_keeps_working_without_a_compatibility_certificate() {
 }
 
 #[tokio::test]
-async fn multiple_targets_save_offline_but_require_real_verification_before_call() {
+async fn multiple_targets_without_verification_call_and_fallback_normally() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         let f = Fixture::new(kind, 2).await;
         vr::create(&f.state.conn(), f.user, &f.config).unwrap();
-        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
-        assert!(!f.call(f.body()).await.0.is_success());
-        vector_compat::verify(&f.state,f.user,&f.config).await.unwrap();
-        f.clear();
+        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(), 0);
         let (status, body) = f.call(f.body()).await;
-        assert_eq!(status, StatusCode::OK, "{kind:?}: {body}");
+        assert_eq!(status, StatusCode::OK, "unverified first source {kind:?}: {body}");
         assert_eq!(f.upstreams[0].count(), 1);
         assert_eq!(f.upstreams[1].count(), 0);
+        f.clear();
+        f.upstreams[0].set(Behavior::Status(503));
+        let (status, body) = f.call(f.body()).await;
+        assert_eq!(status, StatusCode::OK, "unverified configured fallback {kind:?}: {body}");
+        assert_eq!(f.upstreams[0].count(), 1);
+        assert_eq!(f.upstreams[1].count(), 1);
     }
 }
 
 #[tokio::test]
-async fn incompatible_dimensions_spaces_and_ranking_are_rejected() {
+async fn incompatible_dimensions_spaces_and_ranking_fail_diagnostics_but_do_not_gate_calls() {
     for (kind, behavior) in [
         (ModelKind::Embeddings, Behavior::Dimension),
         (ModelKind::Embeddings, Behavior::DifferentSpace),
@@ -476,8 +479,10 @@ async fn incompatible_dimensions_spaces_and_ranking_are_rejected() {
         );
         vr::create(&f.state.conn(), f.user, &f.config).unwrap();
         f.clear();
-        assert!(!f.call(f.body()).await.0.is_success());
-        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
+        let (status, body) = f.call(f.body()).await;
+        assert_eq!(status, StatusCode::OK, "failed diagnostics must not gate {kind:?}: {body}");
+        assert_eq!(f.upstreams[0].count(), 1);
+        assert_eq!(f.upstreams[1].count(), 0);
     }
 }
 
@@ -485,7 +490,7 @@ async fn incompatible_dimensions_spaces_and_ranking_are_rejected() {
 async fn server_error_and_malformed_success_fall_back_with_real_attempt_records() {
     for (kind, behavior) in [
         (ModelKind::Embeddings, Behavior::Status(503)),
-        (ModelKind::Embeddings, Behavior::Dimension),
+        (ModelKind::Embeddings, Behavior::BadIndex),
         (ModelKind::Rerank, Behavior::Status(503)),
         (ModelKind::Rerank, Behavior::BadIndex),
     ] {
@@ -518,7 +523,7 @@ async fn explicit_400_and_429_follow_each_target_switch_setting() {
             let mut f = Fixture::new(kind, 2).await;
             f.config.targets[0].switch_on_400 = allow;
             f.config.targets[0].switch_on_429 = allow;
-            f.verify_save().await;
+            vr::create(&f.state.conn(), f.user, &f.config).unwrap();
             f.upstreams[0].set(Behavior::Status(code));
             let (status, body) = f.call(f.body()).await;
             assert_eq!(
@@ -533,7 +538,7 @@ async fn explicit_400_and_429_follow_each_target_switch_setting() {
 }
 
 #[tokio::test]
-async fn verified_alias_rejects_changed_source_mapping_and_credentials() {
+async fn changed_mapping_and_credentials_do_not_gate_configured_vector_routes() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         for change_mapping in [false, true] {
             let f = Fixture::new(kind, 2).await;
@@ -562,15 +567,14 @@ async fn verified_alias_rejects_changed_source_mapping_and_credentials() {
                 }
             }
             let (status, body) = f.call(f.body()).await;
-            assert!(
-                !status.is_success(),
-                "{kind:?}, changed mapping={change_mapping}: {body}"
-            );
-            assert_eq!(
-                f.upstreams[0].count() + f.upstreams[1].count(),
-                0,
-                "stale contracts must fail before sending a request"
-            );
+            assert_eq!(status, StatusCode::OK, "{kind:?}, changed mapping={change_mapping}: {body}");
+            assert_eq!(f.upstreams[0].count(), 1);
+            assert_eq!(f.upstreams[1].count(), 0);
+            f.clear();
+            f.upstreams[0].set(Behavior::Status(503));
+            let (status, body) = f.call(f.body()).await;
+            assert_eq!(status, StatusCode::OK, "changed backup remains callable {kind:?}: {body}");
+            assert_eq!(f.upstreams[1].count(), 1);
         }
     }
 }
@@ -659,33 +663,35 @@ async fn connection_failure_after_verification_falls_back() {
 }
 
 #[tokio::test]
-async fn expired_evidence_blocks_requests_and_can_be_refreshed() {
+async fn expired_or_corrupt_evidence_does_not_block_first_source_or_fallback() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
-        let f = Fixture::new(kind, 2).await;
-        f.verify_save().await;
-        {
-            let c = f.state.conn();
-            let certificates: Vec<_> = db::settings::all(&c)
-                .unwrap()
-                .into_iter()
-                .filter(|(key, _)| key.starts_with("internal_vector_compat_v1:"))
-                .collect();
-            assert_eq!(certificates.len(), 1);
-            for (key, raw) in certificates {
-                let mut value: Value = serde_json::from_str(&raw).unwrap();
-                value["verified_at_ms"] = json!(db::now_ms() - 25 * 60 * 60 * 1000);
-                db::settings::set(&c, &key, &value.to_string()).unwrap();
+        for corrupt in [false, true] {
+            let f = Fixture::new(kind, 2).await;
+            f.verify_save().await;
+            {
+                let c = f.state.conn();
+                let certificates: Vec<_> = db::settings::all(&c).unwrap().into_iter()
+                    .filter(|(key, _)| key.starts_with("internal_vector_compat_v1:")).collect();
+                assert_eq!(certificates.len(), 1);
+                for (key, raw) in certificates {
+                    let raw = if corrupt { "{broken diagnostic evidence".into() } else {
+                        let mut value: Value = serde_json::from_str(&raw).unwrap();
+                        value["verified_at_ms"] = json!(db::now_ms() - 25 * 60 * 60 * 1000);
+                        value.to_string()
+                    };
+                    db::settings::set(&c, &key, &raw).unwrap();
+                }
             }
+            let (status, body) = f.call(f.body()).await;
+            assert_eq!(status, StatusCode::OK, "{kind:?}, corrupt={corrupt}: {body}");
+            assert_eq!(f.upstreams[0].count(), 1);
+            assert_eq!(f.upstreams[1].count(), 0);
+            f.clear();
+            f.upstreams[0].set(Behavior::Status(503));
+            let (status, body) = f.call(f.body()).await;
+            assert_eq!(status, StatusCode::OK, "fallback {kind:?}, corrupt={corrupt}: {body}");
+            assert_eq!(f.upstreams[1].count(), 1);
         }
-        let (status, body) = f.call(f.body()).await;
-        assert!(!status.is_success(), "{kind:?}: {body}");
-        assert_eq!(f.upstreams[0].count() + f.upstreams[1].count(), 0);
-        vector_compat::verify(&f.state, f.user, &f.config)
-            .await
-            .unwrap();
-        f.clear();
-        let (status, body) = f.call(f.body()).await;
-        assert_eq!(status, StatusCode::OK, "{kind:?}: {body}");
     }
 }
 
@@ -901,12 +907,8 @@ async fn in_flight_kind_credentials_or_acl_changes_stop_before_the_next_attempt(
             };
             let ((status, body), ()) = tokio::join!(f.call(f.body()), mutate);
             assert!(!status.is_success(), "{kind:?}, change={change}: {body}");
+            assert_eq!(f.upstreams[1].count(), 0, "live kind, credential snapshot and ACL checks must still block backup");
             assert_eq!(f.upstreams[0].count(), 1);
-            assert_eq!(
-                f.upstreams[1].count(),
-                0,
-                "changed compatibility scope must fail closed before backup"
-            );
         }
     }
 }
@@ -982,26 +984,22 @@ async fn vector_refusals_keep_original_code_safe_size_and_identity_without_attem
 }
 
 #[tokio::test]
-async fn changed_vector_source_refusal_is_queryable_before_any_attempt() {
+async fn changed_vector_source_uses_normal_attempt_and_billing_records() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         let f = Fixture::new(kind, 2).await;
         f.verify_save().await;
         db::channels::set_secret(&f.state.conn(), &f.state.secrets, f.sources[1], "rotated-after-verification").unwrap();
         let (status, output) = f.call(f.body()).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{output}");
+        assert_eq!(status, StatusCode::OK, "{output}");
         f.flush().await;
+        assert_eq!(f.attempts(), vec![f.sources[0].0]);
+        assert_eq!(f.upstreams[0].count(), 1);
+        assert_eq!(f.upstreams[1].count(), 0);
         let c = f.state.conn();
-        let (http, code, note): (i64, String, String) = c.query_row(
-            "SELECT http_status,error_code,error FROM requests ORDER BY id DESC LIMIT 1", [],
-            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
-        ).unwrap();
-        assert_eq!(http, 400);
-        assert_eq!(code, output["error"]["type"].as_str().unwrap());
-        assert_ne!(code, "model_not_configured");
-        assert!(note.contains("request_shape="));
-        drop(c);
-        assert!(f.attempts().is_empty());
-        assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(), 0);
+        let http: i64 = c.query_row("SELECT http_status FROM requests ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(http, 200);
+        let billed: i64 = c.query_row("SELECT channel_id FROM billing_ledger WHERE request_id>0 AND settled_ms IS NOT NULL ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(billed, f.sources[0].0);
     }
 }
 

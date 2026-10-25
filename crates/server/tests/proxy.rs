@@ -4285,3 +4285,44 @@ mod pool_virtual_cases;
 
 #[path = "support/rerank_usage_cases.rs"]
 mod rerank_usage_cases;
+
+#[tokio::test]
+async fn rerank_document_backfill_precedes_runtime_validation() {
+    for response in [
+        r#"{"results":[{"index":1,"relevance_score":0.9,"document":null},{"index":0,"relevance_score":0.2,"document":null}]}"#,
+        r#"{"results":[{"index":1,"relevance_score":0.9},{"index":0,"relevance_score":0.2}]}"#,
+        r#"{"results":[{"index":1,"relevance_score":0.9,"document":{}},{"index":0,"relevance_score":0.2,"document":{}}]}"#,
+    ] {
+        for object_documents in [false, true] {
+            let f = fixture();
+            f.with_key();
+            f.state.routing().cfg.retry_times = 0;
+            let upstream = start_mock(Reply::Status(200, response)).await;
+            let id = f.add_channel("rerank-backfill", &upstream.base, ChannelSpec::default());
+            f.serve("mock-chat", &[id]);
+            let documents = if object_documents {
+                json!([{"text":"原文第一篇 alpha","source":"first"},{"text":"原文第二篇 beta","source":"second"}])
+            } else {
+                json!(["原文第一篇 alpha", "原文第二篇 beta"])
+            };
+            let request = json!({"model":"mock-chat","query":"原文","documents":documents,"top_n":2,"return_documents":true});
+            let (status, bytes, _) = post(&f, "/v1/rerank", Some(KEY), request.clone()).await;
+            assert_eq!(status, StatusCode::OK, "object_documents={object_documents}, response={response}: {}", String::from_utf8_lossy(&bytes));
+            let delivered: Value = serde_json::from_slice(&bytes).unwrap();
+            let results = delivered["results"].as_array().unwrap();
+            assert_eq!(results.len(), 2);
+            for (row, index, text, score) in [
+                (&results[0], 1, "原文第二篇 beta", 0.9),
+                (&results[1], 0, "原文第一篇 alpha", 0.2),
+            ] {
+                assert_eq!(row["index"], index);
+                assert_eq!(row["document"]["text"], text, "backfill must use the original indexed text, including object input");
+                assert_eq!(row["relevance_score"], score, "existing relevance scores must survive document backfill and runtime validation");
+                assert!(row["document"]["text"].is_string(), "object input must not be nested beneath document.text");
+            }
+            assert_eq!(upstream.count(), 1);
+            assert_eq!(upstream.seen()[0].path, "/v1/rerank");
+            assert_eq!(upstream.seen()[0].body["documents"], request["documents"], "request documents must reach the provider unchanged");
+        }
+    }
+}

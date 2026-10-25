@@ -18,6 +18,8 @@ After deployment and administrator initialization, open Providers and Connection
 
 Closing before the first save creates no empty channel. Closing after credentials are saved retains them; continue through Manage Upstream Keys. If a save response is uncertain, close and refresh to confirm the result before retrying. The system does not delete possibly saved credentials to compensate for a lost response. See [provider setup](provider-channels.md) and [credential pools](provider-key-pools.md).
 
+Vector and rerank compatibility checks are optional diagnostics. They run only when explicitly requested, never on startup or a timer. Missing, failed or expired checks do not block saving, normal calls or configured fallback; live authorization, budgets and response integrity checks still apply.
+
 ## API, Subscription and Local Routes
 
 | Route | Setup | Check before use |

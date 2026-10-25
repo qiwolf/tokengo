@@ -392,18 +392,21 @@ impl Fixture {
         let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
         (code, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
-    async fn assert_only_source(&self, index: usize) {
+    async fn assert_runtime_sources(&self, indices: &[usize]) {
         self.clear();
         let (code, body) = self.call().await;
-        assert_eq!(code, StatusCode::OK, "healthy compatible source must stay callable: {body}");
+        assert_eq!(code, StatusCode::OK, "real upstream availability controls normal calls: {body}");
         for (i, source) in self.upstreams.iter().enumerate() {
-            assert_eq!(source.count(), usize::from(i == index), "unexpected outbound source {i}: {body}");
+            assert_eq!(source.count(), indices.iter().filter(|index| **index == i).count(), "unexpected outbound source {i}: {body}");
         }
+    }
+    async fn assert_only_source(&self, index: usize) {
+        self.assert_runtime_sources(&[index]).await;
     }
 }
 
 #[tokio::test]
-async fn unavailable_cloud_preserves_gpu_for_private_shared_embeddings_and_rerank_after_expiry() {
+async fn diagnostic_outage_and_expiry_do_not_skip_real_upstream_attempts() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             for age in [19, 25] {
@@ -417,7 +420,7 @@ async fn unavailable_cloud_preserves_gpu_for_private_shared_embeddings_and_reran
                 assert!(status["message"].as_str().is_some_and(|s| !s.is_empty()), "{status}");
                 assert!(status["next_retry_at_ms"].as_i64().unwrap() > db::now_ms());
                 assert!(f.require(shared).is_ok(), "fresh per-source evidence must survive old chain expiry");
-                f.assert_only_source(1).await;
+                f.assert_runtime_sources(&[0, 1]).await;
                 f.clear();
                 vector_renewal::tick(&f.state).await.unwrap();
                 assert_eq!(f.count(), 0, "degraded retry uses five minute backoff");
@@ -433,7 +436,7 @@ async fn unavailable_cloud_preserves_gpu_for_private_shared_embeddings_and_reran
 }
 
 #[tokio::test]
-async fn changed_dimensions_space_and_ranking_quarantine_only_the_incompatible_source() {
+async fn diagnostic_dimensions_space_and_ranking_failures_do_not_gate_normal_calls() {
     for shared in [false, true] {
         for (kind, bad) in [(ModelKind::Embeddings, Behavior::Dimension),
                             (ModelKind::Embeddings, Behavior::DifferentSpace),
@@ -444,7 +447,7 @@ async fn changed_dimensions_space_and_ranking_quarantine_only_the_incompatible_s
             f.upstreams[0].set(bad);
             vector_renewal::tick(&f.state).await.unwrap();
             assert_eq!(f.status(shared)["state"], "degraded");
-            f.assert_only_source(1).await;
+            f.assert_only_source(0).await;
             f.upstreams[0].set(Behavior::Good);
             f.retry_now();
             vector_renewal::tick(&f.state).await.unwrap();
@@ -455,7 +458,7 @@ async fn changed_dimensions_space_and_ranking_quarantine_only_the_incompatible_s
 }
 
 #[tokio::test]
-async fn all_sources_unavailable_returns_503_without_outbound_then_recovers() {
+async fn all_real_sources_unavailable_still_fail_with_outbound_attempts_then_recover() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             let f = Fixture::new(kind, 2).await;
@@ -468,25 +471,25 @@ async fn all_sources_unavailable_returns_503_without_outbound_then_recovers() {
             assert!(!status["message"].as_str().unwrap().is_empty());
             f.clear();
             let (code, body) = f.call().await;
-            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-            assert_eq!(f.count(), 0, "quarantined sources must not receive user requests");
+            assert!(!code.is_success(), "actual upstream failures must still fail: {body}");
+            assert_eq!(f.count(), 2, "diagnostic state must not suppress real upstream attempts");
             f.upstreams[1].set(Behavior::Good);
             f.retry_now();
             vector_renewal::tick(&f.state).await.unwrap();
             assert_eq!(f.status(shared)["state"], "degraded");
-            f.assert_only_source(1).await;
+            f.assert_runtime_sources(&[0, 1]).await;
         }
     }
 }
 
 #[tokio::test]
-async fn absent_initial_evidence_never_bootstraps_compatibility_from_one_surviving_source() {
+async fn absent_initial_evidence_stays_diagnostic_and_does_not_block_real_fallback() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             let f = Fixture::new(kind, 2).await;
             f.publish(shared).await;
-            // Simulate a persisted legacy/imported route whose original evidence is absent.
-            // Route creation itself correctly requires a complete initial compatibility proof.
+            // Missing diagnostic evidence does not authorize new heavy probes and
+            // does not block ordinary calls to currently authorized real sources.
             {
                 let c = f.state.conn();
                 let scope = f.scope(shared);
@@ -502,27 +505,28 @@ async fn absent_initial_evidence_never_bootstraps_compatibility_from_one_survivi
             assert!(f.require(shared).is_err(), "single surviving source is not proof of initial multi-target compatibility");
             f.clear();
             let (code, body) = f.call().await;
-            assert!(!code.is_success(), "unverified chain must stay unavailable: {body}");
-            assert_eq!(f.count(), 0);
+            assert_eq!(code, StatusCode::OK, "missing diagnostic history must not gate runtime: {body}");
+            assert_eq!(f.count(), 2);
         }
     }
 }
 
 #[tokio::test]
-async fn changed_source_identity_and_revoked_private_acl_cannot_reuse_degraded_evidence() {
+async fn changed_source_identity_does_not_gate_runtime_but_private_acl_still_applies() {
     for shared in [false, true] {
         let f = Fixture::new(ModelKind::Embeddings, 2).await;
         f.publish(shared).await;
         f.age(25);
         f.upstreams[0].set(Behavior::Status(503));
         vector_renewal::tick(&f.state).await.unwrap();
-        f.assert_only_source(1).await;
+        f.assert_runtime_sources(&[0, 1]).await;
         db::channels::set_secret(&f.state.conn(), &f.state.secrets, f.sources[1], "new-source-identity-secret").unwrap();
         f.clear();
         assert!(f.require(shared).is_err());
-        let (code, _) = f.call().await;
-        assert!(!code.is_success());
-        assert_eq!(f.count(), 0, "source identity mutation invalidates all old delegated evidence");
+        let (code, body) = f.call().await;
+        assert_eq!(code, StatusCode::OK, "new source identity remains callable without diagnostic evidence: {body}");
+        assert_eq!(f.count(), 2, "real primary failure still falls back after identity changes");
+        f.clear();
         vector_renewal::tick(&f.state).await.unwrap();
         assert!(f.require(shared).is_err(), "new source identity plus cloud outage must not reuse old partial proof");
         assert_ne!(f.status(shared)["state"], "degraded");
@@ -546,7 +550,7 @@ async fn changed_source_identity_and_revoked_private_acl_cannot_reuse_degraded_e
     f.age(25);
     f.upstreams[0].set(Behavior::Status(503));
     vector_renewal::tick(&f.state).await.unwrap();
-    f.assert_only_source(1).await;
+    f.assert_runtime_sources(&[0, 1]).await;
     let mut user = db::identity::user(&f.state.conn(), f.user).unwrap().unwrap();
     user.policy.allowed_models = Some(vec![]);
     db::identity::update_user(&f.state.conn(), &user).unwrap();
@@ -557,7 +561,7 @@ async fn changed_source_identity_and_revoked_private_acl_cannot_reuse_degraded_e
 }
 
 #[tokio::test]
-async fn queued_request_rechecks_source_quarantine_before_outbound() {
+async fn queued_request_is_not_rerouted_by_diagnostic_quarantine() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             let f = Fixture::new(kind, 2).await;
@@ -581,11 +585,10 @@ async fn queued_request_rechecks_source_quarantine_before_outbound() {
             };
             let ((code, body), ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
                 tokio::join!(f.call(), renew_while_waiting)
-            }).await.expect("quarantine recheck must not leave a user request waiting indefinitely");
-            assert_eq!(f.upstreams[0].count(), 0, "a queued source quarantined after route loading must not receive user output: {code} {body}");
-            assert!(code.is_success() || code == StatusCode::SERVICE_UNAVAILABLE,
-                "a changed availability snapshot may safely retry or explicitly reject, never bypass quarantine: {code} {body}");
-            if code.is_success() { assert_eq!(f.upstreams[1].count(), 1); }
+            }).await.expect("diagnostic status must not leave a user request waiting indefinitely");
+            assert_eq!(code, StatusCode::OK, "diagnostic quarantine cannot reject a healthy queued request: {body}");
+            assert_eq!(f.upstreams[0].count(), 1, "diagnostic state must not skip the queued primary: {body}");
+            assert_eq!(f.upstreams[1].count(), 0, "a healthy primary must keep the configured route order");
         }
     }
 }

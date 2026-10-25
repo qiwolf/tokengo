@@ -213,14 +213,14 @@ pub(crate) fn saved_status(state: &SharedState, c: &Connection, user: i64, id: i
                 if let Some(fields) = row.as_object_mut() { fields.remove("token"); }
                 if row["state"] == "failed" {
                     let previous = value["message"].as_str().unwrap_or("");
-                    value["message"] = format!("独立验证未完成：{}；{}", row["message"].as_str().unwrap_or("请重新验证"), previous).into();
+                    value["message"] = format!("上次独立诊断未完成（{}）；{}", row["error_code"].as_str().unwrap_or("未知原因"), previous).into();
                     if value["state"] != "valid" && value["state"] != "degraded" && value["state"] != "disabled" {
                         value["state"] = "failed".into();
                         value["error_code"] = row["error_code"].clone();
                     }
                 } else if row["state"] == "checking" && !active && value["state"] != "checking" {
                     row["state"] = "interrupted".into();
-                    row["message"] = "上次独立验证未完成，请重新启动验证".into();
+                    row["message"] = "上次独立诊断未完成，可按需重新启动；不影响保存、正常调用或按配置回退".into();
                     value["message"] = row["message"].clone();
                 }
                 value["manual_verification"] = row;
@@ -229,7 +229,7 @@ pub(crate) fn saved_status(state: &SharedState, c: &Connection, user: i64, id: i
     }
     if active {
         value["state"] = "checking".into();
-        value["message"] = "兼容验证在后台进行，可以继续编辑或离开页面".into();
+        value["message"] = "兼容诊断在后台进行，可以继续编辑或离开页面；不影响保存、正常调用或按配置回退".into();
     }
     value
 }
@@ -389,7 +389,7 @@ pub(crate) async fn verify(
 /// Visible to the owning user/root. Does not expose URLs, credentials or provider response bodies.
 pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
     if !config.enabled {
-        return json!({"state":"disabled","message":"策略已停用，不执行自动续验"});
+        return json!({"state":"disabled","message":"策略已停用；兼容诊断仅在用户主动启动时执行"});
     }
     let kind = config
         .targets
@@ -402,7 +402,7 @@ pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
         .map(|r| r.kind)
         .unwrap_or_default();
     if config.targets.len() < 2 || !matches!(kind, ModelKind::Embeddings | ModelKind::Rerank) {
-        return json!({"state":"not_required","message":"此策略无需向量或重排兼容续验"});
+        return json!({"state":"not_required","message":"此策略无需向量或重排跨来源兼容诊断；诊断不影响正常调用"});
     }
     let result = (|| -> Result<Value, vr::VirtualError> {
         if user == 0 {
@@ -419,51 +419,33 @@ pub fn status(c: &Connection, user: i64, config: &vr::Config) -> Value {
             .and_then(|s| serde_json::from_str::<Value>(&s).ok());
         let verified = raw.as_ref().and_then(|v| v["verified_at_ms"].as_i64());
         let current = vector_compat::require(c, user, &config.targets, kind);
-        let renewable = vector_compat::has_history(c, user, &config.targets, kind)
-            && vector_compat::has_reference(c, user, &fp).unwrap_or(false);
         let now = db::now_ms();
         let available=r.sources.iter().filter(|s|s.usable(now)).count();
-        let (phase, mut message) = if !r.sources.is_empty()&&available>0&&available<r.sources.len(){("degraded",format!("部分来源已隔离：{}；仍有 {available}/{} 个健康来源可用，系统5分钟后重试",r.sources.iter().filter(|s|!s.usable(now)).map(|s|format!("来源{}：{}",s.source_id,s.message)).collect::<Vec<_>>().join("；"),r.sources.len()))}else if r.state=="degraded" {("degraded",format!("续验未完成：{}；保留仍有效且身份未变的兼容证据继续服务，系统5分钟后重试",r.message))}else if r.state == "failed" {
-            (
-                "failed",
-                if renewable {
-                    format!("自动续验失败：{}；暂无已核实健康来源，系统每5分钟自动重试", r.message)
-                } else {
-                    format!("兼容验证失败：{}；配置已保存，请修复来源后重新启动兼容验证", r.message)
-                },
-            )
+        let (phase, mut message) = if !r.sources.is_empty() && available > 0 && available < r.sources.len() {
+            ("degraded", "部分来源的最近兼容诊断未通过，可主动重新诊断以排查差异".to_owned())
+        } else if r.state == "degraded" {
+            ("degraded", "上次兼容诊断未完整通过，可主动重新诊断".to_owned())
+        } else if r.state == "failed" {
+            ("failed", format!("上次兼容诊断失败（{}），请查看来源诊断结果", r.error_code))
         } else if r.lease_until_ms > now {
-            (
-                "checking",
-                if r.error_code.is_empty() {
-                    "兼容自动续验中，无需手动保存策略".into()
-                } else {
-                    format!("兼容自动重试中；上次失败：{}；多目标调用仍暂停", r.message)
-                },
-            )
-        } else if vector_compat::has_history(c, user, &config.targets, kind) && !vector_compat::has_reference(c, user, &fp).unwrap_or(false) {
-            (if current.is_ok() {"valid"} else {"pending"}, "缺少当前来源的数值参考，自动续验已跳过；请独立启动兼容验证，保存不会执行完整负载检查".into())
+            ("checking", "兼容诊断正在后台执行，可以继续编辑或离开页面".to_owned())
         } else if current.is_ok() {
-            ("valid", "兼容校验通过，系统将在到期前自动续验".into())
+            ("valid", "最近兼容诊断通过；不会自动续验，需要时可主动重新诊断".to_owned())
         } else {
-            (
-                "pending",
-                "配置已保存。尚无当前来源的兼容证据，请单独验证目标并启动兼容验证；验证通过前多目标调用暂不可用".into(),
-            )
+            ("pending", "尚无当前来源的有效兼容诊断记录，可按需主动运行诊断".to_owned())
         };
-        if !renewable && r.lease_until_ms <= now && matches!(phase, "degraded") {
-            message = "配置已保存，但缺少当前来源的完整数值参考，自动续验已跳过；请单独启动兼容验证".into();
-        }
+        message.push_str("；诊断仅供排错，不影响配置保存、正常调用或按配置回退");
         if !r.profile_upgrade_error.is_empty() {
-            message.push_str(&format!("；新负载范围校验未通过：{}；仍按原有有效证据和健康来源服务，未扩大已验证范围", r.profile_upgrade_message));
+            message.push_str(&format!("；上次完整负载诊断未通过（{}），可查看诊断详情", r.profile_upgrade_error));
         }
         Ok(
             json!({"state":phase,"message":message,"verified_at_ms":verified,"expires_at_ms":verified.map(|v|v+vector_compat::TTL_MS),"attempted_at_ms":r.attempted_at_ms,"next_retry_at_ms":r.next_retry_at_ms,"lease_until_ms":r.lease_until_ms,"error_code":r.error_code,"sources":r.sources,"available_sources":available,"profile_upgrade_error":r.profile_upgrade_error,"profile_upgrade_message":r.profile_upgrade_message,"profile_upgrade_at_ms":r.profile_upgrade_at_ms}),
         )
     })();
-    result.unwrap_or_else(|e|json!({"state":"failed","message":format!("无法自动续验：{}；请检查策略权限与来源配置，系统会持续重新检查",e.message),"error_code":e.code}))
+    result.unwrap_or_else(|e|json!({"state":"failed","message":format!("无法读取兼容诊断：{}；诊断仅供排错，不影响配置保存、正常调用或按配置回退",e.message),"error_code":e.code}))
 }
-/// Run once at startup, then each minute. Only enabled saved routes authorize recurring probes.
+/// Internal maintenance hook retained for controlled diagnostic tests. Production startup
+/// does not schedule this hook; compatibility checks require an explicit user action.
 pub async fn tick(state: &SharedState) -> Result<(), vr::VirtualError> {
     let jobs = {
         let c = state.conn();

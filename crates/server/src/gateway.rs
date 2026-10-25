@@ -167,11 +167,9 @@ impl Plan {
             None => format!("direct:{name}"),
         }
     }
-    fn vector_contract(&self) -> Option<&crate::vector_compat::Contract> {
-        self.virtual_route.as_ref().and_then(|route| route.compatibility.as_ref())
-    }
-    fn automatic_target_failover(&self) -> bool {
-        self.vector_contract().is_some() || self.virtual_route.as_ref().is_some_and(|r| r.shared)
+    fn automatic_target_failover(&self, endpoint: EndpointKind) -> bool {
+        self.virtual_route.as_ref().is_some_and(|route| route.shared
+            || matches!(endpoint, EndpointKind::Embeddings | EndpointKind::Rerank))
     }
     fn ids(&self) -> Vec<ChannelId> {
         self.entries.iter().map(|e| e.channel.id).collect()
@@ -511,7 +509,6 @@ fn permitted_plan_candidate(
     route: Option<&crate::db::user_virtual_routes::ResolvedVirtualPlan>,
     name: &str, channel: i64, endpoint: EndpointKind,
 ) -> Result<bool, ApiError> {
-    if let Some(route)=route {if let Some(contract)=&route.compatibility {if !crate::vector_renewal::source_allowed(c,if route.shared{0}else{route.user_id},contract,channel,name).map_err(virtual_route_error)?{return Ok(false);}}}
     if let Some(route) = route.filter(|r| r.shared) {
         if !auth.permits_model(&route.name) { return Ok(false); }
         permitted_candidate_access(c, auth, name, channel, endpoint, true)
@@ -857,10 +854,6 @@ fn load_plan(
             None => crate::db::user_virtual_routes::resolve(&conn, auth.user_id, model, now_ms()).map_err(virtual_route_error)?,
         };
         if let Some(resolved) = resolved {
-            if matches!(endpoint, EndpointKind::Embeddings | EndpointKind::Rerank)
-                && resolved.targets.len() > 1 && resolved.compatibility.is_none() {
-                return Err(ApiError::new(StatusCode::BAD_REQUEST,"vector_fallback_unverified","向量或重排多目标回退尚未核实，请先确认模型用途并重新保存调用策略"));
-            }
             let mut plan = Plan {
                 route: resolved.name.clone(),
                 virtual_route: Some(resolved.clone()),
@@ -1144,11 +1137,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             return Err(e);
         }
     };
-    if let Some(contract) = plan_all.vector_contract() {
-        if let Err(error) = crate::vector_compat::validate_request(
-            contract, req.endpoint.as_model_kind(), &req.body,
-        ) {
-            let error = virtual_route_error(error);
+    if plan_all.virtual_route.is_some() && matches!(req.endpoint, EndpointKind::Embeddings | EndpointKind::Rerank) {
+        if let Err(note) = crate::vector_compat::validate_runtime_request(req.endpoint.as_model_kind(), &req.body) {
+            let error = ApiError::bad_request(note);
             record_api_routing_refusal(&state, &req, started_ms, &error);
             return Err(error);
         }
@@ -1644,12 +1635,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             else {
                 continue;
             };
-            // Verified vector chains may walk the remaining ordered candidates
+            // Vector chains may walk the remaining configured candidates
             // on transport, source-health and malformed-output faults. Complete
             // 400/429 responses still stop below when their switches are off.
             // A restored native pin may belong to a later target selected on a prior
             // turn. Its exact source check below takes precedence over the fresh-call cursor.
-            if existing_pin.is_none() && !plan.automatic_target_failover() && target
+            if existing_pin.is_none() && !plan.automatic_target_failover(req.endpoint) && target
                 .as_ref()
                 .is_some_and(|target| Some(target.position) != active_target)
             {
@@ -2184,10 +2175,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     let kind = model_routes::routes_for(&c, name)?
                         .map(|route| route.kind)
                         .unwrap_or_default();
-                    let kind_ok = if plan.virtual_route.as_ref().is_some_and(|r| r.shared) {
+                    let kind_ok = if plan.virtual_route.is_some() {
                         kind == req.endpoint.as_model_kind() || (kind == tokengo_shared::ModelKind::Unknown && req.endpoint.is_generation())
-                    } else if plan.vector_contract().is_some() {
-                        kind == req.endpoint.as_model_kind()
                     } else { !plan.auto
                         || kind == req.endpoint.as_model_kind()
                         || (kind == tokengo_shared::ModelKind::Unknown
@@ -2205,21 +2194,16 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         continue 'channels;
                     }
                 }
-                if let Some(route)=&plan.virtual_route {if let Some(contract)=&route.compatibility {let allowed={let c=state.conn();crate::vector_renewal::source_allowed(&c,if route.shared{0}else{route.user_id},contract,channel.id.0,name).map_err(virtual_route_error)?};if !allowed{last_policy_error=Some(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"vector_source_isolated","此来源已被续验隔离，将选择其余健康来源"));continue 'channels;}}}
                 let live_route_check = (|| -> Result<(), ApiError> {
                     let c = state.conn();
                     if let (Some(route), Some(target), Some(auth)) =
                         (&plan.virtual_route, target, &req.auth)
                     {
-                        let current_contract = if route.shared {
+                        if route.shared {
                             crate::db::shared_virtual_routes::validate_current(&c, auth, route.id, route.version, target.position, now_ms())
                         } else {
                             crate::db::user_virtual_routes::validate_current(&c, auth.user_id, route.id, route.version, target.position, now_ms())
                         }.map_err(virtual_route_error)?;
-                        if !crate::vector_compat::execution_equivalent(current_contract.as_ref(), route.compatibility.as_ref()) {
-                            return Err(ApiError::new(StatusCode::CONFLICT,
-                                "virtual_route_changed", "兼容检查结果或模型用途已变化，请重试"));
-                        }
                     }
                     if pooled {
                         if let Some(snapshot) = credential {
@@ -2542,7 +2526,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
 
                 let resp = match outcome {
                     Err(fault) => {
-                        if plan.automatic_target_failover() { last_http = None; }
+                        if plan.automatic_target_failover(req.endpoint) { last_http = None; }
                         let dur = now_ms() - t0;
                         slow_previous = dur >= attempt_ms as i64 * 3 / 4;
                         guard.settle_billing("channel_fault");
@@ -2797,7 +2781,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             )
                             .await
                         } else if req.endpoint == EndpointKind::Rerank {
-                            buffer_rerank_passthrough(resp, http, &req.body, plan.vector_contract()).await
+                            buffer_rerank_passthrough(resp, http, &req.body, plan.virtual_route.is_some()).await
                         } else {
                             buffer_passthrough(
                                 resp,
@@ -2809,7 +2793,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                     .as_deref()
                                     .zip(candidate_pin.as_ref())
                                     .map(|(owner, pin)| (&state, owner, pin)),
-                                plan.vector_contract().map(|contract| (contract, &req.body)),
+                                (req.endpoint == EndpointKind::Embeddings && plan.virtual_route.is_some())
+                                    .then_some((tokengo_shared::ModelKind::Embeddings, &req.body)),
                                 upstream_protocol.is_some_and(|native|native==crate::protocol::Protocol::Messages
                                     && req.endpoint.protocol()==Some(native) && crate::parameter_budgets::cap_value(&body,"max_tokens").and_then(Value::as_i64)==Some(0)
                                     && crate::parameter_budgets::allows_zero(&parameter_context(channel,&sent_model,native,protocols,false))),
@@ -2879,7 +2864,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             continue 'channels;
                         }
                         if let Some(note) = empty {
-                            if plan.automatic_target_failover() { last_http = None; }
+                            if plan.automatic_target_failover(req.endpoint) { last_http = None; }
                             guard.settle_billing("empty_reply");
                             guard.active_attempt = None;
                             record_attempt(
@@ -3064,7 +3049,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 last_http = Some(err);
                                 continue 'channels;
                             }
-                            if plan.automatic_target_failover() || *balanced_node {
+                            if plan.automatic_target_failover(req.endpoint) || *balanced_node {
                                 guard.usage = serde_json::from_slice::<Value>(&err.body)
                                     .map(|value| Usage::read(&value)).unwrap_or_default();
                                 guard.settle_billing("explicit_route_stop");
@@ -3431,7 +3416,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 last_http = Some(err);
                                 continue 'channels;
                             }
-                            if plan.automatic_target_failover() || *balanced_node {
+                            if plan.automatic_target_failover(req.endpoint) || *balanced_node {
                                 guard.usage = serde_json::from_slice::<Value>(&err.body)
                                     .map(|value| Usage::read(&value)).unwrap_or_default();
                                 guard.settle_billing("explicit_route_stop");
@@ -3958,7 +3943,7 @@ async fn buffer_passthrough(
     _check_empty: bool,
     protocols: Option<(crate::protocol::Protocol,crate::protocol::Protocol)>,
     provenance:Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
-    vector: Option<(&crate::vector_compat::Contract, &Value)>,
+    vector: Option<(tokengo_shared::ModelKind, &Value)>,
     cache_warmup: bool,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
@@ -3982,8 +3967,8 @@ async fn buffer_passthrough(
             let mut validated = v.clone();
             // A configured raw envelope remains byte-for-byte compatible, but its payload must be valid.
             tokengo_shared::unwrap_envelope(&mut validated);
-            if let Some((contract, body)) = vector {
-                if let Err(note) = crate::vector_compat::validate_output(contract, tokengo_shared::ModelKind::Embeddings, body, &validated) {
+            if let Some((kind, body)) = vector {
+                if let Err(note) = crate::vector_compat::validate_runtime_output(kind, body, &validated) {
                     let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
                 }
             }
@@ -4097,11 +4082,10 @@ async fn buffer_rerank_passthrough(
     resp: reqwest::Response,
     status: StatusCode,
     req_body: &Value,
-    contract: Option<&crate::vector_compat::Contract>,
+    validate_shape: bool,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
-    let bytes = match if contract.is_some() { read_vector_body(resp).await }
-        else { resp.bytes().await.map_err(|e| if e.is_timeout() { "等待非流式完成超时（读取正文）".into() } else { format!("upstream body read failed: {e}") }) } {
+    let bytes = match read_vector_body(resp).await {
         Ok(bytes) => bytes,
         Err(note) => return invalid_buffer(note),
     };
@@ -4115,11 +4099,6 @@ async fn buffer_rerank_passthrough(
         Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
     };
     let mut usage=Usage::read(&parsed);
-    if let Some(contract) = contract {
-        if let Err(note) = crate::vector_compat::validate_output(contract, tokengo_shared::ModelKind::Rerank, req_body, &parsed) {
-            let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
-        }
-    }
     if let Err(note) = crate::upstream::validate_response(&parsed, "rerank") {
         let mut invalid=invalid_buffer(note); invalid.4=usage; return invalid;
     }
@@ -4140,9 +4119,9 @@ async fn buffer_rerank_passthrough(
                         r.as_object_mut().map(|o| {
                             o.insert("document".to_string(), serde_json::json!({"text": text}))
                         });
-                    } else if let Some(obj) = docs.get(i) {
+                    } else if let Some(text) = docs.get(i).and_then(|doc| doc.get("text")).and_then(Value::as_str) {
                         r.as_object_mut().map(|o| {
-                            o.insert("document".to_string(), serde_json::json!({"text": obj.to_string()}))
+                            o.insert("document".to_string(), serde_json::json!({"text": text}))
                         });
                     }
                 }
@@ -4151,6 +4130,11 @@ async fn buffer_rerank_passthrough(
     }
     if let Err(note) = crate::upstream::normalize_rerank_response(&mut parsed) {
         let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
+    }
+    if validate_shape {
+        if let Err(note) = crate::vector_compat::validate_runtime_output(tokengo_shared::ModelKind::Rerank, req_body, &parsed) {
+            let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
+        }
     }
     usage = reported_usage;
     // Rerank has no generated tokens when an input-only meter is reported.
