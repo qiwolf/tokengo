@@ -69,17 +69,20 @@ pub fn resolve_anonymous(
 
 pub const SQL: &str = include_str!("db/protocol_state.sql");
 pub const INACTIVE_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
-pub const MAX_ARTIFACTS_PER_OWNER: usize = 4096;
+/// A soft LRU floor, not a lifetime quota. Recently used histories may exceed it.
+pub const RECENT_ARTIFACTS_PER_OWNER: usize = 500;
+pub const COLD_IDLE_MS: i64 = 24 * 60 * 60 * 1000;
+const MAX_COLD_PRUNE_BATCH: usize = 1024;
 pub const MAX_TOTAL_ARTIFACTS: usize = 1_000_000;
 pub const MAX_TOTAL_SESSIONS: usize = 100_000;
 #[derive(Clone, Copy)]
 struct Limits {
-    owner: usize,
+    recent: usize,
     artifacts: usize,
     sessions: usize,
 }
 const LIMITS: Limits = Limits {
-    owner: MAX_ARTIFACTS_PER_OWNER,
+    recent: RECENT_ARTIFACTS_PER_OWNER,
     artifacts: MAX_TOTAL_ARTIFACTS,
     sessions: MAX_TOTAL_SESSIONS,
 };
@@ -112,6 +115,22 @@ fn cleanup(c: &rusqlite::Connection, now: i64) -> db::Result<()> {
     c.execute(
         "DELETE FROM protocol_artifacts WHERE last_used_ms<=?1",
         [cutoff],
+    )?;
+    Ok(())
+}
+/// Retire only idle records outside the most recently used floor in this exact
+/// authenticated scope. The current request's verified inputs are refreshed before
+/// issuance reaches here. Bounded deletion avoids a large cold pool blocking the DB.
+fn prune_cold_owner(c: &rusqlite::Connection, owner: &str, now: i64, recent: usize) -> db::Result<()> {
+    c.execute(
+        "DELETE FROM protocol_artifacts WHERE owner=?1 AND key_digest IN (
+            SELECT key_digest FROM protocol_artifacts WHERE owner=?1 AND last_used_ms<=?2
+            AND key_digest NOT IN (
+                SELECT key_digest FROM protocol_artifacts WHERE owner=?1
+                ORDER BY last_used_ms DESC,issued_ms DESC,key_digest DESC LIMIT ?3
+            ) ORDER BY last_used_ms,issued_ms,key_digest LIMIT ?4
+        )",
+        rusqlite::params![owner, now.saturating_sub(COLD_IDLE_MS), recent as i64, MAX_COLD_PRUNE_BATCH as i64],
     )?;
     Ok(())
 }
@@ -579,22 +598,19 @@ impl ArtifactCollector {
                 let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM protocol_artifacts WHERE owner=?1 AND key_digest=?2)",rusqlite::params![owner,digest],|r|r.get(0))?;
                 additions += usize::from(!exists);
             }
-            let own: i64 = c.query_row(
-                "SELECT COUNT(*) FROM protocol_artifacts WHERE owner=?1",
-                [owner],
-                |r| r.get(0),
-            )?;
-            let total: i64 =
-                c.query_row("SELECT COUNT(*) FROM protocol_artifacts", [], |r| r.get(0))?;
-            if own as usize + additions > limits.owner
-                || total as usize + additions > limits.artifacts
-            {
-                return Err(error(
-                    "Opaque artifact capacity reached; no active history was evicted",
-                ));
-            }
             for digest in &digests {
                 c.execute("INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) VALUES(?1,?2,?3,?3) ON CONFLICT(owner,key_digest) DO UPDATE SET last_used_ms=excluded.last_used_ms",rusqlite::params![owner,digest,now])?;
+            }
+            if !digests.is_empty() {
+                prune_cold_owner(c, owner, now, limits.recent)?;
+            }
+            // Preserve the global safety bound, but don't repeatedly count the whole
+            // ledger for plain SSE chunks or reissued values that add no storage.
+            if additions > 0 {
+                let total: i64 = c.query_row("SELECT COUNT(*) FROM protocol_artifacts", [], |r| r.get(0))?;
+                if total as usize > limits.artifacts {
+                    return Err(error("Opaque artifact capacity reached; no active history was evicted"));
+                }
             }
             Ok(())
         })?;
@@ -789,57 +805,21 @@ mod retention_tests {
         .unwrap());
     }
     #[test]
-    fn owner_global_and_session_limits_never_evict_active_state_and_retry_is_idempotent() {
-        let c = db::open_in_memory().unwrap();
-        let p = pin();
-        let now = db::now_ms();
-        let small = Limits {
-            owner: 1,
-            artifacts: 2,
-            sessions: 2,
-        };
-        collector("one")
-            .persist_at(&c, "a", &p, now, small)
-            .unwrap();
-        collector("one")
-            .persist_at(&c, "a", &p, now, small)
-            .unwrap();
-        assert!(collector("two")
-            .persist_at(&c, "a", &p, now, small)
-            .is_err());
-        collector("two")
-            .persist_at(&c, "b", &p, now, small)
-            .unwrap();
-        assert!(collector("three")
-            .persist_at(
-                &c,
-                "c",
-                &p,
-                now,
-                Limits {
-                    sessions: 3,
-                    ..small
-                }
-            )
-            .is_err());
-        assert_eq!(read_pin(&c, "c").unwrap(), None);
-        assert!(claim_inner(&c, "c", &p, now, small).is_err());
-        assert_eq!(count(&c, "protocol_artifacts"), 2);
-        assert_eq!(count(&c, "protocol_sessions"), 2);
-        assert!(verify_artifacts(
-            &c,
-            "a",
-            &p,
-            &serde_json::json!({"type":"thinking","signature":"one"})
-        )
-        .unwrap());
-        assert!(verify_artifacts(
-            &c,
-            "b",
-            &p,
-            &serde_json::json!({"type":"thinking","signature":"two"})
-        )
-        .unwrap());
+    fn global_and_session_limits_protect_active_state_without_an_owner_lifetime_quota() {
+        let c=db::open_in_memory().unwrap();let p=pin();let now=db::now_ms();
+        let small=Limits{recent:1,artifacts:2,sessions:2};
+        collector("one").persist_at(&c,"a",&p,now,small).unwrap();
+        collector("one").persist_at(&c,"a",&p,now,small).unwrap();
+        collector("two").persist_at(&c,"a",&p,now,small).unwrap();
+        assert!(collector("three").persist_at(&c,"b",&p,now,small).is_err());
+        assert_eq!(read_pin(&c,"b").unwrap(),None);
+        assert!(claim_inner(&c,"b",&p,now,small).unwrap());
+        assert!(claim_inner(&c,"c",&p,now,small).is_err());
+        assert_eq!(count(&c,"protocol_artifacts"),2);
+        assert_eq!(count(&c,"protocol_sessions"),2);
+        for value in ["one","two"] {
+            assert!(verify_artifacts(&c,"a",&p,&serde_json::json!({"type":"thinking","signature":value})).unwrap());
+        }
     }
     #[test]
     fn failed_issuance_rolls_back_pin_and_artifacts_and_retains_pending_for_retry() {
@@ -1056,4 +1036,100 @@ mod anonymous_tests {
         let oversized = json!({"input":vec![json!({"type":"reasoning","encrypted_content":"anonymous"});513]});
         assert!(resolve_anonymous(&c, "key", "model", &[p], &oversized).unwrap().is_none());
     }
+}
+
+#[cfg(test)]
+mod cold_retention_tests {
+    use super::*;
+    fn seed(c: &rusqlite::Connection, owner: &str, pin: &Pin, count: i64, last_used: i64) {
+        assert!(claim(c, owner, pin).unwrap());
+        for i in 0..count {
+            c.execute("INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) VALUES(?1,?2,?3,?3)",rusqlite::params![owner,artifact_key(owner,pin,&format!("cold-{i}")),last_used-i]).unwrap();
+        }
+    }
+    fn p() -> Pin {Pin{channel:1,generation:1,upstream_model:"m".into(),protocol:Protocol::Responses}}
+    fn issue(c:&rusqlite::Connection,owner:&str,pin:&Pin,now:i64) {
+        let mut a=ArtifactCollector::default();a.value(&serde_json::json!({"type":"reasoning","encrypted_content":"new"}));a.persist_at(c,owner,pin,now,LIMITS).unwrap();
+    }
+    fn exists(c:&rusqlite::Connection,owner:&str,pin:&Pin,value:&str)->bool {
+        c.query_row("SELECT EXISTS(SELECT 1 FROM protocol_artifacts WHERE owner=?1 AND key_digest=?2)",rusqlite::params![owner,artifact_key(owner,pin,value)],|r|r.get(0)).unwrap()
+    }
+    #[test]
+    fn cold_retention_prunes_only_idle_excess_and_keeps_500_recent_values() {
+        let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();
+        seed(&c,"a",&pin,501,now-25*60*60*1000);issue(&c,"a",&pin,now);
+        let n:i64=c.query_row("SELECT COUNT(*) FROM protocol_artifacts WHERE owner='a'",[],|r|r.get(0)).unwrap();
+        assert_eq!(n,500);assert!(exists(&c,"a",&pin,"new"));assert!(exists(&c,"a",&pin,"cold-498"));assert!(!exists(&c,"a",&pin,"cold-499"));assert!(!exists(&c,"a",&pin,"cold-500"));
+    }
+    #[test]
+    fn cold_retention_input_reuse_refreshes_old_history_before_lru_eviction() {
+        let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();seed(&c,"a",&pin,501,now-25*60*60*1000);
+        assert!(verify_artifacts(&c,"a",&pin,&serde_json::json!({"input":[{"type":"reasoning","encrypted_content":"cold-500"}]})).unwrap());
+        issue(&c,"a",&pin,db::now_ms()+1);
+        assert!(exists(&c,"a",&pin,"cold-500"));assert!(!exists(&c,"a",&pin,"cold-499"));
+    }
+    #[test]
+    fn cold_retention_recent_activity_can_exceed_soft_window_and_other_owners_are_isolated() {
+        let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();seed(&c,"hot",&pin,501,now);seed(&c,"other",&pin,501,now-25*60*60*1000);
+        issue(&c,"hot",&pin,now);assert!(exists(&c,"other",&pin,"cold-500"));
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts WHERE owner='hot'",[],|r|r.get::<_,i64>(0)).unwrap(),502);
+    }
+    #[test]
+    fn cold_retention_500_floor_and_idle_boundary_are_separate_from_hard_ttl() {
+        let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();seed(&c,"floor",&pin,3,now-25*60*60*1000);issue(&c,"floor",&pin,now);assert!(exists(&c,"floor",&pin,"cold-2"));
+        seed(&c,"boundary",&pin,501,now-24*60*60*1000+1000);issue(&c,"boundary",&pin,now);assert!(exists(&c,"boundary",&pin,"cold-500"));
+        issue(&c,"boundary",&pin,now+2000);assert!(!exists(&c,"boundary",&pin,"cold-500"));
+    }
+    #[test]
+    fn cold_retention_pruning_is_bounded_and_failed_issuance_restores_deleted_history() {
+        let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();
+        seed(&c,"batch",&pin,2000,now-25*60*60*1000);
+        let mut a=ArtifactCollector::default();a.value(&serde_json::json!({"type":"reasoning","encrypted_content":"new"}));
+        assert!(a.persist_at(&c,"batch",&pin,now,Limits{recent:500,artifacts:500,sessions:100}).is_err());
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),2000,"cold deletions must roll back with a failed global-capacity check");
+        assert!(exists(&c,"batch",&pin,"cold-1999"));assert!(!exists(&c,"batch",&pin,"new"));
+        a.persist_at(&c,"batch",&pin,now,LIMITS).unwrap();
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),977,"single issuance prunes at most 1024 rows");
+        assert!(exists(&c,"batch",&pin,"new"));assert!(exists(&c,"batch",&pin,"cold-0"));assert!(!exists(&c,"batch",&pin,"cold-1999"));
+        issue(&c,"batch",&pin,now+1);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),500);
+    }
+    #[test]
+    fn cold_retention_reused_state_and_evictions_survive_database_reopen() {
+        let path=std::env::temp_dir().join(format!("tokengo-cold-retention-{}",uuid::Uuid::new_v4()));
+        let pin=p();let now=db::now_ms();
+        {
+            let c=db::open(&path).unwrap();seed(&c,"restart",&pin,501,now-25*60*60*1000);
+            assert!(verify_artifacts(&c,"restart",&pin,&serde_json::json!({"input":[{"type":"reasoning","encrypted_content":"cold-500"}]})).unwrap());
+            issue(&c,"restart",&pin,db::now_ms()+1);
+        }
+        {
+            let c=db::open(&path).unwrap();assert!(exists(&c,"restart",&pin,"cold-500"));assert!(!exists(&c,"restart",&pin,"cold-499"));
+            assert!(verify_artifacts(&c,"restart",&pin,&serde_json::json!({"input":[{"type":"reasoning","encrypted_content":"cold-500"}]})).unwrap());
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cold_retention_large_pool_records_cleanup_cost_without_a_timing_gate() {
+        let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();
+        for (owner,time) in [("large-hot",now),("large-cold",now-25*60*60*1000)] {
+            assert!(claim(&c,owner,&pin).unwrap());
+            c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT ?1,printf('%064x',i),?2,?2 FROM n",rusqlite::params![owner,time]).unwrap();
+            let started=std::time::Instant::now();issue(&c,owner,&pin,now);
+            let count=c.query_row("SELECT COUNT(*) FROM protocol_artifacts WHERE owner=?1",[owner],|r|r.get::<_,i64>(0)).unwrap();
+            eprintln!("history-owner={owner} initial=20000 remaining={count} issuance_ms={}",started.elapsed().as_millis());
+            assert_eq!(count,if owner=="large-hot"{20001}else{18977});
+        }
+    }
+
+    #[test]
+    fn cold_retention_lru_lookup_uses_its_covering_index_without_a_sort() {
+        let c=db::open_in_memory().unwrap();
+        let mut statement=c.prepare("EXPLAIN QUERY PLAN SELECT key_digest FROM protocol_artifacts WHERE owner=?1 ORDER BY last_used_ms DESC,issued_ms DESC,key_digest DESC LIMIT 500").unwrap();
+        let rows=statement.query_map(["owner"],|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert!(rows.iter().any(|s|s.contains("protocol_artifacts_owner_recent")),"{rows:?}");
+        assert!(!rows.iter().any(|s|s.contains("TEMP B-TREE")),"{rows:?}");
+    }
+
 }

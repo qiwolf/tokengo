@@ -116,16 +116,6 @@ fn messages_error(error: ApiError) -> Response {
     (error.status,Json(serde_json::json!({"type":"error","error":{"type":kind,"message":error.message}}))).into_response()
 }
 
-/// A local, request-scoped opt-out; never inferred from Key names or client hints.
-fn stateless_history_mode(headers: &HeaderMap, endpoint: EndpointKind) -> Result<bool, ApiError> {
-    let mut values = headers.get_all("x-tokengo-history-mode").iter();
-    let Some(value) = values.next() else { return Ok(false); };
-    if values.next().is_some() || value.to_str().ok() != Some("stateless") || endpoint != EndpointKind::Responses {
-        return Err(ApiError::bad_request("X-TokenGo-History-Mode must be a single stateless value on Responses requests"));
-    }
-    Ok(true)
-}
-
 async fn forward_native(
     key: GatewayKey, state: SharedState, headers: HeaderMap,
     peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
@@ -136,7 +126,7 @@ async fn forward_native(
     let client_ip = client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string()));
     gateway::forward(state,ForwardRequest {
         endpoint,model,body:value,stream,client_ip,session_namespace:key.namespace,
-        auth:Some(key.auth),explicit_session,stateless_history:stateless_history_mode(&headers,endpoint)?,
+        auth:Some(key.auth),explicit_session,
         user_agent:headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
     }).await
 }
@@ -154,7 +144,7 @@ async fn forward_tool(key:GatewayKey,state:SharedState,headers:HeaderMap,peer:Op
     let model=match map.get("model") {None=>default.to_string(),Some(Value::String(name)) if !name.trim().is_empty()&&name.len()<=256&&!name.chars().any(char::is_control)=>name.clone(),_=>return Err(ApiError::bad_request("Invalid tool route name"))};
     if model_routes::is_auto(&model) {return Err(ApiError::bad_request("Search and Fetch require an explicit tool route"));}
     crate::search_tools::normalize_request(endpoint.tool_kind().unwrap(),&value).map_err(ApiError::bad_request)?;
-    gateway::forward(state,ForwardRequest{endpoint,model,body:value,stream:false,client_ip:client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string())),session_namespace:key.namespace,auth:Some(key.auth),explicit_session:None,stateless_history:stateless_history_mode(&headers,endpoint)?,user_agent:headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string)}).await
+    gateway::forward(state,ForwardRequest{endpoint,model,body:value,stream:false,client_ip:client_ip(&headers).or_else(||peer.map(|p|p.0.0.ip().to_string())),session_namespace:key.namespace,auth:Some(key.auth),explicit_session:None,user_agent:headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string)}).await
 }
 async fn search(key:GatewayKey,State(state):State<SharedState>,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes)->Result<Response,ApiError>{forward_tool(key,state,headers,peer,body,EndpointKind::Search).await}
 async fn fetch(key:GatewayKey,State(state):State<SharedState>,headers:HeaderMap,peer:Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,body:axum::body::Bytes)->Result<Response,ApiError>{forward_tool(key,state,headers,peer,body,EndpointKind::Fetch).await}
@@ -200,7 +190,6 @@ async fn chat_completions(
             session_namespace: _key.namespace,
             auth: Some(_key.auth),
             explicit_session,
-            stateless_history: stateless_history_mode(&headers, EndpointKind::Chat)?,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -241,7 +230,6 @@ async fn embeddings(
             session_namespace: _key.namespace,
             auth: Some(_key.auth),
             explicit_session,
-            stateless_history: stateless_history_mode(&headers, EndpointKind::Embeddings)?,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )
@@ -282,7 +270,6 @@ async fn rerank(
             session_namespace: _key.namespace,
             auth: Some(_key.auth),
             explicit_session,
-            stateless_history: stateless_history_mode(&headers, EndpointKind::Rerank)?,
             user_agent: headers.get("user-agent").and_then(|v|v.to_str().ok()).map(str::to_string),
         },
     )

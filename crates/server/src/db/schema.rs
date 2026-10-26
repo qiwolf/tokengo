@@ -444,4 +444,6 @@ END;
     (39, include_str!("passthrough.sql")),
     (40, include_str!("shared_virtual_routes.sql")),
     (41, include_str!("oauth_device.sql")),
+    // Additive, backward-readable index for bounded native-history LRU cleanup.
+    (42, "CREATE INDEX protocol_artifacts_owner_recent ON protocol_artifacts(owner,last_used_ms DESC,issued_ms DESC,key_digest DESC);"),
 ];

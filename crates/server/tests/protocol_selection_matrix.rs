@@ -35,10 +35,8 @@ struct Source {
 async fn source(
     State(s): State<Arc<Source>>,
     OriginalUri(uri): OriginalUri,
-    headers: axum::http::HeaderMap,
     Json(v): Json<Value>,
 ) -> Response {
-    assert!(!headers.contains_key("x-tokengo-history-mode"));
     s.seen.lock().unwrap().push((uri.path().into(), v.clone()));
     if v["provider_fail"] == true {
         return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error":{"message":"synthetic source unavailable","type":"server_error"}}))).into_response();
@@ -707,75 +705,109 @@ async fn invalid_converted_chat_effort_aliases_are_rejected_before_outbound_atte
     assert_eq!(attempts,0,"invalid aliases must not cause upstream calls or retry attempts");
 }
 
-// A memory extraction call must not depend on a shared anonymous history quota.
+// Legacy callers use the ordinary Responses contract: no TokenGo-specific header.
+fn history_scope(f: &Fixture, session: Option<&str>) -> (String, tokengo_server::protocol_sessions::Pin) {
+    let generation = f.state.conn().query_row(
+        "SELECT binding_generation FROM channels WHERE id=?1", [f.channel_id], |r| r.get(0),
+    ).unwrap();
+    let pin = tokengo_server::protocol_sessions::Pin {
+        channel: f.channel_id, generation, upstream_model: "upstream".into(), protocol: Protocol::Responses,
+    };
+    let namespace = tokengo_shared::short_hash(&f.key);
+    let owner = match session {
+        Some(id) => tokengo_server::protocol_sessions::key(&namespace, id, "matrix", Protocol::Responses),
+        None => tokengo_server::protocol_sessions::anonymous_key(&namespace, "matrix", &pin),
+    };
+    (owner, pin)
+}
+
+fn seed_recent_history(f: &Fixture, owner: &str, pin: &tokengo_server::protocol_sessions::Pin, count: i64) {
+    let c = f.state.conn();
+    assert!(tokengo_server::protocol_sessions::claim(&c, owner, pin).unwrap());
+    c.execute(
+        "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<?3) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT ?1,printf('%064x',i),?2,?2 FROM n",
+        rusqlite::params![owner, db::now_ms(), count],
+    ).unwrap();
+}
+
 #[tokio::test]
-async fn responses_stateless_survives_full_anonymous_pool_without_evicting_history() {
-    for stream in [false, true] {
-        let f = Fixture::new(vec![Protocol::Responses], false).await;
-        {
-            let c = f.state.conn();
-            let generation = c.query_row("SELECT binding_generation FROM channels WHERE id=?1", [f.channel_id], |r| r.get(0)).unwrap();
-            let pin = tokengo_server::protocol_sessions::Pin {channel:f.channel_id,generation,upstream_model:"upstream".into(),protocol:Protocol::Responses};
-            let owner = tokengo_server::protocol_sessions::anonymous_key(&tokengo_shared::short_hash(&f.key), "matrix", &pin);
-            assert!(tokengo_server::protocol_sessions::claim(&c, &owner, &pin).unwrap());
-            c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT ?1,printf('%064x',i),?2,?2 FROM n", rusqlite::params![owner,db::now_ms()]).unwrap();
+async fn responses_recent_history_above_4096_accepts_new_opaque_json_and_sse_without_client_changes() {
+    for session in [None, Some("long-lived-session")] {
+        for stream in [false, true] {
+            let f = prompt_cache_fixture().await;
+            let (owner, pin) = history_scope(&f, session);
+            seed_recent_history(&f, &owner, &pin, 4096);
+            let headers: Vec<_> = session.into_iter().map(|id| ("x-session-id", id)).collect();
+            let request = json!({"model":"matrix","input":"extract facts","stream":stream,"provider_opaque":true,"store":false});
+            let (code, text) = f.call_with_headers(Protocol::Responses, &f.key, &headers, request.clone()).await;
+            assert_eq!(code, 200, "ordinary requests must survive the old lifetime quota; session={session:?} stream={stream}: {text}");
+            assert_eq!(completed_response(&text, stream)["output"][0]["encrypted_content"], "test-opaque-state");
+            assert!(!text.contains("local_state:"), "{text}");
+            assert_eq!(f.state.conn().query_row(
+                "SELECT count(*) FROM protocol_artifacts WHERE owner=?1", [&owner], |r| r.get::<_, i64>(0),
+            ).unwrap(), 4097, "recent records are protected even above the 500 soft window");
+            // Repeated issuance is idempotent and the returned native value is reusable.
+            let replay = json!({"model":"matrix","input":[{"type":"reasoning","summary":[],"encrypted_content":"test-opaque-state"},{"role":"user","content":"continue"}],"stream":stream,"store":false});
+            let (code, text) = f.call_with_headers(Protocol::Responses, &f.key, &headers, replay).await;
+            assert_eq!(code, 200, "existing history must remain usable: {text}");
+            let _ = completed_response(&text, stream);
+            assert_eq!(f.state.conn().query_row(
+                "SELECT count(*) FROM protocol_artifacts WHERE owner=?1", [&owner], |r| r.get::<_, i64>(0),
+            ).unwrap(), 4097);
+            f.state.drain_writes();
+            let usage = f.state.conn().query_row(
+                "SELECT input_tokens,output_tokens FROM requests WHERE status='ok' ORDER BY id DESC LIMIT 1", [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            ).unwrap();
+            assert_eq!(usage, (5, 2));
+            assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
         }
-        let request=json!({"model":"matrix","input":"extract facts","stream":stream,"provider_opaque":true,"store":false});
-        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],request.clone()).await;
-        assert_eq!(code,200,"stateless extraction must ignore a full history pool: {text}");
-        let result=completed_response(&text,stream);
-        assert_eq!(result["output"][0]["encrypted_content"],"test-opaque-state","native response contract stays intact");
-        f.state.drain_writes();
-        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),4096);
-        // Default clients retain their capacity and ownership protections.
-        let (code,text)=f.call(Protocol::Responses,request).await;
-        if stream && code == 200 {assert!(text.contains("local_state:"),"{text}");} else {assert_eq!(code,503,"{text}");}
-        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),4096);
     }
 }
 
 #[tokio::test]
-async fn responses_stateless_does_not_create_sessions_or_register_replay_material() {
-    for stream in [false,true] {
-        let f=prompt_cache_fixture().await;
-        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],json!({"model":"matrix","input":"one shot","stream":stream,"provider_opaque":true})).await;
-        assert_eq!(code,200,"{text}");
-        let _=completed_response(&text,stream);
-        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        let (code,text)=f.call(Protocol::Responses,json!({"model":"matrix","input":[{"type":"reasoning","summary":[],"encrypted_content":"test-opaque-state"}]})).await;
-        assert_eq!(code,400,"unregistered stateless output cannot become a history credential: {text}");
-        assert_eq!(f.seen.seen.lock().unwrap().len(),1);
+async fn responses_cold_history_outside_soft_window_expires_and_is_not_silently_replayed() {
+    for session in [None, Some("reused-worker-session")] {
+        let f = prompt_cache_fixture().await;
+        let (owner, pin) = history_scope(&f, session);
+        let old_value = "old-cold-reasoning";
+        let mut collector = tokengo_server::protocol_sessions::ArtifactCollector::default();
+        collector.value(&json!({"type":"reasoning","summary":[],"encrypted_content":old_value}));
+        collector.persist(&f.state.conn(), &owner, &pin).unwrap();
+        let cold_time = db::now_ms() - 25 * 60 * 60 * 1000;
+        f.state.conn().execute(
+            "UPDATE protocol_artifacts SET issued_ms=?2,last_used_ms=?2 WHERE owner=?1",
+            rusqlite::params![owner, cold_time],
+        ).unwrap();
+        seed_recent_history(&f, &owner, &pin, 500);
+        let headers: Vec<_> = session.into_iter().map(|id| ("x-session-id", id)).collect();
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &headers,
+            json!({"model":"matrix","input":"new independent task","provider_opaque":true,"store":false}),
+        ).await;
+        assert_eq!(code, 200, "{text}");
+        assert_eq!(f.state.conn().query_row(
+            "SELECT count(*) FROM protocol_artifacts WHERE owner=?1", [&owner], |r| r.get::<_, i64>(0),
+        ).unwrap(), 501, "only the cold record should be retired; fresh records may exceed the soft window");
+        let (code, text) = f.call_with_headers(
+            Protocol::Responses, &f.key, &headers,
+            json!({"model":"matrix","input":[{"type":"reasoning","summary":[],"encrypted_content":old_value},{"role":"user","content":"continue"}],"store":false}),
+        ).await;
+        assert_eq!(code, 400, "retired opaque history must fail before outbound replay: {text}");
+        assert!(text.contains("expired"), "the response should explain the retention boundary: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
     }
 }
 
 #[tokio::test]
-async fn responses_stateless_rejects_history_and_ambiguous_modes_before_upstream() {
-    let f=prompt_cache_fixture().await;
-    for extra in [json!({"input":[{"type":"reasoning","encrypted_content":"unknown","summary":[]}]}),json!({"previous_response_id":"resp_old"}),json!({"conversation":"conv_old"}),json!({"include":["reasoning.encrypted_content"]}),json!({"client_metadata":{"session_id":"explicit"}}),json!({"store":true})] {
-        let mut body=json!({"model":"matrix","input":"extract"});
-        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
-        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],body).await;
-        assert_eq!(code,400,"history semantics contradict stateless mode: {text}");
-    }
-    for headers in [vec![("x-tokengo-history-mode","typo")],vec![("x-tokengo-history-mode","stateless"),("x-tokengo-history-mode","stateless")],vec![("x-tokengo-history-mode","stateless"),("x-session-id","explicit")]] {
-        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&headers,json!({"model":"matrix","input":"extract"})).await;
-        assert_eq!(code,400,"{text}");
-    }
-    let (code,text)=f.call_with_headers(Protocol::Chat,&f.key,&[("x-tokengo-history-mode","stateless")],json!({"model":"matrix","messages":[{"role":"user","content":"extract"}]})).await;
-    assert_eq!(code,400,"history-mode header is Responses-only: {text}");
-    assert!(f.seen.seen.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn responses_stateless_allows_plain_tool_replay_and_records_usage() {
-    let f=prompt_cache_fixture().await;
-    let request=json!({"model":"matrix","input":[{"role":"user","content":"compute"},{"type":"function_call","call_id":"c1","name":"sum","arguments":"{\"a\":1}"},{"type":"function_call_output","call_id":"c1","output":"2"}],"tools":[{"type":"function","name":"sum","parameters":{"type":"object","properties":{"a":{"type":"integer"}}}}]});
-    let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],request).await;
-    assert_eq!(code,200,"{text}");
-    assert_eq!(f.seen.seen.lock().unwrap()[0].1["store"],false);
+async fn responses_ordinary_tool_replay_keeps_usage_without_client_extensions() {
+    let f = prompt_cache_fixture().await;
+    let request = json!({"model":"matrix","input":[{"role":"user","content":"compute"},{"type":"function_call","call_id":"c1","name":"sum","arguments":"{\"a\":1}"},{"type":"function_call_output","call_id":"c1","output":"2"}],"tools":[{"type":"function","name":"sum","parameters":{"type":"object","properties":{"a":{"type":"integer"}}}}],"store":false});
+    let (code, text) = f.call(Protocol::Responses, request).await;
+    assert_eq!(code, 200, "{text}");
     f.state.drain_writes();
-    let usage=f.state.conn().query_row("SELECT input_tokens,output_tokens FROM requests WHERE status='ok' ORDER BY id DESC LIMIT 1",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).unwrap();
-    assert_eq!(usage,(5,2));
-    assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(f.state.conn().query_row(
+        "SELECT input_tokens,output_tokens FROM requests WHERE status='ok' ORDER BY id DESC LIMIT 1", [],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+    ).unwrap(), (5, 2));
 }

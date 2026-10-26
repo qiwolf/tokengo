@@ -116,8 +116,6 @@ pub struct ForwardRequest {
     pub session_namespace: String,
     /// Validated explicit conversation identity resolved from inbound headers/body.
     pub explicit_session: Option<String>,
-    /// Explicit one-shot Responses request; never registers opaque history.
-    pub stateless_history: bool,
     pub endpoint: EndpointKind,
     pub model: String,
     /// 原样的请求体（只改 `model` 一处，别的一个字节都不动）。
@@ -1096,20 +1094,6 @@ fn load_auto_plan(
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
 pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
-    if req.stateless_history {
-        if req.endpoint != EndpointKind::Responses
-            || req.explicit_session.is_some()
-            || crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses, &req.body)
-            || !crate::protocol_sessions::artifact_values(&req.body).is_empty()
-            || ["previous_response_id", "conversation"].iter().any(|f| req.body.get(*f).is_some_and(|v| !v.is_null()))
-            || req.body.get("store").is_some_and(|v| !v.is_null() && v != &Value::Bool(false))
-            || req.body.get("include").and_then(Value::as_array).is_some_and(|items| items.iter().any(|v| v.as_str() == Some("reasoning.encrypted_content")))
-        {
-            return Err(ApiError::bad_request("Stateless history mode cannot use session identity, opaque history, server continuation, encrypted-content include or stored responses"));
-        }
-        // Apply the one-shot contract to ordinary native providers too, not only OAuth.
-        req.body.as_object_mut().ok_or_else(|| ApiError::bad_request("Expected a JSON object"))?.insert("store".into(), Value::Bool(false));
-    }
     if let Some(kind) = req.endpoint.tool_kind() {
         if req.stream || model_routes::is_auto(&req.model) {
             return Err(ApiError::bad_request(
@@ -1549,14 +1533,13 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     let session = explicit
         .map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")))
         .or_else(|| tokengo_shared::session_id_from_body(&req.body))
-        .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)))
-        .filter(|_| !req.stateless_history);
+        .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
 
     let opaque = req
         .endpoint
         .protocol()
         .is_some_and(|p| crate::protocol_sessions::opaque_history(p, &req.body));
-    let mut pin_key = req.explicit_session.as_deref().filter(|_| !req.stateless_history).and_then(|id| {
+    let mut pin_key = req.explicit_session.as_deref().and_then(|id| {
         req.endpoint
             .protocol()
             .filter(|p| *p != crate::protocol::Protocol::Chat)
@@ -1567,7 +1550,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         .map(|key| crate::protocol_sessions::load(&state.conn(), key))
         .transpose()?
         .flatten();
-    let anonymous_responses = !req.stateless_history && req.endpoint == EndpointKind::Responses
+    let anonymous_responses = req.endpoint == EndpointKind::Responses
         && req.explicit_session.is_none();
     if anonymous_responses && opaque {
         let candidates: Vec<_> = plan.entries.iter().filter_map(|entry| {
@@ -1605,9 +1588,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     }
     if opaque && existing_pin.is_none() {
         let note = if anonymous_responses {
-            "Opaque reasoning history has no unique verifiable ownership for this key, model and authorized source; start without untracked opaque history"
+            "Opaque reasoning history has no unique verifiable ownership for this key, model and authorized source; history may be expired or unknown, start a new conversation without untracked opaque history"
         } else {
-            "Opaque reasoning history requires an existing explicit session bound to its original source"
+            "Opaque reasoning history requires an existing explicit session bound to its original source; history may have expired, start a new conversation"
         };
         let error = ApiError::bad_request(note).with_code("explicit_session_required");
         guard.reject(&error);
@@ -1747,7 +1730,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         pin,
                         &req.body,
                     )? {
-                        let error=ApiError::bad_request("Opaque history contains artifacts not issued to this key, session and source");
+                        let error=ApiError::bad_request("Opaque history contains artifacts not issued to this key, session and source, or history has expired; start a new conversation");
                         guard.reject(&error);
                         return Err(error);
                     }

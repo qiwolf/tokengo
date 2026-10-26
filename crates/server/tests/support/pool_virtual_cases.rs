@@ -716,7 +716,7 @@ async fn native_pin_overrides_affinity_and_prevents_key_switch_replay() {
         artifacts.persist(&c, &owner, &pin).unwrap();
         identity::context(&c, keys[0].0).unwrap().unwrap()
     };
-    let response=gateway::forward(f.state.clone(),ForwardRequest{auth:Some(auth),session_namespace:"test-native-owner".into(),stateless_history:false,explicit_session:Some("native-session".into()),endpoint:EndpointKind::Responses,model:"native-model".into(),body:json!({"model":"native-model","input":[{"type":"reasoning","encrypted_content":"owned-native-reasoning","summary":[]},{"role":"user","content":"hi"}],"max_output_tokens":16,"store":false}),stream:false,client_ip:None,user_agent:None}).await.unwrap();
+    let response=gateway::forward(f.state.clone(),ForwardRequest{auth:Some(auth),session_namespace:"test-native-owner".into(),explicit_session:Some("native-session".into()),endpoint:EndpointKind::Responses,model:"native-model".into(),body:json!({"model":"native-model","input":[{"type":"reasoning","encrypted_content":"owned-native-reasoning","summary":[]},{"role":"user","content":"hi"}],"max_output_tokens":16,"store":false}),stream:false,client_ip:None,user_agent:None}).await.unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
     let c = f.state.conn();
