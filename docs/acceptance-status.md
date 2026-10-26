@@ -1,12 +1,14 @@
 # 功能与验收状态
 
-本次发行目标 **v0.34.0-qiwolf.20**：通用历史软窗口回收及Key归属显示，schema42。已完成的定向与私有部署证据、正式发布待办见[发行记录](acceptance/2026-10-26-qiwolf20-release/README.md)；不把准备阶段视为公开完成。
+当前正式版 **[v0.34.0-qiwolf.20](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.20)**，发行源码`8ea6c37b3a62`，Cargo0.34.0/schema42。完整CI1393通过/0失败/5忽略，正式发行与公开9资产、GHCR匿名拉取、配套原生/容器及Key生命周期独立验收通过。生产私有修复构建与完整公开包分别标识，详见[发行收据](acceptance/2026-10-26-qiwolf20-release/README.md)。
+
+历史公开版 **[v0.34.0-qiwolf.19](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.19)**，发行源码`9a2276d96f6a`，Cargo0.34.0/schema41。管理页面性能、兼容诊断与正常调用分离及路由配置文档见[版本说明](releases/v0.34.0-qiwolf.19.md)和[发行收据](acceptance/2026-10-26-qiwolf19-release/README.md)。
 
 历史正式版 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)**，发行源码`1b672c8d34ca`，Cargo0.34.0/schema41。完整新建渠道、公开客户端设备OAuth、参数合同与分层HTTP(S)代理已随同一源码发行；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40181428585)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40182556647)成功，9个公开资产及GHCR、配套原生/容器与Key生命周期独立验收通过。build-test完整工作区Rust **1345通过、0失败、3忽略**；Python分别python-container 3项、python-deploy 6项、python-mineru 13项，不与历史定向687项或重复覆盖累加。真实用户授权完成、令牌刷新和真实模型调用仍须逐账号验收。见[版本说明](releases/v0.34.0-qiwolf.18.md)及[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。标签快照不移动，后补结果维护于main与Release页面。
 
 2026-10-25另完成[首页、双语指南与84秒介绍视频更新](acceptance/2026-10-25-docs-video/README.md)，产品仍以q18为基线；本次文档和媒体更新不移动公开标签，也不重新打包已发布资产。
 
-上一公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
+历史公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 
 历史公开版 **[v0.34.0-qiwolf.16](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.16)**，发行源码`2702757fe472`，Cargo0.34.0/schema40。包含本地向量/重排轮询、OAuth结构化输出、输出上限与别名、截断终态、日志和重排计量修复。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40122964321)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40124162546)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1239通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.16.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf16-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 
@@ -14,7 +16,7 @@
 
 历史公开版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](releases/v0.34.0-qiwolf.14.md)和[发行收据](acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
 
-更新日期：2026-10-25。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
+更新日期：2026-10-26。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
 
