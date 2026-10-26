@@ -1,0 +1,13 @@
+--- app.py.before
++++ app.py
+@@ -1452,7 +1452,9 @@
+                 "GROUP BY 1 ORDER BY 2 DESC LIMIT 8", (since_ms,)):
+             keys.append({"key": str(kid), "req": cnt,
+                          "spend": kspend.get(kid, 0.0),
+-                         "key_alias": (gname or ""), "user_alias": (uname or ""),
++                         "key_name": (gname or ""),
++                         "key_alias": (f"{gname} - {uname}" if gname and uname else (gname or "")),
++                         "user_alias": (uname or ""),
+                          "email": (login or "")})
+         hours = [{"t": int(h), "req": cnt, "tok": tok} for h, cnt, tok in db.execute(
+             "SELECT CAST(ts_ms/3600000 AS INTEGER)*3600, count(*), "

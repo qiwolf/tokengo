@@ -249,6 +249,14 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                             </div>
                                         }
                                     })}
+                                    <div class="recent-key">
+                                        <span class="muted small">"Key"</span>
+                                        {move || row.get().map(|r| {
+                                            let label = r.key_display_name.unwrap_or_else(|| "未记录 Key".into());
+                                            let title = label.clone();
+                                            view! { <span title=title>{label}</span> }
+                                        })}
+                                    </div>
                                     <div class="recent-meta">
                                         {move || row.get().map(|r| {
                                             let time = fmt::ts(r.ts_ms);

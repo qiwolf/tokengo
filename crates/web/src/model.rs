@@ -347,6 +347,8 @@ pub struct StatsResp {
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LogRow {
+    #[serde(default)]
+    pub key_display_name: Option<String>,
     #[serde(default)] pub input_tokens_known:bool,
     #[serde(default)] pub output_tokens_known:bool,
     #[serde(default)] pub usage_source:String,
@@ -523,6 +525,8 @@ pub struct VisionTest {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct GatewayKey {
+    #[serde(default)]
+    pub display_name: String,
     pub id: i64,
     pub name: String,
     pub hint: Option<String>,

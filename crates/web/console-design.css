@@ -131,7 +131,7 @@ p {text-wrap:pretty;}
 .console-layout .console-content .overview-tabs>button {border:0;border-radius:0;border-bottom:2px solid transparent;background:none;color:var(--fg-2);padding:4px 0 12px;white-space:nowrap;}
 .console-layout .console-content .overview-tabs>button.active {color:var(--accent);border-bottom-color:var(--accent);box-shadow:none;}
 .console-content .recent-list {display:block;padding:0;}
-.console-content .recent-call {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:16px;padding:12px 16px;border:0;border-bottom:1px solid var(--line);border-radius:0;}
+.console-content .recent-call {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.7fr) minmax(0,1fr);align-items:center;gap:16px;padding:12px 16px;border:0;border-bottom:1px solid var(--line);border-radius:0;}
 .console-content .recent-call:last-child {border-bottom:0;}
 .console-content .recent-main {display:grid;grid-template-columns:80px minmax(0,1fr) 64px;align-items:center;gap:12px;min-width:0;}
 .console-content .recent-model {font-size:14px;font-weight:500;overflow-wrap:anywhere;}
@@ -340,3 +340,7 @@ p {text-wrap:pretty;}
  .console-layout .console-content .model-observatory .kind-tabs {grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;}
  .console-layout .console-content .model-observatory .kind-tab {flex-direction:row;gap:4px;}
 }
+
+/* Keep long Key/owner names readable in both desktop and stacked call rows. */
+.console-content .recent-key {display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px;}
+.console-content .recent-key>span:last-child {min-width:0;overflow-wrap:anywhere;}

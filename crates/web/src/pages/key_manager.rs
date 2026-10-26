@@ -2,6 +2,15 @@ use super::policy_editor::{self as policy, BudgetUsage, PolicyEditor};
 use crate::{Ctx, admin_api as api, fmt};
 use leptos::prelude::*;
 use serde_json::{Value, json};
+/// The editable name remains personal; administrator labels include its owner.
+fn key_label(key: &Value, personal: bool) -> String {
+    if !personal {
+        if let Some(label)=key["display_name"].as_str().filter(|label|!label.trim().is_empty()) {
+            return label.to_owned();
+        }
+    }
+    api::text(key,"name")
+}
 fn key_copy_notice(copied: bool) -> &'static str {
     if copied { "完整 API Key 已复制到系统剪贴板，请安全保存。" }
     else { "复制未成功。请点击“复制 Key”重试，或选中上方 Key 手动复制；也可稍后从列表再次显示。" }
@@ -332,7 +341,7 @@ pub fn KeyManager(
         if busy.get_untracked() { return; }
         let Some(id) = key["id"].as_i64() else { return; };
         let owner_id = owner.get_untracked(); let token = generation.get_untracked();
-        reveal_name.set(api::text(&key,"name")); revealed_key.set(String::new()); reveal_error.set(String::new()); reveal_note.set(String::new());
+        reveal_name.set(key_label(&key,personal)); revealed_key.set(String::new()); reveal_error.set(String::new()); reveal_note.set(String::new());
         busy.set(true); reveal_open.set(true);
         leptos::task::spawn_local(async move {
             match crate::api::call("POST", &format!("{}/reveal",key_path(personal,id)), Some(json!({}))).await {
@@ -447,7 +456,7 @@ pub fn KeyManager(
     view! {<Show when=move||!embedded||!editor_open.get()><section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
     <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"各 Key 共享用户总额度，设置 Key 上限不会增加总额度。最多32把活动 Key；已有密钥保留。"</p></Show>
     <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，点击新建 API Key 开始。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let delete_row=k.clone();let reveal_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=api::text(&k,"name");let hint=api::text(&k,"hint");let key_id=api::text(&k,"id");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div><div class="muted small">{format!("VKey ID：{key_id}")}</div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><div class="key-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|reveal_key(reveal_row.clone())>"显示 Key"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限和额度限制"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button>{if key_can_delete(&delete_row){view!{<button type="button" class="ghost danger" disabled=move||busy.get()||loading.get() on:click=move |_|{delete_target.set(Some(delete_row.clone()));delete_error.set(String::new());delete_open.set(true);}>"删除 Key"</button>}.into_any()}else{().into_any()}}</div></td></tr>}}).collect_view()}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let delete_row=k.clone();let reveal_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=key_label(&k,personal);let hint=api::text(&k,"hint");let key_id=api::text(&k,"id");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div><div class="muted small">{format!("VKey ID：{key_id}")}</div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><div class="key-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|reveal_key(reveal_row.clone())>"显示 Key"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限和额度限制"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button>{if key_can_delete(&delete_row){view!{<button type="button" class="ghost danger" disabled=move||busy.get()||loading.get() on:click=move |_|{delete_target.set(Some(delete_row.clone()));delete_error.set(String::new());delete_open.set(true);}>"删除 Key"</button>}.into_any()}else{().into_any()}}</div></td></tr>}}).collect_view()}</tbody></table></div>
     <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
     </Show><KeyEditorSurface open=editor_open busy=busy embedded=embedded>
     <Show when=move||secret.get().is_some()><section class="one-time-key" aria-labelledby=if personal{"my-created-key-title"}else{"admin-created-key-title"}>
@@ -480,7 +489,7 @@ pub fn KeyManager(
     </div>
     </super::ModuleDialog>
     <super::ModuleDialog open=delete_open busy=busy title="删除 API Key".to_string()>
-    <p>{move||format!("确定删除“{}”？",delete_target.get().map(|k|api::text(&k,"name")).unwrap_or_default())}</p>
+    <p>{move||format!("确定删除“{}”？",delete_target.get().map(|k|key_label(&k,personal)).unwrap_or_default())}</p>
     <p class="account-help">"删除会永久撤销此 Key 并从日常列表移除，不能恢复；使用它及其子密钥的客户端将无法继续调用。调用历史、账务、审计及父子 Key 的安全约束保留。"</p>
     <p role="alert">{move||delete_error.get()}</p>
     <div class="account-actions"><button type="button" class="danger" disabled=move||busy.get() on:click=delete_key>{move||if busy.get(){"正在删除…"}else{"确认删除 Key"}}</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|delete_open.set(false)>"取消"</button></div>
@@ -490,6 +499,15 @@ pub fn KeyManager(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn key_labels_distinguish_admin_and_personal_views_without_changing_name() {
+        let key=json!({"name":"Memory","display_name":"Memory - Cyber"});
+        assert_eq!(key_label(&key,false),"Memory - Cyber");
+        assert_eq!(key_label(&key,true),"Memory");
+        assert_eq!(key["name"],"Memory");
+        assert_eq!(key_label(&json!({"name":"Legacy"}),false),"Legacy");
+        assert_eq!(key_label(&json!({"name":"Legacy","display_name":" "}),false),"Legacy");
+    }
     #[test]
     fn failed_copy_keeps_actionable_manual_delivery_message() {
         assert!(key_copy_notice(false).contains("手动复制"));

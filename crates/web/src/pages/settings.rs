@@ -123,7 +123,9 @@ fn GatewayKeys(ctx: Ctx) -> impl IntoView {
                 </Show>
                 <For each=move || keys.get() key=|row| row.id children=move |row| {
                     let id = row.id;
-                    let delete_name = row.name.clone();
+                    let label = if row.display_name.is_empty() { row.name.clone() } else { row.display_name.clone() };
+                    let title = label.clone();
+                    let delete_name = label.clone();
                     let copy = move |_| {
                         if busy.get_untracked() { return; }
                         busy.set(true);
@@ -168,7 +170,7 @@ fn GatewayKeys(ctx: Ctx) -> impl IntoView {
                         <article class="panel gateway-key-row" style="margin-top:12px;overflow-wrap:anywhere" data-key-id=id>
                             <div class="gateway-key-record">
                                 <div class="gateway-key-identity">
-                                    <strong class="gateway-key-name" title=row.name.clone()>{row.name.clone()}</strong>
+                                    <strong class="gateway-key-name" title=title>{label}</strong>
                                     <code>{row.hint.unwrap_or_else(|| "（无提示）".into())}</code>
                                     <span class="muted small gateway-key-created">{format!("创建于 {}", fmt::ts(row.created_at_ms))}</span>
                                 </div>

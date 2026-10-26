@@ -211,6 +211,9 @@ pub fn add_attempt(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRow {
+    pub user_id: Option<i64>,
+    pub key_id: Option<i64>,
+    pub key_display_name: Option<String>,
     pub input_tokens_known: bool,
     pub output_tokens_known: bool,
     pub usage_source: String,
@@ -239,6 +242,9 @@ pub struct RequestRow {
 
 fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
     Ok(RequestRow {
+        user_id: r.get(22)?,
+        key_id: r.get(23)?,
+        key_display_name: r.get(24)?,
         input_tokens_known:r.get(19)?,output_tokens_known:r.get(20)?,usage_source:r.get(21)?,
         explored:r.get::<_,i64>(18)?!=0,
         error_code:r.get(17)?,
@@ -286,7 +292,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let request = conn.query_row(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
                 input_tokens, output_tokens, has_image, error, served_model, first_byte_ms,
-                client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source FROM requests WHERE id = ?1",
+                client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name FROM requests WHERE id = ?1",
         [id], request_row,
     ).optional()?;
     let Some(request) = request else { return Ok(None); };
@@ -307,7 +313,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt
@@ -1101,6 +1107,35 @@ mod tests {
         let row=recent(&conn,1).unwrap().remove(0);
         assert_eq!(row.model,"auto");
         assert_eq!(row.served_model,"actual-model");
+    }
+
+    #[test]
+    fn request_key_labels_distinguish_owners_and_preserve_history() {
+        let c = open_in_memory().unwrap();
+        let policy = super::super::identity::Policy::default();
+        let cyber = super::super::identity::create_user(&c, "Cyber", "user", &policy).unwrap();
+        let other = super::super::identity::create_user(&c, "Other", "user", &policy).unwrap();
+        let (key, _) = super::super::identity::create_key(&c, cyber.id, "Memory", &policy, None, None).unwrap();
+        let (other_key, _) = super::super::identity::create_key(&c, other.id, "Memory", &policy, None, None).unwrap();
+        for (key, user, expected) in [(key.id, cyber.id, "Memory - Cyber"), (other_key.id, other.id, "Memory - Other")] {
+            let id = start(&c, "chat", "example", None, false).unwrap();
+            c.execute("UPDATE requests SET user_id=?2,key_id=?3 WHERE id=?1", params![id,user,key]).unwrap();
+            let detail = detail(&c,id).unwrap().unwrap();
+            let value = serde_json::to_value(&detail.request).unwrap();
+            assert_eq!(value["key_display_name"], expected);
+            let listed = super::super::gateway_keys::list(&c).unwrap().into_iter().find(|k| k.id == key).unwrap();
+            assert_eq!(listed.name, "Memory");
+            assert_eq!(listed.display_name, expected);
+
+            assert_eq!(value["key_id"], key);
+            assert_eq!(value["user_id"], user);
+            // Soft deletion retains the identity and its request history.
+            c.execute("INSERT INTO settings(key,value) VALUES(?1,'1')",[format!("deleted_key:{key}")]).unwrap();
+            let row = recent(&c,1).unwrap().remove(0);
+            assert_eq!(serde_json::to_value(row).unwrap()["key_display_name"], expected);
+        }
+        let legacy = start(&c, "chat", "legacy", None, false).unwrap();
+        assert!(serde_json::to_value(detail(&c,legacy).unwrap().unwrap().request).unwrap()["key_display_name"].is_null());
     }
 
     #[test]

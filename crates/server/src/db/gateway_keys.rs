@@ -8,6 +8,7 @@ use serde::Serialize;
 pub struct GatewayKey {
     pub id: i64,
     pub name: String,
+    pub display_name: String,
     pub hint: String,
     pub created_at_ms: i64,
 }
@@ -42,12 +43,13 @@ fn selector(key: &str) -> Option<&str> {
 
 pub fn list(conn: &Connection) -> Result<Vec<GatewayKey>> {
     let mut stmt =
-        conn.prepare("SELECT g.id,g.name,g.hint,g.created_at_ms FROM gateway_keys g WHERE NOT EXISTS(SELECT 1 FROM settings s WHERE s.key='deleted_key:'||CAST(g.id AS TEXT)) ORDER BY g.id")?;
+        conn.prepare("SELECT g.id,g.name,g.hint,g.created_at_ms,CASE WHEN u.name IS NOT NULL THEN g.name || ' - ' || u.name ELSE g.name END FROM gateway_keys g LEFT JOIN users u ON u.id=g.user_id WHERE NOT EXISTS(SELECT 1 FROM settings s WHERE s.key='deleted_key:'||CAST(g.id AS TEXT)) ORDER BY g.id")?;
     let rows = stmt
         .query_map([], |r| {
             Ok(GatewayKey {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                display_name: r.get(4)?,
                 hint: r.get(2)?,
                 created_at_ms: r.get(3)?,
             })
@@ -92,6 +94,7 @@ pub fn create(
     Ok(GatewayKey {
         id,
         name: name.into(),
+        display_name: conn.query_row("SELECT g.name || ' - ' || u.name FROM gateway_keys g JOIN users u ON u.id=g.user_id WHERE g.id=?1", [id], |r| r.get(0))?,
         hint: sessions::mask_key(key),
         created_at_ms: conn.query_row(
             "SELECT created_at_ms FROM gateway_keys WHERE id=?1",

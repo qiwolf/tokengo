@@ -214,6 +214,8 @@ async fn disable_user(
 }
 fn key_view(c:&rusqlite::Connection,key:&identity::VKey)->db::Result<Value> {
     let mut row=serde_json::to_value(key).map_err(|e|db::DbError::Other(e.to_string()))?;
+    let owner=identity::user(c,key.user_id)?.map(|u|u.name).unwrap_or_else(||format!("用户 #{}",key.user_id));
+    row["display_name"]=json!(format!("{} - {}",key.name,owner));
     row["can_reveal"]=json!(db::gateway_keys::can_reveal(c,key.id)?);
     Ok(row)
 }
@@ -472,4 +474,29 @@ async fn own_revoke(
         identity::audit(c, Some(&auth), "key.revoke", "key", id, json!({}))
     })?;
     Ok(Json(json!({"revoked":true,"id":id})))
+}
+
+#[cfg(test)]
+mod key_label_tests {
+    use super::*;
+
+    #[test]
+    fn admin_key_display_follows_owner_without_renaming_or_rotating_key() {
+        let c=db::open_in_memory().unwrap();
+        let policy=Policy::default();
+        let mut cyber=identity::create_user(&c,"Cyber","user",&policy).unwrap();
+        let other=identity::create_user(&c,"Other","user",&policy).unwrap();
+        let (key,secret)=identity::create_key(&c,cyber.id,"Memory",&policy,None,None).unwrap();
+        let (sibling,_)=identity::create_key(&c,other.id,"Memory",&policy,None,None).unwrap();
+        assert_eq!(key_view(&c,&key).unwrap()["display_name"],"Memory - Cyber");
+        assert_eq!(key_view(&c,&sibling).unwrap()["display_name"],"Memory - Other");
+        cyber.name="Cyber renamed".into();
+        identity::update_user(&c,&cyber).unwrap();
+        let view=key_view(&c,&key).unwrap();
+        assert_eq!(view["name"],"Memory");
+        assert_eq!(view["display_name"],"Memory - Cyber renamed");
+        assert_eq!(identity::key(&c,key.id).unwrap().unwrap().name,"Memory");
+        assert_eq!(db::gateway_keys::auth_candidate(&c,&secret).unwrap().map(|row|row.0),Some(key.id));
+        assert!(db::gateway_keys::check(&c,&secret).unwrap());
+    }
 }
