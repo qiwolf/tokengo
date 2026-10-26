@@ -1,6 +1,8 @@
 # 功能与验收状态
 
-当前正式版 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)**，发行源码`1b672c8d34ca`，Cargo0.34.0/schema41。完整新建渠道、公开客户端设备OAuth、参数合同与分层HTTP(S)代理已随同一源码发行；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40181428585)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40182556647)成功，9个公开资产及GHCR、配套原生/容器与Key生命周期独立验收通过。build-test完整工作区Rust **1345通过、0失败、3忽略**；Python分别python-container 3项、python-deploy 6项、python-mineru 13项，不与历史定向687项或重复覆盖累加。真实用户授权完成、令牌刷新和真实模型调用仍须逐账号验收。见[版本说明](releases/v0.34.0-qiwolf.18.md)及[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。标签快照不移动，后补结果维护于main与Release页面。
+本次发行目标 **v0.34.0-qiwolf.20**：通用历史软窗口回收及Key归属显示，schema42。已完成的定向与私有部署证据、正式发布待办见[发行记录](acceptance/2026-10-26-qiwolf20-release/README.md)；不把准备阶段视为公开完成。
+
+历史正式版 **[v0.34.0-qiwolf.18](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.18)**，发行源码`1b672c8d34ca`，Cargo0.34.0/schema41。完整新建渠道、公开客户端设备OAuth、参数合同与分层HTTP(S)代理已随同一源码发行；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40181428585)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40182556647)成功，9个公开资产及GHCR、配套原生/容器与Key生命周期独立验收通过。build-test完整工作区Rust **1345通过、0失败、3忽略**；Python分别python-container 3项、python-deploy 6项、python-mineru 13项，不与历史定向687项或重复覆盖累加。真实用户授权完成、令牌刷新和真实模型调用仍须逐账号验收。见[版本说明](releases/v0.34.0-qiwolf.18.md)及[发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)。标签快照不移动，后补结果维护于main与Release页面。
 
 2026-10-25另完成[首页、双语指南与84秒介绍视频更新](acceptance/2026-10-25-docs-video/README.md)，产品仍以q18为基线；本次文档和媒体更新不移动公开标签，也不重新打包已发布资产。
 

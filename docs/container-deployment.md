@@ -1,6 +1,6 @@
 # 容器部署与分发
 
-本文随 **v0.34.0-qiwolf.18** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **41**。这是构建时的文档快照，不据此推定该版本已经公开发行；当前公开版本以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases)、[仓库 README](../README.md)和[最终发行收据](acceptance/2026-10-25-qiwolf18-release/README.md)为准。新安装和从 schema40 升级均执行源码中的 schema41 迁移；升级前一致备份数据库、主密钥、程序与配置，回滚须保留升级后的新写入并使用匹配快照。
+本文随 **v0.34.0-qiwolf.20** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。这是构建快照，发布完成状态以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)及[发行收据](acceptance/2026-10-26-qiwolf20-release/README.md)为准。schema41→42只增加历史归属排序覆盖索引，不清空历史或变更Key；历史保留与降级限制见[保留规则](native-history-retention.md)。升级前一致备份数据库、主密钥、程序及配置；恢复写入后不能用旧冷备直接覆盖。
 
 历史公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 

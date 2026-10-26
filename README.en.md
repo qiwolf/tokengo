@@ -10,9 +10,9 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current stable release: **[v0.34.0-qiwolf.19](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.19)** · [Release notes](docs/releases/v0.34.0-qiwolf.19.md) · [Publication record](docs/acceptance/2026-10-26-qiwolf19-release/README.md).
+Release target (see publication record for completion): **[v0.34.0-qiwolf.20](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.20)** · [Release notes](docs/releases/v0.34.0-qiwolf.20.md) · [Publication record](docs/acceptance/2026-10-26-qiwolf20-release/README.md).
 
-当前正式版：**[v0.34.0-qiwolf.19](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.19)** · [版本说明](docs/releases/v0.34.0-qiwolf.19.md) · [发布记录](docs/acceptance/2026-10-26-qiwolf19-release/README.md)。
+本次发行目标（完成状态见发布记录）：**[v0.34.0-qiwolf.20](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.20)** · [版本说明](docs/releases/v0.34.0-qiwolf.20.md) · [发布记录](docs/acceptance/2026-10-26-qiwolf20-release/README.md)。
 
 ## Meet TokenGo in 84 seconds · 84 秒认识 TokenGo
 
