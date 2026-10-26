@@ -116,6 +116,8 @@ pub struct ForwardRequest {
     pub session_namespace: String,
     /// Validated explicit conversation identity resolved from inbound headers/body.
     pub explicit_session: Option<String>,
+    /// Explicit one-shot Responses request; never registers opaque history.
+    pub stateless_history: bool,
     pub endpoint: EndpointKind,
     pub model: String,
     /// 原样的请求体（只改 `model` 一处，别的一个字节都不动）。
@@ -1094,6 +1096,20 @@ fn load_auto_plan(
 /// 转发。成功/失败都返回一个**能直接回给客户端**的响应。
 pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Response, ApiError> {
     let started_ms = now_ms();
+    if req.stateless_history {
+        if req.endpoint != EndpointKind::Responses
+            || req.explicit_session.is_some()
+            || crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses, &req.body)
+            || !crate::protocol_sessions::artifact_values(&req.body).is_empty()
+            || ["previous_response_id", "conversation"].iter().any(|f| req.body.get(*f).is_some_and(|v| !v.is_null()))
+            || req.body.get("store").is_some_and(|v| !v.is_null() && v != &Value::Bool(false))
+            || req.body.get("include").and_then(Value::as_array).is_some_and(|items| items.iter().any(|v| v.as_str() == Some("reasoning.encrypted_content")))
+        {
+            return Err(ApiError::bad_request("Stateless history mode cannot use session identity, opaque history, server continuation, encrypted-content include or stored responses"));
+        }
+        // Apply the one-shot contract to ordinary native providers too, not only OAuth.
+        req.body.as_object_mut().ok_or_else(|| ApiError::bad_request("Expected a JSON object"))?.insert("store".into(), Value::Bool(false));
+    }
     if let Some(kind) = req.endpoint.tool_kind() {
         if req.stream || model_routes::is_auto(&req.model) {
             return Err(ApiError::bad_request(
@@ -1533,13 +1549,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     let session = explicit
         .map(|id| tokengo_shared::short_hash(&format!("explicit:{id}")))
         .or_else(|| tokengo_shared::session_id_from_body(&req.body))
-        .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
+        .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)))
+        .filter(|_| !req.stateless_history);
 
     let opaque = req
         .endpoint
         .protocol()
         .is_some_and(|p| crate::protocol_sessions::opaque_history(p, &req.body));
-    let mut pin_key = req.explicit_session.as_deref().and_then(|id| {
+    let mut pin_key = req.explicit_session.as_deref().filter(|_| !req.stateless_history).and_then(|id| {
         req.endpoint
             .protocol()
             .filter(|p| *p != crate::protocol::Protocol::Chat)
@@ -1550,7 +1567,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         .map(|key| crate::protocol_sessions::load(&state.conn(), key))
         .transpose()?
         .flatten();
-    let anonymous_responses = req.endpoint == EndpointKind::Responses
+    let anonymous_responses = !req.stateless_history && req.endpoint == EndpointKind::Responses
         && req.explicit_session.is_none();
     if anonymous_responses && opaque {
         let candidates: Vec<_> = plan.entries.iter().filter_map(|entry| {
@@ -2586,6 +2603,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 Duration::from_millis(left),
                                 attempt_timeout,
                                 &mut guard,
+                                pin_key.is_some(),
                             )
                             .await
                             {
@@ -2684,7 +2702,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             if let (Some(owner), Some(pin)) = (&pin_key, &candidate_pin) {
                                 let persisted =
                                     prepared.artifacts.persist(&state.conn(), owner, pin);
-                                if persisted.is_err() {
+                                if let Err(error) = persisted {
+                                    let note = crate::protocol_sessions::persistence_note(&error);
                                     guard.settle_billing("local_state_fault");
                                     guard.active_attempt = None;
                                     record_attempt(
@@ -2697,7 +2716,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                         "local_fault",
                                         Some(status),
                                         now_ms() - t0,
-                                        Some("Opaque artifact state unavailable"),
+                                        Some(&note),
                                     );
                                     guard.error_code = Some("state_unavailable".into());
                                     guard.finish(
@@ -2710,7 +2729,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                         0,
                                         0,
                                         false,
-                                        Some("Opaque artifact state unavailable"),
+                                        Some(&note),
                                     );
                                     return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
                                 }
@@ -3989,7 +4008,7 @@ async fn buffer_passthrough(
             }
             if let Some((state,owner,pin))=provenance {
                 let mut artifacts=crate::protocol_sessions::ArtifactCollector::default();artifacts.value(&validated);
-                if artifacts.persist(&state.conn(),owner,pin).is_err(){let mut invalid=invalid_buffer("local_state: opaque artifact ownership could not be persisted".into());invalid.4=usage;return invalid;}
+                if let Err(error)=artifacts.persist(&state.conn(),owner,pin){let mut invalid=invalid_buffer(crate::protocol_sessions::persistence_note(&error));invalid.4=usage;return invalid;}
             }
             usage_from_value(&v)
         }
@@ -4056,7 +4075,7 @@ async fn buffer_responses_stream(
     let bytes=match serde_json::to_vec(&converted) {Ok(b)=>b,Err(_)=>return fail("Invalid collected Responses JSON".into())};
     if let Some((state,owner,pin))=provenance {
         let mut artifacts=crate::protocol_sessions::ArtifactCollector::default();artifacts.value(&value);
-        if artifacts.persist(&state.conn(),owner,pin).is_err() {return fail("local_state: opaque artifact ownership could not be persisted".into());}
+        if let Err(error)=artifacts.persist(&state.conn(),owner,pin) {return fail(crate::protocol_sessions::persistence_note(&error));}
     }
     let response=Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE,"application/json")
         .body(Body::from(bytes)).unwrap_or_else(|_|StatusCode::BAD_GATEWAY.into_response());
@@ -4164,7 +4183,7 @@ struct PreparedStream {
     artifacts:crate::protocol_sessions::ArtifactCollector,
 }
 async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Protocol,client:crate::protocol::Protocol,
-    remaining:Duration,idle:Duration,guard:&mut RequestGuard)->Result<PreparedStream,String> {
+    remaining:Duration,idle:Duration,guard:&mut RequestGuard,track_artifacts:bool)->Result<PreparedStream,String> {
     let mut prepared=PreparedStream {observer:crate::protocol::sse::Observer::new(source),
         transcoder:(source!=client).then(||crate::protocol::sse::Transcoder::new(source,client)),prefix:Bytes::new(),eof:false,artifacts:Default::default()};
     let deadline=tokio::time::Instant::now()+remaining;
@@ -4179,7 +4198,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let observed=prepared.observer.feed(&chunk);
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
-                prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;
+                if track_artifacts {prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;}
                 if let Some(note)=&prepared.observer.failed {return Err(format!("precommit upstream error: {note}"));}
                 let out=match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?,None=>chunk.to_vec()};
                 if prefix.len().saturating_add(out.len())>1<<20 {return Err("precommit prefix exceeds 1 MiB".into());}
@@ -4194,7 +4213,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let ended=prepared.observer.finish_frames();
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
-                prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;
+                if track_artifacts {prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;}
                 if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?);}
                 prepared.eof=true;
                 if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err("precommit empty or failed stream".into());}
@@ -4282,14 +4301,11 @@ fn stream_passthrough(
                 }
                 let out = observed
                     .and_then(|frames| {
-                        st.artifacts.frames(&frames)?;
                         if let Some((owner, pin)) = &st.provenance {
+                            st.artifacts.frames(&frames)?;
                             st.artifacts
                                 .persist(&st.state.conn(), owner, pin)
-                                .map_err(|_| {
-                                    "local_state: opaque artifact ownership persistence failed"
-                                        .to_string()
-                                })?;
+                                .map_err(|error| crate::protocol_sessions::persistence_note(&error))?;
                         }
                         Ok(())
                     })
@@ -4325,17 +4341,15 @@ fn stream_passthrough(
                     };
                 }
                 if let Ok(frames) = ended {
-                    if let Err(note) = st.artifacts.frames(&frames).and_then(|_| {
+                    if let Err(note) = (|| -> Result<(), String> {
                         if let Some((owner, pin)) = &st.provenance {
+                            st.artifacts.frames(&frames)?;
                             st.artifacts
                                 .persist(&st.state.conn(), owner, pin)
-                                .map_err(|_| {
-                                    "local_state: opaque artifact ownership persistence failed"
-                                        .to_string()
-                                })?;
+                                .map_err(|error| crate::protocol_sessions::persistence_note(&error))?;
                         }
                         Ok(())
-                    }) {
+                    })() {
                         st.finish(Some(&note));
                         return Some((Ok(stream_error(st.endpoint.protocol(), &note)), st));
                     }

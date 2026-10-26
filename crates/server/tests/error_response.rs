@@ -149,7 +149,7 @@ impl Fixture {
             self.state.clone(),
             ForwardRequest {
                 auth: None,
-                explicit_session: None,
+                stateless_history:false,explicit_session: None,
                 session_namespace: "test".into(),
                 endpoint: EndpointKind::Chat,
                 model: "test-model".into(),

@@ -86,6 +86,23 @@ const LIMITS: Limits = Limits {
 fn error(message: &str) -> db::DbError {
     db::DbError::Other(message.into())
 }
+/// Retain a useful failure category without exposing arbitrary database diagnostics.
+/// Only exact internal messages are recognized; SQLite details and unknown strings
+/// may contain caller data, SQL values or credentials and must never reach logs.
+pub fn persistence_note(error: &db::DbError) -> String {
+    let reason = match error {
+        db::DbError::Other(message) => match message.as_str() {
+            "Opaque artifact capacity reached; no active history was evicted"
+            | "Native session capacity reached; no active history was evicted" => "capacity",
+            "Native session source ownership changed" => "source_changed",
+            "Opaque artifact count or size bound exceeded" => "artifact_bounds",
+            "Invalid native session ownership" => "ownership_invalid",
+            _ => "storage_failure",
+        },
+        db::DbError::Sqlite(_) => "storage_failure",
+    };
+    format!("local_state: opaque artifact ownership could not be persisted (reason={reason})")
+}
 fn cleanup(c: &rusqlite::Connection, now: i64) -> db::Result<()> {
     let cutoff = now.saturating_sub(INACTIVE_TTL_MS);
     c.execute(
@@ -197,6 +214,41 @@ pub fn opaque_history(protocol: Protocol, body: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn persistence_notes_distinguish_fixed_internal_failures() {
+        for (message, reason) in [
+            ("Opaque artifact capacity reached; no active history was evicted", "capacity"),
+            ("Native session capacity reached; no active history was evicted", "capacity"),
+            ("Native session source ownership changed", "source_changed"),
+            ("Opaque artifact count or size bound exceeded", "artifact_bounds"),
+            ("Invalid native session ownership", "ownership_invalid"),
+        ] {
+            assert_eq!(
+                persistence_note(&error(message)),
+                format!("local_state: opaque artifact ownership could not be persisted (reason={reason})"),
+            );
+        }
+    }
+
+    #[test]
+    fn persistence_notes_do_not_expose_unknown_or_sqlite_details() {
+        let secret = "PRIVATE-KEY-DO-NOT-LOG";
+        let expected = "local_state: opaque artifact ownership could not be persisted (reason=storage_failure)";
+        for error in [
+            error(secret),
+            // A known prefix is insufficient: do not echo added dynamic context.
+            error(&format!("Native session source ownership changed: {secret}")),
+            db::DbError::Sqlite(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some(secret.into()),
+            )),
+        ] {
+            let note = persistence_note(&error);
+            assert_eq!(note, expected);
+            assert!(!note.contains(secret));
+        }
+    }
+
     #[test]
     fn session_ownership_is_key_scoped_and_cannot_be_overwritten() {
         let c = db::open_in_memory().unwrap();

@@ -1,0 +1,27 @@
+[
+  {
+    "source": "ct103-tokengo-responses.mjs",
+    "source_sha256": "0f66093f02e4ea7d99def71ec913906845d4242db2e8ff6190380f5901901614",
+    "candidate_sha256": "74ac2d0e018d8be76b7cd096375c712ed446450047df4d228898bea16b479674"
+  },
+  {
+    "source": "ct115-tokengo-responses.mjs",
+    "source_sha256": "c1d50bbb4a67d6d2b27ff3c03160bfea17b1851020aabf5f2c062e28119d7db3",
+    "candidate_sha256": "14b3c8c8f57f47d8d7a474ff8399a869999f1823fb3982069f9d8d0a6d4a9fa5"
+  },
+  {
+    "source": "ct127-0-tokengo-responses.mjs",
+    "source_sha256": "c1d50bbb4a67d6d2b27ff3c03160bfea17b1851020aabf5f2c062e28119d7db3",
+    "candidate_sha256": "14b3c8c8f57f47d8d7a474ff8399a869999f1823fb3982069f9d8d0a6d4a9fa5"
+  },
+  {
+    "source": "ct131-openai_responses_llm.py",
+    "source_sha256": "974d065a4fcb62bc8e28f232d1b1c4edad69c61a4caffabe179fced7fd20ce1f",
+    "candidate_sha256": "b57b396f65eba21c6731e27b20561dcc944fd704966e2e9a3a9a10280d0caf5b"
+  },
+  {
+    "source": "ct135-openai_responses_llm.py",
+    "source_sha256": "95b80eede93a202e4df02855cd545e8776d524c644d63ea64ac6260e945fc986",
+    "candidate_sha256": "cb63707e6ad3f5eb1703580dd6ec9f1106c36d3fa9268915ef1d41cd3811815b"
+  }
+]

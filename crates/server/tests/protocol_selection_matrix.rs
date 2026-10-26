@@ -35,8 +35,10 @@ struct Source {
 async fn source(
     State(s): State<Arc<Source>>,
     OriginalUri(uri): OriginalUri,
+    headers: axum::http::HeaderMap,
     Json(v): Json<Value>,
 ) -> Response {
+    assert!(!headers.contains_key("x-tokengo-history-mode"));
     s.seen.lock().unwrap().push((uri.path().into(), v.clone()));
     if v["provider_fail"] == true {
         return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error":{"message":"synthetic source unavailable","type":"server_error"}}))).into_response();
@@ -703,4 +705,77 @@ async fn invalid_converted_chat_effort_aliases_are_rejected_before_outbound_atte
     f.state.drain_writes();
     let attempts:i64=f.state.conn().query_row("SELECT COUNT(*) FROM attempts",[],|row|row.get(0)).unwrap();
     assert_eq!(attempts,0,"invalid aliases must not cause upstream calls or retry attempts");
+}
+
+// A memory extraction call must not depend on a shared anonymous history quota.
+#[tokio::test]
+async fn responses_stateless_survives_full_anonymous_pool_without_evicting_history() {
+    for stream in [false, true] {
+        let f = Fixture::new(vec![Protocol::Responses], false).await;
+        {
+            let c = f.state.conn();
+            let generation = c.query_row("SELECT binding_generation FROM channels WHERE id=?1", [f.channel_id], |r| r.get(0)).unwrap();
+            let pin = tokengo_server::protocol_sessions::Pin {channel:f.channel_id,generation,upstream_model:"upstream".into(),protocol:Protocol::Responses};
+            let owner = tokengo_server::protocol_sessions::anonymous_key(&tokengo_shared::short_hash(&f.key), "matrix", &pin);
+            assert!(tokengo_server::protocol_sessions::claim(&c, &owner, &pin).unwrap());
+            c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT ?1,printf('%064x',i),?2,?2 FROM n", rusqlite::params![owner,db::now_ms()]).unwrap();
+        }
+        let request=json!({"model":"matrix","input":"extract facts","stream":stream,"provider_opaque":true,"store":false});
+        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],request.clone()).await;
+        assert_eq!(code,200,"stateless extraction must ignore a full history pool: {text}");
+        let result=completed_response(&text,stream);
+        assert_eq!(result["output"][0]["encrypted_content"],"test-opaque-state","native response contract stays intact");
+        f.state.drain_writes();
+        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),4096);
+        // Default clients retain their capacity and ownership protections.
+        let (code,text)=f.call(Protocol::Responses,request).await;
+        if stream && code == 200 {assert!(text.contains("local_state:"),"{text}");} else {assert_eq!(code,503,"{text}");}
+        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),4096);
+    }
+}
+
+#[tokio::test]
+async fn responses_stateless_does_not_create_sessions_or_register_replay_material() {
+    for stream in [false,true] {
+        let f=prompt_cache_fixture().await;
+        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],json!({"model":"matrix","input":"one shot","stream":stream,"provider_opaque":true})).await;
+        assert_eq!(code,200,"{text}");
+        let _=completed_response(&text,stream);
+        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        let (code,text)=f.call(Protocol::Responses,json!({"model":"matrix","input":[{"type":"reasoning","summary":[],"encrypted_content":"test-opaque-state"}]})).await;
+        assert_eq!(code,400,"unregistered stateless output cannot become a history credential: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(),1);
+    }
+}
+
+#[tokio::test]
+async fn responses_stateless_rejects_history_and_ambiguous_modes_before_upstream() {
+    let f=prompt_cache_fixture().await;
+    for extra in [json!({"input":[{"type":"reasoning","encrypted_content":"unknown","summary":[]}]}),json!({"previous_response_id":"resp_old"}),json!({"conversation":"conv_old"}),json!({"include":["reasoning.encrypted_content"]}),json!({"client_metadata":{"session_id":"explicit"}}),json!({"store":true})] {
+        let mut body=json!({"model":"matrix","input":"extract"});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],body).await;
+        assert_eq!(code,400,"history semantics contradict stateless mode: {text}");
+    }
+    for headers in [vec![("x-tokengo-history-mode","typo")],vec![("x-tokengo-history-mode","stateless"),("x-tokengo-history-mode","stateless")],vec![("x-tokengo-history-mode","stateless"),("x-session-id","explicit")]] {
+        let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&headers,json!({"model":"matrix","input":"extract"})).await;
+        assert_eq!(code,400,"{text}");
+    }
+    let (code,text)=f.call_with_headers(Protocol::Chat,&f.key,&[("x-tokengo-history-mode","stateless")],json!({"model":"matrix","messages":[{"role":"user","content":"extract"}]})).await;
+    assert_eq!(code,400,"history-mode header is Responses-only: {text}");
+    assert!(f.seen.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn responses_stateless_allows_plain_tool_replay_and_records_usage() {
+    let f=prompt_cache_fixture().await;
+    let request=json!({"model":"matrix","input":[{"role":"user","content":"compute"},{"type":"function_call","call_id":"c1","name":"sum","arguments":"{\"a\":1}"},{"type":"function_call_output","call_id":"c1","output":"2"}],"tools":[{"type":"function","name":"sum","parameters":{"type":"object","properties":{"a":{"type":"integer"}}}}]});
+    let (code,text)=f.call_with_headers(Protocol::Responses,&f.key,&[("x-tokengo-history-mode","stateless")],request).await;
+    assert_eq!(code,200,"{text}");
+    assert_eq!(f.seen.seen.lock().unwrap()[0].1["store"],false);
+    f.state.drain_writes();
+    let usage=f.state.conn().query_row("SELECT input_tokens,output_tokens FROM requests WHERE status='ok' ORDER BY id DESC LIMIT 1",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).unwrap();
+    assert_eq!(usage,(5,2));
+    assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),0);
 }
