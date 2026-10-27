@@ -118,8 +118,14 @@ pub fn output_bound(ctx: &Context<'_>, body: &Value, ceiling: Option<i64>, choic
             }
             value.unwrap_or(4096)
         }
+        OutputSemantics::Unknown => {
+            for key in keys { integer(body, key, zero)?; }
+            ceiling.filter(|n| *n > 0)
+                .ok_or("Unknown source output-limit semantics require verified total output bounds")?
+        }
         OutputSemantics::AnswerOnly { reasoning_budget } => {
-            let answer = integer(body, "max_tokens", false)?;
+            let answer_key = if ctx.protocol == Protocol::Responses { "max_output_tokens" } else { "max_tokens" };
+            let answer = integer(body, answer_key, false)?;
             // DashScope documents this separate inclusive control. It is not an
             // alias of answer-only max_tokens, so unequal values are not merged.
             let inclusive = if parameter_contracts_china::has_inclusive_chat_cap(ctx) {
@@ -135,7 +141,7 @@ pub fn output_bound(ctx: &Context<'_>, body: &Value, ceiling: Option<i64>, choic
                 if budget < 0 { return Err("Unknown/unbounded reasoning budget requires verified total output bounds".into()); }
                 answer.unwrap_or(4096).checked_add(budget).ok_or("Total reasoning/output reservation overflow")?
             } else {
-                ceiling.filter(|n| *n > 0).ok_or("Answer-only max_tokens requires verified total output bounds when reasoning budget is unknown")?
+                ceiling.filter(|n| *n > 0).ok_or_else(||format!("Answer-only {answer_key} requires verified total output bounds when reasoning budget is unknown"))?
             }
         }
     };
@@ -148,7 +154,7 @@ pub fn preserve_converted_total_cap(ctx: &Context<'_>, from: Protocol, body: &mu
     if from == ctx.protocol || !explicit_cap(body) { return Ok(()); }
     // Work on a copy: a failed conversion cannot remove the caller's cap.
     let mut converted = body.clone();
-    let needs_inclusive = matches!(parameter_contracts_china::output_semantics(ctx, body), OutputSemantics::AnswerOnly { .. });
+    let needs_inclusive = matches!(parameter_contracts_china::output_semantics(ctx, body), OutputSemantics::AnswerOnly { .. } | OutputSemantics::Unknown);
     let mimo_chat = ctx.protocol == Protocol::Chat && parameter_contracts::provider(ctx) == "mimo";
     if needs_inclusive || mimo_chat || (parameter_contracts_china::has_inclusive_chat_cap(ctx) && cap_value(body,"max_tokens").is_some()) {
         if parameter_contracts_china::has_inclusive_chat_cap(ctx) {
@@ -201,6 +207,24 @@ mod tests {
         assert_eq!(output_bound(&c, &unknown, Some(1024), 1).unwrap(), 1024);
         assert!(output_bound(&c, &unknown, None, 1).is_err());
     }
+    #[test]
+    fn p0_dashscope_responses_never_use_answer_cap_as_total() {
+        let c = context("dashscope", "qwen3.7-plus", Protocol::Responses);
+        let original = json!({"max_output_tokens":32,"thinking_budget":64});
+        assert!(output_bound(&c, &original, None, 1).is_err());
+        assert_eq!(output_bound(&c, &original, Some(1024), 1).unwrap(),1024);
+        let unknown = context("dashscope", "future-model", Protocol::Responses);
+        assert!(output_bound(&unknown, &original, None, 1).is_err());
+        let mut converted = json!({"max_output_tokens":32});
+        assert!(preserve_converted_total_cap(&c, Protocol::Chat, &mut converted).is_err());
+        assert_eq!(converted, json!({"max_output_tokens":32}));
+        let new = context("dashscope", "qwen3.8-max", Protocol::Responses);
+        assert_eq!(output_bound(&new, &original, None, 1).unwrap(),32);
+        // The protocol-native answer field is max_output_tokens, not max_tokens.
+        let off = json!({"max_output_tokens":32,"enable_thinking":false});
+        assert_eq!(output_bound(&c, &off, None, 1).unwrap(),32);
+    }
+
     #[test]
     fn inclusive_conversion_is_exact_model_and_atomic() {
         let c=context("dashscope","qwen3.8-max",Protocol::Chat);

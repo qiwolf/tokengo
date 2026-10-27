@@ -332,7 +332,11 @@ fn inventory_ref() -> &'static Value {
     INVENTORY.get_or_init(|| serde_json::from_str(include_str!("parameter_contracts_inventory.json"))
         .expect("bundled parameter inventory must be valid JSON"))
 }
-pub fn inventory() -> Value { inventory_ref().clone() }
+pub fn inventory() -> Value {
+    let mut inventory = inventory_ref().clone();
+    inventory["contract_evidence"] = crate::contract_evidence::registry();
+    inventory
+}
 
 /// An administrator's legacy drop list is not a lossless parameter adapter.
 /// Refuse to erase known control/content/cost/state fields supplied by a client.
@@ -365,6 +369,7 @@ pub fn describe(ctx: &Context<'_>) -> Value {
         "api_version":ctx.api_version.filter(|v|v.len()==10 && v.bytes().enumerate().all(|(i,b)|if i==4||i==7{b==b'-'}else{b.is_ascii_digit()})),"inventory_ref":protocol,"unknown_native_parameters":"preserved",
         "automatic_parameter_dropping":false,"automatic_effort_downgrade":false,"source":"documented_contract_not_live_inference",
         "schema_observed_at":"2026-10-25","gemini_native_generate_content_transport":false,
+        "contract_evidence":crate::contract_evidence::describe(ctx),
         "oauth_profile_compatible":!ctx.is_oauth || ctx.profile_override.is_none_or(|name|name=="openai")})
 }
 
@@ -373,6 +378,20 @@ mod tests {
     use super::*;
     fn ctx<'a>(url: &'a str, model: &'a str, protocol: Protocol) -> Context<'a> {
         Context { base_url:url, model, protocol, api_version:None, is_oauth:false, profile_override:None }
+    }
+    #[test]
+    fn versioned_evidence_identity_does_not_grant_runtime_capabilities() {
+        let a = describe(&ctx("https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-2-0-pro", Protocol::Chat));
+        assert_eq!(a["contract_evidence"]["revision"], "2026-10-27-p0.1");
+        assert_eq!(a["contract_evidence"]["identity"]["model"], "doubao-seed-2-0-pro");
+        assert_eq!(a["contract_evidence"]["identity"]["authentication_line"], "externally_configured_credentials");
+        assert_eq!(a["contract_evidence"]["version_verification"], "required_before_new_capability");
+        assert_eq!(a["contract_evidence"]["live_inference_verified"], false);
+        let unknown = describe(&ctx("https://example.invalid/v1", "doubao-seed-2-0-pro", Protocol::Chat));
+        assert_eq!(unknown["contract_evidence"]["identity"]["provider"], "unknown");
+        assert_eq!(unknown["contract_evidence"]["rules"], json!([]));
+        let oauth = Context {is_oauth:true, ..ctx("https://api.openai.com/v1", "gpt-6.1-terra", Protocol::Responses)};
+        assert_eq!(describe(&oauth)["contract_evidence"]["identity"]["authentication_line"], "managed_openai_oauth");
     }
     #[test]
     fn endpoint_and_manual_profiles_are_explicit_and_do_not_infer_from_names_or_ports() {
@@ -471,7 +490,7 @@ mod tests {
     #[test]
     fn descriptor_is_bounded_and_inventory_is_not_a_support_claim() {
         let c=ctx("https://api.openai.com/v1","gpt-6-luna",Protocol::Responses);
-        assert!(describe(&c).to_string().len()<1500); assert!(describe(&c).get("parameters").is_none());
+        assert!(describe(&c).to_string().len()<2048); assert!(describe(&c).get("parameters").is_none());
         let i=inventory(); assert!(i["parameters"].as_array().unwrap().len()>=127); assert_eq!(i["runtime_acceptance"],"not_executed");
     }
 }

@@ -714,6 +714,22 @@ fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option
     billing_bound_with_contract(body,endpoint,price,context,None)
 }
 fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
+    let plan = crate::request_plan::RequestPlan::prepare(body, |outgoing| {
+        let bounds = billing_bound_with_contract_inner(outgoing, endpoint, price, context, contract)?;
+        // Defaults materialized during metering must still satisfy the final
+        // native contract (for example DashScope Responses' minimum cap of 16).
+        if let Some(contract) = contract {
+            crate::parameter_contracts::validate(contract, outgoing)
+                .and_then(|_| crate::parameter_contracts_china::validate(contract, outgoing))
+                .map_err(ApiError::bad_request)?;
+        }
+        Ok::<_, ApiError>(bounds)
+    })?;
+    let (outgoing, bounds) = plan.into_parts();
+    *body = outgoing;
+    Ok(bounds)
+}
+fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
     let mut input=admission_input_bound(body,endpoint)?;
     let mut output=if let Some(contract)=contract {
         crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
@@ -1542,7 +1558,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     let mut pin_key = req.explicit_session.as_deref().and_then(|id| {
         req.endpoint
             .protocol()
-            .filter(|p| *p != crate::protocol::Protocol::Chat)
             .map(|p| crate::protocol_sessions::key(&req.session_namespace, id, &req.model, p))
     });
     let mut existing_pin = pin_key
@@ -1550,16 +1565,16 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         .map(|key| crate::protocol_sessions::load(&state.conn(), key))
         .transpose()?
         .flatten();
-    let anonymous_responses = req.endpoint == EndpointKind::Responses
+    let anonymous_native = matches!(req.endpoint, EndpointKind::Chat | EndpointKind::Responses)
         && req.explicit_session.is_none();
-    if anonymous_responses && opaque {
+    if anonymous_native && opaque {
         let candidates: Vec<_> = plan.entries.iter().filter_map(|entry| {
-            (entry.protocols.select(crate::protocol::Protocol::Responses)
-                == Some(crate::protocol::Protocol::Responses)).then(|| crate::protocol_sessions::Pin {
+            (entry.protocols.select(req.endpoint.protocol().unwrap())
+                == req.endpoint.protocol()).then(|| crate::protocol_sessions::Pin {
                     channel: entry.channel.id.0,
                     generation: entry.binding_generation,
                     upstream_model: entry.channel.upstream_model(&entry.name).into(),
-                    protocol: crate::protocol::Protocol::Responses,
+                    protocol: req.endpoint.protocol().unwrap(),
                 })
         }).collect();
         if let Some((owner, pin)) = crate::protocol_sessions::resolve_anonymous(
@@ -1587,7 +1602,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         return Err(error);
     }
     if opaque && existing_pin.is_none() {
-        let note = if anonymous_responses {
+        let note = if anonymous_native {
             "Opaque reasoning history has no unique verifiable ownership for this key, model and authorized source; history may be expired or unknown, start a new conversation without untracked opaque history"
         } else {
             "Opaque reasoning history requires an existing explicit session bound to its original source; history may have expired, start a new conversation"
@@ -1689,10 +1704,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             });
             // Fresh anonymous calls acquire ownership only after a successful response.
             // Replays use the previously resolved source and all existing pin safeguards.
-            let pin_key = pin_key.clone().or_else(|| {
+            let pin_key = pin_key.clone().filter(|_| req.endpoint != EndpointKind::Chat
+                || upstream_protocol == Some(crate::protocol::Protocol::Chat)).or_else(|| {
                 candidate_pin.as_ref()
-                    .filter(|_| anonymous_responses)
-                    .filter(|pin| pin.protocol == crate::protocol::Protocol::Responses)
+                    .filter(|_| anonymous_native)
+                    .filter(|pin| Some(pin.protocol) == req.endpoint.protocol())
                     .map(|pin| crate::protocol_sessions::anonymous_key(
                         &req.session_namespace, &req.model, pin,
                     ))
@@ -2645,7 +2661,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             if let (Some(key), Some(pin)) = (&pin_key, &candidate_pin) {
                                 let claimed = {
                                     let conn = state.conn();
-                                    crate::protocol_sessions::claim(&conn, key, pin)
+                                    if pin.protocol == crate::protocol::Protocol::Chat { Ok(true) }
+                                    else { crate::protocol_sessions::claim(&conn, key, pin) }
                                 };
                                 match claimed {
                                     Ok(true) => {}
@@ -2897,7 +2914,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             continue;
                         }
                         if let (Some(key), Some(pin)) = (&pin_key, &candidate_pin) {
-                            if !crate::protocol_sessions::claim(&state.conn(), key, pin)? {
+                            if pin.protocol != crate::protocol::Protocol::Chat
+                                && !crate::protocol_sessions::claim(&state.conn(), key, pin)? {
                                 let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");
                                 guard.reject(&error);
                                 return Err(error);
@@ -4961,6 +4979,20 @@ mod tests {
         let mut warm=json!({"messages":[],"max_tokens":0});
         let (input,output)=billing_bound_with_contract(&mut warm,EndpointKind::Messages,None,Some((4096,128)),Some(&c)).unwrap();
         assert!(input>0); assert_eq!(output,0); assert_eq!(warm["max_tokens"],0);
+    }
+
+    #[test]
+    fn p0_dashscope_default_cap_failure_is_atomic() {
+        let c=crate::parameter_contracts::Context {base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",model:"qwen3.7-plus",protocol:crate::protocol::Protocol::Responses,api_version:None,is_oauth:false,profile_override:Some("dashscope")};
+        let mut body=json!({"input":"test"});
+        let original=body.clone();
+        // Input admission fails only after an omitted cap would be materialized.
+        assert!(billing_bound_with_contract(&mut body,EndpointKind::Responses,None,Some((1,1024)),Some(&c)).is_err());
+        assert_eq!(body,original);
+        let mut body=json!({"input":"test","max_output_tokens":32});
+        let (_,output)=billing_bound_with_contract(&mut body,EndpointKind::Responses,None,Some((4096,1024)),Some(&c)).unwrap();
+        assert_eq!(output,1024);
+        assert_eq!(body["max_output_tokens"],32);
     }
 
     #[test]

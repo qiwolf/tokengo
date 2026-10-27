@@ -31,13 +31,13 @@ pub fn anonymous_key(namespace: &str, model: &str, pin: &Pin) -> String {
     let scope = serde_json::json!([
         namespace,
         tokengo_shared::normalize_model_name(model),
-        Protocol::Responses,
+        pin.protocol,
         pin
     ]).to_string();
     format!("protocol_anonymous:{:x}", Sha256::digest(scope.as_bytes()))
 }
 
-/// Resolve only against currently authorized native Responses sources. Every supplied
+/// Resolve only against currently authorized native Chat/Responses sources. Every supplied
 /// artifact must have been issued to the same anonymous scope. Explicit owners are never
 /// searched, and ambiguity fails closed rather than choosing an account arbitrarily.
 pub fn resolve_anonymous(
@@ -52,7 +52,7 @@ pub fn resolve_anonymous(
     }
     let mut found: Option<(String, Pin)> = None;
     let mut visited = std::collections::BTreeSet::new();
-    for pin in candidates.iter().filter(|p| p.protocol == Protocol::Responses) {
+    for pin in candidates.iter().filter(|p| matches!(p.protocol, Protocol::Chat | Protocol::Responses)) {
         let owner = anonymous_key(namespace, model, pin);
         if !visited.insert(owner.clone()) {
             continue;
@@ -210,7 +210,8 @@ pub fn opaque_history(protocol: Protocol, body: &Value) -> bool {
         .and_then(Value::as_array);
     items.is_some_and(|items| {
         items.iter().any(|m| {
-            (protocol == Protocol::Responses
+            chat_opaque_present(m)
+                || (protocol == Protocol::Responses
                 && if m["type"] == "reasoning" {
                     !crate::protocol::is_plain_reasoning(m)
                 } else {
@@ -342,6 +343,27 @@ fn artifact_key(owner: &str, pin: &Pin, value: &str) -> String {
     let bytes = serde_json::json!([owner, pin, value]).to_string();
     format!("{:x}", Sha256::digest(bytes.as_bytes()))
 }
+// Only inspect documented Chat state paths. Function arguments, tool results,
+// provider metadata and user text cannot create ownership artifacts.
+fn chat_opaque_present(message: &Value) -> bool {
+    matches!(message["role"].as_str(), Some("assistant" | "model"))
+        && (message.get("encrypted_content").is_some_and(|v| !v.is_null())
+            || message["tool_calls"].as_array().is_some_and(|calls| calls.iter().any(|call| {
+                call.pointer("/extra_content/google/thought_signature").is_some_and(|v| !v.is_null())
+            })))
+}
+fn visit_chat_opaque(message: &Value, visit: &mut impl FnMut(&str) -> bool) -> bool {
+    if !matches!(message["role"].as_str(), Some("assistant" | "model")) { return true; }
+    let values = message.get("encrypted_content").into_iter().chain(
+        message["tool_calls"].as_array().into_iter().flatten()
+            .filter_map(|call| call.pointer("/extra_content/google/thought_signature"))
+    );
+    for value in values.filter(|v| !v.is_null()) {
+        let Some(value) = value.as_str().filter(|s| !s.is_empty()) else { return false; };
+        if !visit(value) { return false; }
+    }
+    true
+}
 fn walk_artifacts(v: &Value, visit: &mut impl FnMut(&str) -> bool) -> bool {
     match v {
         Value::Array(items) => {
@@ -352,6 +374,7 @@ fn walk_artifacts(v: &Value, visit: &mut impl FnMut(&str) -> bool) -> bool {
             }
         }
         Value::Object(map) => {
+            if !visit_chat_opaque(v, visit) { return false; }
             let field = match map.get("type").and_then(Value::as_str) {
                 Some("thinking") => Some("signature"),
                 Some("redacted_thinking") => Some("data"),
@@ -369,6 +392,7 @@ fn walk_artifacts(v: &Value, visit: &mut impl FnMut(&str) -> bool) -> bool {
             }
             for key in [
                 "response",
+                "choices",
                 "message",
                 "output",
                 "input",
@@ -420,6 +444,12 @@ pub fn verify_artifacts(
     pin: &Pin,
     body: &Value,
 ) -> db::Result<bool> {
+    // Chat-only state cannot borrow an identical digest issued in another
+    // protocol's shape. Inspect only history-message fields, never tool input.
+    if pin.protocol != Protocol::Chat && ["input", "messages"].iter().any(|field| {
+        body.get(*field).and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(chat_opaque_present))
+    }) { return Ok(false); }
     let Ok(values) = bounded_values(body) else {
         return Ok(false);
     };
@@ -459,6 +489,8 @@ pub struct ArtifactCollector {
     signatures: std::collections::HashMap<u64, String>,
     redacted: std::collections::HashMap<u64, String>,
     pending: Vec<String>,
+    // (choice index, optional tool index); None is Ark message ciphertext.
+    chat: std::collections::HashMap<(u64, Option<u64>), String>,
     overflowed: bool,
 }
 impl ArtifactCollector {
@@ -485,11 +517,54 @@ impl ArtifactCollector {
             Err(()) => self.overflowed = true,
         }
     }
+    fn chat_frames(&mut self, value: &Value) -> Result<(), String> {
+        let Some(choices) = value.get("choices").and_then(Value::as_array) else { return Ok(()); };
+        for choice in choices {
+            let index = choice.get("index").and_then(Value::as_u64).unwrap_or(0);
+            // A full message is authoritative for the whole choice, including
+            // removed fields/tool indices. It also wins if a provider sends both
+            // snapshot and delta; stale prefixes must never become issued state.
+            let snapshot = choice.get("message").is_some();
+            if snapshot { self.chat.retain(|(i, _), _| *i != index); }
+            if let Some(delta) = choice.get("message").or_else(|| choice.get("delta")) {
+                if let Some(value) = delta.get("encrypted_content").filter(|v| !v.is_null()) {
+                    self.chat_delta((index, None), value, snapshot)?;
+                }
+                if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
+                    for (position, call) in calls.iter().enumerate() {
+                        if let Some(value) = call.pointer("/extra_content/google/thought_signature").filter(|v| !v.is_null()) {
+                            let tool = call.get("index").and_then(Value::as_u64)
+                                .or_else(|| snapshot.then_some(position as u64))
+                                .ok_or("Opaque Chat tool delta requires its index")?;
+                            self.chat_delta((index, Some(tool)), value, snapshot)?;
+                        }
+                    }
+                }
+            }
+            if choice["finish_reason"].as_str().is_some_and(|reason| !reason.is_empty()) {
+                let closed: Vec<_> = self.chat.keys().filter(|(i, _)| *i == index).copied().collect();
+                for key in closed {
+                    if let Some(value) = self.chat.remove(&key).filter(|s| !s.is_empty()) { self.pending.push(value); }
+                }
+            }
+        }
+        Ok(())
+    }
+    fn chat_delta(&mut self, key: (u64, Option<u64>), value: &Value, snapshot: bool) -> Result<(), String> {
+        let value = value.as_str().ok_or("Opaque Chat state delta must be a string")?;
+        if self.chat.len() >= 128 && !self.chat.contains_key(&key) { return Err("Too many opaque Chat blocks".into()); }
+        let joined = self.chat.entry(key).or_default();
+        if snapshot { joined.clear(); }
+        if joined.len().saturating_add(value.len()) > 1 << 20 { return Err("Opaque Chat block exceeds 1 MiB".into()); }
+        joined.push_str(value);
+        Ok(())
+    }
     pub fn frames(&mut self, frames: &[crate::protocol::sse::Frame]) -> Result<(), String> {
         for frame in frames {
             let Ok(v) = serde_json::from_str::<Value>(&frame.data) else {
                 continue;
             };
+            self.chat_frames(&v)?;
             let event = v
                 .get("type")
                 .and_then(Value::as_str)
@@ -498,7 +573,7 @@ impl ArtifactCollector {
             let index = v.get("index").and_then(Value::as_u64).unwrap_or(0);
             // Start frames may contain only a prefix. Issue signatures only when
             // their block closes, and Responses artifacts only from final snapshots.
-            if !matches!(
+            if v.get("choices").is_none() && !matches!(
                 event,
                 "content_block_start"
                     | "content_block_delta"
@@ -556,6 +631,7 @@ impl ArtifactCollector {
             || self.pending.iter().map(String::len).sum::<usize>()
                 + self.signatures.values().map(String::len).sum::<usize>()
                 + self.redacted.values().map(String::len).sum::<usize>()
+                + self.chat.values().map(String::len).sum::<usize>()
                 > 16 << 20
         {
             return Err("Opaque artifact memory bound exceeded".into());
@@ -579,10 +655,12 @@ impl ArtifactCollector {
             || self.pending.iter().map(String::len).sum::<usize>()
                 + self.signatures.values().map(String::len).sum::<usize>()
                 + self.redacted.values().map(String::len).sum::<usize>()
+                + self.chat.values().map(String::len).sum::<usize>()
                 > 16 << 20
         {
             return Err(error("Opaque artifact count or size bound exceeded"));
         }
+        if pin.protocol == Protocol::Chat && self.pending.is_empty() { return Ok(()); }
         let digests: std::collections::BTreeSet<_> = self
             .pending
             .iter()

@@ -7,7 +7,7 @@
 **Tech Stack:** Rust workspace、现有 Web 前端、JSON/SSE、现有数据库/计量；默认 build-test 构建测试，Mac 编辑及 Git。
 **Spec:** [方案书](../specs/2026-10-27-provider-compatibility.md)
 
-状态：待实施；2026-10-27；基线 `fff38c01e771fed0523cfeb22d08baa88ae11b70`。此文的复选框不是已完成声明。
+状态：分批实施中；第一批P0进展见[验收记录](../../acceptance/2026-10-27-provider-p0.md)。下列复选框保留完整包的完成定义，局部实现不代替整包完成。2026-10-27；基线 `fff38c01e771fed0523cfeb22d08baa88ae11b70`。此文的复选框不是已完成声明。
 
 ## Global Constraints
 

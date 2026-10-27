@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputSemantics {
     Total,
+    /// No documented total/answer limit for this exact source/model/protocol.
+    Unknown,
     AnswerOnly { reasoning_budget: Option<i64> },
 }
 
@@ -27,6 +29,35 @@ const QWEN_INCLUSIVE_CAP: &[&str] = &[
     "qwen3.7-flash", "qwen3.6-plus", "qwen3.6-flash", "qwen3.5-plus", "qwen3.5-flash",
     "glm-5.2", "glm-5.3", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 ];
+// 2026-10-27 native Responses reference. These are exact deployed IDs,
+// not Chat max_completion_tokens capabilities or model-name prefix guesses.
+const QWEN_RESPONSES_TOTAL_CAP: &[&str] = &[
+    "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-flash", "qwen3.8-2.4t-a95b",
+    "qwen3.8-27b", "qwen3.8-omni-flash",
+];
+const QWEN_RESPONSES_ANSWER_CAP: &[&str] = &[
+    "qwen3.7-max", "qwen3.7-max-2026-05-20", "qwen3.7-max-2026-06-08", "qwen3.7-max-2026-05-17",
+    "qwen3.7-max-preview", "qwen3.7-plus", "qwen3.7-plus-2026-05-26",
+    "qwen3.6-plus", "qwen3.6-plus-2026-04-02", "qwen3.5-plus", "qwen3.5-plus-2026-04-20", "qwen3.5-plus-2026-02-15",
+    "qwen3.7-flash", "qwen3.7-flash-2026-07-15", "qwen3.6-flash", "qwen3.6-flash-2026-04-16",
+    "qwen3.5-flash", "qwen3.5-flash-2026-02-23", "qwen3.6-35b-a3b", "qwen3.5-397b-a17b",
+    "qwen3.5-122b-a10b", "qwen3.5-27b", "qwen3.5-35b-a3b",
+    "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
+    "glm-5.3", "glm-5.2", "kimi-k3",
+];
+fn known_dashscope_responses(model: &str) -> bool {
+    QWEN_RESPONSES_TOTAL_CAP.contains(&model) || QWEN_RESPONSES_ANSWER_CAP.contains(&model)
+}
+fn dashscope_responses_thinking_disabled(ctx: &Context<'_>, body: &Value) -> bool {
+    // GLM-5.3 is thinking-only; Kimi's off control is not documented here.
+    if matches!(ctx.model, "glm-5.3" | "kimi-k3") { return false; }
+    match effort(ctx, body) {
+        Some("none") => matches!(ctx.model, "deepseek-v4-pro" | "deepseek-v4-pro-0813" | "deepseek-v4-flash-0731" | "deepseek-v4.1-flash" | "glm-5.2"),
+        Some(_) => false, // effort takes precedence over enable_thinking.
+        None => body.get("enable_thinking") == Some(&json!(false)),
+    }
+}
+
 const KIMI_K3: &[&str] = &["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3"];
 const KIMI_CODE: &[&str] = &["kimi-k2.7-code", "kimi-k2.7-code-highspeed"];
 const GLM_MODELS: &[&str] = &["glm-5.3", "glm-5.2", "glm-5.1", "glm-5", "glm-4.7", "glm-4.6"];
@@ -110,7 +141,7 @@ fn disabled(ctx: &Context<'_>, body: &Value) -> bool {
 }
 fn known(ctx: &Context<'_>) -> bool {
     match provider(ctx) {
-        "dashscope" => QWEN_HYBRID.contains(&ctx.model) || QWEN_TOTAL_CAP.contains(&ctx.model) || ctx.model == "glm-5.2",
+        "dashscope" => (ctx.protocol == Protocol::Responses && known_dashscope_responses(ctx.model)) || QWEN_HYBRID.contains(&ctx.model) || QWEN_TOTAL_CAP.contains(&ctx.model) || ctx.model == "glm-5.2",
         "moonshot" => KIMI_K3.contains(&ctx.model) || KIMI_CODE.contains(&ctx.model) || ctx.model == "kimi-k2.6",
         "zai" => GLM_MODELS.contains(&ctx.model),
         "minimax" => ["MiniMax-M3", "MiniMax-M3.1-Flash"].contains(&ctx.model),
@@ -131,6 +162,11 @@ pub fn validate(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
         "moonshot" if ctx.protocol == Protocol::Chat => validate_kimi(ctx, body),
         "zai" if ctx.protocol == Protocol::Chat => validate_glm(ctx, body),
         "minimax" if matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => validate_minimax(ctx, body),
+        "dashscope" if ctx.protocol == Protocol::Responses && known_dashscope_responses(ctx.model) => {
+            integer(body, "/max_output_tokens", 16, i64::MAX)?;
+            boolean(body, "/enable_thinking")?;
+            Ok(())
+        }
         "dashscope" if matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => validate_dashscope(ctx, body),
         "ark" => validate_ark(ctx, body),
         "siliconflow" if ctx.protocol == Protocol::Chat => validate_siliconflow(ctx, body),
@@ -371,6 +407,14 @@ pub fn has_inclusive_chat_cap(ctx: &Context<'_>) -> bool {
 /// No provider default is invented. Answer-only budgets without an explicit,
 /// verified reasoning ceiling require the caller's conservative total reservation.
 pub fn output_semantics(ctx: &Context<'_>, body: &Value) -> OutputSemantics {
+    if !ctx.is_oauth && provider(ctx) == "dashscope" && ctx.protocol == Protocol::Responses {
+        if QWEN_RESPONSES_TOTAL_CAP.contains(&ctx.model) { return OutputSemantics::Total; }
+        if QWEN_RESPONSES_ANSWER_CAP.contains(&ctx.model) {
+            return if dashscope_responses_thinking_disabled(ctx, body) { OutputSemantics::Total }
+                else { OutputSemantics::AnswerOnly { reasoning_budget: None } };
+        }
+        return OutputSemantics::Unknown;
+    }
     if disabled(ctx, body) || !matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) {
         return OutputSemantics::Total;
     }
@@ -478,7 +522,7 @@ pub fn describe(ctx: &Context<'_>) -> Value {
     let specific = known(ctx) && !runtime_profile;
     let urls: &[&str] = match p {
         "mimo" => &["https://mimo.mi.com/docs/en-US/api/chat/openai-api", "https://mimo.mi.com/docs/en-US/api/chat/responses", "https://mimo.mi.com/docs/en-US/api/chat/anthropic-api"],
-        "dashscope" => &["https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions", "https://help.aliyun.com/en/model-studio/anthropic-api-messages"],
+        "dashscope" => &["https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions", "https://help.aliyun.com/en/model-studio/anthropic-api-messages", "https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses"],
         "moonshot" => &["https://platform.kimi.ai/docs/models", "https://platform.kimi.ai/docs/api/models-overview", "https://platform.kimi.ai/docs/api/chat"],
         "zai" => &["https://docs.bigmodel.cn/api-reference/模型-api/对话补全", "https://docs.z.ai/api-reference/llm/chat-completion"],
         "minimax" => &["https://platform.minimax.io/docs/api-reference/text-openai-api", "https://platform.minimax.io/docs/api-reference/text-anthropic-api"],
@@ -627,6 +671,27 @@ mod tests {
         let b=json!({"temperature":null,"thinking":null,"other":null});
         assert!(validate(&c,&b).is_ok()); assert!(!adapt(&c,&mut b.clone()).unwrap());
     }
+    #[test]
+    fn p0_dashscope_responses_caps_are_protocol_and_model_specific() {
+        let old = ctx("dashscope", "qwen3.7-plus", Protocol::Responses);
+        assert_eq!(output_semantics(&old, &json!({"max_output_tokens":32})), OutputSemantics::AnswerOnly { reasoning_budget: None });
+        assert_eq!(output_semantics(&old, &json!({"max_output_tokens":32,"thinking_budget":64})), OutputSemantics::AnswerOnly { reasoning_budget: None });
+        for model in ["deepseek-v4-pro", "glm-5.3", "kimi-k3"] {
+            let c = ctx("dashscope", model, Protocol::Responses);
+            assert_eq!(output_semantics(&c, &json!({"max_output_tokens":32})), OutputSemantics::AnswerOnly { reasoning_budget: None });
+        }
+        let new = ctx("dashscope", "qwen3.8-max", Protocol::Responses);
+        assert_eq!(output_semantics(&new, &json!({"max_output_tokens":32})), OutputSemantics::Total);
+        assert!(validate(&new, &json!({"max_output_tokens":15})).is_err());
+        assert!(validate(&new, &json!({"max_output_tokens":16})).is_ok());
+        let hosted = ctx("siliconflow", "Qwen/Qwen3.8-27B", Protocol::Responses);
+        assert_eq!(output_semantics(&hosted, &json!({"max_output_tokens":32})), OutputSemantics::Total);
+        // Reasoning.effort wins over enable_thinking on native Responses.
+        let old = ctx("dashscope", "deepseek-v4-pro", Protocol::Responses);
+        assert_eq!(output_semantics(&old, &json!({"reasoning":{"effort":"high"},"enable_thinking":false})), OutputSemantics::AnswerOnly { reasoning_budget: None });
+        assert_eq!(output_semantics(&old, &json!({"reasoning":{"effort":"none"}})), OutputSemantics::Total);
+    }
+
     #[test]
     fn unknown_dashscope_budget_is_not_a_verified_reasoning_ceiling() {
         let c = ctx("dashscope", "future-model", Protocol::Chat);
