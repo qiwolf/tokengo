@@ -1,8 +1,8 @@
 # 功能与验收状态
 
-本次发行目标 **v0.34.0-qiwolf.21**：模型别名可发现性与旧路由目标显式清理，Cargo0.34.0/schema42。已完成的私有Web及页面验收与待完成的正式发行分别记录，见[发行收据](acceptance/2026-10-27-qiwolf21-release/README.md)。
+当前正式版 **[v0.34.0-qiwolf.21](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.21)**，发行源码`153c9db127c3`，Cargo0.34.0/schema42。完整CI1398/0/5及正式发行流程成功；9个公开资产、匿名GHCR拉取与原生/容器独立运行及Key生命周期验收通过。私有Web更新不等于生产完整包升级，本轮未部署完整生产包。详见[发行收据](acceptance/2026-10-27-qiwolf21-release/README.md)。
 
-当前正式版 **[v0.34.0-qiwolf.20](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.20)**，发行源码`8ea6c37b3a62`，Cargo0.34.0/schema42。完整CI1393通过/0失败/5忽略，正式发行与公开9资产、GHCR匿名拉取、配套原生/容器及Key生命周期独立验收通过。生产私有修复构建与完整公开包分别标识，详见[发行收据](acceptance/2026-10-26-qiwolf20-release/README.md)。
+历史正式版 **[v0.34.0-qiwolf.20](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.20)**，发行源码`8ea6c37b3a62`，Cargo0.34.0/schema42。完整CI1393通过/0失败/5忽略，正式发行与公开9资产、GHCR匿名拉取、配套原生/容器及Key生命周期独立验收通过。生产私有修复构建与完整公开包分别标识，详见[发行收据](acceptance/2026-10-26-qiwolf20-release/README.md)。
 
 历史公开版 **[v0.34.0-qiwolf.19](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.19)**，发行源码`9a2276d96f6a`，Cargo0.34.0/schema41。管理页面性能、兼容诊断与正常调用分离及路由配置文档见[版本说明](releases/v0.34.0-qiwolf.19.md)和[发行收据](acceptance/2026-10-26-qiwolf19-release/README.md)。
 
