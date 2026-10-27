@@ -282,6 +282,9 @@ impl Upstream {
             .map_err(|e| ChannelFault { message: format!("invalid probe JSON: {e}") })?;
         if channel.unwrap_envelope { tokengo_shared::unwrap_envelope(&mut v); }
         validate_response(&v, path).map_err(|message| ChannelFault { message })?;
+        if path.trim_start_matches('/')=="chat/completions" {
+            crate::protocol::validate_response(crate::protocol::Protocol::Chat,&v).map_err(|message|ChannelFault{message})?;
+        }
         Ok((status,None))
     }
 
@@ -306,6 +309,35 @@ impl Upstream {
         let code = r.status().as_u16();
         let text = r.text().await.unwrap_or_default();
         Ok((code, cap_chars(&text, 4000)))
+    }
+
+    /// Fixed standard runtime API paths only. Reuses the configured egress and
+    /// authentication lane; bounded JSON never escapes as arbitrary provider text.
+    pub async fn runtime_metadata_request(&self, channel:&Channel, secret:Option<&str>, path:&str,
+        body:Option<serde_json::Value>,timeout:Duration)->Result<serde_json::Value,ChannelFault> {
+        let fault=||ChannelFault{message:"Standard runtime metadata unavailable".into()};
+        if !matches!(path,"/api/version"|"/api/show"|"/version"|"/v1/models") {return Err(fault());}
+        let mut url=reqwest::Url::parse(&channel.base_url).map_err(|_|fault())?;
+        // Preserve a reverse proxy's configured API prefix. Only the OpenAI
+        // compatibility /v1 suffix is replaced by standard runtime paths.
+        let configured=url.path().trim_end_matches('/');
+        let prefix=configured.strip_suffix("/v1").unwrap_or(configured);
+        let target=format!("{prefix}{path}");
+        url.set_path(&target);url.set_query(None);url.set_fragment(None);
+        let client=self.egress_client(channel,crate::egress::Purpose::Catalog)?;
+        let mut rb=if body.is_some(){client.post(url)}else{client.get(url)}.timeout(timeout);
+        for (name,value) in build_headers(channel,secret,&new_uuid(),crate::db::now_ms(),None) {
+            let mut header=reqwest::header::HeaderValue::from_str(&value).map_err(|_|fault())?;
+            header.set_sensitive(true);rb=rb.header(name,header);
+        }
+        if let Some(body)=body {rb=rb.json(&body);}
+        let mut response=rb.send().await.map_err(|_|fault())?;
+        if !response.status().is_success(){return Err(fault());}
+        let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await.map_err(|_|fault())? {
+            if bytes.len()+chunk.len()>2*1024*1024{return Err(fault());}bytes.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&bytes).map_err(|_|fault())
     }
 
     /// 拉这条渠道支持的模型清单：`GET {base_url}/models`，用这条渠道自己的

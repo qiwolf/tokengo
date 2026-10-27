@@ -425,6 +425,18 @@ pub fn protect_explicit_controls(body: &Value, dropped: &[String]) -> Result<(),
     Ok(())
 }
 
+/// Uses the execution contract's exact model tables, never a brand prefix.
+pub(crate) fn known_model_for_evidence(ctx: &Context<'_>) -> bool {
+    if ctx.is_oauth { return false; }
+    match provider(ctx) {
+        "openai" => gpt6(ctx.model),
+        "anthropic" => claude_current(ctx.model) || claude_extended(ctx.model),
+        "gemini" => matches!(ctx.model, "gemini-4-argon" | "gemini-3.8-flash" | "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"),
+        "ollama" | "vllm" => false,
+        _ => crate::parameter_contracts_china::known(ctx),
+    }
+}
+
 /// Bounded per-model summary: the full inventory belongs once at API top-level,
 /// not once per model in a catalog with thousands of entries.
 pub fn describe(ctx: &Context<'_>) -> Value {
@@ -511,7 +523,7 @@ mod tests {
     #[test]
     fn versioned_evidence_identity_does_not_grant_runtime_capabilities() {
         let a = describe(&ctx("https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-2-0-pro", Protocol::Chat));
-        assert_eq!(a["contract_evidence"]["revision"], "2026-10-27-p1.2");
+        assert_eq!(a["contract_evidence"]["revision"], crate::contract_evidence::REVISION);
         assert_eq!(a["contract_evidence"]["identity"]["model"], "doubao-seed-2-0-pro");
         assert_eq!(a["contract_evidence"]["identity"]["authentication_line"], "externally_configured_credentials");
         assert_eq!(a["contract_evidence"]["version_verification"], "required_before_new_capability");
@@ -520,7 +532,7 @@ mod tests {
         assert_eq!(unknown["contract_evidence"]["identity"]["provider"], "unknown");
         assert_eq!(unknown["contract_evidence"]["rules"], json!([]));
         let oauth = Context {is_oauth:true, ..ctx("https://api.openai.com/v1", "gpt-6.1-terra", Protocol::Responses)};
-        assert_eq!(describe(&oauth)["contract_evidence"]["identity"]["authentication_line"], "managed_openai_oauth");
+        assert_eq!(describe(&oauth)["contract_evidence"]["identity"]["authentication_line"], "oauth_runtime_bound");
     }
     #[test]
     fn endpoint_and_manual_profiles_are_explicit_and_do_not_infer_from_names_or_ports() {

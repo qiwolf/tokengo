@@ -5,8 +5,23 @@ use leptos::prelude::*;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+#[derive(Clone)]
+pub(crate) struct DiagnosticTarget { pub source_id:i64, pub model:String, pub kind:String }
+static DIAGNOSTIC_TARGET: std::sync::Mutex<Option<DiagnosticTarget>>=std::sync::Mutex::new(None);
+/// A one-shot in-memory edit intent, never a saved probe or authorization grant.
+pub(crate) fn queue_diagnostic_target(source_id:i64,model:String,kind:String) {
+    *DIAGNOSTIC_TARGET.lock().unwrap()=Some(DiagnosticTarget{source_id,model,kind});
+}
+fn diagnostic_draft(target:&DiagnosticTarget,channel:&Channel,meta:&Value,kinds:&BTreeMap<String,String>)->Result<Value,String> {
+    if target.source_id!=channel.id || !channel.models.iter().any(|m|m.model==target.model) {return Err("诊断目标已变化，请重新选择实际来源与模型。".into())}
+    let choices=source_choices(channel,&target.model,kinds,meta);
+    if !choices.contains(&target.kind) {return Err("当前来源未提供所选检查类型，请按真实能力重新选择。".into())}
+    let mut draft=initial();draft["name"]=json!(format!("兼容验证 · {}",target.model));draft["source_id"]=json!(target.source_id);draft["model"]=json!(target.model);draft["kind"]=json!(target.kind);
+    if target.kind=="fetch" {draft["input"]=json!("");}
+    Ok(draft)
+}
 fn initial() -> Value {
-    json!({"name":"","source_id":0,"model":"","kind":"chat","input":"Reply OK","max_tokens":"8","expected_status":"200","contains":"","expected_dimensions":"","timeout_secs":"10","max_latency_secs":"","interval_secs":"300","enabled":false,"search_count":"1","need_content":false,"localization":null,"ori_question":null})
+    json!({"name":"","source_id":0,"model":"","kind":"chat","input":"Reply OK","max_tokens":"8","expected_status":"200","contains":"","expected_dimensions":"","timeout_secs":"10","max_latency_secs":"","interval_secs":"300","enabled":false,"search_count":"1","need_content":false,"localization":null,"ori_question":null,"rerank_query":"示例查询","rerank_documents":"示例文档"})
 }
 fn read_draft(row: &Value) -> Value {
     let mut d = row.clone();
@@ -29,6 +44,9 @@ fn read_draft(row: &Value) -> Value {
                 .unwrap_or_default()
         );
     }
+    let rerank=if row["kind"]=="rerank" {serde_json::from_str::<Value>(row["input"].as_str().unwrap_or("")).unwrap_or(Value::Null)}else{Value::Null};
+    d["rerank_query"]=json!(rerank["query"].as_str().unwrap_or("示例查询"));
+    d["rerank_documents"]=json!(rerank["documents"].as_array().map(|docs|docs.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")).unwrap_or_else(||"示例文档".into()));
     d["search_count"] = json!(row["search_count"].as_u64().unwrap_or(1).to_string());
     d["need_content"] = json!(row["need_content"] == true);
     d["contains"] = json!(row["contains"].as_str().unwrap_or(""));
@@ -63,6 +81,15 @@ fn seconds(d: &Value, key: &str, label: &str, optional: bool) -> Result<Option<u
         })?;
     Ok(Some((n * 1000.0).round() as u64))
 }
+fn rerank_input(d:&Value)->Result<String,String> {
+    let query=d["rerank_query"].as_str().unwrap_or("").trim();
+    if query.is_empty()||query.len()>512 {return Err("重排查询词须为1–512字节".into())}
+    let documents=d["rerank_documents"].as_str().unwrap_or("").lines().map(str::trim).filter(|line|!line.is_empty()).map(str::to_owned).collect::<Vec<_>>();
+    if documents.is_empty()||documents.len()>16||documents.iter().any(|doc|doc.len()>1024) {return Err("重排文档须为1–16条，每行一条，每条最多1024字节".into())}
+    let input=json!({"query":query,"documents":documents}).to_string();
+    if input.len()>4096 {return Err("重排查询与文档合计不能超过4096字节（含编码开销）".into())}
+    Ok(input)
+}
 fn payload(d: &Value, channels: &[Channel]) -> Result<Value, String> {
     let name = d["name"].as_str().unwrap_or("").trim();
     if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
@@ -86,6 +113,7 @@ fn payload(d: &Value, channels: &[Channel]) -> Result<Value, String> {
         "responses",
         "messages",
         "embeddings",
+        "rerank",
         "search",
         "fetch",
     ]
@@ -94,23 +122,23 @@ fn payload(d: &Value, channels: &[Channel]) -> Result<Value, String> {
         return Err("请选择请求类型".into());
     }
     if !repair
-        && !["embeddings", "search", "fetch"].contains(&kind)
+        && !["embeddings", "rerank", "search", "fetch"].contains(&kind)
         && c.is_some_and(|c| !native_kinds(c).iter().any(|k| k == kind))
     {
         return Err("所选接入未声明支持此原生请求类型".into());
     }
-    let input = d["input"].as_str().unwrap_or("");
+    let input=if kind=="rerank" {rerank_input(d)?}else{d["input"].as_str().unwrap_or("").to_string()};
     if kind == "search" {
         if input.trim().is_empty() || input.chars().count() > 128 {
             return Err("查询词须为 1 至 128 字".into());
         }
     } else if kind == "fetch" {
-        validate_url(input)?;
+        validate_url(&input)?;
     } else if input.trim().is_empty() || input.len() > 4096 {
         return Err("测试文本须为 1 至 4096 字节".into());
     }
     let contains = d["contains"].as_str().unwrap_or("").trim();
-    if kind != "embeddings" && contains.len() > 512 {
+    if !matches!(kind,"embeddings"|"rerank") && contains.len() > 512 {
         return Err("匹配文字不能超过 512 字节".into());
     }
     let dim = if kind != "embeddings"
@@ -124,7 +152,7 @@ fn payload(d: &Value, channels: &[Channel]) -> Result<Value, String> {
     } else {
         Some(number(d, "expected_dimensions", "向量维度", 1, 65536)?)
     };
-    let mut b = json!({"name":name,"source_id":id,"model":model,"kind":kind,"input":input,"max_tokens":number(d,"max_tokens","最大输出 Token",1,256)?,"expected_status":number(d,"expected_status","HTTP 状态",200,599)?,"contains":if contains.is_empty()||kind=="embeddings"{None}else{Some(contains)},"expected_dimensions":if kind=="embeddings"{dim}else{None},"timeout_ms":seconds(d,"timeout_secs","等待超时",false)?.unwrap(),"max_latency_ms":seconds(d,"max_latency_secs","耗时上限",true)?,"interval_secs":number(d,"interval_secs","执行间隔（秒）",60,86400)?,"enabled":d["enabled"]==true});
+    let mut b = json!({"name":name,"source_id":id,"model":model,"kind":kind,"input":input,"max_tokens":number(d,"max_tokens","最大输出 Token",1,256)?,"expected_status":number(d,"expected_status","HTTP 状态",200,599)?,"contains":if contains.is_empty()||matches!(kind,"embeddings"|"rerank"){None}else{Some(contains)},"expected_dimensions":if kind=="embeddings"{dim}else{None},"timeout_ms":seconds(d,"timeout_secs","等待超时",false)?.unwrap(),"max_latency_ms":seconds(d,"max_latency_secs","耗时上限",true)?,"interval_secs":number(d,"interval_secs","执行间隔（秒）",60,86400)?,"enabled":d["enabled"]==true});
     b["search_count"] = json!(if kind == "search" {
         number(d, "search_count", "搜索结果数", 1, 50)?
     } else {
@@ -272,6 +300,7 @@ fn kind_label(kind: &str) -> &'static str {
         "responses" => "Responses 对话",
         "messages" => "Messages 对话",
         "embeddings" => "Embeddings 向量",
+        "rerank" => "Rerank 重排",
         "search" => "独立搜索",
         "fetch" => "网页提取",
         _ => "请选择请求类型",
@@ -295,6 +324,7 @@ fn native_kinds(c: &Channel) -> Vec<String> {
 fn kind_options(c: &Channel, known: Option<&str>) -> Vec<String> {
     match known {
         Some("embeddings") => vec!["embeddings".into()],
+        Some("rerank") => vec!["rerank".into()],
         Some("chat" | "unknown" | "") | None => native_kinds(c),
         _ => vec![],
     }
@@ -421,6 +451,17 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
     let selected = RwSignal::new(None::<Value>);
     let draft = RwSignal::new(initial());
     let provider = RwSignal::new(String::new());
+    let requested=StoredValue::new(DIAGNOSTIC_TARGET.lock().unwrap().take());
+    Effect::new(move |_| {
+        if busy.get() || !channels_ready.get() || !probes_ready.get() {return}
+        let Some(target)=requested.get_value() else{return};requested.set_value(None);
+        let rows=channels.get_untracked();
+        let Some(channel)=rows.iter().find(|c|c.id==target.source_id&&eligible.get_untracked().contains(&c.id)) else {error.set("诊断来源当前不可检查，请刷新后按实际来源配置探针。".into());return};
+        match diagnostic_draft(&target,channel,targets.get_untracked().get(&channel.id).unwrap_or(&Value::Null),&model_kinds.get_untracked()) {
+            Ok(prefilled)=>{provider.set(channel.provider_id.map(|id|id.to_string()).unwrap_or_else(||"ungrouped".into()));selected.set(None);draft.set(prefilled);notice.set("已按诊断来源预填未保存草稿；请审阅后保存，再明确执行一次。".into());open.set(true);},
+            Err(message)=>error.set(message)
+        }
+    });
     let tasks = crate::page_tasks::PageTasks::new();
     tasks.spawn(async move {
         crate::page_tasks::parallel([
@@ -680,17 +721,18 @@ pub fn CustomProbes(ctx: Ctx) -> impl IntoView {
     view! {<section class="custom-probes card"><style>{include_str!("../../custom-probes.css")}</style><div class="custom-probe-head"><div><h2>"自定义探针"</h2><p class="muted small">"按指定凭据、模型和请求类型检查上游。系统诊断不扣用户额度，仍消耗上游资源；实际成本未知时会明确标注。"</p></div><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return;}busy.set(true);tasks.spawn(async move{match load().await{Ok(p)=>{probes.set(p.0);eligible.set(p.1);targets.set(p.2);error.set(String::new());},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>"刷新"</button><button class="primary" disabled=move||busy.get() on:click=move |_|edit(None)>"新增探针"</button></div></div>
     <p role="status" class="small">{move||notice.get()}</p><Show when=move||!error.get().is_empty()&&!open.get()&&!deleting.get()><p role="alert" class="error">{move||error.get()}</p></Show>
     <div class="custom-probe-table-wrap"><table class="custom-probe-table"><thead><tr><th>"名称 / 定时状态"</th><th>"供应方 · Key · 模型"</th><th>"最近结果"</th><th>"执行间隔"</th><th>"操作"</th></tr></thead><tbody>{move||probes.get().into_iter().map(|row|{let e=row.clone();let t=row.clone();let r=row.clone();let d=row.clone();let sid=row["source_id"].as_i64().unwrap_or(0);let c=channels.get().into_iter().find(|c|c.id==sid);let target=c.as_ref().map(|c|format!("{} · {}",c.provider_name.as_deref().unwrap_or("未分组接入"),labels.get().get(&sid).cloned().unwrap_or_else(||c.base_url.clone()))).unwrap_or_else(||if channels_ready.get(){"原接入已移除，请编辑修复".into()}else{"接入资料读取中…".into()});let meta=targets.get().get(&sid).cloned().unwrap_or(Value::Null);let credential_type=type_label(&meta);let enabled=row["enabled"]==true;view!{<tr><td><strong>{api::text(&row,"name")}</strong><span class="muted small">{if enabled{"定时已启用"}else{"定时已停用"}}</span></td><td><span>{target}</span><span class="muted small">{credential_type}</span><span class="muted small">{format!("{} · {}",api::text(&row,"model"),kind_label(row["kind"].as_str().unwrap_or("")))}</span></td><td class="custom-probe-result"><span>{result_text(&row["last_result"])}</span><span class="muted small">{result_when(&row["last_result"])}</span><span class="muted small">{cost_text(&row["last_result"])}</span></td><td>{format!("{} 秒",row["interval_secs"].as_u64().unwrap_or(0))}</td><td><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|edit(Some(e.clone()))>"编辑"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(r.clone(),"run")>"执行一次"</button><button class="ghost" disabled=move||busy.get() on:click=move |_|action(t.clone(),"toggle")>{if enabled{"停用"}else{"启用"}}</button><button class="danger" disabled=move||busy.get() on:click=move |_|{selected.set(Some(d.clone()));error.set(String::new());deleting.set(true);}>"删除"</button></div></td></tr>}}).collect_view()}</tbody></table></div><Show when=move||probes.get().is_empty()&&probes_ready.get()><p class="muted custom-probe-empty">"暂无探针。点击“新增探针”选择需要检查的上游。"</p></Show>
-    <ModuleDialog open=open title="配置自定义探针".into() busy=busy><div class="custom-probe-form"><Show when=move||!error.get().is_empty()><p role="alert" class="error">{move||error.get()}</p></Show><fieldset disabled=move||busy.get()><legend>"检查目标"</legend><p class="muted small">"请求类型与所选凭据的真实能力一致。OAuth 使用已绑定账号；搜索和网页提取使用专用工具接口。"</p><div class="custom-probe-fields"><ProbeField draft=draft field="name" label="探针名称"/>
+    <ModuleDialog open=open title="配置自定义探针".into() busy=busy><div class="custom-probe-form"><Show when=move||!error.get().is_empty()><p role="alert" class="error">{move||error.get()}</p></Show><fieldset disabled=move||busy.get()><legend>"检查目标"</legend><Show when=move||!notice.get().is_empty()><p class="muted small" role="status">{move||notice.get()}</p></Show><p class="muted small">"请求类型与所选凭据的真实能力一致。OAuth 使用已绑定账号；搜索和网页提取使用专用工具接口。"</p><div class="custom-probe-fields"><ProbeField draft=draft field="name" label="探针名称"/>
     <label>"供应方"<select prop:value=move||provider.get() on:change=move|e|{provider.set(event_target_value(&e));draft.update(|d|{d["source_id"]=json!(0);d["model"]=json!("");});}><option value="">"请选择供应方"</option>{move||{let mut map=BTreeMap::new();for c in channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)){map.insert(c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into()),c.provider_name.unwrap_or_else(||"未分组接入".into()));}map.into_iter().map(|(id,name)|view!{<option value=id>{name}</option>}).collect_view()}}</select></label>
     <label>"凭据 / API 地址"<select prop:value=move||draft.get()["source_id"].as_i64().unwrap_or(0).to_string() on:change=move|e|draft.update(|d|{let id=event_target_value(&e).parse::<i64>().unwrap_or(0);d["source_id"]=json!(id);d["model"]=json!("");d["kind"]=json!("");})><option value="0">"请选择接入"</option>{move||{let id=draft.get()["source_id"].as_i64().unwrap_or(0);(id>0&&!channels.get().iter().any(|c|c.id==id)).then(||view!{<option value=id.to_string()>"原接入已移除，请重新选择"</option>})}}{move||channels.get().into_iter().filter(|c|eligible.get().contains(&c.id)||draft.get()["source_id"].as_i64()==Some(c.id)).filter(|c|c.provider_id.map(|i|i.to_string()).unwrap_or_else(||"ungrouped".into())==provider.get()).map(|c|{let meta=targets.get().get(&c.id).cloned().unwrap_or(Value::Null);let label=source_option_label(&c,&meta,&labels.get().get(&c.id).cloned().unwrap_or_else(||"上游凭据".into()));view!{<option value=c.id.to_string()>{label}</option>}}).collect_view()}</select></label>
     <label>{move||if matches!(draft.get()["kind"].as_str(),Some("search"|"fetch")){"本地模型（计费归属）"}else{"已配置模型"}}<select prop:value=move||draft.get()["model"].as_str().unwrap_or("").to_string() on:change=move|e|draft.update(|d|{let name=event_target_value(&e);d["model"]=json!(name.clone());let kinds=model_kinds.get_untracked();d["kind"]=json!(channels.get_untracked().iter().find(|c|Some(c.id)==d["source_id"].as_i64()).and_then(|c|source_choices(c,&name,&kinds,targets.get_untracked().get(&c.id).unwrap_or(&Value::Null)).first().cloned()).unwrap_or_default());})><option value="">"请选择模型"</option>{move||{let current=draft.get()["model"].as_str().unwrap_or("").to_string();let id=draft.get()["source_id"].as_i64().unwrap_or(0);(!current.is_empty()&&!channels.get().iter().any(|c|c.id==id&&c.models.iter().any(|m|m.model==current))).then(||view!{<option value=current.clone()>{format!("{}（原映射已移除）",current)}</option>})}}{move||channels.get().into_iter().find(|c|Some(c.id)==draft.get()["source_id"].as_i64()).map(|c|c.models.into_iter().filter(|m|m.enabled||draft.get()["model"].as_str()==Some(m.model.as_str())).map(|m|view!{<option value=m.model.clone()>{m.model.clone()}</option>}).collect_view())}</select></label>
-    <label>"请求类型"<select prop:value=move||draft.get()["kind"].as_str().unwrap_or("chat").to_string() on:change=move|e|draft.update(|d|d["kind"]=json!(event_target_value(&e)))>{move||channels.get().into_iter().find(|c|Some(c.id)==draft.get()["source_id"].as_i64()).map(|c|source_choices(&c,draft.get()["model"].as_str().unwrap_or(""),&model_kinds.get(),targets.get().get(&c.id).unwrap_or(&Value::Null)).into_iter().map(|kind|{let label=kind_label(&kind);view!{<option value=kind>{label}</option>}}).collect_view())}</select></label><Show when=move||{let d=draft.get();!matches!(d["kind"].as_str(),Some("search"|"fetch"|"embeddings"))&&targets.get().get(&d["source_id"].as_i64().unwrap_or(0)).is_none_or(|t|t["managed_openai"]!=true)}><ProbeField draft=draft field="max_tokens" label="最大输出 Token" kind="number" hint="1–256；按所选来源的原生协议发送"/></Show></div>
+    <label>"请求类型"<select prop:value=move||draft.get()["kind"].as_str().unwrap_or("chat").to_string() on:change=move|e|draft.update(|d|d["kind"]=json!(event_target_value(&e)))>{move||channels.get().into_iter().find(|c|Some(c.id)==draft.get()["source_id"].as_i64()).map(|c|source_choices(&c,draft.get()["model"].as_str().unwrap_or(""),&model_kinds.get(),targets.get().get(&c.id).unwrap_or(&Value::Null)).into_iter().map(|kind|{let label=kind_label(&kind);view!{<option value=kind>{label}</option>}}).collect_view())}</select></label><Show when=move||{let d=draft.get();!matches!(d["kind"].as_str(),Some("search"|"fetch"|"embeddings"|"rerank"))&&targets.get().get(&d["source_id"].as_i64().unwrap_or(0)).is_none_or(|t|t["managed_openai"]!=true)}><ProbeField draft=draft field="max_tokens" label="最大输出 Token" kind="number" hint="1–256；按所选来源的原生协议发送"/></Show></div>
     <p class="custom-probe-target-note muted small">{move||draft.get()["source_id"].as_i64().and_then(|id|targets.get().get(&id).cloned()).map(|m|format!("{}{}",m["availability_note"].as_str().unwrap_or(""),m["cost_note"].as_str().map(|s|format!(" · {s}")).unwrap_or_default())).unwrap_or_default()}</p>
     <Show when=move||draft.get()["source_id"].as_i64().and_then(|id|targets.get().get(&id).cloned()).is_some_and(|m|m["managed_openai"]==true)><p class="muted small">"OpenAI 受管理订阅线路使用其专用传输与探针边界；其他账号授权按所声明的供应方接口协议和输出上限执行。"</p></Show>
     <Show when=move||draft.get()["kind"]=="search"><div class="custom-probe-fields"><ProbeField draft=draft field="input" label="查询词" hint="1–128 字"/><ProbeField draft=draft field="search_count" label="搜索结果数" kind="number" hint="1–50 条"/><label class="custom-probe-check"><input type="checkbox" prop:checked=move||draft.get()["need_content"]==true on:change=move|e|draft.update(|d|d["need_content"]=json!(event_target_checked(&e)))/>"同时返回网页正文"</label></div></Show>
     <Show when=move||draft.get()["kind"]=="fetch"><ProbeField draft=draft field="input" label="网页 URL" kind="url" hint="完整 HTTP(S) 地址，不可包含账号密码"/></Show>
-    <Show when=move||!matches!(draft.get()["kind"].as_str(),Some("search"|"fetch"))><label>"测试文本"<textarea rows="2" prop:value=move||draft.get()["input"].as_str().unwrap_or("").to_string() on:input=move|e|draft.update(|d|d["input"]=json!(event_target_value(&e)))></textarea></label></Show></fieldset>
-    <fieldset disabled=move||busy.get()><legend>"通过条件与执行周期"</legend><div class="custom-probe-fields"><ProbeField draft=draft field="expected_status" label="预期 HTTP 状态" kind="number"/><Show when=move||draft.get()["kind"]!="embeddings"><ProbeField draft=draft field="contains" label="响应应包含文字（可选）" hint="匹配回答、搜索结果或网页正文；错误时匹配服务商错误说明"/></Show><Show when=move||draft.get()["kind"]=="embeddings"><ProbeField draft=draft field="expected_dimensions" label="预期向量维度（可选）" kind="number"/></Show><ProbeField draft=draft field="timeout_secs" label="等待超时（秒）" kind="number" hint="1–60 秒"/><ProbeField draft=draft field="max_latency_secs" label="耗时上限（秒，可选）" kind="number" hint="留空只检查超时；填写 0.001–60 秒"/><ProbeField draft=draft field="interval_secs" label="定时执行间隔（秒）" kind="number" hint="60–86400 秒"/><label class="custom-probe-check"><input type="checkbox" prop:checked=move||draft.get()["enabled"]==true on:change=move|e|draft.update(|d|d["enabled"]=json!(event_target_checked(&e)))/>"启用定时执行"</label></div></fieldset><div class="custom-probe-footer"><span class="muted small">"保存配置不会立即执行；可在列表点击“执行一次”。"</span><button class="ghost" disabled=move||busy.get() on:click=move |_|{open.set(false);draft.set(initial());error.set(String::new());}>"取消"</button><button class="primary" disabled=move||busy.get() on:click=save>{move||if busy.get(){"保存中…"}else{"保存探针"}}</button></div></div></ModuleDialog>
+    <Show when=move||draft.get()["kind"]=="rerank"><label>"重排查询词"<input maxlength="512" aria-describedby="rerank-query-help" prop:value=move||draft.get()["rerank_query"].as_str().unwrap_or("").to_string() on:input=move|e|draft.update(|d|d["rerank_query"]=json!(event_target_value(&e)))/></label><p id="rerank-query-help" class="muted small">"1–512字节"</p><label>"待重排文档（每行一条）"<textarea rows="5" aria-describedby="rerank-documents-help" prop:value=move||draft.get()["rerank_documents"].as_str().unwrap_or("").to_string() on:input=move|e|draft.update(|d|d["rerank_documents"]=json!(event_target_value(&e)))></textarea></label><p id="rerank-documents-help" class="muted small">"1–16条，每条最多1024字节；查询与文档编码后合计最多4096字节。"</p><p class="muted small">"发送所填查询词和文档，仅检查返回的top1结果结构、索引范围和有限相关度分数，不代表排序质量已验收。"</p></Show>
+    <Show when=move||!matches!(draft.get()["kind"].as_str(),Some("search"|"fetch"|"rerank"))><label>"测试文本"<textarea rows="2" prop:value=move||draft.get()["input"].as_str().unwrap_or("").to_string() on:input=move|e|draft.update(|d|d["input"]=json!(event_target_value(&e)))></textarea></label></Show></fieldset>
+    <fieldset disabled=move||busy.get()><legend>"通过条件与执行周期"</legend><div class="custom-probe-fields"><ProbeField draft=draft field="expected_status" label="预期 HTTP 状态" kind="number"/><Show when=move||!matches!(draft.get()["kind"].as_str(),Some("embeddings"|"rerank"))><ProbeField draft=draft field="contains" label="响应应包含文字（可选）" hint="匹配回答、搜索结果或网页正文；错误时匹配服务商错误说明"/></Show><Show when=move||draft.get()["kind"]=="embeddings"><ProbeField draft=draft field="expected_dimensions" label="预期向量维度（可选）" kind="number"/></Show><ProbeField draft=draft field="timeout_secs" label="等待超时（秒）" kind="number" hint="1–60 秒"/><ProbeField draft=draft field="max_latency_secs" label="耗时上限（秒，可选）" kind="number" hint="留空只检查超时；填写 0.001–60 秒"/><ProbeField draft=draft field="interval_secs" label="定时执行间隔（秒）" kind="number" hint="60–86400 秒"/><label class="custom-probe-check"><input type="checkbox" prop:checked=move||draft.get()["enabled"]==true on:change=move|e|draft.update(|d|d["enabled"]=json!(event_target_checked(&e)))/>"启用定时执行"</label></div></fieldset><div class="custom-probe-footer"><span class="muted small">"保存配置不会立即执行；可在列表点击“执行一次”。"</span><button class="ghost" disabled=move||busy.get() on:click=move |_|{open.set(false);draft.set(initial());error.set(String::new());}>"取消"</button><button class="primary" disabled=move||busy.get() on:click=save>{move||if busy.get(){"保存中…"}else{"保存探针"}}</button></div></div></ModuleDialog>
     <ModuleDialog open=deleting title="删除探针".into() busy=busy><p>{move||format!("确定删除“{}”？定时执行将停止。",selected.get().as_ref().and_then(|r|r["name"].as_str()).unwrap_or("此探针"))}</p><Show when=move||!error.get().is_empty()><p role="alert" class="error">{move||error.get()}</p></Show><div class="custom-probe-actions"><button class="ghost" disabled=move||busy.get() on:click=move |_|deleting.set(false)>"取消"</button><button class="danger" disabled=move||busy.get() on:click=move |_|{if let Some(r)=selected.get_untracked(){action(r,"delete");}}>"确认删除"</button></div></ModuleDialog></section>}
 }
 #[cfg(test)]
@@ -713,6 +755,34 @@ mod tests {
         d["source_id"] = json!(7);
         d["model"] = json!("local");
         d
+    }
+    #[test]
+    fn rerank_draft_has_editable_query_and_documents_and_bounded_wire_input() {
+        let mut draft=initial();draft["source_id"]=json!(7);draft["model"]=json!("local");draft["name"]=json!("rerank fixture");draft["kind"]=json!("rerank");draft["rerank_query"]=json!("查找相关资料");draft["rerank_documents"]=json!("资料一\n资料二");draft["contains"]=json!("stale matcher");draft["expected_dimensions"]=json!("42");
+        let payload=payload(&draft,&[channel()]).unwrap();assert!(payload["contains"].is_null());assert!(payload["expected_dimensions"].is_null());
+        let encoded:Value=serde_json::from_str(payload["input"].as_str().unwrap()).unwrap();assert_eq!(encoded["query"],"查找相关资料");assert_eq!(encoded["documents"],json!(["资料一","资料二"]));assert_eq!(encoded.as_object().unwrap().len(),2);
+        let reread=read_draft(&payload);assert_eq!(reread["rerank_query"],draft["rerank_query"]);assert_eq!(reread["rerank_documents"],draft["rerank_documents"]);
+        draft["rerank_query"]=json!(" ");assert!(rerank_input(&draft).is_err());draft["rerank_query"]=json!("query");draft["rerank_documents"]=json!((0..17).map(|_|"doc").collect::<Vec<_>>().join("\n"));assert!(rerank_input(&draft).is_err());
+        draft["rerank_documents"]=json!("x".repeat(1025));assert!(rerank_input(&draft).is_err());draft["rerank_documents"]=json!(vec!["x".repeat(1024);4].join("\n"));assert!(rerank_input(&draft).is_err());
+        assert_eq!(kind_options(&channel(),Some("rerank")),vec!["rerank"]);
+    }
+    #[test]
+    fn diagnostic_handoff_uses_existing_oauth_and_tool_choices() {
+        let channel=channel();
+        let target=DiagnosticTarget{source_id:7,model:"local".into(),kind:"responses".into()};
+        let oauth=json!({"credential_kind":"oauth","managed_openai":true,"native_kinds":["responses"]});
+        assert_eq!(diagnostic_draft(&target,&channel,&oauth,&BTreeMap::new()).unwrap()["kind"],"responses");
+        let tool=DiagnosticTarget{kind:"search".into(),..target};
+        let tools=json!({"search":true,"fetch":false});
+        assert_eq!(diagnostic_draft(&tool,&channel,&tools,&BTreeMap::new()).unwrap()["kind"],"search");
+    }
+    #[test]
+    fn diagnostic_handoff_is_scoped_and_never_auto_enables_or_runs_a_probe() {
+        let channel=channel();let target=DiagnosticTarget{source_id:7,model:"local".into(),kind:"chat".into()};
+        let draft=diagnostic_draft(&target,&channel,&Value::Null,&BTreeMap::new()).unwrap();
+        assert_eq!(draft["source_id"],7);assert_eq!(draft["model"],"local");assert_eq!(draft["kind"],"chat");assert_eq!(draft["enabled"],false);assert!(draft["version"].is_null());
+        let mut wrong=target.clone();wrong.source_id=8;assert!(diagnostic_draft(&wrong,&channel,&Value::Null,&BTreeMap::new()).is_err());
+        wrong=target;wrong.kind="search".into();assert!(diagnostic_draft(&wrong,&channel,&Value::Null,&BTreeMap::new()).is_err());
     }
     #[test]
     fn defaults_are_disabled_and_optional_conditions_are_null() {

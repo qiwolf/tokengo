@@ -57,12 +57,17 @@ async fn native_answer_caps_reserve_verified_total_and_settle_incomplete_once() 
     }}
 }
 #[tokio::test]
-async fn unknown_reasoning_or_unrepresentable_conversion_fails_before_send_and_reservation() {
+async fn native_unknown_budget_uses_price_estimate_but_unrepresentable_conversion_still_rejects() {
     for model in ["qwen3.7-plus","future-model"] {
         let f=Fixture::new(model,false).await;
         let(code,text)=f.call("/v1/responses",json!({"model":"logical","input":"hi","max_output_tokens":32,"thinking_budget":64})).await;
-        assert_eq!(code,400,"{model}: {text}");assert_eq!(f.seen.lock().unwrap().len(),0);
-        let count:i64=f.state.conn().query_row("SELECT count(*) FROM billing_ledger",[],|r|r.get(0)).unwrap();assert_eq!(count,0);
+        assert_eq!(code,200,"{model}: {text}");assert_eq!(f.seen.lock().unwrap().len(),1);
+        f.state.drain_writes();let c=f.state.conn();
+        let (count,bound,snapshot):(i64,i64,String)=c.query_row("SELECT count(*),output_bound,source_snapshot FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!((count,bound),(1,2048));let snapshot:Value=serde_json::from_str(&snapshot).unwrap();
+        assert_eq!(snapshot["reservation_estimate"]["origin"],"price_configured");assert_eq!(snapshot["reservation_estimate"]["confidence"],"estimate_not_upstream_bound");
+        assert_eq!(f.seen.lock().unwrap()[0]["max_output_tokens"],32);
+
     }
     let f=Fixture::new("qwen3.7-plus",true).await;
     let(code,text)=f.call("/v1/chat/completions",json!({"model":"logical","messages":[{"role":"user","content":"hi"}],"max_tokens":32})).await;

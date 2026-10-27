@@ -2,6 +2,17 @@
 use crate::{Ctx, api, model::ReasoningCapability};
 use leptos::prelude::*;
 use serde_json::json;
+use std::sync::{Arc, Mutex};
+
+/// Async results belong to one mounted component and one latest operation.
+struct ReasoningEpoch { active:bool, generation:u64 }
+impl Default for ReasoningEpoch {fn default()->Self{Self{active:true,generation:0}}}
+impl ReasoningEpoch {
+    fn begin(&mut self)->Option<u64>{if !self.active{return None}self.generation+=1;Some(self.generation)}
+    fn accepts(&self,ticket:u64)->bool{self.active&&self.generation==ticket}
+    fn dispose(&mut self){self.active=false;self.generation+=1;}
+}
+
 pub(crate) fn confirmed_levels(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for part in text.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -36,6 +47,9 @@ pub(crate) fn thinking_modes_label(c: &ReasoningCapability) -> String {
 #[component]
 pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(optional)] label: Option<String>) -> impl IntoView {
     let diagnostics_open = RwSignal::new(false);
+    let lifecycle=Arc::new(Mutex::new(ReasoningEpoch::default()));
+    let cleanup=lifecycle.clone();on_cleanup(move||cleanup.lock().unwrap().dispose());
+    let load_lifecycle=lifecycle.clone();
     let model = StoredValue::new(model);
     let data = RwSignal::new(ReasoningCapability::default());
     let manual = RwSignal::new(String::new());
@@ -45,40 +59,32 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(opt
     let loaded = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let message = RwSignal::new(String::new());
-    let load =
-        Callback::new(move |()| {
-            loaded.set(false);
-            let Some(id) = channel else {
-                return;
-            };
-            leptos::task::spawn_local(async move {
-                match api::channels().await {
-                    Ok(rows) => {
-                        if let Some(m) = rows.into_iter().find(|c| c.id == id).and_then(|c| {
-                            c.models.into_iter().find(|m| m.model == model.get_value())
-                        }) {
-                            let cap = m.reasoning.unwrap_or_default();
-                            manual.set(cap.manual_levels.clone().unwrap_or_default().join(", "));
-                            manual_on.set(cap.manual_levels.is_some());
-                            default.set(if cap.configured_default {
-                                cap.default_effort.clone().unwrap_or_default()
-                            } else {
-                                String::new()
-                            });
-                            data.set(cap);
-                            loaded.set(true);
-                        } else {
-                            error.set("当前模型配置不存在，请刷新渠道后重试。".into());
-                        }
-                    }
-                    Err(e) => {
-                        ctx.note_err(&e);
-                        error.set(e.message);
-                    }
-                }
-            });
+    let load=Callback::new(move|()| {
+        let epoch=load_lifecycle.clone();let Some(ticket)=epoch.lock().unwrap().begin()else{return};
+        loaded.set(false);
+        let Some(id)=channel else{return};
+        // Resolve owner-bound values before yielding; the original component may
+        // be replaced while the real metadata request is still in flight.
+        let requested_model=model.get_value();
+        leptos::task::spawn_local(async move {
+            let response=api::channels().await;
+            if !epoch.lock().unwrap().accepts(ticket){return}
+            match response {
+                Ok(rows)=>{
+                    if let Some(m)=rows.into_iter().find(|c|c.id==id).and_then(|c|c.models.into_iter().find(|m|m.model==requested_model)) {
+                        let cap=m.reasoning.unwrap_or_default();
+                        manual.set(cap.manual_levels.clone().unwrap_or_default().join(", "));
+                        manual_on.set(cap.manual_levels.is_some());
+                        default.set(if cap.configured_default{cap.default_effort.clone().unwrap_or_default()}else{String::new()});
+                        data.set(cap);loaded.set(true);
+                    }else{error.set("当前模型配置不存在，请刷新渠道后重试。".into());}
+                },
+                Err(e)=>{error.set(e.message.clone());ctx.note_err(&e);}
+            }
         });
+    });
     load.run(());
+    let save_lifecycle=lifecycle.clone();
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         let Some(id) = channel else {
@@ -105,15 +111,28 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(opt
         } else {
             Some(effort)
         };
-        busy.set(true);
-        error.set(String::new());
-        message.set(String::new());
+        let epoch=save_lifecycle.clone();let Some(ticket)=epoch.lock().unwrap().begin()else{return};
+        let body=json!({"model":model.get_value(),"manual_levels":levels,"default_effort":effort});
+        busy.set(true);error.set(String::new());message.set(String::new());
         leptos::task::spawn_local(async move {
-            match api::call("PUT",&format!("/api/channels/{id}/models/reasoning"),Some(json!({"model":model.get_value(),"manual_levels":levels,"default_effort":effort}))).await{Ok(_)=>{message.set("推理参数已保存，客户端显式参数仍优先。".into());load.run(());},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}
+            let response=api::call("PUT",&format!("/api/channels/{id}/models/reasoning"),Some(body)).await;
+            if !epoch.lock().unwrap().accepts(ticket){return}
             busy.set(false);
+            match response {Ok(_)=>{message.set("推理参数已保存，客户端显式参数仍优先。".into());load.run(());},Err(e)=>{error.set(e.message.clone());ctx.note_err(&e);}}
         });
     };
-    let refresh=move |_|{let Some(id)=channel else{return;};if busy.get_untracked(){return;}busy.set(true);error.set(String::new());leptos::task::spawn_local(async move{match api::refresh_channel_metadata(id).await{Ok(r) if r.ok=>{message.set("已从服务商更新模型信息；本次未调用模型。".into());load.run(());},Ok(r)=>error.set(r.note.unwrap_or_else(||"元数据获取失败，现有配置保留。".into())),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});};
+    let refresh_lifecycle=lifecycle.clone();
+    let refresh=move |_| {
+        let Some(id)=channel else{return};if busy.get_untracked(){return}
+        let epoch=refresh_lifecycle.clone();let Some(ticket)=epoch.lock().unwrap().begin()else{return};
+        busy.set(true);error.set(String::new());
+        leptos::task::spawn_local(async move {
+            let response=api::refresh_channel_metadata(id).await;
+            if !epoch.lock().unwrap().accepts(ticket){return}
+            busy.set(false);
+            match response {Ok(r) if r.ok=>{message.set("已从服务商更新模型信息；本次未调用模型。".into());load.run(());},Ok(r)=>error.set(r.note.unwrap_or_else(||"元数据获取失败，现有配置保留。".into())),Err(e)=>{error.set(e.message.clone());ctx.note_err(&e);}}
+        });
+    };
     let field = move |name: &str| {
         format!(
             "reasoning-{}-{}-{}",
@@ -123,13 +142,19 @@ pub fn ReasoningConfig(ctx: Ctx, channel: Option<i64>, model: String, #[prop(opt
         )
     };
     view! {<section class="reasoning-config"><h3>{label.unwrap_or_else(||if channel.is_some(){"推理设置".into()}else{"推理设置（请先保存模型）".into()})}</h3><p>{move||capability_label(&data.get())}</p><p class="muted small">{move||thinking_modes_label(&data.get())}</p><p class="muted small">{move||data.get().default_effort.map(|v|format!("当前默认档位：{v}（{}）",if data.get().configured_default{"已配置"}else{"服务商默认"})).unwrap_or_else(||"当前跟随服务商默认设置。".into())}</p><p class="account-help">"先更新模型信息，查看服务商公布的档位，再选择默认值。未公布档位时保持默认；客户端指定的推理档位优先生效。"</p><div class="toolbar reasoning-actions"><button type="button" class="ghost" on:click=move |_|diagnostics_open.set(true)>"识别依据与高级说明"</button><super::ModuleDialog open=diagnostics_open title="推理能力识别依据".to_string()><p class="muted small">{move||data.get().reason}</p><p class="muted small">{move||data.get().effort_wire.map(|wire|format!("推理强度的上游参数：{wire}")).unwrap_or_else(||"上游强度参数位置尚未确认；不根据模型名称推断。".into())}</p><p class="muted small">"思考模式与推理强度分别记录。disabled、adaptive 和 between_tools 是模式，不会作为强度档位加入下拉选项；本页默认值只配置强度，思考模式仍由客户端显式请求。"</p><p class="muted small">"更新模型信息不会发送推理请求，识别结果不代表实际调用已验证。具体能力以当前接入协议为准。推理档位使用模型原生参数，不另建模型名；客户端显式指定的 reasoning.effort、reasoning_effort 和 service_tier 优先。"</p></super::ModuleDialog>
-    <button type="button" class="ghost" disabled=move||busy.get()||channel.is_none() on:click=refresh>"更新模型信息"</button></div><form class="account-form" on:submit=save><div class="account-field reasoning-default-field"><label for=field("default")>"默认推理档位"</label><select id=field("default") prop:value=default disabled=move||busy.get()||channel.is_none()||!loaded.get() on:change=move|e|default.set(event_target_value(&e))><option value="">"使用服务商默认"</option>{move||data.get().levels.into_iter().map(|level|view!{<option value=level.clone()>{level.clone()}</option>}).collect_view()}</select></div>
+    <button type="button" class="ghost" disabled=move||busy.get()||channel.is_none() on:click=refresh>"更新模型信息"</button></div>{channel.map(|id|view!{<super::provider_compatibility::CompatibilityDiagnostics ctx=ctx channel=id model=model.get_value()/>})}<form class="account-form" on:submit=save><div class="account-field reasoning-default-field"><label for=field("default")>"默认推理档位"</label><select id=field("default") prop:value=default disabled=move||busy.get()||channel.is_none()||!loaded.get() on:change=move|e|default.set(event_target_value(&e))><option value="">"使用服务商默认"</option>{move||data.get().levels.into_iter().map(|level|view!{<option value=level.clone()>{level.clone()}</option>}).collect_view()}</select></div>
     <label class="pick"><input type="checkbox" disabled=move||busy.get()||!loaded.get() prop:checked=manual_on on:change=move|e|manual_on.set(event_target_checked(&e))/>{"人工确认支持档位"}</label><Show when=move||manual_on.get()><div class="account-field"><label for=field("manual")>"已明确确认的档位（逗号分隔）"</label><input id=field("manual") prop:value=manual on:input=move|e|manual.set(event_target_value(&e)) aria-describedby=field("help")/><p id=field("help") class="account-help">"仅填写你已核实支持的值，来源会标为人工确认。先保存档位，再选择默认；关闭后恢复目录判断。"</p></div></Show>
     <p class="account-error" role="alert">{move||error.get()}</p><p class="account-success" role="status">{move||message.get()}</p><button type="submit" class="primary" disabled=move||busy.get()||channel.is_none()||!loaded.get()>{move||if busy.get(){"正在保存…"}else{"保存推理参数"}}</button></form></section>}
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn detached_or_superseded_reasoning_requests_cannot_publish() {
+        let mut epoch=ReasoningEpoch::default();let old=epoch.begin().unwrap();let current=epoch.begin().unwrap();
+        assert!(!epoch.accepts(old));assert!(epoch.accepts(current));
+        epoch.dispose();assert!(!epoch.accepts(current));assert!(epoch.begin().is_none());
+    }
     #[test]
     fn modes_are_displayed_independently_and_do_not_become_strength_options() {
         let c = ReasoningCapability {

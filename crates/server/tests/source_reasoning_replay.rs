@@ -1,4 +1,5 @@
-//! Source capability is an explicit input dialect contract, never inferred from output.
+//! Source capability claims are evidence, not feature-disable switches.
+//! Representable raw history remains usable; explicit conversion policy still applies.
 use axum::{
     extract::{OriginalUri, State},
     routing::post,
@@ -185,14 +186,18 @@ fn replay() -> Value {
     json!({"model":"logical","max_output_tokens":16,"input":[{"type":"message","role":"user","content":"compute"},{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"exact prior reasoning"}]},{"type":"function_call","call_id":"call_exact","name":"sum","arguments":"{\"a\":1}"},{"type":"function_call_output","call_id":"call_exact","output":"2"}]})
 }
 #[tokio::test]
-async fn missing_capability_rejects_before_any_source_attempt_or_charge() {
-    let f = Fixture::new(&[None]).await;
-    let response = f.send("/v1/responses", replay()).await;
-    assert_eq!(response.status(), 400);
-    assert!(f.seen.lock().unwrap().is_empty());
-    assert_eq!(f.attempt_count(), 0);
-    assert_eq!(f.ledger_count(), 0);
-    f.no_source_penalty();
+async fn missing_or_false_claim_preserves_usable_raw_history_and_tool_identity() {
+    for declaration in [None,Some(false)] {
+        let f = Fixture::new(&[declaration]).await;
+        let response = f.send("/v1/responses", replay()).await;
+        assert_eq!(response.status(), 200);
+        let _=response.json::<Value>().await.unwrap();
+        let seen=f.seen.lock().unwrap();assert_eq!(seen.len(),1);
+        assert_eq!(seen[0].1["messages"][1]["reasoning_content"],"exact prior reasoning");
+        assert_eq!(seen[0].1["messages"][1]["tool_calls"][0]["id"],"call_exact");
+        assert_eq!(seen[0].1["messages"][2]["tool_call_id"],"call_exact");drop(seen);
+        assert_eq!(f.attempt_count(),1);assert_eq!(f.ledger_count(),1);f.no_source_penalty();
+    }
 }
 #[tokio::test]
 async fn declared_capability_replays_exact_reasoning_and_tool_identity() {
@@ -211,14 +216,14 @@ async fn declared_capability_replays_exact_reasoning_and_tool_identity() {
     f.no_source_penalty();
 }
 #[tokio::test]
-async fn incompatible_candidate_skips_locally_then_declared_source_succeeds() {
+async fn unconfirmed_first_candidate_remains_usable_without_forced_fallback() {
     let f = Fixture::new(&[None, Some(true)]).await;
     let response = f.send("/v1/responses", replay()).await;
     assert_eq!(response.status(), 200);
     let _ = response.bytes().await.unwrap();
     let seen = f.seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
-    assert!(seen[0].0.starts_with("/1/"));
+    assert!(seen[0].0.starts_with("/0/"));
     assert_eq!(f.attempt_count(), 1);
     assert_eq!(f.ledger_count(), 1);
     f.no_source_penalty();
@@ -256,4 +261,15 @@ async fn plain_input_can_receive_reasoning_output_without_replay_capability() {
         .iter()
         .any(|item| item["type"] == "reasoning"
             && item["content"][0]["text"] == "new source reasoning"));
+}
+
+#[tokio::test]
+async fn explicit_conversion_off_still_rejects_conversion_without_disabling_native_chat() {
+    let f=Fixture::new(&[Some(false)]).await;
+    {let c=f.state.conn();let mut caps=tokengo_server::protocol_config::load(&c,f.ids[0]).unwrap();caps.allow_conversion=false;tokengo_server::protocol_config::save(&c,f.ids[0],&caps).unwrap();}
+    let response=f.send("/v1/responses",replay()).await;assert_eq!(response.status(),400);
+    assert!(f.seen.lock().unwrap().is_empty());assert_eq!(f.attempt_count(),0);assert_eq!(f.ledger_count(),0);
+    let response=f.send("/v1/chat/completions",json!({"model":"logical","max_tokens":16,"messages":[{"role":"assistant","content":"prior","reasoning_content":"native prior"},{"role":"user","content":"continue"}]})).await;
+    assert_eq!(response.status(),200);let _=response.json::<Value>().await.unwrap();
+    assert_eq!(f.seen.lock().unwrap()[0].1["messages"][0]["reasoning_content"],"native prior");
 }

@@ -48,6 +48,9 @@ const QWEN_RESPONSES_ANSWER_CAP: &[&str] = &[
 fn known_dashscope_responses(model: &str) -> bool {
     QWEN_RESPONSES_TOTAL_CAP.contains(&model) || QWEN_RESPONSES_ANSWER_CAP.contains(&model)
 }
+pub(crate) fn documented_responses_cap(ctx:&Context<'_>)->bool {
+    !ctx.is_oauth && provider(ctx)=="dashscope" && ctx.protocol==Protocol::Responses && known_dashscope_responses(ctx.model)
+}
 fn dashscope_responses_thinking_disabled(ctx: &Context<'_>, body: &Value) -> bool {
     // GLM-5.3 is thinking-only; Kimi's off control is not documented here.
     if matches!(ctx.model, "glm-5.3" | "kimi-k3") { return false; }
@@ -162,7 +165,7 @@ fn disabled(ctx: &Context<'_>, body: &Value) -> bool {
         _ => false,
     }
 }
-fn known(ctx: &Context<'_>) -> bool {
+pub(crate) fn known(ctx: &Context<'_>) -> bool {
     match provider(ctx) {
         "dashscope" => (ctx.protocol == Protocol::Responses && known_dashscope_responses(ctx.model)) || QWEN_HYBRID.contains(&ctx.model) || QWEN_TOTAL_CAP.contains(&ctx.model) || ["glm-5.2", "kimi-k3", "kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed", "MiniMax/MiniMax-M3.1-Flash", "deepseek-v4.1-flash-1017"].contains(&ctx.model),
         "deepseek" => DEEPSEEK_MODELS.contains(&ctx.model),
@@ -696,7 +699,7 @@ pub fn describe(ctx: &Context<'_>) -> Value {
         "zai" => "GLM-5.3 cannot disable thinking. clear_thinking controls historical reasoning only, not current thinking. do_sample=false is not a temperature=0 rewrite. Native MCP/retrieval and usage stay intact.",
         "minimax" => "M3.1-Flash cannot turn thinking off. M3 Chat defaults to thinking on, but M3 Messages defaults off: omission is not cross-protocol equivalence. Temperature and several Messages controls may be ignored, not effective. Preserve whole thinking/tool history.",
         "ark" => "For the listed Seed versions minimal means off, unlike OpenAI minimal. Opaque thinking and stateful continuation are not plaintext equivalents; gateway ownership rules remain separate.",
-        "siliconflow" => "Platform contract differs from original-model vendor. max_tokens excludes chain of thought; thinking_budget is separate. Missing budget remains unknown and requires a conservative verified total ceiling.",
+        "siliconflow" => "Platform contract differs from original-model vendor. max_tokens excludes chain of thought; thinking_budget is separate. Missing upstream budget evidence remains unknown. Native calls may use an explicitly identified local reservation estimate; this is not a verified supplier hard cap. Unrepresentable converted total caps remain request errors.",
         "ollama" => "Thinking levels/defaults are runtime model metadata from /api/show. Only a subset of OpenAI is supported; stateless Responses only. Do not infer deployment identity from a model name or localhost port.",
         "vllm" => "Server version, generation_config, chat template and parsers determine capabilities/defaults. Preserve native extensions/cache_salt; cache salt is not authorization identity. Profile must be explicit for self-hosted deployments.",
         _ => "No Chinese-provider or local-engine contract selected; native fields are retained for the source to decide.",

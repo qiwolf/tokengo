@@ -80,18 +80,19 @@ pub fn list(c:&Connection)->db::Result<Vec<Probe>> {
     let rows=q.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     rows.into_iter().map(|raw|serde_json::from_str(&raw).map_err(|_|db_bad("探针配置损坏，请联系管理员"))).collect()
 }
-fn endpoint(kind:&str)->Option<EndpointKind> { Some(match kind {"chat"=>EndpointKind::Chat,"responses"=>EndpointKind::Responses,"messages"=>EndpointKind::Messages,"embeddings"=>EndpointKind::Embeddings,"search"=>EndpointKind::Search,"fetch"=>EndpointKind::Fetch,_=>return None}) }
+fn endpoint(kind:&str)->Option<EndpointKind> { Some(match kind {"chat"=>EndpointKind::Chat,"responses"=>EndpointKind::Responses,"messages"=>EndpointKind::Messages,"embeddings"=>EndpointKind::Embeddings,"rerank"=>EndpointKind::Rerank,"search"=>EndpointKind::Search,"fetch"=>EndpointKind::Fetch,_=>return None}) }
 impl Config {
     fn validate(&mut self)->Result<(),String> {
         self.name=self.name.trim().into();self.model=self.model.trim().into();
         if self.name.is_empty() || self.name.chars().count()>80 || self.name.chars().any(char::is_control) {return Err("探针名称须为1至80字且不含控制字符".into());}
         if self.source_id<=0 || self.model.is_empty() || self.model.len()>1024 || db::model_routes::is_auto(&self.model) || self.model.chars().any(char::is_control) {return Err("请选择真实上游接入及其本地映射模型，不能使用 auto".into());}
-        if endpoint(&self.kind).is_none() {return Err("请选择支持的对话、向量、搜索或网页提取探针类型".into());}
+        if endpoint(&self.kind).is_none() {return Err("请选择支持的对话、向量、重排、搜索或网页提取探针类型".into());}
         if endpoint(&self.kind).and_then(EndpointKind::tool_kind).is_some() {tool_body(self)?;} else if self.input.is_empty() || self.input.len()>4096 {return Err("探测输入须为1至4096字节".into());}
+        if self.kind=="rerank" {rerank_body(self,"validated-model")?;}
         if !(1..=256).contains(&self.max_tokens) || !(200..=599).contains(&self.expected_status) || !(1000..=60000).contains(&self.timeout_ms) || !(60..=86400).contains(&self.interval_secs) {return Err("输出上限1至256，预期状态200至599，超时1至60秒，间隔60至86400秒".into());}
         if self.contains.as_ref().is_some_and(|s|s.len()>512) {return Err("匹配文本最多512字节".into());}
         self.contains=self.contains.take().filter(|s|!s.is_empty());
-        if self.kind=="embeddings"&&self.contains.is_some(){return Err("向量探针请使用维度检查，不使用对话文本匹配".into());}
+        if matches!(self.kind.as_str(),"embeddings"|"rerank")&&self.contains.is_some(){return Err("向量或重排探针使用结构检查，不使用对话文本匹配".into());}
         if self.expected_dimensions.is_some_and(|n|n==0||n>65536) || (self.expected_dimensions.is_some()&&self.kind!="embeddings") {return Err("向量维度仅用于向量探针，范围1至65536".into());}
         if self.max_latency_ms.is_some_and(|n|n==0||n>60000) {return Err("延迟上限须为1至60000毫秒".into());}
         Ok(())
@@ -118,6 +119,7 @@ fn ready(c:&Connection,state:&SharedState,cfg:&Config,require_enabled:bool)->Res
     if require_enabled && (!mapping.enabled||!db::model_routes::enabled(c,&mapping.model).map_err(|_|"无法读取模型状态")?) {return Err("模型已停用，未发送探测请求".into());}
     let known=db::kinds::all(c).map_err(|_|"无法读取模型类型")?.into_iter().find(|k|same_model_name(&k.name,&mapping.model)).map(|k|k.kind);
     if cfg.kind=="embeddings"&&known!=Some(tokengo_shared::ModelKind::Embeddings) {return Err("请先在模型管理中将此模型标记为向量类型，再配置向量探针".into());}
+    if cfg.kind=="rerank"&&known!=Some(tokengo_shared::ModelKind::Rerank) {return Err("请先在模型管理中将此模型标记为重排类型，再配置重排探针".into());}
     if endpoint.is_generation()&&known.is_some_and(|kind|!matches!(kind,tokengo_shared::ModelKind::Chat|tokengo_shared::ModelKind::Unknown)) {return Err("所选模型不是对话类型，不能使用对话协议探针".into());}
 
     if let Some(protocol)=endpoint.protocol() {
@@ -194,12 +196,24 @@ fn validate_oauth_probe_protocol(managed_openai:bool,native:crate::protocol::Pro
     }
     Ok(())
 }
+/// Reuses the bounded persisted input field; no new secret-bearing config or
+/// migration. This is a top-1 protocol/shape check, not ranking-quality proof.
+fn rerank_body(cfg:&Config,model:&str)->Result<Value,String> {
+    if cfg.input.len()>4096 {return Err("重排查询和文档 JSON 合计最多4096字节".into());}
+    let value:Value=serde_json::from_str(&cfg.input).map_err(|_|"重排输入须为 query 与 documents 的 JSON 对象")?;
+    let object=value.as_object().filter(|o|o.len()==2&&o.contains_key("query")&&o.contains_key("documents")).ok_or("重排输入只接受 query 和 documents")?;
+    let query=object["query"].as_str().filter(|s|!s.trim().is_empty()&&s.len()<=512).ok_or("重排 query 须为1至512字节文本")?;
+    let documents=object["documents"].as_array().filter(|d|!d.is_empty()&&d.len()<=16).ok_or("重排 documents 须包含1至16个文档")?;
+    if documents.iter().any(|d|d.as_str().is_none_or(|s|s.trim().is_empty()||s.len()>1024)) {return Err("每个重排文档须为1至1024字节文本".into());}
+    Ok(json!({"model":model,"query":query,"documents":documents,"top_n":1}))
+}
 fn body(cfg:&Config,model:&str)->bytes::Bytes {
     let value=match cfg.kind.as_str(){
         "search"|"fetch"=>tool_body(cfg).expect("validated tool input"),
         "responses"=>json!({"model":model,"input":cfg.input,"max_output_tokens":cfg.max_tokens,"stream":false,"store":false}),
         "messages"=>json!({"model":model,"messages":[{"role":"user","content":cfg.input}],"max_tokens":cfg.max_tokens,"stream":false}),
         "embeddings"=>json!({"model":model,"input":cfg.input,"encoding_format":"float"}),
+        "rerank"=>rerank_body(cfg,model).expect("validated bounded rerank input"),
         _=>json!({"model":model,"messages":[{"role":"user","content":cfg.input}],"max_tokens":cfg.max_tokens,"stream":false}),
     };bytes::Bytes::from(value.to_string())
 }
@@ -224,6 +238,13 @@ fn evaluate(cfg:&Config,code:u16,bytes:&[u8],latency:u64,unwrap:bool)->(bool,Str
         let Ok(mut value)=serde_json::from_slice::<Value>(bytes)else{return(false,"成功状态的响应不是有效 JSON".into())};
         if unwrap {tokengo_shared::unwrap_envelope(&mut value);}
         if if let Some(kind)=endpoint(&cfg.kind).and_then(EndpointKind::tool_kind) {crate::search_tools::response_units(kind,code,&value).is_err()}else{crate::upstream::validate_response(&value,endpoint(&cfg.kind).unwrap().path()).is_err()} {return(false,"响应结构与所选模型接口不匹配或内容为空".into());}
+        if cfg.kind=="rerank" {
+            let count=rerank_body(cfg,"").ok().and_then(|body|body["documents"].as_array().map(Vec::len));
+            let valid=value.get("error").is_none_or(Value::is_null)&&value["results"].as_array().is_some_and(|rows|rows.len()==1&&rows.iter().all(|row|
+                row["index"].as_u64().is_some_and(|index|count.is_some_and(|n|index<n as u64))
+                &&row["relevance_score"].as_f64().is_some_and(f64::is_finite)));
+            if !valid {return(false,"重排结果须包含一个文档范围内的索引及有限相关性分数；未验证排序质量".into());}
+        }
         if cfg.kind=="embeddings" {
             let valid=value["data"].as_array().is_some_and(|rows|!rows.is_empty()&&rows.iter().all(|row|row["embedding"].as_array().is_some_and(|array|!array.is_empty()&&array.len()<=65536&&array.iter().all(|x|x.as_f64().is_some_and(f64::is_finite))&&cfg.expected_dimensions.is_none_or(|n|array.len()==n as usize))));
             if !valid {return(false,"向量结果无效或维度与设定不符".into());}

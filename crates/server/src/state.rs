@@ -86,6 +86,7 @@ impl ModelLoads {
 }
 
 pub struct AppState {
+    pub(crate) compatibility_jobs: Mutex<crate::provider_diagnostics::Registry>,
     pub tool_rates: crate::source_rates::SourceRates,
     pub oauth: crate::oauth::OAuthRuntime,
     pub egress: crate::egress::Runtime,
@@ -284,6 +285,7 @@ impl AppState {
             model_loads: Arc::new(ModelLoads::default()),
             auto_sequence: std::sync::atomic::AtomicU64::new(0),
             vector_verification_jobs: Mutex::new(HashSet::new()),
+            compatibility_jobs: Mutex::new(Default::default()),
             local_vector_sequences: Mutex::new(HashMap::new()),
             db: Mutex::new(conn),
             routing: Mutex::new(router),

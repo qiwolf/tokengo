@@ -148,6 +148,41 @@ pub fn output_bound(ctx: &Context<'_>, body: &Value, ceiling: Option<i64>, choic
     per_choice.checked_mul(choices).ok_or_else(|| "Total output reservation overflow".into())
 }
 
+/// Local reservation policy and supplier output semantics are independent.
+/// A configured/price/default estimate never claims supplier hard enforcement.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReservationEstimate {
+    pub output_tokens:i64,
+    pub origin:&'static str,
+    pub confidence:&'static str,
+    pub source_limit_semantics:&'static str,
+    pub supplier_hard_cap_verified:bool,
+}
+
+pub fn reservation_estimate(ctx:&Context<'_>,body:&Value,source_output:Option<i64>,price_output:Option<i64>,choices:i64)->Result<ReservationEstimate,String> {
+    let semantics=parameter_contracts_china::output_semantics(ctx,body);
+    let inclusive=parameter_contracts_china::has_inclusive_chat_cap(ctx)&&cap_value(body,"max_completion_tokens").is_some();
+    let uncertain=matches!(semantics,OutputSemantics::Unknown|OutputSemantics::AnswerOnly{reasoning_budget:None})&&!inclusive;
+    if !uncertain {
+        return Ok(ReservationEstimate{output_tokens:output_bound(ctx,body,source_output,choices)?,origin:"contract",confidence:"contract_calculated_not_live_verified",
+            source_limit_semantics:match semantics{OutputSemantics::Total=>"total",OutputSemantics::AnswerOnly{..}=>"answer_plus_reasoning",OutputSemantics::Unknown=>"unknown"},supplier_hard_cap_verified:false});
+    }
+    let (estimate,origin)=if let Some(value)=source_output.filter(|n|*n>0){(value,"source_configured")}
+        else if let Some(value)=price_output.filter(|n|*n>0){(value,"price_configured")}
+        else{(4096,"gateway_default")};
+    // Reuse native shape, type and explicit-conflict validation. The returned
+    // supplier-bound calculation is deliberately not reclassified as evidence.
+    output_bound(ctx,body,Some(estimate),choices)?;
+    let keys:&[&str]=match ctx.protocol{Protocol::Chat=>&["max_tokens","max_completion_tokens"],Protocol::Responses=>&["max_output_tokens"],Protocol::Messages=>&["max_tokens"]};
+    let mut lower=0;
+    for key in keys {if let Some(value)=integer(body,key,allows_zero(ctx))?{lower=lower.max(value);}}
+    let lower=lower.checked_mul(choices).ok_or("Total output estimate overflow")?;
+    // Configuration/price limits are aggregate request admission quantities.
+    // Do not multiply an already aggregate local allowance by n again.
+    Ok(ReservationEstimate{output_tokens:estimate.max(lower),origin,confidence:"estimate_not_upstream_bound",
+        source_limit_semantics:if matches!(semantics,OutputSemantics::Unknown){"unknown"}else{"answer_only_unknown_reasoning"},supplier_hard_cap_verified:false})
+}
+
 /// Conversion starts with an inclusive client cap. Use a documented inclusive
 /// wire field or refuse; never send the total as an answer-only source limit.
 pub fn preserve_converted_total_cap(ctx: &Context<'_>, from: Protocol, body: &mut Value) -> Result<(), String> {
@@ -276,6 +311,22 @@ mod tests {
         let c=context("siliconflow","Qwen/Qwen3.8-27B",Protocol::Chat);
         assert!(output_bound(&c,&json!({"max_tokens":null}),None,1).is_err());
         assert_eq!(output_bound(&c,&json!({"max_tokens":null}),Some(8192),1).unwrap(),8192);
+    }
+
+    #[test]
+    fn native_unknown_reservation_uses_existing_policy_without_claiming_supplier_bound(){
+        let c=context("siliconflow","unknown-hosted-reasoner",Protocol::Chat);
+        let body=json!({"max_tokens":64});let before=body.clone();
+        let priced=reservation_estimate(&c,&body,None,Some(2048),1).unwrap();
+        assert_eq!((priced.output_tokens,priced.origin,priced.confidence),(2048,"price_configured","estimate_not_upstream_bound"));assert!(!priced.supplier_hard_cap_verified);
+        let configured=reservation_estimate(&c,&body,Some(1024),Some(2048),1).unwrap();assert_eq!((configured.output_tokens,configured.origin),(1024,"source_configured"));
+        let default=reservation_estimate(&c,&body,None,None,1).unwrap();assert_eq!((default.output_tokens,default.origin),(4096,"gateway_default"));
+        assert_eq!(reservation_estimate(&c,&json!({"max_tokens":4096}),None,Some(2048),1).unwrap().output_tokens,4096);
+        assert_eq!(reservation_estimate(&c,&body,None,Some(2048),2).unwrap().output_tokens,2048);
+        assert!(reservation_estimate(&c,&json!({"max_tokens":i64::MAX}),None,Some(2048),2).is_err());
+        assert!(reservation_estimate(&c,&json!({"max_tokens":-1}),None,Some(2048),1).is_err());assert_eq!(body,before);
+        let known=context("dashscope","qwen3.8-max",Protocol::Responses);
+        let precise=reservation_estimate(&known,&json!({"max_output_tokens":32}),None,Some(2048),1).unwrap();assert_eq!((precise.output_tokens,precise.origin),(32,"contract"));
     }
 
 }

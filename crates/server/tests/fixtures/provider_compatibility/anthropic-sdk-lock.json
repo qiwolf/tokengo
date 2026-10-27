@@ -1,0 +1,46 @@
+{
+  "package": "anthropic",
+  "version": "2.3.0",
+  "metadata_url": "https://pypi.org/pypi/anthropic/2.3.0/json",
+  "requires_dist": [
+    "anyio<5,>=4.1.0",
+    "docstring-parser<1,>=0.15",
+    "httpx2<3,>=2.0.0",
+    "jiter<1,>=0.4.0",
+    "opentelemetry-api<2,>=1.1.0",
+    "pydantic<3,>=1.10.0",
+    "sniffio<2,>=1",
+    "typing-extensions<5,>=4.14",
+    "aiohttp<4,>=3.10.0; extra == \"aiohttp\"",
+    "boto3<2,>=1.28.57; extra == \"aws\"",
+    "botocore<2,>=1.31.57; extra == \"aws\"",
+    "boto3<2,>=1.28.57; extra == \"bedrock\"",
+    "botocore<2,>=1.31.57; extra == \"bedrock\"",
+    "google-auth[requests]<3,>=2; extra == \"google-cloud\"",
+    "mcp<3,>=1.0; python_version >= \"3.10\" and extra == \"mcp\"",
+    "google-auth[requests]<3,>=2; extra == \"vertex\"",
+    "standardwebhooks<2,>=1.0.1; extra == \"webhooks\""
+  ],
+  "files": [
+    {
+      "filename": "anthropic-2.3.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/3f/29/eb3558ab6bf252a07ac41c76ac5b0ea24a0aa0c23f87a40aaf31a5f8dba4/anthropic-2.3.0-py3-none-any.whl",
+      "digests": {
+        "blake2b_256": "3f29eb3558ab6bf252a07ac41c76ac5b0ea24a0aa0c23f87a40aaf31a5f8dba4",
+        "md5": "4be9841f0ec0147c98ce5bef04ffb273",
+        "sha256": "aa6a3984f9276f307933d42dc6f58b6efc821a5ecafbc8d1bb5993a066767622"
+      },
+      "upload_time_iso_8601": "2026-10-23T23:18:45.779480Z"
+    },
+    {
+      "filename": "anthropic-2.3.0.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/3e/ba/4c91947e0d0062d66d371db371597287153f7685fbed512d3294d0cde3c7/anthropic-2.3.0.tar.gz",
+      "digests": {
+        "blake2b_256": "3eba4c91947e0d0062d66d371db371597287153f7685fbed512d3294d0cde3c7",
+        "md5": "ce126f72e42eea8a9ccf5e719dee43b0",
+        "sha256": "edfdea1e3fa7b3ce25df1511953408b2f03bfa61eb6f6268f766101a9e18ad53"
+      },
+      "upload_time_iso_8601": "2026-10-23T23:18:47.649721Z"
+    }
+  ]
+}

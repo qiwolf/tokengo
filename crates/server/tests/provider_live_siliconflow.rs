@@ -11,6 +11,7 @@ struct Fixture {
     url: String,
     key: String,
     dir: PathBuf,
+    source_model: String,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -19,8 +20,19 @@ impl Drop for Fixture {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
+/// Controlled acceptance-runner selection, never a public client/provider rule.
+/// All original request controls remain unchanged; choosing a different model
+/// must expose its own role/parameter failures rather than borrow Qwen behavior.
+fn selected_source_model() -> String {
+    let model=std::env::var("TOKENGO_TEST_SILICONFLOW_MODEL").unwrap_or_else(|_|"Qwen/Qwen3.8-27B".into());
+    assert!(!model.is_empty() && model.len()<=256 && model.bytes().all(|b|
+        b.is_ascii_alphanumeric()||matches!(b,b'/'|b':'|b'.'|b'_'|b'-'|b'+')),
+        "Controlled runner requires a bounded exact catalog model ID");
+    model
+}
 impl Fixture {
     async fn new(source_key: &str) -> Self {
+        let source_model=selected_source_model();
         let dir = std::env::temp_dir().join(format!("tokengo-live-siliconflow-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         #[cfg(unix)] {
@@ -36,8 +48,8 @@ impl Fixture {
             let (_,key)=db::identity::create_key(&c,user.id,"synthetic live key",&Default::default(),None,None).unwrap();
             let channel=db::channels::create(&c,&db::channels::NewChannel { name:"isolated SiliconFlow acceptance".into(),base_url:"https://api.siliconflow.cn/v1".into(),enabled:true,unwrap_envelope:false,max_concurrent:0 }).unwrap();
             db::channels::set_secret(&c,&state.secrets,channel,source_key).unwrap();
-            db::channels::set_models(&c,channel,&[db::channels::ModelMapping::new("sf-live-qwen",Some("Qwen/Qwen3.8-27B".into()),false)]).unwrap();
-            tokengo_server::protocol_config::save(&c,channel.0,&Capabilities { parameter_profile:Some("siliconflow".into()),native:vec![Protocol::Chat],allow_conversion:true,chat_reasoning_replay:true,..Default::default() }).unwrap();
+            db::channels::set_models(&c,channel,&[db::channels::ModelMapping::new("sf-live-qwen",Some(source_model.clone()),false)]).unwrap();
+            tokengo_server::protocol_config::save(&c,channel.0,&Capabilities { parameter_profile:Some("siliconflow".into()),native:vec![Protocol::Chat],allow_conversion:true,chat_reasoning_replay:source_model=="Qwen/Qwen3.8-27B",..Default::default() }).unwrap();
             // Fixture admission prices are synthetic; this does not verify provider pricing.
             db::billing::create_price(&c,&db::billing::Price { id:0,channel_id:channel.0,model:"sf-live-qwen".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:16384,max_output_tokens:1024 },"synthetic acceptance").unwrap();
             key
@@ -52,7 +64,7 @@ impl Fixture {
         let url=format!("http://{}",listener.local_addr().unwrap());
         let router:Router=app(state.clone());
         let task=tokio::spawn(async move { axum::serve(listener,router).await.unwrap(); });
-        Self { state,task,url,key,dir }
+        Self { state,task,url,key,dir,source_model }
     }
     async fn call(&self,protocol:Protocol,body:Value)->(u16,String) {
         let result=reqwest::Client::builder().timeout(Duration::from_secs(120)).build().unwrap()
@@ -204,7 +216,7 @@ async fn live_siliconflow_qwen_json_sse_and_tool_roundtrip() {
     let request_count:i64=f.state.conn().query_row("SELECT count(*) FROM requests",[],|r|r.get(0)).unwrap();
     let total_usage:(i64,i64)=f.state.conn().query_row("SELECT coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0) FROM requests",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
     let request_errors=request_log_errors(&f);
-    let result=json!({"source":"https://api.siliconflow.cn/v1","model":"Qwen/Qwen3.8-27B","host":std::env::var("HOSTNAME").unwrap_or_default(),"synthetic_material":true,"native_protocol":"chat","client_protocols":["chat","responses"],"scope":"SiliconFlow hosted source only; not Qwen/DashScope official acceptance","gateway_request_records":request_count,"request_errors":request_errors,"usage":{"input_tokens":total_usage.0,"output_tokens":total_usage.1},"records":records,"expected_calls":8,"thinking":"none","developer_role_scope":"leading plaintext developer instruction in both Chat and Responses clients; hosted source acceptance only","strict_scope":"Chat explicit false; Responses omitted strict on already closed schema inferred true by gateway converter; no client changes","passed":failures.is_empty() && request_count==8,"failures":failures,"provider_prices_verified":false,"production_modified":false});
+    let result=json!({"source":"https://api.siliconflow.cn/v1","model":f.source_model.clone(),"selection":"controlled_runner_exact_catalog_model","host":std::env::var("HOSTNAME").unwrap_or_default(),"synthetic_material":true,"native_protocol":"chat","client_protocols":["chat","responses"],"scope":"SiliconFlow hosted exact source/model only; not original-vendor official API acceptance","gateway_request_records":request_count,"request_errors":request_errors,"usage":{"input_tokens":total_usage.0,"output_tokens":total_usage.1},"records":records,"expected_calls":8,"thinking":"none","developer_role_scope":"leading plaintext developer instruction in both Chat and Responses clients; hosted source acceptance only","strict_scope":"Chat explicit false; Responses omitted strict on already closed schema inferred true by gateway converter; no client changes","passed":failures.is_empty() && request_count==8,"failures":failures,"provider_prices_verified":false,"production_modified":false});
     let sanitized=serde_json::to_string_pretty(&result).unwrap().replace(&source_key,"[REDACTED_SOURCE_KEY]").replace(&f.key,"[REDACTED_FIXTURE_KEY]");
     std::fs::write(report,sanitized).unwrap();
     drop(f);
@@ -223,8 +235,63 @@ async fn live_siliconflow_developer_diagnostic() {
     record_status(&mut records,"Chat_developer_diagnostic",status,&wire);
     f.state.drain_writes();
     let request_log_errors=request_log_errors(&f);
-    let result=json!({"source":"https://api.siliconflow.cn/v1","model":"Qwen/Qwen3.8-27B","host":std::env::var("HOSTNAME").unwrap_or_default(),"synthetic_material":true,"expected_calls":1,"automatic_retry":false,"request_payload":"unchanged body(Chat,false), system then plaintext developer then user","records":records,"request_log_errors":request_log_errors,"passed":status==200,"production_modified":false,"scope":"SiliconFlow hosted source diagnostic only; not official Qwen or other vendor acceptance"});
+    let result=json!({"source":"https://api.siliconflow.cn/v1","model":f.source_model.clone(),"selection":"controlled_runner_exact_catalog_model","host":std::env::var("HOSTNAME").unwrap_or_default(),"synthetic_material":true,"expected_calls":1,"automatic_retry":false,"request_payload":"unchanged body(Chat,false), system then plaintext developer then user","records":records,"request_log_errors":request_log_errors,"passed":status==200,"production_modified":false,"scope":"SiliconFlow hosted exact source/model diagnostic only; not original-vendor official API acceptance"});
     let sanitized=serde_json::to_string_pretty(&result).unwrap().replace(&source_key,"[REDACTED_SOURCE_KEY]").replace(&f.key,"[REDACTED_FIXTURE_KEY]");
     std::fs::write(report,sanitized).unwrap();
     drop(f);
+}
+
+
+/// Separate exact-source role acceptance; does not replace the Qwen8call stress.
+#[tokio::test]
+#[ignore = "two paid SiliconFlow native calls for one selected exact model; explicit authorization required"]
+async fn live_siliconflow_selected_native_role_json_sse() {
+    let model=selected_source_model();
+    assert!(matches!(model.as_str(),"deepseek-ai/DeepSeek-V4-Flash"|"zai-org/GLM-5.2"|"moonshotai/Kimi-K2.7-Code"),"Select one of the three directly observed exact role-contract sources");
+    let source_key=std::env::var("TOKENGO_TEST_SILICONFLOW_KEY").expect("explicit source key required");
+    let report=std::env::var_os("TOKENGO_TEST_REPORT").map(PathBuf::from).expect("report path required");
+    // Use the normal new-source fixture: no source context metadata, and its
+    // existing 1024-token Price admission policy. It is not a supplier ceiling.
+    let f=Fixture::new(&source_key).await;
+    let mut records=Vec::new();let mut failures=Vec::new();
+    for stream in [false,true] {
+        let mut request=json!({"model":"sf-live-qwen","messages":[{"role":"developer","content":"Return exactly ROLE_PRIORITY_OK and no other visible text."},{"role":"user","content":"Proceed"}],"max_tokens":64,"stream":stream});
+        if stream {request["stream_options"]=json!({"include_usage":true});}
+        assert!(request.get("reasoning_effort").is_none());
+        let (status,wire)=f.call(Protocol::Chat,request).await;
+        let label=format!("native_Chat_role_stream_{stream}");record_status(&mut records,&label,status,&wire);
+        let (marker,terminal)=if stream {
+            let values=events(&wire);
+            (values.iter().filter_map(|v|v.pointer("/choices/0/delta/content").and_then(Value::as_str)).collect::<String>().trim()=="ROLE_PRIORITY_OK",
+             wire.contains("data: [DONE]")&&values.iter().any(|v|v.pointer("/choices/0/finish_reason").and_then(Value::as_str)==Some("stop")))
+        }else{
+            let value=serde_json::from_str::<Value>(&wire).unwrap_or(Value::Null);
+            (text(Protocol::Chat,&value).trim()=="ROLE_PRIORITY_OK",value.pointer("/choices/0/finish_reason").and_then(Value::as_str)==Some("stop"))
+        };
+        let usage=&records.last().unwrap()["usage"];
+        let usage_known=usage["prompt_tokens"].as_u64().is_some()&&usage["completion_tokens"].as_u64().is_some();
+        let passed=status==200&&marker&&terminal&&usage_known;
+        records.last_mut().unwrap()["assertions"]=json!({"http_200":status==200,"unique_control_instruction_executed":marker,"completed_terminal":terminal,"usage_known":usage_known,"original_developer_preserved_in_client_request":true,"explicit_none_sent":false});
+        records.last_mut().unwrap()["passed"]=json!(passed);if !passed {failures.push(label);}
+    }
+    f.state.drain_writes();
+    let c=f.state.conn();
+    let requests:i64=c.query_row("SELECT COUNT(*) FROM requests",[],|r|r.get(0)).unwrap();
+    let attempts:i64=c.query_row("SELECT COUNT(*) FROM attempts",[],|r|r.get(0)).unwrap();
+    let ledgers:i64=c.query_row("SELECT COUNT(*) FROM billing_ledger",[],|r|r.get(0)).unwrap();
+    let duplicate_settlements:i64=c.query_row("SELECT COUNT(*) FROM (SELECT request_id,COUNT(*) AS n FROM billing_ledger GROUP BY request_id HAVING n<>1)",[],|r|r.get(0)).unwrap();
+    let unsettled:i64=c.query_row("SELECT COUNT(*) FROM billing_ledger WHERE settled_ms IS NULL OR status='reserved'",[],|r|r.get(0)).unwrap();
+    let total_usage:(i64,i64)=c.query_row("SELECT coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0) FROM requests",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    let mismatched_usage:i64=c.query_row("SELECT COUNT(*) FROM billing_ledger l JOIN requests r ON r.id=l.request_id WHERE l.input_tokens IS NULL OR l.output_tokens IS NULL OR r.input_tokens_known=0 OR r.output_tokens_known=0 OR l.input_tokens<>r.input_tokens OR l.output_tokens<>r.output_tokens",[],|r|r.get(0)).unwrap();
+    let pending_budgets:i64=c.query_row("SELECT COUNT(*) FROM billing_budgets WHERE reserved_micro<>0",[],|r|r.get(0)).unwrap();
+    let mut estimate_query=c.prepare("SELECT source_snapshot FROM billing_ledger ORDER BY id").unwrap();
+    let estimates:Vec<Value>=estimate_query.query_map([],|r|r.get::<_,String>(0)).unwrap().map(|row|serde_json::from_str::<Value>(&row.unwrap()).unwrap()["reservation_estimate"].clone()).collect();
+    let estimate_labels=estimates.iter().all(|value|value["origin"]=="price_configured"&&value["confidence"]=="estimate_not_upstream_bound"&&value["supplier_hard_cap_verified"]==false);
+    drop(estimate_query);drop(c);
+    let errors=request_log_errors(&f);
+    let passed=failures.is_empty()&&requests==2&&attempts==2&&ledgers==2&&duplicate_settlements==0&&unsettled==0&&mismatched_usage==0&&pending_budgets==0&&estimate_labels;
+    let result=json!({"source":"https://api.siliconflow.cn/v1","model":f.source_model.clone(),"selection":"controlled_runner_exact_catalog_model","host":std::env::var("HOSTNAME").unwrap_or_default(),"case":"native_role_json_sse","synthetic_material":true,"native_protocol":"chat","client_protocols":["chat"],"expected_calls":2,"automatic_retry":false,"source_context_bounds":null,"local_price_admission":{"max_input_tokens":16384,"max_output_tokens":1024,"origin":"price_configured","confidence":"estimate_not_upstream_bound"},"reservation_estimates":estimates,"supplier_total_cap_verified":false,"supplier_thinking_budget_verified":false,"provider_prices_verified":false,"gateway_request_records":requests,"actual_attempts":attempts,"ledger_rows":ledgers,"duplicate_settlements":duplicate_settlements,"unsettled":unsettled,"usage_mismatches":mismatched_usage,"pending_budget_holds":pending_budgets,"usage":{"input_tokens":total_usage.0,"output_tokens":total_usage.1},"request_errors":errors,"records":records,"failures":failures,"passed":passed,"scope":"Exact SF hosted model native Chat leading developer role fold only; no reasoning control/tools/Responses/strict guarantee or original-vendor acceptance","production_modified":false});
+    let sanitized=serde_json::to_string_pretty(&result).unwrap().replace(&source_key,"[REDACTED_SOURCE_KEY]").replace(&f.key,"[REDACTED_FIXTURE_KEY]");
+    std::fs::write(report,sanitized).unwrap();drop(f);
+    assert!(passed,"Native role acceptance failed; inspect sanitized report");
 }

@@ -59,19 +59,20 @@ async fn setup(fault:Option<&'static str>)->(Http,Http,Arc<AppState>,String,Arc<
 fn terminal(text:&str)->Value {text.lines().filter_map(|l|l.strip_prefix("data: ")).filter_map(|s|serde_json::from_str::<Value>(s).ok()).find(|v|v["type"]=="response.completed").unwrap()["response"].clone()}
 #[tokio::test]
 async fn w09_http_and_sse_tools_replay_complete_raw_history_and_neutral_metadata() {
-    for stream in [false,true] {
+    for stream in [false,true] { for strict in [None,Some(true),Some(false)] {
         let(_source,gateway,state,key,seen,dir)=setup(None).await;let client=reqwest::Client::new();
-        let request=json!({"model":"logical","instructions":"first instruction","input":[{"role":"system","content":"second instruction"},{"role":"developer","content":"third instruction"},{"role":"user","content":"weather?"}],"stream":stream,"max_output_tokens":41,"tools":[{"type":"function","name":"weather","strict":false,"parameters":{"type":"object","properties":{}}}]});
+        let mut request=json!({"model":"logical","instructions":"first instruction","input":[{"role":"system","content":"second instruction"},{"role":"developer","content":"third instruction"},{"role":"user","content":"weather?"}],"stream":stream,"max_output_tokens":41,"tools":[{"type":"function","name":"weather","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}]});
+        if let Some(strict)=strict {request["tools"][0]["strict"]=json!(strict);}
         let response=client.post(format!("{}/v1/responses",gateway.url)).bearer_auth(&key).json(&request).send().await.unwrap();let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{text}");
         let first=if stream{terminal(&text)}else{serde_json::from_str::<Value>(&text).unwrap()};
         assert_eq!(first["usage"]["input_tokens"],7);assert_eq!(first["usage"]["output_tokens"],9);assert_eq!(first["usage"]["output_tokens_details"]["reasoning_tokens"],4);
         assert_eq!(first["output"][0]["content"][0]["text"],"raw 思考");assert_eq!(first["output"][1]["call_id"],"call_w09");assert_eq!(first["tokengo_provider_metadata"]["fields"]["input_sensitive"],false);
         let mut history=first["output"].as_array().unwrap().clone();history.push(json!({"type":"function_call_output","call_id":"call_w09","output":"sunny"}));
         let response=client.post(format!("{}/v1/responses",gateway.url)).bearer_auth(&key).json(&json!({"model":"logical","input":history,"max_output_tokens":41})).send().await.unwrap();let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{text}");let next:Value=serde_json::from_str(&text).unwrap();assert_eq!(next["output"][1]["content"][0]["text"],"answer <think>literal</think>");
-        let sent=seen.lock().unwrap();assert_eq!(sent.len(),2);assert_eq!(sent[0]["tools"][0]["function"]["strict"],false,"this fixture tests explicit nonstrict tool semantics only");assert_eq!(sent[0]["messages"][0],json!({"role":"system","content":"first instruction\n\nsecond instruction\n\nthird instruction"}));for body in sent.iter(){assert_eq!(body["reasoning_split"],true);assert_eq!(body["max_tokens"],41);}assert_eq!(sent[1]["messages"][0]["reasoning_content"],"raw 思考");assert_eq!(sent[1]["messages"][0]["tool_calls"][0]["id"],"call_w09");assert_eq!(sent[1]["messages"][1]["tool_call_id"],"call_w09");drop(sent);
+        let sent=seen.lock().unwrap();assert_eq!(sent.len(),2);assert_eq!(sent[0]["tools"][0]["function"]["strict"],strict.unwrap_or(true),"preserve strict intent even when source enforcement is unverified");assert_eq!(sent[0]["messages"][0],json!({"role":"system","content":"first instruction\n\nsecond instruction\n\nthird instruction"}));for body in sent.iter(){assert_eq!(body["reasoning_split"],true);assert_eq!(body["max_tokens"],41);}assert_eq!(sent[1]["messages"][0]["reasoning_content"],"raw 思考");assert_eq!(sent[1]["messages"][0]["tool_calls"][0]["id"],"call_w09");assert_eq!(sent[1]["messages"][1]["tool_call_id"],"call_w09");drop(sent);
         assert_accounting(&state,2,Some((7,9)),&[if stream {"ok"} else {"success"},"success"]);
         state.drain_writes();drop(gateway);drop(state);std::fs::remove_dir_all(dir).ok();
-    }
+    }}
 }
 #[tokio::test]
 async fn w09_explicit_nosplit_and_signed_messages_fail_before_transport_native_stays_native() {
@@ -79,7 +80,7 @@ async fn w09_explicit_nosplit_and_signed_messages_fail_before_transport_native_s
     for(path,body)in [("responses",json!({"model":"logical","input":"hi","reasoning_split":false})),("responses",json!({"model":"logical","input":[{"role":"developer","content":"keep","id":"state"}]})),("responses",json!({"model":"logical","input":[{"role":"user","content":"hi"},{"role":"system","content":"late"}]})),("messages",json!({"model":"logical","max_tokens":30,"thinking":{"type":"adaptive"},"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"raw","signature":"signed"}]}]}))] {
         let response=client.post(format!("{}/v1/{path}",gateway.url)).bearer_auth(&key).json(&body).send().await.unwrap();assert_eq!(response.status(),400,"{}",response.text().await.unwrap());assert_eq!(seen.lock().unwrap().len(),0);
     }
-    let response=client.post(format!("{}/v1/chat/completions",gateway.url)).bearer_auth(&key).json(&json!({"model":"logical","messages":[{"role":"user","content":"hi"}],"reasoning_split":false,"max_tokens":41,"vendor_future":{"keep":"yes"}})).send().await.unwrap();assert_eq!(response.status(),200);let out:Value=response.json().await.unwrap();assert_eq!(out["base_resp"]["status_code"],0);assert!(out.get("tokengo_provider_metadata").is_none());let sent=seen.lock().unwrap();assert_eq!(sent[0]["reasoning_split"],false);assert_eq!(sent[0]["vendor_future"]["keep"],"yes");drop(sent);
+    let response=client.post(format!("{}/v1/chat/completions",gateway.url)).bearer_auth(&key).json(&json!({"model":"logical","messages":[{"role":"user","content":"hi"}],"reasoning_split":false,"max_tokens":41,"tools":[{"type":"function","function":{"name":"weather","strict":true,"parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}}],"vendor_future":{"keep":"yes"}})).send().await.unwrap();assert_eq!(response.status(),200);let out:Value=response.json().await.unwrap();assert_eq!(out["base_resp"]["status_code"],0);assert!(out.get("tokengo_provider_metadata").is_none());let sent=seen.lock().unwrap();assert_eq!(sent[0]["reasoning_split"],false);assert_eq!(sent[0]["tools"][0]["function"]["strict"],true);assert_eq!(sent[0]["vendor_future"]["keep"],"yes");drop(sent);
     state.drain_writes();drop(gateway);drop(state);std::fs::remove_dir_all(dir).ok();
 }
 #[tokio::test]

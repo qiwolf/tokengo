@@ -1,0 +1,8 @@
+data: {"id":"chat_fixture","object":"chat.completion.chunk","created":0,"model":"fixture-model","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":7}}
+
+data: {"choices":[],"usage":{"completion_tokens":3}}
+
+data: [DONE]
+

@@ -61,6 +61,8 @@ curl http://127.0.0.1:3160/v1/chat/completions \
 
 Supports Chat, Responses, Messages, embeddings, reranking, model listing, standalone Search/Fetch and authorized HTTP pass-through. The **client protocol** is how an application calls TokenGo; the **provider protocol** is how TokenGo calls the upstream. They may be native or use an explicitly permitted, representable conversion.
 
+来源、参数与独立验证的维护方式见[模型兼容维护](docs/provider-compatibility.md)。
+
 订阅线路包括既有 OpenAI/Codex 浏览器授权，以及 Kimi Code、MiniMax 中国/Global、GitHub Copilot 设备授权。后四条已验证真实设备端点的发起、轮询 pending 和取消；真实用户授权、刷新、权益、推理及账务仍需逐账号验收。Copilot 授权页显示公开注册应用 OpenCode，目前仅开放账号目录明确支持 Chat 的模型；MiniMax 公共目录不代表订阅权益。
 
 Subscription routes include the existing OpenAI/Codex browser flow and device authorization for Kimi Code, MiniMax CN/Global and GitHub Copilot. The latter four flows have verified start, pending polling and cancellation against real endpoints; real-user login, refresh, entitlement, inference and accounting still require account-specific acceptance. Copilot displays the registered public application OpenCode and currently accepts only catalog-declared Chat models. MiniMax's public catalog does not establish subscription entitlement.

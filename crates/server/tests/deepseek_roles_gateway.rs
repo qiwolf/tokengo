@@ -166,7 +166,7 @@ async fn deepseek_responses_function_call_and_output_history_round_trip() {
 
 
 #[tokio::test]
-async fn converted_reasoning_replay_requires_explicit_source_capability() {
+async fn converted_reasoning_replay_without_declaration_preserves_raw_tools_and_single_settlement() {
     let f = Fixture::with_reasoning_replay("deepseek", true, false).await;
     let mut body = request(Protocol::Responses, false, false);
     body["input"].as_array_mut().unwrap().extend([
@@ -174,10 +174,32 @@ async fn converted_reasoning_replay_requires_explicit_source_capability() {
         json!({"type":"function_call","call_id":"call_sum","name":"sum","arguments":"{\"a\":1}"}),
         json!({"type":"function_call_output","call_id":"call_sum","output":"1"}),
     ]);
-    let (code, wire) = f.call(Protocol::Responses, body).await;
-    assert_eq!(code, 400, "{wire}");
-    assert!(wire.contains("reasoning"), "expected reasoning replay rejection: {wire}");
-    assert!(f.source.seen.lock().unwrap().is_empty());
+    let original=body.clone();
+    let (code, wire) = f.call(Protocol::Responses, body.clone()).await;
+    assert_eq!(code, 200, "{wire}");assert_eq!(body,original);
+    let response:Value=serde_json::from_str(&wire).unwrap();
+    assert_eq!(response["status"],"completed");
+    assert_eq!(response["output"][0]["content"][0]["text"],"ROLE_OK");
+    assert_eq!((response["usage"]["input_tokens"].as_i64(),response["usage"]["output_tokens"].as_i64()),(Some(7),Some(3)));
+    {
+        let seen=f.source.seen.lock().unwrap();assert_eq!(seen.len(),1,"undeclared capability must not force a fallback or replay");
+        assert_eq!(seen[0]["model"],"deepseek-flash");
+        let messages=seen[0]["messages"].as_array().unwrap();assert_eq!(messages.len(),5);
+        assert_eq!(messages[0],json!({"role":"system","content":"System instruction."}));
+        assert_eq!(messages[1],json!({"role":"system","content":"Be concise. Keep numbers."}));
+        assert_eq!(messages[3]["reasoning_content"],"I should call sum");
+        assert_eq!(messages[3]["tool_calls"][0]["id"],"call_sum");
+        assert_eq!(messages[3]["tool_calls"][0]["function"],json!({"name":"sum","arguments":"{\"a\":1}"}));
+        for opaque in ["summary","signature","encrypted_content"] {assert!(messages[3].get(opaque).is_none());}
+        assert_eq!(messages[4],json!({"role":"tool","tool_call_id":"call_sum","content":"1"}));
+    }
+    f.state.drain_writes();let c=f.state.conn();
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM requests",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM attempts",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM attempts WHERE outcome='success'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM billing_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM billing_ledger WHERE input_tokens=7 AND output_tokens=3 AND status<>'reserved' AND settled_ms IS NOT NULL",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM billing_budgets WHERE reserved_micro<>0",[],|r|r.get::<_,i64>(0)).unwrap(),0);
 }
 
 #[tokio::test]

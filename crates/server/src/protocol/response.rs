@@ -166,10 +166,25 @@ pub(super) fn reasoning_tokens(protocol: Protocol, usage: &Value) -> Result<Opti
 }
 /// Inert trace identity. It never substitutes for completion or tool identity.
 pub(super) fn request_id(body: &Value) -> Result<Option<String>, String> {
-    body.get("request_id").map(|v| {
-        v.as_str().filter(|s| !s.is_empty() && s.len() <= 1024)
-            .map(str::to_owned).ok_or_else(|| "Invalid request_id metadata".into())
-    }).transpose()
+    fn read(value:&Value)->Result<String,String> {
+        value.as_str().filter(|s|!s.is_empty()&&s.len()<=1024)
+            .map(str::to_owned).ok_or_else(||"Invalid request_id metadata".into())
+    }
+    let direct=body.get("request_id").map(read).transpose()?;
+    let extension=body.get("tokengo_metadata").map(|value| {
+        fields(value,&["request_id"])?;
+        read(value.get("request_id").ok_or("Invalid TokenGo trace metadata")?)
+    }).transpose()?;
+    if direct.as_ref().zip(extension.as_ref()).is_some_and(|(a,b)|a!=b) {
+        return Err("Conflicting request_id metadata".into());
+    }
+    Ok(direct.or(extension))
+}
+
+/// Neutral extension for a Messages envelope. This never changes message/tool
+/// identity, usage, ownership, or the source's native message delta semantics.
+pub(super) fn messages_trace(body:&mut Value,trace:&str) {
+    body["tokengo_metadata"]=json!({"request_id":trace});
 }
 
 /// Observed input subsets, never additional billable input. Unknown stays absent.
@@ -318,6 +333,8 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
                 "prompt_cache_retention",
             ],
             Protocol::Messages => &[
+                "request_id",
+                "tokengo_metadata",
                 "id",
                 "type",
                 "role",
@@ -360,9 +377,6 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
     let finish = reason(from, body, msg.get("tool_calls").is_some())?;
     let counts = usage(from, body)?;
     let trace = request_id(body)?;
-    if trace.is_some() && to == Protocol::Messages {
-        return Err("request_id metadata cannot be represented by Messages".into());
-    }
     let mut usage_metadata = UsageMetadata::default();
     if matches!(from, Protocol::Chat | Protocol::Responses) {
         usage_metadata.observe(from, &body["usage"], counts.map(|c| c.0))?;
@@ -443,7 +457,9 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
             "output_tokens_details"
         }] = json!({"reasoning_tokens":n});
     }
-    if let Some(trace) = trace { out["request_id"] = json!(trace); }
+    if let Some(trace) = trace {
+        if to==Protocol::Messages {messages_trace(&mut out,&trace);}else{out["request_id"]=json!(trace);}
+    }
     if matches!((from,to),(Protocol::Chat,Protocol::Responses)|(Protocol::Responses,Protocol::Chat)) && counts.is_some() {
         usage_metadata.apply(to, &mut out["usage"]);
     }

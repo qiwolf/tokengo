@@ -531,6 +531,8 @@ impl Transcoder {
             match self.to {
                 Protocol::Chat => value["request_id"] = json!(trace),
                 Protocol::Responses if value.get("response").is_some() => value["response"]["request_id"] = json!(trace),
+                Protocol::Messages if value["type"]=="message_start" => super::response::messages_trace(&mut value["message"],trace),
+                Protocol::Messages if value["type"]=="message_delta" => super::response::messages_trace(&mut value,trace),
                 _ => {}
             }
         }
@@ -1028,12 +1030,13 @@ impl Transcoder {
         }
         let v: Value = serde_json::from_str(&frame.data).map_err(|_| "Invalid SSE JSON")?;
         let payload = if self.from == Protocol::Responses { &v["response"] } else { &v };
-        if let Some(trace) = super::response::request_id(payload)? {
-            if self.to == Protocol::Messages { return Err("request_id metadata cannot be represented by Messages".into()); }
-            if self.request_id.as_ref().is_some_and(|old| old != &trace) {
+        let mut traces=vec![super::response::request_id(payload)?];
+        if self.from==Protocol::Messages {traces.push(super::response::request_id(&v["message"])?);}
+        for trace in traces.into_iter().flatten() {
+            if self.request_id.as_ref().is_some_and(|old|old!=&trace) {
                 return Err("Conflicting request_id metadata in stream".into());
             }
-            self.request_id = Some(trace);
+            self.request_id=Some(trace);
         }
         if matches!(self.from, Protocol::Chat | Protocol::Responses) {
             self.usage_metadata.observe(self.from, &payload["usage"], self.observer.input.and_then(|n| u64::try_from(n).ok()))?;

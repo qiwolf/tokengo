@@ -19,6 +19,12 @@ async fn upstream(State(mock):State<Mock>,OriginalUri(uri):OriginalUri,headers:H
     match uri.path() {
         "/v1/tools/search"=>if input=="invalid" {Json(json!({"query":"probe-ok","results":"invalid"})).into_response()}else if input=="empty" {Json(json!({"results":[]})).into_response()}else{Json(json!({"query":"echo-needle","results":[{"title":"actual-result","url":"https://result.invalid","snippet":"probe-ok","summary":"","content":"","rerank_score":0.9,"authority":1,"site_name":null,"site_icon":null,"date":null}]})).into_response()},
         "/v1/tools/fetch"=>Json(json!({"title":"Fetched","content":"fetched-probe-ok","url":body["url"]})).into_response(),
+        "/v1/rerank"=>Json(match input {
+            "rerank-invalid-score"=>json!({"results":[{"index":0,"relevance_score":"invalid"}]}),
+            "rerank-invalid-index"=>json!({"results":[{"index":999,"relevance_score":0.5}]}),
+            "rerank-empty"=>json!({"results":[]}),
+            _=>json!({"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":2,"total_tokens":2}}),
+        }).into_response(),
         "/v1/embeddings"=>Json(json!({"object":"list","data":[{"index":0,"embedding":[0.1,0.2,0.3]}]})).into_response(),
         "/v1/messages"=>Json(json!({"id":"msg_fixture","type":"message","role":"assistant","model":"wire-model","content":[{"type":"text","text":"probe-ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}})).into_response(),
         "/v1/responses"=>Json(json!({"id":"resp_fixture","object":"response","status":"completed","output":[{"id":"msg_fixture","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"probe-ok","annotations":[]}]}]})).into_response(),
@@ -162,4 +168,19 @@ async fn custom_probe_reparent_while_waiting_old_key_gate_never_dispatches_stale
     let next=db::provider_pool::source_credential(&f.state.conn(),f.source).unwrap().unwrap();assert_ne!((old.id,old.provider_id),(next.id,next.provider_id));drop(held);
     let result=task.await.unwrap();assert!(!result.ok,"stale Key gate must not authorize a different credential");assert_eq!(f.mock.calls.load(Ordering::SeqCst),0);assert_eq!(result.billing.unwrap()["usage_certainty"],"not_sent");
     let ledger=db::billing::usage(&f.state.conn(),&Default::default()).unwrap().remove(0);assert_eq!(ledger.source_snapshot["credential_id"],old.id);assert_eq!(ledger.source_snapshot["provider_id"],old.provider_id);assert_eq!(ledger.status,"not_sent");assert_eq!(ledger.debit_micro,Some(0));
+}
+
+#[tokio::test]
+async fn rerank_probe_uses_query_documents_native_results_and_system_diagnostic_ledger() {
+ let f=Fixture::new().await;db::kinds::set(&f.state.conn(),"local-vector",tokengo_shared::ModelKind::Rerank).unwrap();let before=protected(&f.state.conn());
+ for (query,expected) in [("rerank-ok",true),("rerank-invalid-score",false),("rerank-invalid-index",false),("rerank-empty",false)] {
+  let mut config=f.config();config["model"]=json!("local-vector");config["kind"]=json!("rerank");config["input"]=json!(json!({"query":query,"documents":["hospital evidence","another document"]}).to_string());config["contains"]=Value::Null;
+  let probe=f.create(config).await;let result=f.run(&probe).await;assert_eq!(result["ok"],expected,"{query}: {result}");
+ }
+ let captures=f.mock.captures.lock().unwrap();assert_eq!(captures.len(),4);for capture in captures.iter(){assert_eq!(capture.0,"/v1/rerank");assert_eq!(capture.3["model"],"wire-vector");assert_eq!(capture.3["documents"],json!(["hospital evidence","another document"]));assert_eq!(capture.3["top_n"],1);assert!(capture.3.get("messages").is_none());assert!(capture.3.get("max_tokens").is_none());}drop(captures);
+ let usage=db::billing::usage(&f.state.conn(),&Default::default()).unwrap();assert_eq!(usage.len(),4);assert!(usage.iter().all(|r|r.user_id==0&&r.key_id==0&&r.request_id==0&&r.status!="reserved"&&r.debit_micro==Some(0)&&r.auth_snapshot["kind"]=="admin_diagnostic"));assert_eq!(protected(&f.state.conn()),before,"diagnostics do not alter pricing, privileges, customers or routing");
+ for input in [json!({"query":"x","documents":[]}),json!({"query":"x","documents":["x"],"arbitrary":"not-forwarded"}),json!({"query":"x".repeat(513),"documents":["x"]}),json!({"query":"x","documents":["x".repeat(1025)]})] {
+  let mut config=f.config();config["model"]=json!("local-vector");config["kind"]=json!("rerank");config["input"]=json!(input.to_string());config["contains"]=Value::Null;assert_eq!(f.req("POST","/api/custom-probes",config).await.0,400);
+ }
+ assert_eq!(f.mock.calls.load(Ordering::SeqCst),4,"invalid bounded shapes never execute");
 }

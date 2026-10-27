@@ -1,0 +1,197 @@
+{
+  "schema_revision": "provider-compatibility/v1",
+  "fixture_origin": "authored synthetic samples; never captured production responses",
+  "cases": [
+    {
+      "id": "empty_tool_calls",
+      "file": "empty_tool_calls.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "completed",
+        "text": "你好",
+        "input": 7,
+        "output": 3,
+        "tools": []
+      }
+    },
+    {
+      "id": "same_index_first_frame",
+      "file": "same_index_first_frame.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": "ISSUE-01",
+      "expected": {
+        "result": "completed",
+        "text": "",
+        "input": 7,
+        "output": 3,
+        "tools": [
+          {
+            "id": "call_exact",
+            "name": "lookup",
+            "arguments": {
+              "x": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate_terminal_usage",
+      "file": "duplicate_terminal_usage.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "completed",
+        "text": "answer",
+        "input": 7,
+        "output": 3,
+        "tools": []
+      }
+    },
+    {
+      "id": "partial_usage",
+      "file": "partial_usage.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "completed",
+        "text": "answer",
+        "input": 7,
+        "output": 3,
+        "tools": []
+      }
+    },
+    {
+      "id": "finish_length",
+      "file": "finish_length.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "incomplete",
+        "text": "partial",
+        "input": 7,
+        "output": 3,
+        "tools": []
+      }
+    },
+    {
+      "id": "finish_eof",
+      "file": "finish_eof.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "completed",
+        "text": "answer",
+        "input": 7,
+        "output": 3,
+        "tools": []
+      }
+    },
+    {
+      "id": "missing_terminal",
+      "file": "missing_terminal.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "error",
+        "input": 7,
+        "output": 3
+      }
+    },
+    {
+      "id": "truncated_tool",
+      "file": "truncated_tool.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "error",
+        "input": 7,
+        "output": 3
+      }
+    },
+    {
+      "id": "source_error",
+      "file": "source_error.sse",
+      "provenance": "synthetic_contract_shape",
+      "vendor": "openai_compatible_shape_not_live_vendor",
+      "authentication_lane": "synthetic_no_credentials",
+      "exact_model": "fixture-model",
+      "native_protocol": "chat",
+      "client_protocol": "responses",
+      "api_version": "not_applicable",
+      "schema_revision": "provider-compatibility/v1",
+      "sdk_version": "openai-python==3.40.0 (expected; actual installation recorded by runner)",
+      "issue_reference": null,
+      "expected": {
+        "result": "error",
+        "input": 7,
+        "output": 3
+      }
+    }
+  ]
+}

@@ -18,6 +18,7 @@ pub mod oauth_enrollment;
 pub mod connection_parameters;
 pub mod proxy_settings;
 pub mod model_reasoning;
+pub mod provider_compatibility;
 pub mod accounts;
 pub mod policy_editor;
 pub mod key_manager;
@@ -166,8 +167,49 @@ pub fn PageHead(
     }
 }
 
-/// Focused editor/detail surface. The browser handles modal focus containment and
-/// restores the launching control; Escape and the close button update the same state.
+/// Explicitly cycle a native modal's own focusable controls; no positive tab order.
+fn modal_tab_target(count:usize,current:Option<usize>,backward:bool)->Option<usize> {
+    if count==0 {return None}
+    Some(match (current,backward) {(Some(index),true)=>(index+count-1)%count,(Some(index),false)=>(index+1)%count,(None,true)=>count-1,(None,false)=>0})
+}
+fn modal_is_innermost(dialog:&web_sys::Element)->bool {
+    dialog.is_connected()&&dialog.matches(":modal").unwrap_or(false)&&dialog.query_selector("dialog:modal").ok().flatten().is_none()
+}
+fn modal_control_is_rendered(node:&web_sys::HtmlElement)->bool {
+    if node.offset_width()==0&&node.offset_height()==0{return false}
+    // Closed details may retain layout metrics for descendants that cannot focus.
+    let mut ancestor=node.parent_element();
+    while let Some(element)=ancestor {
+        if element.matches("details:not([open])").unwrap_or(false) && !element.query_selector(":scope > summary").ok().flatten().is_some_and(|summary|summary.contains(Some(node))) {return false}
+        ancestor=element.parent_element();
+    }
+    true
+}
+fn modal_controls(dialog:&web_sys::Element)->Vec<web_sys::HtmlElement> {
+    use wasm_bindgen::JsCast;
+    let Ok(nodes)=dialog.query_selector_all("button, a[href], input:not([type=hidden]), select, textarea, summary, [tabindex], [contenteditable=true]")else{return vec![]};
+    (0..nodes.length()).filter_map(|index|nodes.item(index)?.dyn_into::<web_sys::HtmlElement>().ok()).filter(|node| {
+        node.tab_index()>=0 && modal_control_is_rendered(node)
+            && !node.matches(":disabled").unwrap_or(true)
+            && node.closest("[hidden], [inert]").ok().flatten().is_none()
+            && node.closest("dialog:modal").ok().flatten().is_some_and(|owner|owner.is_same_node(Some(dialog)))
+    }).collect()
+}
+fn modal_recover_focus(id:&str) {
+    use wasm_bindgen::JsCast;
+    let Some(document)=web_sys::window().and_then(|w|w.document())else{return};
+    let Some(dialog)=document.get_element_by_id(id)else{return};
+    if !modal_is_innermost(&dialog){return}
+    if let Some(active)=document.active_element() {
+        if dialog.contains(Some(&active)){return}
+        // Opening another native modal transfers ownership to that modal.
+        if active.closest("dialog:modal").ok().flatten().is_some(){return}
+    }
+    if let Some(first)=modal_controls(&dialog).first(){let _=first.focus();}
+    else if let Some(dialog)=dialog.dyn_ref::<web_sys::HtmlElement>(){let _=dialog.focus();}
+}
+/// Native dialogs retain Escape and launching-control restoration. Explicit Tab
+/// containment also covers nested dialogs and the browser focus-to-BODY boundary.
 #[component]
 pub fn ModuleDialog(open: RwSignal<bool>, title: String, #[prop(optional)] busy: Option<RwSignal<bool>>, children: Children) -> impl IntoView {
     use wasm_bindgen::JsCast;
@@ -175,6 +217,7 @@ pub fn ModuleDialog(open: RwSignal<bool>, title: String, #[prop(optional)] busy:
     let id = format!("module-dialog-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let title_id = format!("{id}-title");
     let effect_id = id.clone();
+    let keyboard_id=id.clone();let focus_id=id.clone();
     Effect::new(move |_| {
         let wanted = open.get();
         if let Some(dialog) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(&effect_id)) {
@@ -188,6 +231,32 @@ pub fn ModuleDialog(open: RwSignal<bool>, title: String, #[prop(optional)] busy:
     });
     view! {
         <dialog id=id class="module-dialog console-content" aria-labelledby=title_id.clone()
+            on:keydown=move |ev:web_sys::KeyboardEvent| {
+                if ev.key()!="Tab"||ev.alt_key()||ev.ctrl_key()||ev.meta_key(){return}
+                let Some(document)=web_sys::window().and_then(|w|w.document())else{return};
+                let Some(dialog)=document.get_element_by_id(&keyboard_id)else{return};
+                if !modal_is_innermost(&dialog){return}
+                let controls=modal_controls(&dialog);
+                let active=document.active_element();
+                let current=controls.iter().position(|control|active.as_ref().is_some_and(|active|control.is_same_node(Some(active))));
+                ev.prevent_default();ev.stop_propagation();
+                if let Some(next)=modal_tab_target(controls.len(),current,ev.shift_key()){let _=controls[next].focus();}
+                else if let Some(dialog)=dialog.dyn_ref::<web_sys::HtmlElement>(){let _=dialog.focus();}
+            }
+            on:focusout=move |ev:web_sys::FocusEvent| {
+                // focusout fires while activeElement is temporarily BODY, before
+                // focusin finishes. Never interrupt a valid native transition.
+                if let Some(related)=ev.related_target().and_then(|target|target.dyn_into::<web_sys::Element>().ok()) {
+                    let current=web_sys::window().and_then(|w|w.document()).and_then(|document|document.get_element_by_id(&focus_id));
+                    if current.is_some_and(|dialog|dialog.contains(Some(&related)))||related.closest("dialog:modal").ok().flatten().is_some(){return}
+                }
+                let id=focus_id.clone();
+                leptos::task::spawn_local(async move {
+                    // Check after the browser has completed the native focus move.
+                    let _=wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)).await;
+                    modal_recover_focus(&id);
+                });
+            }
             on:cancel=move |ev: web_sys::Event| { ev.prevent_default(); if !busy.map(|s|s.get_untracked()).unwrap_or(false) { open.set(false); } }
             on:close=move |_| { if open.get_untracked() { open.set(false); } }>
             <header class="module-dialog-header"><h2 id=title_id.clone()>{title}</h2><button type="button" class="ghost" autofocus disabled=move ||busy.map(|s|s.get()).unwrap_or(false) on:click=move |_|open.set(false)>"关闭"</button></header>
@@ -200,6 +269,15 @@ pub fn ModuleDialog(open: RwSignal<bool>, title: String, #[prop(optional)] busy:
 mod tests {
     use super::*;
 
+    #[test]
+    fn modal_tab_ring_wraps_both_directions_and_recovers_outside_focus() {
+        assert_eq!(modal_tab_target(3,Some(2),false),Some(0));
+        assert_eq!(modal_tab_target(3,Some(0),true),Some(2));
+        assert_eq!(modal_tab_target(3,None,false),Some(0));
+        assert_eq!(modal_tab_target(3,None,true),Some(2));
+        assert_eq!(modal_tab_target(1,Some(0),false),Some(0));
+        assert_eq!(modal_tab_target(0,None,false),None);
+    }
     #[test]
     fn ordinary_accounts_cannot_mount_administrator_pages() {
         for page in Page::ALL {assert_eq!(page.for_account(false),Page::Portal);}

@@ -2,26 +2,15 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## 未发布 — 2026-10-27 多厂商兼容第三批（W07–W09）
+## v0.34.0-qiwolf.22 — 2026-10-28（北京时间）
 
-- JSON/SSE保留有界request_id、cache子集及原usage观测，重复终态不重复加总，未知语义仍拒绝；不改现有定价与结算算法。
-- 窄匹配百炼6区域workspace域名；新增不授予能力的运行时身份声明、摘要和代次隔离，Ollama/vLLM目录自称不作为自动推理支持；现有高级配置可编辑并保留新字段，保存不联网。
-- MiniMax精确API来源新增native Chat split至公共Responses的raw思考/工具历史与流式codec；敏感标记不重试/换源，signed Messages、no-split转换及未证明strict保证继续保护，不修改客户端。
-- 子集、证据和升级边界见[第三批验收记录](docs/acceptance/2026-10-27-provider-p1-batch3.md)。本条不代表推送、发布或生产升级。
-
-## 未发布 — 2026-10-27 多厂商兼容第二批（W04–W06）
-
-- 保留工具 strict 三态：Chat/Messages 省略值转 Responses 显式 false；Responses 省略值仅在 schema 已严格可证明时转 Chat true，其余在 TokenGo 选择原生路线，不静默收紧或降级。
-- 补精确 Qwen/Kimi/GLM 前导文本 developer、来源/型号参数组合、GLM Coding Plan、Claude Mythos5.1；实测后独立补硅基流动 Qwen27B 角色适配，托管型号不继承其他品牌的关闭思考能力。
-- Kimi K3 原生 Responses 完整 summary 历史新增来源绑定证明，保留 JSON/SSE 原形及其他来源已有显式历史行为。MiniMax M3 关闭思考跨协议可用，active 跨协议先拒绝，完整方言留待 W09。
-- DeepSeek strict 明确要求文档所列官方 Beta 来源及统一严格函数；普通 `/v1` 或未知代理不自动切端点。只改 TokenGo，不修改客户端、生产配置或数据库。范围与限制见[第二批验收记录](docs/acceptance/2026-10-27-provider-p1.md)。本条不代表发布或部署。
-
-## 未发布 — 2026-10-27 多厂商兼容第一批
-
-- 按精确来源/协议/型号区分百炼原生Responses输出预算；仅答案或未知语义要求可信总上界，最终请求在副本完成计量及合同复核，失败不修改原请求。
-- 补齐Gemini/Ark原生Chat签名及密文的显式/匿名会话归属，覆盖JSON与流式快照/增量；拒绝变造、跨用户/来源/协议的历史，普通Chat不额外锁定来源。
-- 新增版本化证据描述，不授予认证或执行能力；Ark版本冲突保持待核验。不修改客户端，不迁移数据库或清空历史。
-- 第一批状态、真实来源范围和升级边界见[验收记录](docs/acceptance/2026-10-27-provider-p0.md)。本条不代表已推送、发布或部署。
+- 修复DeepSeek前导developer角色、Responses工具索引转换，恢复Terra及其他模型用途维护；只改TokenGo，不要求DSH、AG/HS或其他客户端修改。
+- 补齐W01–W11核心兼容：精确来源/型号/协议参数合同、strict三态、原生签名密文归属、Kimi summary历史、MiniMax split思考与工具、百炼workspace及运行时身份隔离。
+- 未充分验收显示范围，不关闭合法原生调用或可表达转换；未知原生输出上界使用明确标注的本地预算估算，保留权限、归属、真实额度及不能表达的具体请求校验。
+- 保留cache/reasoning用量子集、raw usage与中性request_id；Messages JSON/SSE用有界tokengo_metadata携带trace，不将未知语义字段静默丢弃。
+- 新增静态兼容诊断、15秒可取消独立验证和运行时标准API采集；保存不联网，OAuth/向量/重排进入现有真实探针。修复弹窗卸载后的异步访问和键盘焦点。
+- 受影响服务端699项及Web171项通过；SDK对照24+3项、硅基流动4个精确托管型号14次实际调用通过。厂商官方账号、其他型号及可选新执行器未实测，不外推支持保证。
+- Cargo0.34.0/schema42不变。分批证据及限制见[第四批验收](docs/acceptance/2026-10-28-provider-p1-batch4.md)、[核心审计](docs/acceptance/2026-10-27-provider-core-audit.md)和[版本说明](docs/releases/v0.34.0-qiwolf.22.md)；公开发行与237升级分别附最终收据。
 
 ## v0.34.0-qiwolf.21 — 2026-10-27（北京时间）
 

@@ -115,13 +115,17 @@ fn w09_masked_empty_or_error_shapes_do_not_hide_semantic_policy_flags() {
     }
 }
 #[test]
-fn w09_strict_guarantee_requires_verified_provider_contract() {
+fn w09_strict_intent_is_preserved_without_claiming_upstream_enforcement() {
     for strict in [Some(true),None,Some(false)] {
         let mut tool=json!({"type":"function","name":"weather","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}});
         if let Some(strict)=strict {tool["strict"]=json!(strict);}
-        let body=json!({"model":"m","input":"hi","tools":[tool]});
-        let result=p("MiniMax-M3").convert_request(&body);
-        if strict==Some(false) {assert_eq!(result.unwrap()["tools"][0]["function"]["strict"],false);}
-        else {let error=result.unwrap_err();assert!(error.starts_with("Unsupported ")&&error.contains("strict guarantee"),"{error}");}
+        let body=json!({"model":"m","input":"hi","tools":[tool]});let before=body.clone();
+        let result=p("MiniMax-M3").convert_request(&body).unwrap();
+        assert_eq!(result["tools"][0]["function"]["strict"],strict.unwrap_or(true));
+        assert_eq!(result["tools"][0]["function"]["parameters"],body["tools"][0]["parameters"]);
+        assert_eq!(body,before);
     }
+    // Missing strict still cannot justify rewriting an open/optional schema.
+    let ambiguous=json!({"model":"m","input":"hi","tools":[{"type":"function","name":"weather","parameters":{"type":"object","properties":{"optional":{"type":"string"}}}}]});
+    assert!(p("MiniMax-M3").convert_request(&ambiguous).is_err());
 }

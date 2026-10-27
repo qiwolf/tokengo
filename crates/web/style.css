@@ -2239,3 +2239,19 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 .provider-model-mapping > .account-actions,
 .provider-model-mapping > [role="group"] { grid-column:1/-1; margin:0; min-width:0; }
 .provider-model-mapping > [role="group"] > .account-actions { margin:12px 0 0; }
+
+/* Source-bound diagnostics follow the existing module dialog and controls. */
+.compatibility-diagnostics { min-width:0; overflow-wrap:anywhere; }
+.compatibility-diagnostics .compatibility-facts { display:grid; grid-template-columns:minmax(88px,1fr) minmax(0,3fr); gap:12px 16px; }
+.compatibility-diagnostics dt { font-weight:600; }
+.compatibility-diagnostics dd { margin:0; min-width:0; }
+.compatibility-diagnostics details { border-top:1px solid var(--line); padding:12px 0; }
+.compatibility-diagnostics summary { cursor:pointer; min-height:44px; display:list-item; align-content:center; }
+.compatibility-diagnostics select { max-width:100%; min-height:44px; }
+.compatibility-diagnostics .compatibility-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.compatibility-diagnostics button { min-height:44px; max-width:100%; white-space:normal; }
+@media(max-width:600px) {
+  .compatibility-diagnostics .compatibility-facts { grid-template-columns:minmax(0,1fr); gap:6px; }
+  .compatibility-diagnostics dd { margin-bottom:12px; }
+  .compatibility-diagnostics .compatibility-actions > button { width:100%; }
+}

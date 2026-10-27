@@ -714,7 +714,7 @@ fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option
     billing_bound_with_contract(body,endpoint,price,context,None)
 }
 fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
-    let plan = crate::request_plan::RequestPlan::prepare(body, |outgoing| {
+    let mut plan = crate::request_plan::RequestPlan::prepare(body, |outgoing| {
         let bounds = billing_bound_with_contract_inner(outgoing, endpoint, price, context, contract)?;
         // Defaults materialized during metering must still satisfy the final
         // native contract (for example DashScope Responses' minimum cap of 16).
@@ -725,6 +725,10 @@ fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Optio
         }
         Ok::<_, ApiError>(bounds)
     })?;
+    if let Some(contract)=contract {
+        plan.record_budget_validation(body,contract);
+        tracing::debug!(dispositions=%plan.disposition_report(),"Final source output budget validated");
+    }
     let (outgoing, bounds) = plan.into_parts();
     *body = outgoing;
     Ok(bounds)
@@ -732,7 +736,7 @@ fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Optio
 fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
     let mut input=admission_input_bound(body,endpoint)?;
     let mut output=if let Some(contract)=contract {
-        crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
+        crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
     } else {output_bound(body,endpoint)?};
     if has_input_audio(body) || endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
         input=context.map(|v|v.0).or(price.map(|p|p.max_input_tokens)).filter(|n|*n>0)
@@ -757,7 +761,7 @@ fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price
             body[field]=Value::from(per_choice);
         }
         if let Some(contract)=contract {
-            output=crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
+            output=crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
         }
         if endpoint.has_image(body) {input=context.map(|v|v.0).unwrap_or(p.max_input_tokens);}
         if input>p.max_input_tokens || output>p.max_output_tokens {
@@ -765,7 +769,7 @@ fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price
         }
     }
     if let Some(contract)=contract {
-        output=crate::parameter_budgets::output_bound(contract,body,context.map(|v|v.1),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
+        output=crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
     }
     if let Some((max_input,max_output))=context {
         if input>max_input || output>max_output {return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","Request exceeds configured source token bounds"));}
@@ -1400,7 +1404,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     // must use an inclusive source field or explicitly reject it.
                     output_bound(&req.body,req.endpoint).map_err(|error|error.message)
                 } else {
-                    crate::parameter_budgets::output_bound(&contract,&projection,ceiling.map(|v|v.1),choices)
+                    let price_output=crate::db::billing::price(&c,&candidate.name,candidate.channel.id.0)?.map(|price|price.max_output_tokens);
+                    crate::parameter_budgets::reservation_estimate(&contract,&projection,ceiling.map(|v|v.1),price_output,choices).map(|estimate|estimate.output_tokens)
                 };
                 match bound {
                     Ok(value) => {
@@ -1786,12 +1791,16 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             Some(input)
                         }else{None};
                         let conversion_input=conversion_input.as_ref().unwrap_or(&req.body);
-                        let converted=match minimax_policy.as_ref() {
-                            Some(policy)=>policy.convert_request(conversion_input),
-                            None=>crate::parameter_contracts::convert_request_for_source(&conversion_contract,from,conversion_input),
-                        };
+                        let converted=crate::request_plan::RequestPlan::prepare_conversion_detailed(conversion_input,&conversion_contract,from,|input| {
+                            match minimax_policy.as_ref() {
+                                Some(policy)=>policy.convert_request(input),
+                                None=>crate::parameter_contracts::convert_request_for_source(&conversion_contract,from,input),
+                            }
+                        });
                         match converted {
-                            Ok(mut body) => {
+                            Ok(conversion_plan) => {
+                                tracing::debug!(request_id,dispositions=%conversion_plan.disposition_report(),"Source protocol request converted");
+                                let (mut body,())=conversion_plan.into_parts();
                                 if let Err(note) = crate::reasoning_capabilities::restore_disable_intent(
                                     &state.conn(), channel.id.0, name, from, to, conversion_input, &mut body,
                                 ) {
@@ -1800,8 +1809,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 }
                                 body
                             }
-                            Err(note) => {
-                                last_policy_error = Some(ApiError::bad_request(note));
+                            Err(error) => {
+                                tracing::debug!(request_id,dispositions=%error.disposition_report(),"Source protocol conversion rejected");
+                                last_policy_error = Some(ApiError::bad_request(error.message));
                                 continue;
                             }
                         }
@@ -1809,30 +1819,15 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     _ => req.body.clone(),
                 }
             };
-            // A source returning reasoning does not imply it accepts that dialect
-            // in assistant history. Only converted Chat replay needs explicit opt-in.
-            if req
-                .endpoint
-                .protocol()
+            // This flag records an input-dialect claim. An absent/false claim
+            // does not disable a representable raw history conversion; the
+            // separate allow_conversion policy still controls conversion use.
+            let unconfirmed_chat_reasoning_replay = req.endpoint.protocol()
                 .is_some_and(|client| client != crate::protocol::Protocol::Chat)
                 && upstream_protocol == Some(crate::protocol::Protocol::Chat)
                 && !protocols.chat_reasoning_replay
-                && prepared
-                    .get("messages")
-                    .and_then(Value::as_array)
-                    .is_some_and(|messages| {
-                        messages.iter().any(|message| {
-                            message
-                                .get("reasoning_content")
-                                .is_some_and(|value| !value.is_null())
-                        })
-                    })
-            {
-                last_policy_error = Some(ApiError::bad_request(
-                    "Source does not declare Chat reasoning history replay support",
-                ));
-                continue;
-            }
+                && prepared.get("messages").and_then(Value::as_array).is_some_and(|messages|
+                    messages.iter().any(|message|message.get("reasoning_content").is_some_and(|value|!value.is_null())));
             // 门口闸机：拿到名额才发；这条满了就先跳过（换下一条）
             let permit = match pre_permits.remove(&channel.id.0) {
                 Some(p) => Some(p),
@@ -2016,10 +2011,16 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse::<u64>().ok());
-            let notes = match (req.endpoint.protocol(), upstream_protocol) {
+            let mut notes = match (req.endpoint.protocol(), upstream_protocol) {
                 (Some(from), Some(to)) => crate::protocol::normalization_notes(from, to, &req.body),
                 _ => vec![],
             };
+            if unconfirmed_chat_reasoning_replay {
+                notes.push("Raw Chat reasoning history preserved; source replay acceptance is not fully verified");
+            }
+            if minimax_policy.is_some() && req.body.get("tools").is_some() {
+                notes.push("MiniMax strict intent preserved; upstream schema enforcement is not fully verified");
+            }
             let mut adaptation_note = (!notes.is_empty()).then(|| notes.join("; "));
             let removed_extensions=channel.drop_fields.iter().filter(|key|req.body.get(key.as_str()).is_some()).cloned().collect::<Vec<_>>();
             if !removed_extensions.is_empty() {
@@ -2111,9 +2112,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     continue 'channels;
                 }
                 let managed_openai=oauth.as_ref().is_some_and(|credential|credential.managed_openai);
-                let mut source_parameter_changed=false;
+                let mut mapping_reasoning_defaults=false;
                 if let Some(native)=upstream_protocol {
-                    let contract=parameter_context(channel,&sent_model,native,protocols,managed_openai);
                     let explicit_effort=match native {
                         crate::protocol::Protocol::Chat=>body.get("reasoning_effort"),
                         crate::protocol::Protocol::Responses=>body.pointer("/reasoning/effort"),
@@ -2125,51 +2125,30 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             last_policy_error=Some(ApiError::bad_request("Explicit reasoning parameter is excluded by this mapping's declared/manual capability")); continue 'channels;
                         }
                     }
-                    match crate::message_roles::adapt(&contract, &mut body) {
-                        Ok(changed) => source_parameter_changed |= changed,
-                        Err(note) => { last_policy_error = Some(ApiError::bad_request(note)); continue 'channels; }
-                    }
-                    match if contract.is_oauth { Ok(false) } else { crate::parameter_contracts_china::adapt(&contract,&mut body) } {
-                        Ok(changed)=>source_parameter_changed|=changed,
-                        Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
-                    }
                 }
-                let native_override=upstream_protocol.is_some_and(|native|!managed_openai
-                    && crate::parameter_budgets::native_thinking_override(&parameter_context(channel,&sent_model,native,protocols,false),&body));
-                let mapping_reasoning_defaults = if let Some(native) = upstream_protocol.filter(|_|!native_override) {
-                    match crate::reasoning_capabilities::apply_defaults_and_validate(
-                        &state.conn(),
-                        channel.id.0,
-                        name,
-                        &sent_model,
-                        native,
-                        &mut body,
-                    ) {
-                        Ok(value) => value,
-                        Err(note) => {
-                            last_policy_error = Some(ApiError::bad_request(note));
-                            continue 'channels;
-                        }
-                    }
-                } else {
-                    false
-                };
                 if let Some(native)=upstream_protocol {
                     let contract=parameter_context(channel,&sent_model,native,protocols,managed_openai);
-                    match if contract.is_oauth { Ok(false) } else { crate::parameter_contracts_china::adapt(&contract,&mut body) } {
-                        Ok(changed)=>source_parameter_changed|=changed,
-                        Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
+                    let source_plan=match crate::request_plan::RequestPlan::prepare_source_detailed(
+                        &body,&contract,req.endpoint.protocol().unwrap_or(native),|outgoing| {
+                            let native_override=!managed_openai && crate::parameter_budgets::native_thinking_override(&contract,outgoing);
+                            if native_override {Ok(false)} else {
+                                crate::reasoning_capabilities::apply_defaults_and_validate(
+                                    &state.conn(),channel.id.0,name,&sent_model,native,outgoing)
+                            }
+                        }) {
+                        Ok(value)=>value,
+                        Err(error)=>{
+                            tracing::debug!(request_id,dispositions=%error.disposition_report(),"Source request contract rejected");
+                            last_policy_error=Some(ApiError::bad_request(error.message));continue 'channels;
+                        }
+                    };
+                    tracing::debug!(request_id,channel_id=channel.id.0,dispositions=%source_plan.disposition_report(),"Source contract prepared on final request copy");
+                    let (outgoing,result)=source_plan.into_parts();
+                    mapping_reasoning_defaults=result.default_changed;
+                    if result.changed {
+                        body_bytes=Bytes::from(serde_json::to_vec(&outgoing).map_err(|e|ApiError::internal(e.to_string()))?);
                     }
-                    if let Err(note)=crate::parameter_contracts::validate(&contract,&body)
-                        .and_then(|_|crate::parameter_contracts_china::validate(&contract,&body))
-                        .and_then(|_|crate::parameter_budgets::validate_warmup(&contract,req.endpoint.protocol().unwrap_or(native),&body)) {
-                        last_policy_error=Some(ApiError::bad_request(note));continue 'channels;
-                    }
-                }
-                if mapping_reasoning_defaults || source_parameter_changed {
-                    body_bytes = Bytes::from(
-                        serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?,
-                    );
+                    body=outgoing;
                 }
                 if let Some(credential) = &oauth {
                     if upstream_protocol != Some(credential.provider)
@@ -2422,6 +2401,17 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     body_bytes = Bytes::from(
                         serde_json::to_vec(&body).map_err(|e| ApiError::internal(e.to_string()))?,
                     );
+                    let reservation_estimate=if req.endpoint.is_generation()&&!managed_openai {
+                        upstream_protocol.map(|native| {
+                            let contract=parameter_context(channel,&sent_model,native,protocols,false);
+                            crate::parameter_budgets::reservation_estimate(&contract,&body,context.map(|value|value.1),price.as_ref().map(|price|price.max_output_tokens),if native==crate::protocol::Protocol::Chat{choices_count(&body)?}else{1})
+                                .map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))
+                        }).transpose()?
+                    }else{None};
+                    if let Some(estimate)=reservation_estimate.as_ref().filter(|value|value.origin!="contract") {
+                        let note=format!("Output reservation uses {} tokens; origin={}; confidence={}; supplier hard cap not verified",estimate.output_tokens,estimate.origin,estimate.confidence);
+                        adaptation_note=Some(adaptation_note.take().map(|previous|format!("{previous}; {note}")).unwrap_or(note));
+                    }
                     let attempt_id = format!("{}:{}", request_id, ordinal);
                     let reservation = if req.endpoint.tool_kind().is_some() {
                         match crate::db::billing::request_price(&c, name, channel.id.0)? {
@@ -2494,7 +2484,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol(),
                     "virtual_model_scope":plan.virtual_route.as_ref().map(|r|if r.shared {"shared"} else {"private"}),"virtual_model_id":plan.virtual_route.as_ref().map(|route|route.id),"virtual_model_version":plan.virtual_route.as_ref().map(|route|route.version),
                     "target_position":target.as_ref().map(|target|target.position),"provider_id":credential.as_ref().map(|credential|credential.provider_id),"credential_id":credential.as_ref().map(|credential|credential.id),"credential_revision":credential.as_ref().map(|credential|credential.revision),
-                    "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision)});
+                    "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision),"reservation_estimate":reservation_estimate});
                     if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2,input_bound=?3,output_bound=?4 WHERE id=?1",rusqlite::params![id,source.to_string(),input,output]) {
                     if crate::db::billing::release(&c,id,"not_sent").is_ok(){guard.reservation=None;}
                     return Err(ApiError::from(crate::db::DbError::from(e)));

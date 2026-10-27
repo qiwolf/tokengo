@@ -64,6 +64,7 @@ async fn rewrite_deserialize_error(resp: Response) -> Response {
 
 fn router_inner() -> Router<SharedState> {
     Router::new()
+        .merge(super::provider_diagnostics::router())
         // —— 无鉴权 ——
         .route("/ping", get(ping))
         .route("/auth/status", get(auth_status))
@@ -751,15 +752,15 @@ struct ProbeQuery {
 ///
 /// 探活和「拉上游模型清单」都要这一套。抽出来是因为这两件事的加载逻辑一模一样，
 /// 各写一份迟早会有一边忘了解密密钥（现象是"这条渠道明明有 key，面板却说没有"）。
-struct ReadyChannel {
-    source_identity: String,
-    channel: tokengo_shared::Channel,
-    secret: Option<String>,
-    has_secret: bool,
-    models: Vec<channels::ModelMapping>,
+pub(super) struct ReadyChannel {
+    pub(super) source_identity: String,
+    pub(super) channel: tokengo_shared::Channel,
+    pub(super) secret: Option<String>,
+    pub(super) has_secret: bool,
+    pub(super) models: Vec<channels::ModelMapping>,
 }
 
-fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<Option<ReadyChannel>, ApiError> {
+pub(super) fn ready_channel(state: &SharedState, id: tokengo_shared::ChannelId) -> Result<Option<ReadyChannel>, ApiError> {
     let conn = state.conn();
     if !crate::protocol_config::background_probe_allowed(&conn,id.0)? {
         return Err(ApiError::bad_request("OAuth and standalone tools require authenticated, metered verification; use the OAuth account catalog or the normal VKey endpoint"));

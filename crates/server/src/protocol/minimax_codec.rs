@@ -49,12 +49,9 @@ impl Policy {
             }
         }
         let mut outgoing = super::convert_request(Protocol::Responses, Protocol::Chat, &input).map_err(protocol_fault)?;
-        // A closed schema can establish the caller's strict intent, but cannot
-        // establish that this provider enforces it. Never downgrade that intent.
-        if outgoing["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool|
-            tool["type"] == "function" && tool["function"]["strict"] == true)) {
-            return Err("Unsupported MiniMax strict guarantee: this source has no verified enforcement contract; select a source with a verified guarantee or a suitable native route".into());
-        }
+        // The generic converter preserves strict's omitted/true/false intent.
+        // Upstream enforcement remains unverified, which is an evidence state,
+        // not a reason to disable otherwise representable function tools.
         fold_control_messages(&mut outgoing)?;
         outgoing["reasoning_split"] = Value::Bool(true);
         if let Some(thinking) = thinking {

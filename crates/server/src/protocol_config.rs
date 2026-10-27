@@ -18,12 +18,16 @@ pub struct Capabilities {
     /// Native Chat input_audio only; output audio and media conversion stay disabled.
     #[serde(default, skip_serializing_if = "is_false")]
     pub native_input_audio: bool,
-    /// Explicit ability to replay converted assistant reasoning_content history.
-    /// Native Chat passthrough and returned reasoning fields do not require it.
+    /// Declared source acceptance of converted assistant reasoning_content.
+    /// False/omitted means unconfirmed, never a feature-disable switch.
+    /// The separate allow_conversion policy controls converted traffic; native
+    /// Chat passthrough and returned reasoning fields do not require a claim.
     #[serde(default, skip_serializing_if = "is_false")]
     pub chat_reasoning_replay: bool,
-    /// Verified independent input/output ceilings, not a token price or a promise
-    /// that both ceilings fit the provider's joint context window simultaneously.
+    /// Configured independent input/output limits, not a token price, provider
+    /// attestation, or a promise that both fit one joint context window.
+    /// Unverified native output uses an explicitly labeled local reservation
+    /// estimate; opaque/audio input admission retains its context requirement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_input_tokens: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

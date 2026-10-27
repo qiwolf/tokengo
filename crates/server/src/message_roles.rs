@@ -21,16 +21,34 @@ const KIMI_SYSTEM_MODELS: &[&str] = &[
 ];
 // Independent SiliconFlow contract, not inherited from the Qwen brand. The
 // official Chat guide documents system instructions; a 2026-10-27 exact-model
-// probe rejected developer (code20015, expected system/user/assistant/tool),
-// then rejected a second system message. Only one leading system is accepted.
+// Qwen probe rejected developer (code20015), then a second system message.
+// 2026-10-28 exact-source controls: DeepSeek V4 Flash and GLM5.2 accepted
+// developer structurally but ignored its unique instruction; Kimi Code rejected
+// developer. All three honored the same instruction as system. Their pure
+// leading controls use the same documented single-priority text fold.
 // https://docs.siliconflow.cn/docs/api/chat-completions-post
 // https://docs.siliconflow.cn/docs/userguide/capabilities/text-generation
-const SILICONFLOW_SYSTEM_MODELS: &[&str] = &["Qwen/Qwen3.8-27B"];
+const SILICONFLOW_SYSTEM_MODELS: &[&str] = &[
+    "Qwen/Qwen3.8-27B", "deepseek-ai/DeepSeek-V4-Flash",
+    "zai-org/GLM-5.2", "moonshotai/Kimi-K2.7-Code",
+];
 const GLM_SYSTEM_MODELS: &[&str] = &[
     "glm-5.3", "glm-5.3-flash", "glm-5.3-flashx", "glm-5.2", "glm-5.1", "glm-5-turbo", "glm-5", "glm-4.7",
     "glm-4.7-flash", "glm-4.7-flashx", "glm-4.6", "glm-4.5-air", "glm-4.5-airx",
     "glm-4.5-flash", "glm-4-flash-250414", "glm-4-flashx-250414",
 ];
+
+pub(crate) fn documented_model(ctx:&Context<'_>)->bool {
+    if ctx.is_oauth || ctx.protocol!=Protocol::Chat{return false;}
+    match crate::parameter_contracts::provider(ctx) {
+        "deepseek"=>matches!(ctx.model,"deepseek-flash"|"deepseek-v4-pro"),
+        "dashscope"=>QWEN_SYSTEM_MODELS.contains(&ctx.model)||matches!(ctx.model,"qwq-plus"|"qwq-32b"|"qvq-max"|"qvq-plus"),
+        "moonshot"=>KIMI_SYSTEM_MODELS.contains(&ctx.model),
+        "zai"=>GLM_SYSTEM_MODELS.contains(&ctx.model),
+        "siliconflow"=>SILICONFLOW_SYSTEM_MODELS.contains(&ctx.model),
+        _=>false,
+    }
+}
 
 /// Fold leading textual developer instructions into the target's single
 /// privileged system role. This intentionally collapses the distinct OpenAI
@@ -385,4 +403,23 @@ mod tests {
         assert!(adapt(&ctx,&mut body).unwrap());
         assert_eq!(body["messages"][0]["role"],"system");
     }
+    #[test]
+    fn siliconflow_observed_three_models_fold_leading_text_without_brand_expansion(){
+        for model in ["deepseek-ai/DeepSeek-V4-Flash","zai-org/GLM-5.2","moonshotai/Kimi-K2.7-Code"] {
+            let c=Context{base_url:"https://api.siliconflow.cn/v1",model,protocol:Protocol::Chat,api_version:None,is_oauth:false,profile_override:Some("siliconflow")};
+            let mut body=serde_json::json!({"messages":[{"role":"system","content":"first"},{"role":"developer","content":"second"},{"role":"user","content":"Proceed"}]});
+            assert!(documented_model(&c));assert!(adapt(&c,&mut body).unwrap());
+            assert_eq!(body["messages"],serde_json::json!([{"role":"system","content":"first\n\nsecond"},{"role":"user","content":"Proceed"}]));
+            let mut single=serde_json::json!({"messages":[{"role":"developer","content":"text","name":"must retain"}]});
+            assert!(adapt(&c,&mut single).unwrap());assert_eq!(single["messages"][0]["name"],"must retain");
+            for messages in [serde_json::json!([{"role":"user","content":"Proceed"},{"role":"developer","content":"late"}]),serde_json::json!([{"role":"system","content":"first"},{"role":"developer","content":"text","name":"must retain"}]),serde_json::json!([{"role":"developer","content":[{"type":"image_url","image_url":"private"}]}])] {
+                let mut bad=serde_json::json!({"messages":messages});let before=bad.clone();assert!(adapt(&c,&mut bad).is_err());assert_eq!(bad,before);
+            }
+        }
+        for model in ["deepseek-ai/DeepSeek-V4.1-Flash","deepseek-ai/DeepSeek-V4-Pro","Pro/zai-org/GLM-5.2","zai-org/GLM-5.3","Pro/moonshotai/Kimi-K2.6","moonshotai/Kimi-future"] {
+            let c=Context{base_url:"https://api.siliconflow.cn/v1",model,protocol:Protocol::Chat,api_version:None,is_oauth:false,profile_override:Some("siliconflow")};
+            let mut body=serde_json::json!({"messages":[{"role":"developer","content":"keep"}]});let before=body.clone();assert!(!documented_model(&c));assert!(!adapt(&c,&mut body).unwrap());assert_eq!(body,before);
+        }
+    }
+
 }
