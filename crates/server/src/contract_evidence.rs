@@ -4,7 +4,7 @@ use crate::{parameter_contracts::{self, Context}, protocol::Protocol};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const REVISION: &str = "2026-10-27-p1.1";
+pub const REVISION: &str = "2026-10-27-p1.2";
 
 #[derive(Debug, Serialize)]
 pub struct ProviderContractIdentity<'a> {
@@ -38,6 +38,48 @@ pub struct ContractEvidence {
 }
 
 const RULES: &[ContractEvidence] = &[
+    ContractEvidence {
+        rule_id:"G10",provider:"moonshot",protocol:Protocol::Chat,
+        field:"usage input subsets/raw provenance",source:"https://platform.kimi.com/docs/api/chat",
+        read_at:"2026-10-27",scope:"typed cache read/write subsets; no duplicate totals or inferred supplier cost; bounded wire provenance",
+        confidence:"documentation_and_static_code",review_trigger:"usage subset or protocol schema change",
+    },
+    ContractEvidence {
+        rule_id:"G12",provider:"zai",protocol:Protocol::Chat,
+        field:"request_id",source:"https://docs.bigmodel.cn/api-reference/模型-api/对话补全",
+        read_at:"2026-10-27",scope:"bounded trace string only; semantic extensions remain guarded",
+        confidence:"documentation_and_static_code",review_trigger:"trace or semantic response schema change",
+    },
+    ContractEvidence {
+        rule_id:"G06-chat",provider:"dashscope",protocol:Protocol::Chat,
+        field:"workspace endpoint identity",source:"https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions",
+        read_at:"2026-10-27",scope:"exact workspace single-label host in six documented regions; no model-name or arbitrary suffix inference",
+        confidence:"documentation_and_static_code",review_trigger:"workspace region or endpoint contract change",
+    },
+    ContractEvidence {
+        rule_id:"G06",provider:"dashscope",protocol:Protocol::Responses,
+        field:"workspace endpoint identity",source:"https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses",
+        read_at:"2026-10-27",scope:"six exact documented workspace regions and paths; manual profile wins, no capability grant",
+        confidence:"documentation_and_static_code",review_trigger:"workspace region or endpoint contract change",
+    },
+    ContractEvidence {
+        rule_id:"G17-ollama",provider:"ollama",protocol:Protocol::Chat,
+        field:"runtime_identity",source:"https://docs.ollama.com/api/openai-compatibility",
+        read_at:"2026-10-27",scope:"bounded unverified operator/API claims; template digest changes invalidate source identity; no automatic probing or capability grant",
+        confidence:"documentation_and_static_code",review_trigger:"runtime template/parser/config or evidence source change",
+    },
+    ContractEvidence {
+        rule_id:"G17-vllm",provider:"vllm",protocol:Protocol::Chat,
+        field:"runtime_identity",source:"https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/",
+        read_at:"2026-10-27",scope:"runtime/model names do not prove parser/template support; declared identity remains unverified",
+        confidence:"documentation_and_static_code",review_trigger:"runtime template/parser/config or evidence source change",
+    },
+    ContractEvidence {
+        rule_id:"G16",provider:"minimax",protocol:Protocol::Chat,
+        field:"source split thinking codec",source:"https://platform.minimax.io/docs/api-reference/text-openai-api",
+        read_at:"2026-10-27",scope:"API-key exact M3/M3.1 split Chat to public Responses; signed Messages and unproved strict guarantees remain guarded; native passthrough unchanged",
+        confidence:"documentation_and_static_code",review_trigger:"thinking/signature/split/schema or authentication line change",
+    },
     ContractEvidence {
         rule_id: "G01", provider: "dashscope", protocol: Protocol::Responses,
         field: "max_output_tokens",

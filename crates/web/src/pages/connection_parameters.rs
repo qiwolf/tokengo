@@ -96,6 +96,16 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn runtime_identity_is_not_lost_when_changing_protocol_or_conversion(){
+        let identity=json!({"runtime":"ollama","evidence":"operator_declared","models":[{"model":"qwen3:8b","template_sha256":"a".repeat(64)}]});
+        let raw=json!({"native":["chat","responses"],"parameter_profile":"ollama","allow_conversion":true,"runtime_identity":identity}).to_string();
+        let chosen=choose_primary(&raw,"responses");
+        let edited=patch_flag(&chosen,"allow_conversion",false);
+        let value=api::protocols(&edited).unwrap();
+        assert_eq!(value["runtime_identity"],identity);
+        assert_eq!(value["native"],json!(["responses","chat"]));
+        assert_eq!(value["allow_conversion"],false);
+    }
     #[test] fn protocol_convenience_controls_preserve_other_contract_fields(){
         let raw=r#"{"native":["chat","responses"],"parameter_profile":"mimo","max_input_tokens":200,"max_output_tokens":100,"allow_conversion":false}"#;
         let chosen=choose_primary(raw,"responses");let value:Value=serde_json::from_str(&chosen).unwrap();

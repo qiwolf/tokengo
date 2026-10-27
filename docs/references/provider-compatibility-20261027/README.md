@@ -6,7 +6,7 @@
 
 设计结论见[方案书](../../superpowers/specs/2026-10-27-provider-compatibility.md)，实施顺序见[开发计划](../../superpowers/plans/2026-10-27-provider-compatibility.md)，逐项工作见[gap-ledger.json](gap-ledger.json)。
 
-实施进度：本资料册及JSON台账保留研究时刻的基线状态，后续结果单独见[第一批P0验收记录](../../acceptance/2026-10-27-provider-p0.md)及[第二批 W04–W06 验收记录](../../acceptance/2026-10-27-provider-p1.md)，不将未完成的P1/P2合并宣称通过。
+实施进度：本资料册及JSON台账保留研究时刻的基线状态，后续结果单独见[第一批P0验收记录](../../acceptance/2026-10-27-provider-p0.md)及[第二批 W04–W06 验收记录](../../acceptance/2026-10-27-provider-p1.md)及[第三批 W07–W09 验收记录](../../acceptance/2026-10-27-provider-p1-batch3.md)，不将未完成的P1/P2合并宣称通过。
 
 ## 阅读与参数核验口径
 

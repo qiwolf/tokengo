@@ -1755,6 +1755,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             let upstream_path = upstream_protocol
                 .map(|p| p.path())
                 .unwrap_or(req.endpoint.path());
+            let minimax_policy = match (req.endpoint.protocol(), upstream_protocol) {
+                (Some(client), Some(native)) => {
+                    let context=parameter_context(channel,channel.upstream_model(name),native,protocols,false);
+                    let policy=crate::protocol::minimax_codec::policy(&context,client);
+                    if policy.is_some() && crate::oauth::binding_metadata(&state,channel.id.0).map_err(|_|ApiError::internal("OAuth source identity unavailable"))?.is_some() {None}else{policy}
+                }
+                _=>None,
+            };
             let prepared = if let Some(kind) = req.endpoint.tool_kind() {
                 crate::search_tools::normalize_request(kind, &req.body)
                     .map_err(ApiError::bad_request)?
@@ -1778,9 +1786,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             Some(input)
                         }else{None};
                         let conversion_input=conversion_input.as_ref().unwrap_or(&req.body);
-                        match crate::parameter_contracts::convert_request_for_source(
-                            &conversion_contract,from,conversion_input,
-                        ) {
+                        let converted=match minimax_policy.as_ref() {
+                            Some(policy)=>policy.convert_request(conversion_input),
+                            None=>crate::parameter_contracts::convert_request_for_source(&conversion_contract,from,conversion_input),
+                        };
+                        match converted {
                             Ok(mut body) => {
                                 if let Err(note) = crate::reasoning_capabilities::restore_disable_intent(
                                     &state.conn(), channel.id.0, name, from, to, conversion_input, &mut body,
@@ -1993,6 +2003,10 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     last_policy_error=Some(ApiError::bad_request(note)); continue 'channels;
                 }
             }
+            if minimax_policy.is_some() && body.get("reasoning_split")!=Some(&Value::Bool(true)) {
+                last_policy_error=Some(ApiError::bad_request("MiniMax Responses conversion requires the selected split codec; source field removal cannot discard reasoning_split"));
+                continue 'channels;
+            }
             let explicit_output_cap=crate::parameter_budgets::explicit_cap(&req.body);
             let output_contract_is_total=upstream_protocol.is_some_and(|native|
                 matches!(crate::parameter_contracts_china::output_semantics(&parameter_context(channel,&sent_model,native,protocols,false),&body),crate::parameter_contracts_china::OutputSemantics::Total));
@@ -2092,6 +2106,10 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         continue 'channels;
                     }
                 };
+                if minimax_policy.is_some() && oauth.is_some() {
+                    last_policy_error=Some(ApiError::bad_request("MiniMax split conversion requires a non-OAuth source"));
+                    continue 'channels;
+                }
                 let managed_openai=oauth.as_ref().is_some_and(|credential|credential.managed_openai);
                 let mut source_parameter_changed=false;
                 if let Some(native)=upstream_protocol {
@@ -2627,6 +2645,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 &mut guard,
                                 pin_key.is_some(),
                                 candidate_pin.as_ref().map(|pin| crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(), pin)).transpose()?.unwrap_or_default(),
+                                minimax_policy.as_ref(),
                             )
                             .await
                             {
@@ -2648,6 +2667,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                             Some(&note),
                                         );
                                         ordinal += 1;
+                                        if minimax_policy.is_some() && note.contains("MiniMax policy semantics") {
+                                            return Err(guard.source_policy_error(channel.id.0,&note));
+                                        }
                                         last_policy_error = Some(ApiError::new(
                                             StatusCode::BAD_REQUEST,
                                             "protocol_not_supported",
@@ -2841,6 +2863,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 upstream_protocol.is_some_and(|native|native==crate::protocol::Protocol::Messages
                                     && req.endpoint.protocol()==Some(native) && crate::parameter_budgets::cap_value(&body,"max_tokens").and_then(Value::as_i64)==Some(0)
                                     && crate::parameter_budgets::allows_zero(&parameter_context(channel,&sent_model,native,protocols,false))),
+                                minimax_policy.as_ref(),
                             )
                             .await
                         };
@@ -2899,6 +2922,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 Some(note),
                             );
                             ordinal += 1;
+                            if minimax_policy.is_some() && note.contains("MiniMax policy semantics") {
+                                return Err(guard.source_policy_error(channel.id.0,note));
+                            }
                             last_policy_error = Some(ApiError::new(
                                 StatusCode::BAD_REQUEST,
                                 "protocol_not_supported",
@@ -3989,6 +4015,7 @@ async fn buffer_passthrough(
     provenance:Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
     vector: Option<(tokengo_shared::ModelKind, &Value)>,
     cache_warmup: bool,
+    minimax: Option<&crate::protocol::minimax_codec::Policy>,
 ) -> (Response, i64, i64, Option<String>, Usage) {
     let ctype = content_type(&resp);
     let bytes = match if vector.is_some() { read_vector_body(resp).await }
@@ -4016,6 +4043,15 @@ async fn buffer_passthrough(
                     let mut invalid = invalid_buffer(note); invalid.4 = usage; return invalid;
                 }
             }
+            // Provider policy flags must win even when a filtered payload has no
+            // ordinary content/choices. Otherwise empty-response fallback could
+            // send a policy-blocked request to another provider.
+            let minimax_converted=if let Some(policy)=minimax {
+                match policy.convert_response(&validated) {
+                    Ok(value)=>Some(value),
+                    Err(note)=>{let mut invalid=invalid_buffer(conversion_fault(note));invalid.4=usage;return invalid;}
+                }
+            }else{None};
             let validity=if cache_warmup {
                 if crate::parameter_budgets::valid_warmup_response(&validated) && usage.input.is_some() && usage.output==Some(0) { Ok(()) }
                 else { Err("Invalid zero-output cache-warming response or usage".into()) }
@@ -4025,7 +4061,8 @@ async fn buffer_passthrough(
             }
             if let Some((source,client))=protocols {
                 if source!=client {
-                    match crate::protocol::convert_response(source,client,&validated).and_then(|v|serde_json::to_vec(&v).map_err(|e|e.to_string())) {
+                    let converted=match minimax_converted {Some(value)=>Ok(value),None=>crate::protocol::convert_response(source,client,&validated)};
+                    match converted.and_then(|v|serde_json::to_vec(&v).map_err(|e|e.to_string())) {
                         Ok(b)=>out=Bytes::from(b),
                         Err(note)=>{let mut invalid=invalid_buffer(conversion_fault(note));invalid.4=usage;return invalid;}
                     }
@@ -4199,18 +4236,37 @@ async fn buffer_rerank_passthrough(
     )
 }
 
+// The selected source policy follows both precommit and ongoing conversion.
+// Native traffic does not allocate a transcoder or apply provider normalization.
+enum ResponseTranscoder {
+    Standard(crate::protocol::sse::Transcoder),
+    MiniMax(Box<crate::protocol::minimax_codec::Stream>),
+}
+impl ResponseTranscoder {
+    fn new(source:crate::protocol::Protocol,client:crate::protocol::Protocol,policy:Option<&crate::protocol::minimax_codec::Policy>)->Option<Self> {
+        if source==client {None}else{Some(match policy {
+            Some(policy)=>Self::MiniMax(Box::new(policy.stream())),
+            None=>Self::Standard(crate::protocol::sse::Transcoder::new(source,client)),
+        })}
+    }
+    fn policy_feed(&mut self,bytes:&[u8])->Option<Result<Vec<u8>,String>> {match self {Self::MiniMax(t)=>Some(t.feed(bytes)),Self::Standard(_)=>None}}
+    fn policy_finish(&mut self)->Option<Result<Vec<u8>,String>> {match self {Self::MiniMax(t)=>Some(t.finish()),Self::Standard(_)=>None}}
+    fn feed(&mut self,bytes:&[u8])->Result<Vec<u8>,String> {match self {Self::Standard(t)=>t.feed(bytes),Self::MiniMax(t)=>t.feed(bytes)}}
+    fn finish(&mut self)->Result<Vec<u8>,String> {match self {Self::Standard(t)=>t.finish(),Self::MiniMax(t)=>t.finish()}}
+}
+
 /// Bounded precommit preserves source bytes and observes protocol semantics before headers are sent.
 struct PreparedStream {
     observer: crate::protocol::sse::Observer,
-    transcoder: Option<crate::protocol::sse::Transcoder>,
+    transcoder: Option<ResponseTranscoder>,
     prefix: Bytes,
     eof: bool,
     artifacts:crate::protocol_sessions::ArtifactCollector,
 }
 async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Protocol,client:crate::protocol::Protocol,
-    remaining:Duration,idle:Duration,guard:&mut RequestGuard,track_artifacts:bool,artifacts:crate::protocol_sessions::ArtifactCollector)->Result<PreparedStream,String> {
+    remaining:Duration,idle:Duration,guard:&mut RequestGuard,track_artifacts:bool,artifacts:crate::protocol_sessions::ArtifactCollector,minimax:Option<&crate::protocol::minimax_codec::Policy>)->Result<PreparedStream,String> {
     let mut prepared=PreparedStream {observer:crate::protocol::sse::Observer::new(source),
-        transcoder:(source!=client).then(||crate::protocol::sse::Transcoder::new(source,client)),prefix:Bytes::new(),eof:false,artifacts};
+        transcoder:ResponseTranscoder::new(source,client,minimax),prefix:Bytes::new(),eof:false,artifacts};
     let deadline=tokio::time::Instant::now()+remaining;
     let mut prefix=Vec::new();
     loop {
@@ -4220,12 +4276,14 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
             .map_err(|_|"precommit upstream body read failed".to_string())?;
         match chunk {
             Some(chunk)=>{
+                let policy_result=prepared.transcoder.as_mut().and_then(|t|t.policy_feed(&chunk));
                 let observed=prepared.observer.feed(&chunk);
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
+                let policy_out=policy_result.transpose().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?;
                 let frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
                 if track_artifacts {prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;}
                 if let Some(note)=&prepared.observer.failed {return Err(format!("precommit upstream error: {note}"));}
-                let out=match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?,None=>chunk.to_vec()};
+                let out=match policy_out {Some(out)=>out,None=>match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?,None=>chunk.to_vec()}};
                 if prefix.len().saturating_add(out.len())>1<<20 {return Err("precommit prefix exceeds 1 MiB".into());}
                 prefix.extend_from_slice(&out);
                 if prepared.observer.done {
@@ -4235,11 +4293,13 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 if prepared.observer.meaningful || prepared.observer.done {break;}
             },
             None=>{
+                let policy_result=prepared.transcoder.as_mut().and_then(ResponseTranscoder::policy_finish);
                 let ended=prepared.observer.finish_frames();
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
+                let policy_out=policy_result.transpose().map_err(conversion_fault)?;
                 let frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
                 if track_artifacts {prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;}
-                if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?);}
+                if let Some(out)=policy_out {prefix.extend_from_slice(&out);}else if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?);}
                 prepared.eof=true;
                 if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err("precommit empty or failed stream".into());}
                 break;
@@ -4316,6 +4376,7 @@ fn stream_passthrough(
         }
         match tokio::time::timeout(st.idle_timeout, st.resp.chunk()).await {
             Ok(Ok(Some(chunk))) => {
+                let policy_result=st.transcoder.as_mut().and_then(|t|t.policy_feed(&chunk));
                 let observed = st.observer.feed(&chunk);
                 if let Some(g) = st.guard.as_mut() {
                     g.usage = Usage {
@@ -4324,7 +4385,8 @@ fn stream_passthrough(
                     };
                     g.streamed = true;
                 }
-                let out = observed
+                let policy_out=policy_result.transpose().map_err(conversion_fault);
+                let out = policy_out.and_then(|policy_out|observed
                     .and_then(|frames| {
                         if let Some((owner, pin)) = &st.provenance {
                             st.artifacts.frames(&frames)?;
@@ -4334,10 +4396,10 @@ fn stream_passthrough(
                         }
                         Ok(())
                     })
-                    .and_then(|_| match st.transcoder.as_mut() {
+                    .and_then(|_| match policy_out {Some(out)=>Ok(out),None=>match st.transcoder.as_mut() {
                         Some(t) => t.feed(&chunk).map_err(conversion_fault),
                         None => Ok(chunk.to_vec()),
-                    });
+                    }}));
                 match out {
                     Ok(out) => {
                         st.delivered += out.len();
@@ -4450,7 +4512,7 @@ struct StreamState {
     endpoint: EndpointKind,
     resp: reqwest::Response,
     observer: crate::protocol::sse::Observer,
-    transcoder: Option<crate::protocol::sse::Transcoder>,
+    transcoder: Option<ResponseTranscoder>,
     prefix: Option<Bytes>,
     eof: bool,
     artifacts: crate::protocol_sessions::ArtifactCollector,
@@ -4855,6 +4917,16 @@ impl RequestGuard {
         self.error_code=Some(e.kind.into());
         let state=self.state.clone();
         self.finish(&state,Status::ClientError,Some(e.status.as_u16()),None,self.started_ms,None,0,0,false,Some(&e.message));
+    }
+    // A provider policy signal must not be bypassed by retrying another source.
+    // The attempt has already settled once; preserve observed usage in its log.
+    fn source_policy_error(&mut self, channel:i64, note:&str)->ApiError {
+        let error=ApiError::new(StatusCode::BAD_REQUEST,"protocol_not_supported",note);
+        self.error_code=Some(error.kind.into());
+        let state=self.state.clone();
+        self.finish(&state,Status::Failed,Some(400),Some(channel),self.started_ms,None,
+            self.usage.input.unwrap_or(0),self.usage.output.unwrap_or(0),self.streamed,Some(note));
+        error
     }
     fn identify(&self, auth: Option<&crate::db::identity::AuthContext>) -> Result<(),ApiError> {
         if let Some(auth) = auth { self.state.conn().execute("UPDATE requests SET user_id=?2,key_id=?3,auth_snapshot=?4 WHERE id=?1",rusqlite::params![self.request_id,auth.user_id,auth.key_id,serde_json::to_string(auth).map_err(|e|ApiError::internal(e.to_string()))?]).map_err(crate::db::DbError::from)?; }

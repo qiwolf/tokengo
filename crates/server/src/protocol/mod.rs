@@ -6,6 +6,7 @@ mod response;
 mod oauth_response;
 mod sparse;
 pub mod sse;
+pub mod minimax_codec;
 pub mod collect;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1033,7 +1033,8 @@ async fn credential_catalog(
             ));
         }
     }
-    let (catalog, total) = crate::upstream::parse_model_catalog_with_total(&raw);
+    let (mut catalog, total) = crate::upstream::parse_model_catalog_with_total(&raw);
+    crate::reasoning_capabilities::constrain_runtime_catalog(&s.conn(), channel.id.0, &mut catalog)?;
     if catalog.is_empty() && !crate::upstream::looks_like_a_model_list(&raw) {
         return Err(ApiError::new(
             axum::http::StatusCode::BAD_GATEWAY,

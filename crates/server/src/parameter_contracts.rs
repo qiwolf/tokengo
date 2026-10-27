@@ -52,8 +52,20 @@ pub fn provider(ctx: &Context<'_>) -> &'static str {
         (Some("ark.cn-beijing.volces.com"), "/api/v3") => "ark",
         (Some("api.siliconflow.cn"), "/v1") => "siliconflow",
         (Some("api.xiaomimimo.com"), "/v1" | "/anthropic/v1") => "mimo",
+        (Some(host), "/compatible-mode/v1") if workspace_host(host) => "dashscope",
         _ => "unknown",
     }
+}
+
+// One workspace DNS label and an explicitly documented region, never an arbitrary suffix.
+fn workspace_host(host: &str) -> bool {
+    let parts: Vec<_> = host.split('.').collect();
+    parts.len() == 5 && parts[2..] == ["maas", "aliyuncs", "com"]
+        && matches!(parts[1], "cn-beijing" | "ap-southeast-1" | "us-east-1"
+            | "eu-central-1" | "ap-northeast-1" | "cn-hongkong")
+        && !parts[0].is_empty() && parts[0].len() <= 63
+        && parts[0].bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !parts[0].starts_with('-') && !parts[0].ends_with('-')
 }
 
 /// Preserve defaults of the selected provider's source protocol during a
@@ -440,6 +452,25 @@ mod tests {
         Context { base_url:url, model, protocol, api_version:None, is_oauth:false, profile_override:None }
     }
     #[test]
+    fn w08_workspace_endpoints_are_exact_and_manual_profile_wins() {
+        for region in ["cn-beijing", "ap-southeast-1", "us-east-1", "eu-central-1", "ap-northeast-1", "cn-hongkong"] {
+            let url = format!("https://workspace-123.{region}.maas.aliyuncs.com/compatible-mode/v1");
+            let mut c = ctx(&url, "qwen3.8-plus", Protocol::Chat);
+            assert_eq!(provider(&c), "dashscope", "{url}");
+            c.profile_override = Some("native");
+            assert_eq!(provider(&c), "unknown");
+        }
+        for url in [
+            "https://evil.cn-beijing.maas.aliyuncs.com.evil.test/compatible-mode/v1",
+            "https://a.b.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            "https://cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            "https://a.unknown.maas.aliyuncs.com/compatible-mode/v1",
+            "https://a.cn-beijing.maas.aliyuncs.com/other",
+            "https://a.cn-beijing.maas.aliyuncs.com/compatible-mode/v1?secret=redacted",
+        ] { assert_eq!(provider(&ctx(url,"qwen3.8-plus",Protocol::Chat)), "unknown", "{url}"); }
+    }
+
+    #[test]
     fn p1_minimax_effort_bridge_keeps_native_levels_and_modes_separate() {
         for model in ["MiniMax-M3","MiniMax-M3.1-Flash"] {
             let c=Context{model,profile_override:Some("minimax"),..ctx("https://example.invalid/v1",model,Protocol::Messages)};
@@ -480,7 +511,7 @@ mod tests {
     #[test]
     fn versioned_evidence_identity_does_not_grant_runtime_capabilities() {
         let a = describe(&ctx("https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-2-0-pro", Protocol::Chat));
-        assert_eq!(a["contract_evidence"]["revision"], "2026-10-27-p1.1");
+        assert_eq!(a["contract_evidence"]["revision"], "2026-10-27-p1.2");
         assert_eq!(a["contract_evidence"]["identity"]["model"], "doubao-seed-2-0-pro");
         assert_eq!(a["contract_evidence"]["identity"]["authentication_line"], "externally_configured_credentials");
         assert_eq!(a["contract_evidence"]["version_verification"], "required_before_new_capability");

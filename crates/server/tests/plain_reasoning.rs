@@ -28,7 +28,7 @@ fn plain_reasoning_and_tools_round_trip_without_summary_or_encryption() {
     );
     assert_eq!(
         back["usage"],
-        json!({"prompt_tokens":8,"completion_tokens":5,"total_tokens":13,"completion_tokens_details":{"reasoning_tokens":2}})
+        json!({"prompt_tokens":8,"completion_tokens":5,"total_tokens":13,"completion_tokens_details":{"reasoning_tokens":2},"tokengo_raw_usage":{"protocol":"chat","usage":chat()["usage"]}})
     );
     let mut input = r["output"].as_array().unwrap().clone();
     input.push(json!({"type":"function_call_output","call_id":"call_exact","output":"2"}));

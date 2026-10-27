@@ -227,3 +227,7 @@
 ## 2026-10-27 第二批实施收据
 
 W04、W05及W06的合同修复与保护性门禁已实施，细项、实际验收和未完成边界以[第二批收据](../../acceptance/2026-10-27-provider-p1.md)为准。MiniMax active Chat↔Messages 完整思考方言仍属W09；官方账号实测未由硅基流动结果替代。历史清单保留原计划，不将未完成的W07–W12勾选完成。
+
+## 2026-10-27 第三批实施收据
+
+W07–W09实现和验证范围见[第三批验收记录](../../acceptance/2026-10-27-provider-p1-batch3.md)。W09仅开放已证明的MiniMax API来源Chat split/Responses子集，签名Messages/no-split转换/未证实strict保证保留门禁；W08标准API解析所得仍是未验证声明，网络采集与完整诊断UI留W10。响应内raw usage留存不等于新增服务端账单审计仓库。

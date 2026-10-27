@@ -933,7 +933,8 @@ async fn channels_models(
     // （`UpstreamModel`）。上游没说的字段就是空，界面据此决定显示哪些小标签。
     let (ok, status, catalog, seen, note) = match r {
         Ok((code, body)) if (200..300).contains(&code) => {
-            let (catalog, seen) = crate::upstream::parse_model_catalog_with_total(&body);
+            let (mut catalog, seen) = crate::upstream::parse_model_catalog_with_total(&body);
+            crate::reasoning_capabilities::constrain_runtime_catalog(&state.conn(), id.0, &mut catalog)?;
             if catalog.is_empty() {
                 let note = if crate::upstream::looks_like_a_model_list(&body) {
                     format!(

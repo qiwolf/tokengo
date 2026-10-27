@@ -20,6 +20,8 @@ pub struct ReasoningCapabilities {
     pub manual_levels: Option<Vec<String>>,
     pub source: String,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_identity: Option<Value>,
 }
 impl Default for ReasoningCapabilities {
     fn default() -> Self {
@@ -39,6 +41,7 @@ impl ReasoningCapabilities {
             manual_levels: None,
             source: "unknown".into(),
             reason: reason.into(),
+            runtime_identity: None,
         }
     }
 }
@@ -216,6 +219,7 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         manual_levels: None,
         source: "upstream".into(),
         reason: "上游模型目录明确声明；思考模式与推理强度分别记录；未执行付费推理探测".into(),
+        runtime_identity: None,
     }
 }
 
@@ -263,12 +267,14 @@ pub fn store_catalog(
     now: i64,
 ) -> db::Result<()> {
     let identity = fingerprint(c, id)?;
+    let runtime = runtime_profile(c, id)?;
     c.execute(
         "DELETE FROM channel_reasoning_catalog WHERE channel_id=?1",
         [id],
     )?;
     for m in models {
-        let json = serde_json::to_string(&m.reasoning)
+        let reasoning = if runtime { runtime_unknown() } else { m.reasoning.clone() };
+        let json = serde_json::to_string(&reasoning)
             .map_err(|_| DbError::Other("Invalid reasoning metadata".into()))?;
         c.execute("INSERT INTO channel_reasoning_catalog(channel_id,upstream_model,source_identity,capability_json,fetched_at_ms) VALUES(?1,?2,?3,?4,?5)",params![id,m.id,identity,json,now])?;
     }
@@ -283,6 +289,11 @@ pub(crate) fn for_model_with_identity(
     upstream: &str,
     current_identity: &str,
 ) -> db::Result<ReasoningCapabilities> {
+    if runtime_profile(c, id)? {
+        let mut caps=runtime_unknown();
+        caps.runtime_identity=Some(crate::protocol_config::load(c,id)?.runtime_description(upstream));
+        return Ok(caps);
+    }
     let row:Option<(String,String)>=c.query_row("SELECT source_identity,capability_json FROM channel_reasoning_catalog WHERE channel_id=?1 AND upstream_model=?2",params![id,upstream],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let Some((identity, json)) = row else {
         return Ok(ReasoningCapabilities::default());
@@ -309,6 +320,24 @@ pub(crate) fn for_model_with_identity(
         caps.reason = "上游模型目录声明的档位，加上官方来源已验证的关闭推理兼容值；保留服务商默认，未对当前账号执行推理探测".into();
     }
     Ok(caps)
+}
+
+fn runtime_profile(c: &Connection, id: i64) -> db::Result<bool> {
+    Ok(matches!(crate::protocol_config::load(c, id)?.parameter_profile.as_deref(), Some("ollama" | "vllm")))
+}
+fn runtime_unknown() -> ReasoningCapabilities {
+    ReasoningCapabilities::unknown("运行时模型目录声明未验证；模板、解析器与运行时身份不证明推理档位，请独立确认")
+}
+/// Source-aware DTO boundary: a runtime's own model metadata cannot grant capabilities.
+pub fn constrain_runtime_catalog(c: &Connection, id: i64, models: &mut [crate::upstream::UpstreamModel]) -> db::Result<()> {
+    if runtime_profile(c, id)? {
+        let config=crate::protocol_config::load(c,id)?;
+        for model in models {
+            model.reasoning = runtime_unknown();
+            model.reasoning.runtime_identity=Some(config.runtime_description(&model.id));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq)]

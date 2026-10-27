@@ -2,6 +2,13 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
+## 未发布 — 2026-10-27 多厂商兼容第三批（W07–W09）
+
+- JSON/SSE保留有界request_id、cache子集及原usage观测，重复终态不重复加总，未知语义仍拒绝；不改现有定价与结算算法。
+- 窄匹配百炼6区域workspace域名；新增不授予能力的运行时身份声明、摘要和代次隔离，Ollama/vLLM目录自称不作为自动推理支持；现有高级配置可编辑并保留新字段，保存不联网。
+- MiniMax精确API来源新增native Chat split至公共Responses的raw思考/工具历史与流式codec；敏感标记不重试/换源，signed Messages、no-split转换及未证明strict保证继续保护，不修改客户端。
+- 子集、证据和升级边界见[第三批验收记录](docs/acceptance/2026-10-27-provider-p1-batch3.md)。本条不代表推送、发布或生产升级。
+
 ## 未发布 — 2026-10-27 多厂商兼容第二批（W04–W06）
 
 - 保留工具 strict 三态：Chat/Messages 省略值转 Responses 显式 false；Responses 省略值仅在 schema 已严格可证明时转 Chat true，其余在 TokenGo 选择原生路线，不静默收紧或降级。

@@ -164,6 +164,106 @@ pub(super) fn reasoning_tokens(protocol: Protocol, usage: &Value) -> Result<Opti
     }
     Ok(Some(n))
 }
+/// Inert trace identity. It never substitutes for completion or tool identity.
+pub(super) fn request_id(body: &Value) -> Result<Option<String>, String> {
+    body.get("request_id").map(|v| {
+        v.as_str().filter(|s| !s.is_empty() && s.len() <= 1024)
+            .map(str::to_owned).ok_or_else(|| "Invalid request_id metadata".into())
+    }).transpose()
+}
+
+/// Observed input subsets, never additional billable input. Unknown stays absent.
+#[derive(Clone, Default)]
+pub(super) struct UsageMetadata {
+    cached: Option<u64>,
+    written: Option<u64>,
+    raw: Option<Value>,
+}
+fn bounded_usage(value: &Value, depth: usize) -> Result<(), String> {
+    if depth > 12 { return Err("Raw usage metadata nesting exceeds 12".into()); }
+    match value {
+        Value::Object(map) => {
+            if map.contains_key("tokengo_raw_usage") { return Err("Nested raw usage is unsupported".into()); }
+            for child in map.values() { bounded_usage(child, depth + 1)?; }
+        }
+        Value::Array(items) => for child in items { bounded_usage(child, depth + 1)?; },
+        _ => {}
+    }
+    Ok(())
+}
+fn bounded_usage_depth(value: &Value, depth: usize) -> Result<(), String> {
+    if depth > 16 { return Err("Usage metadata nesting limit exceeded".into()); }
+    match value {
+        Value::Object(map) => for child in map.values() { bounded_usage_depth(child, depth + 1)?; },
+        Value::Array(items) => for child in items { bounded_usage_depth(child, depth + 1)?; },
+        _ => {}
+    }
+    Ok(())
+}
+impl UsageMetadata {
+    pub(super) fn observe(&mut self, protocol: Protocol, usage: &Value, input: Option<u64>) -> Result<(), String> {
+        if usage.is_null() { return Ok(()); }
+        object(usage)?;
+        // Bound traversal before serialization/cloning, including supplied provenance.
+        bounded_usage_depth(usage, 0)?;
+        if serde_json::to_vec(usage).map_err(|_| "Invalid usage metadata")?.len() > 65536 {
+            return Err("Usage metadata exceeds 64 KiB".into());
+        }
+        let raw = if let Some(raw) = usage.get("tokengo_raw_usage") {
+            fields(raw, &["protocol", "usage"])?;
+            if !matches!(raw["protocol"].as_str(), Some("chat" | "responses")) {
+                return Err("Invalid raw usage protocol".into());
+            }
+            object(&raw["usage"])?;
+            bounded_usage(&raw["usage"], 0)?;
+            if serde_json::to_vec(raw).map_err(|_| "Invalid raw usage metadata")?.len() > 60 * 1024 {
+                return Err("Raw usage metadata exceeds 60 KiB".into());
+            }
+            raw.clone()
+        } else {
+            bounded_usage(usage, 0)?;
+            // Reserve space for the protocol wrapper before copying the source.
+            if serde_json::to_vec(usage).map_err(|_| "Invalid raw usage metadata")?.len() > 60 * 1024 - 64 {
+                return Err("Raw usage metadata exceeds 60 KiB".into());
+            }
+            json!({"protocol":protocol,"usage":usage})
+        };
+        let read = |value: Option<&Value>| -> Result<Option<u64>, String> {
+            value.filter(|v| !v.is_null()).map(|v| v.as_u64()
+                .filter(|n| *n <= i64::MAX as u64).ok_or_else(|| "Invalid cache token count".into())).transpose()
+        };
+        let input = read(usage.get(if protocol == Protocol::Chat { "prompt_tokens" } else { "input_tokens" }))?.or(input);
+        read(usage.get(if protocol == Protocol::Chat { "completion_tokens" } else { "output_tokens" }))?;
+        let detail_key = if protocol == Protocol::Chat { "prompt_tokens_details" } else { "input_tokens_details" };
+        let details = usage.get(detail_key).filter(|v| !v.is_null());
+        if let Some(details) = details { object(details)?; }
+        let detailed_read = read(details.and_then(|v| v.get("cached_tokens")))?;
+        let legacy_read = read(usage.get("cached_tokens"))?;
+        if detailed_read.zip(legacy_read).is_some_and(|(a,b)| a != b) {
+            return Err("Conflicting cache read token counts".into());
+        }
+        let cached = detailed_read.or(legacy_read).or(self.cached);
+        let written = read(details.and_then(|v| v.get("cache_write_tokens")))?.or(self.written);
+        // The explicit cache-write dialect defines mutually exclusive buckets.
+        // No model-name inference or pricing assumption is needed for this check.
+        let observed = cached.unwrap_or(0).checked_add(written.unwrap_or(0)).ok_or("Cache token overflow")?;
+        if input.is_some_and(|total| observed > total) {
+            return Err("Cache token subsets exceed total input".into());
+        }
+        self.cached = cached;
+        self.written = written;
+        self.raw = Some(raw);
+        Ok(())
+    }
+    pub(super) fn apply(&self, protocol: Protocol, usage: &mut Value) {
+        let key = if protocol == Protocol::Chat { "prompt_tokens_details" } else { "input_tokens_details" };
+        if let Some(n) = self.cached { usage[key]["cached_tokens"] = json!(n); }
+        if let Some(n) = self.written { usage[key]["cache_write_tokens"] = json!(n); }
+        if let Some(raw) = &self.raw { usage["tokengo_raw_usage"] = raw.clone(); }
+    }
+    pub(super) fn has_cache(&self) -> bool { self.cached.is_some_and(|n| n > 0) || self.written.is_some_and(|n| n > 0) }
+}
+
 pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Value, String> {
     if from == to {
         return Ok(body.clone());
@@ -173,6 +273,7 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
         match from {
             Protocol::Chat => &[
                 "id",
+                "request_id",
                 "object",
                 "created",
                 "model",
@@ -185,6 +286,7 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
             ],
             Protocol::Responses => &[
                 "id",
+                "request_id",
                 "object",
                 "created_at",
                 "model",
@@ -257,6 +359,17 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
     let msg = message(from, body)?;
     let finish = reason(from, body, msg.get("tool_calls").is_some())?;
     let counts = usage(from, body)?;
+    let trace = request_id(body)?;
+    if trace.is_some() && to == Protocol::Messages {
+        return Err("request_id metadata cannot be represented by Messages".into());
+    }
+    let mut usage_metadata = UsageMetadata::default();
+    if matches!(from, Protocol::Chat | Protocol::Responses) {
+        usage_metadata.observe(from, &body["usage"], counts.map(|c| c.0))?;
+        if to == Protocol::Messages && usage_metadata.has_cache() {
+            return Err("Chat/Responses cache subsets cannot be represented by Messages".into());
+        }
+    }
     let reasoning_count = if matches!(
         (from, to),
         (Protocol::Chat, Protocol::Responses) | (Protocol::Responses, Protocol::Chat)
@@ -329,6 +442,10 @@ pub fn convert_response(from: Protocol, to: Protocol, body: &Value) -> Result<Va
         } else {
             "output_tokens_details"
         }] = json!({"reasoning_tokens":n});
+    }
+    if let Some(trace) = trace { out["request_id"] = json!(trace); }
+    if matches!((from,to),(Protocol::Chat,Protocol::Responses)|(Protocol::Responses,Protocol::Chat)) && counts.is_some() {
+        usage_metadata.apply(to, &mut out["usage"]);
     }
     Ok(out)
 }

@@ -9,6 +9,9 @@ pub struct Capabilities {
     /// None uses only verified endpoint recognition and preserves old fingerprints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameter_profile: Option<String>,
+    /// Unverified runtime identity evidence; never a capability or authentication grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_identity: Option<crate::runtime_identity::RuntimeIdentity>,
     pub native: Vec<Protocol>,
     #[serde(default)]
     pub allow_conversion: bool,
@@ -33,6 +36,7 @@ impl Default for Capabilities {
     fn default() -> Self {
         Self {
             parameter_profile: None,
+            runtime_identity: None,
             native: vec![Protocol::Chat],
             allow_conversion: false,
             native_input_audio: false,
@@ -46,6 +50,9 @@ impl Capabilities {
     pub fn validate(&self) -> Result<(), String> {
         if self.parameter_profile.as_deref().is_some_and(|profile| !crate::parameter_contracts::profile_supported(profile)) {
             return Err("Unknown parameter_profile; select a documented provider contract".into());
+        }
+        if let Some(identity) = &self.runtime_identity {
+            identity.validate(self.parameter_profile.as_deref())?;
         }
         match (self.max_input_tokens,self.max_output_tokens) {
             (None,None)=>{},
@@ -67,6 +74,10 @@ impl Capabilities {
             }
         }
         Ok(())
+    }
+    pub fn runtime_description(&self, model: &str) -> serde_json::Value {
+        self.runtime_identity.as_ref().map(|identity|identity.describe(model))
+            .unwrap_or_else(||serde_json::json!({"status":"unknown","capabilities":"unknown","origin_verified":false}))
     }
     pub fn context_bounds(&self) -> Option<(i64, i64)> {
         self.max_input_tokens.zip(self.max_output_tokens)
@@ -94,6 +105,10 @@ pub fn load(c: &rusqlite::Connection, id: i64) -> db::Result<Capabilities> {
 }
 pub fn save(c: &rusqlite::Connection, id: i64, caps: &Capabilities) -> db::Result<()> {
     caps.validate().map_err(db::DbError::Other)?;
+    if caps.runtime_identity.is_some() {
+        let oauth: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM oauth_channel_bindings WHERE channel_id=?1)", [id], |row|row.get(0))?;
+        if oauth { return Err(db::DbError::Other("Runtime identity cannot describe an independently authenticated OAuth source".into())); }
+    }
     let key = format!("channel_protocols:{id}");
     let value = serde_json::to_string(caps).map_err(|e| db::DbError::Other(e.to_string()))?;
     if db::settings::get(c, &key)?.as_deref() != Some(&value) {
@@ -115,6 +130,7 @@ mod tests {
         assert_eq!(caps.select(Protocol::Responses), None);
         let chosen = Capabilities {
             parameter_profile: None,
+            runtime_identity: None,
             native: vec![Protocol::Messages],
             allow_conversion: true,
             native_input_audio: false,
@@ -132,6 +148,7 @@ mod tests {
     fn malformed_capabilities_fail_closed() {
         assert!(Capabilities {
             parameter_profile: None,
+            runtime_identity: None,
             native: vec![],
             allow_conversion: true,
             native_input_audio: false,
@@ -143,6 +160,7 @@ mod tests {
         .is_err());
         assert!(Capabilities {
             parameter_profile: None,
+            runtime_identity: None,
             native: vec![Protocol::Chat, Protocol::Chat],
             allow_conversion: true,
             native_input_audio: false,
@@ -298,5 +316,79 @@ mod parameter_profile_tests {
         assert!(caps.validate().is_ok());
         caps.parameter_profile = Some("drop_everything".into());
         assert!(caps.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod w08_runtime_tests {
+    use super::*;
+    use serde_json::json;
+    fn declaration(template: &str) -> serde_json::Value {
+        json!({"native":["chat"],"parameter_profile":"ollama","runtime_identity":{
+            "runtime":"ollama","evidence":"operator_declared","version":"0.13.3",
+            "models":[{"model":"qwen3:8b","template_sha256":template}]
+        }})
+    }
+    #[test]
+    fn w08_offline_identity_is_bounded_unverified_and_invalidates_cache() {
+        let c = db::open_in_memory().unwrap();
+        let id = db::channels::create(&c,&db::channels::NewChannel {
+            name:"Offline".into(),base_url:"http://unreachable.invalid/v1".into(),enabled:true,
+            unwrap_envelope:false,max_concurrent:0,
+        }).unwrap().0;
+        let caps: Capabilities = serde_json::from_value(declaration(&"a".repeat(64))).unwrap();
+        save(&c,id,&caps).unwrap();
+        let before=crate::reasoning_capabilities::fingerprint(&c,id).unwrap();
+        let generation=|c:&rusqlite::Connection|c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get::<_,i64>(0)).unwrap();
+        let before_generation=generation(&c);
+        save(&c,id,&caps).unwrap();
+        assert_eq!(generation(&c),before_generation);
+        assert_eq!(caps.runtime_description("qwen3:8b")["status"],"unverified");
+        assert_eq!(caps.runtime_description("other")["status"],"unknown");
+        let models=crate::upstream::parse_model_catalog(r#"{"data":[{"id":"qwen3:8b","reasoning_effort_levels":["low","high"]}]}"#);
+        crate::reasoning_capabilities::store_catalog(&c,id,&models,1).unwrap();
+        assert_eq!(crate::reasoning_capabilities::for_model(&c,id,"qwen3:8b").unwrap().status,"unknown", "runtime catalog self-claims cannot grant levels");
+        db::channels::set_models(&c,tokengo_shared::ChannelId(id),&[
+            db::channels::ModelMapping::new("runtime-alias",Some("qwen3:8b".into()),false)
+        ]).unwrap();
+        let manual_levels=vec!["low".to_owned(),"high".to_owned()];
+        crate::reasoning_capabilities::configure(&c,id,"runtime-alias",Some(&manual_levels),Some("high")).unwrap();
+        let confirmed=crate::reasoning_capabilities::for_mapping(&c,id,"runtime-alias").unwrap();
+        assert_eq!(confirmed.status,"supported");
+        assert_eq!(confirmed.source,"user_confirmed");
+        assert_eq!(confirmed.manual_levels,Some(manual_levels.clone()));
+        assert_eq!(confirmed.default_effort.as_deref(),Some("high"));
+        let saved_manual=|c:&rusqlite::Connection|c.query_row(
+            "SELECT source_identity,upstream_model,manual_levels,default_effort FROM channel_reasoning_settings WHERE channel_id=?1 AND model_name=?2",
+            rusqlite::params![id,tokengo_shared::normalize_model_name("runtime-alias")],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?))
+        ).unwrap();
+        let original_manual=saved_manual(&c);
+        let before_generation=generation(&c);
+        let different: Capabilities=serde_json::from_value(declaration(&"b".repeat(64))).unwrap();
+        save(&c,id,&different).unwrap();
+        assert_eq!(generation(&c),before_generation+1);
+        assert_ne!(before,crate::reasoning_capabilities::fingerprint(&c,id).unwrap());
+        assert_eq!(crate::reasoning_capabilities::for_model(&c,id,"qwen3:8b").unwrap().status,"unknown");
+        let stale_manual=crate::reasoning_capabilities::for_mapping(&c,id,"runtime-alias").unwrap();
+        assert_eq!(stale_manual.status,"unknown");
+        assert!(stale_manual.manual_levels.is_none());
+        assert!(stale_manual.default_effort.is_none());
+        assert_eq!(saved_manual(&c),original_manual,"identity invalidation must not delete or rewrite old operator settings");
+        assert!(!load(&c,id).unwrap().chat_reasoning_replay);
+        for field in ["template_sha256","reasoning_parser_sha256","generation_config_sha256"] {
+            let mut bad=declaration(&"a".repeat(64)); bad["runtime_identity"]["models"][0][field]=json!("https://private.test/?api_key=secret");
+            assert!(serde_json::from_value::<Capabilities>(bad).map(|c|c.validate().is_err()).unwrap_or(true));
+        }
+        let mut spoof=declaration(&"a".repeat(64)); spoof["runtime_identity"]["evidence"]=json!("verified");
+        assert!(serde_json::from_value::<Capabilities>(spoof).is_err());
+        for profile in ["vllm","openai","native"] {
+            let mut conflict=declaration(&"a".repeat(64));conflict["parameter_profile"]=json!(profile);
+            assert!(serde_json::from_value::<Capabilities>(conflict).unwrap().validate().is_err());
+        }
+        let mut excessive=declaration(&"a".repeat(64));
+        excessive["runtime_identity"]["models"]=json!((0..129).map(|i|json!({"model":format!("model-{i}")})).collect::<Vec<_>>());
+        assert!(serde_json::from_value::<Capabilities>(excessive).unwrap().validate().is_err());
+        let mut conflict=declaration(&"a".repeat(64));conflict["parameter_profile"]=json!("openai");
+        assert!(serde_json::from_value::<Capabilities>(conflict).unwrap().validate().is_err());
     }
 }

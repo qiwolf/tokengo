@@ -191,7 +191,7 @@ pub fn protocols(raw: &str) -> Result<Value, String> {
     let v = object(raw)?;
     if v.as_object().is_some_and(|o| {
         o.keys()
-            .any(|k| !matches!(k.as_str(), "native" | "allow_conversion" | "native_input_audio" | "chat_reasoning_replay" | "max_input_tokens" | "max_output_tokens" | "parameter_profile"))
+            .any(|k| !matches!(k.as_str(), "native" | "allow_conversion" | "native_input_audio" | "chat_reasoning_replay" | "max_input_tokens" | "max_output_tokens" | "parameter_profile" | "runtime_identity"))
     }) {
         return Err("协议配置包含未知字段；请检查原生协议、转换、音频、推理回放、上下文上限与参数适配配置".into());
     }
@@ -219,6 +219,13 @@ pub fn protocols(raw: &str) -> Result<Value, String> {
     if let Some(profile) = v.get("parameter_profile").filter(|value| !value.is_null()) {
         if !matches!(profile.as_str(), Some("openai" | "anthropic" | "gemini" | "deepseek" | "dashscope" | "moonshot" | "zai" | "minimax" | "ark" | "siliconflow" | "mimo" | "ollama" | "vllm" | "native")) {
             return Err("parameter_profile 必须是已支持的服务商适配配置".into());
+        }
+    }
+    // Preserve advanced runtime evidence verbatim. The authoritative server
+    // validates matching profile, exact model IDs and digest bounds before saving.
+    if let Some(identity)=v.get("runtime_identity").filter(|value|!value.is_null()) {
+        if !identity.is_object() || identity.to_string().len()>262_144 {
+            return Err("runtime_identity 须为有界对象或 null；来源和摘要由服务端保存前校验".into());
         }
     }
     let input = v.get("max_input_tokens").filter(|value| !value.is_null());
@@ -250,6 +257,17 @@ mod tests {
             r#"{"native":["chat"],"max_input_tokens":"1","max_output_tokens":1}"#,
             r#"{"native":["chat"],"max_input_tokens":9223372036854775808,"max_output_tokens":1}"#,
         ] { assert!(protocols(raw).is_err(), "{raw}"); }
+    }
+    #[test]
+    fn w08_runtime_identity_survives_advanced_protocol_editing() {
+        let value=serde_json::json!({"native":["chat"],"parameter_profile":"ollama","allow_conversion":true,
+            "runtime_identity":{"runtime":"ollama","evidence":"operator_declared","version":"0.13.3",
+                "models":[{"model":"qwen3:8b","template_sha256":"a".repeat(64)}]}});
+        assert_eq!(protocols(&value.to_string()).unwrap(),value);
+        let mut cleared=value.clone();cleared["runtime_identity"]=Value::Null;
+        assert_eq!(protocols(&cleared.to_string()).unwrap(),cleared);
+        let mut malformed=value.clone();malformed["runtime_identity"]=serde_json::json!(true);
+        assert!(protocols(&malformed.to_string()).is_err());
     }
     #[test]
     fn monetary_inputs_keep_integer_precision_and_reject_overflow() {

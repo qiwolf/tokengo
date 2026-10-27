@@ -32,7 +32,7 @@ impl Frame {
     }
 }
 #[derive(Default)]
-struct Decoder {
+pub(super) struct Decoder {
     line: Vec<u8>,
     data: Vec<String>,
     event: Option<String>,
@@ -76,7 +76,7 @@ impl Decoder {
         }
         Ok(())
     }
-    fn feed(&mut self, chunk: &[u8]) -> Result<Vec<Frame>, String> {
+    pub(super) fn feed(&mut self, chunk: &[u8]) -> Result<Vec<Frame>, String> {
         if self.finished {
             return Err("SSE already finished".into());
         }
@@ -104,7 +104,7 @@ impl Decoder {
         }
         Ok(out)
     }
-    fn finish(&mut self) -> Result<Vec<Frame>, String> {
+    pub(super) fn finish(&mut self) -> Result<Vec<Frame>, String> {
         if self.finished {
             return Ok(Vec::new());
         }
@@ -463,6 +463,8 @@ pub struct Transcoder {
     text_index: Option<u32>,
     reasoning: String,
     reasoning_tokens: Option<u64>,
+    usage_metadata: super::response::UsageMetadata,
+    request_id: Option<String>,
     reasoning_index: Option<u32>,
     reasoning_item: String,
     reasoning_closed: bool,
@@ -504,6 +506,8 @@ impl Transcoder {
             text_index: None,
             reasoning: String::new(),
             reasoning_tokens: None,
+            usage_metadata: super::response::UsageMetadata::default(),
+            request_id: None,
             reasoning_index: None,
             reasoning_item: format!("rs_{unique}"),
             reasoning_closed: false,
@@ -523,6 +527,13 @@ impl Transcoder {
         }
     }
     fn emit(&mut self, out: &mut Vec<u8>, event: Option<&str>, mut value: Value) {
+        if let Some(trace) = &self.request_id {
+            match self.to {
+                Protocol::Chat => value["request_id"] = json!(trace),
+                Protocol::Responses if value.get("response").is_some() => value["response"]["request_id"] = json!(trace),
+                _ => {}
+            }
+        }
         if self.to == Protocol::Responses {
             value["sequence_number"] = json!(self.sequence);
             self.sequence += 1;
@@ -568,7 +579,11 @@ impl Transcoder {
         if let Some(n)=self.reasoning_tokens {
             u.insert(if chat {"completion_tokens_details"} else {"output_tokens_details"}.into(), json!({"reasoning_tokens":n}));
         }
-        Value::Object(u)
+        let mut usage = Value::Object(u);
+        if matches!((self.from,self.to),(Protocol::Chat,Protocol::Responses)|(Protocol::Responses,Protocol::Chat)) {
+            self.usage_metadata.apply(if chat { Protocol::Chat } else { Protocol::Responses }, &mut usage);
+        }
+        usage
     }
     fn messages_wire_usage(&self) -> Value {
         json!({"input_tokens":self.observer.input.unwrap_or(0),"output_tokens":self.observer.output.unwrap_or(0)})
@@ -806,12 +821,18 @@ impl Transcoder {
         let event = kind(frame, v);
         match self.from {
             Protocol::Chat => {
+                super::fields(v, &["id", "request_id", "object", "created", "model", "choices", "usage", "system_fingerprint", "service_tier", "timings"])?;
                 if let Some(choices) = v["choices"].as_array() {
                     for c in choices {
+                        super::fields(c, &["index", "delta", "finish_reason", "logprobs"])?;
+                        if c.get("logprobs").is_some_and(|v| !v.is_null()) { return Err("Chat logprobs cannot be converted".into()); }
                         if c["index"].as_u64().unwrap_or(0) != 0 {
                             return Err("Multiple Chat choices cannot be converted".into());
                         }
                         let d = &c["delta"];
+                        if !d.is_null() {
+                            super::fields(d, &["role", "content", "tool_calls", "reasoning_content", "reasoning", "reasoning_details", "refusal", "audio", "annotations", "function_call"])?;
+                        }
                         if let Some(r)=d.get("reasoning_content").filter(|v| !v.is_null()) {
                             if !r.is_string() || (self.to != Protocol::Responses && r != "") { return Err("Unsupported raw reasoning destination/type".into()); }
                         }
@@ -1006,9 +1027,26 @@ impl Transcoder {
             return Ok(());
         }
         let v: Value = serde_json::from_str(&frame.data).map_err(|_| "Invalid SSE JSON")?;
+        let payload = if self.from == Protocol::Responses { &v["response"] } else { &v };
+        if let Some(trace) = super::response::request_id(payload)? {
+            if self.to == Protocol::Messages { return Err("request_id metadata cannot be represented by Messages".into()); }
+            if self.request_id.as_ref().is_some_and(|old| old != &trace) {
+                return Err("Conflicting request_id metadata in stream".into());
+            }
+            self.request_id = Some(trace);
+        }
+        if matches!(self.from, Protocol::Chat | Protocol::Responses) {
+            self.usage_metadata.observe(self.from, &payload["usage"], self.observer.input.and_then(|n| u64::try_from(n).ok()))?;
+            if self.to == Protocol::Messages && self.usage_metadata.has_cache() {
+                return Err("Chat/Responses cache subsets cannot be represented by Messages".into());
+            }
+        }
         if matches!((self.from,self.to),(Protocol::Chat,Protocol::Responses)|(Protocol::Responses,Protocol::Chat)) {
             for usage in [&v["usage"], &v["response"]["usage"]] {
                 if let Some(n)=super::response::reasoning_tokens(self.from,usage)? {self.reasoning_tokens=Some(n);}
+            }
+            if self.reasoning_tokens.zip(self.observer.output).is_some_and(|(n,total)| n > total as u64) {
+                return Err("Reasoning token count exceeds total output".into());
             }
         }
         let model = match self.from {

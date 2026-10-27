@@ -19,6 +19,7 @@ pub mod admission;
 pub mod gateway;
 pub mod protocol;
 pub mod protocol_config;
+pub mod runtime_identity;
 pub mod parameter_contracts;
 pub mod contract_evidence;
 pub mod request_plan;
