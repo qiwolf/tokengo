@@ -12,6 +12,13 @@ use crate::pages::PageHead;
 use crate::Ctx;
 
 pub(crate) fn model_visible_in(r:&NameRoute,filter:&str)->bool {match filter {"all"=>true,"disabled"=>r.visible&&(!r.enabled||!r.routed),"hidden"=>!r.visible,"internal"=>r.internal_only,_=>r.visible&&r.enabled&&r.routed}}
+pub(crate) fn unavailable_enabled_count(routes: &[NameRoute], kind: &str, provider: &str, search: &str) -> usize {
+    routes.iter().filter(|r| r.visible && r.enabled && !r.routed
+        && tab_of(purpose_kind(r)) == kind && model_matches(r, provider, search)).count()
+}
+pub(crate) fn route_status(r: &NameRoute) -> &'static str {
+    if !r.enabled { "已停用" } else if !r.routed { "已启用，暂无可用连接" } else { "已配置" }
+}
 pub(crate) fn source_labels(r:&NameRoute)->Vec<String>{
     let mut names=r.sources.iter().map(|s|s.provider_name.as_deref().filter(|n|!n.trim().is_empty()).unwrap_or("未分组").to_string()).collect::<Vec<_>>();
     if names.is_empty(){names.push("未分组".into());}names.sort();names.dedup();names
@@ -389,6 +396,9 @@ pub fn Models(ctx:Ctx)->impl IntoView {
             </super::ModuleDialog><Show when=move ||ordering.get()><div class="toolbar"><p>"使用列表中的上移、下移调整顺序。"</p><button type="button" class="primary" on:click=move |_|ordering.set(false)>"完成排序"</button></div></Show><div class="score-toolbar"><span>"服务商已配置模型"</span><span class="muted small">{move ||format!("更新 {}",fmt::ts_short(updated.get()))}</span></div>
             <nav class="kind-tabs" aria-label="模型用途分类">{KIND_TABS.iter().enumerate().map(|(i,k)|{let key=k.key;let title=k.title;view!{<button class=move ||format!("kind-tab{}",if tab.get()==key{" on"}else{""}) title=title aria-label=move ||format!("{}，{}个模型",title,tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&model_matches(r,&provider_filter.get(),&search.get())).collect::<Vec<_>>()))[i]) aria-pressed=move ||(tab.get()==key).to_string() on:click=move |_|tab.set(key.into())>{model_kind_icon(i)}<span class="model-kind-title">{k.title}</span><span class="tab-n">{move ||tab_counts(&build_rows(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&model_matches(r,&provider_filter.get(),&search.get())).collect::<Vec<_>>()))[i]}</span></button>}}).collect_view()}</nav>
             <div class="model-controls"><div class="model-filter-fields"><div class="model-filter-field"><label for="model-visibility">"显示"</label><select id="model-visibility" prop:value=visibility on:change=move|e|visibility.set(event_target_value(&e))><option value="enabled">"已启用"</option><option value="disabled">"已停用 / 无可用连接"</option><option value="hidden">"兼容隐藏"</option><option value="internal">"仅内部调用"</option><option value="all">"全部"</option></select></div><div class="model-filter-field"><label for="model-provider">"供应商"</label><select id="model-provider" prop:value=provider_filter on:change=move|e|provider_filter.set(event_target_value(&e))><option value="">"全部供应商"</option>{move||provider_options(&routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())).collect::<Vec<_>>()).into_iter().map(|p|view!{<option value=p.clone()>{p.clone()}</option>}).collect_view()}</select></div></div><input type="search" placeholder="搜索展示名称、调用名或供应商" aria-label="搜索模型名称或供应商" prop:value=search on:input=move |e|search.set(event_target_value(&e))/><div class="model-sort-controls" role="group" aria-label="模型排序"><button type="button" title="按评分排序" aria-label="按评分" aria-pressed=move ||sort_score.get().to_string() class:active=move ||sort_score.get() on:click=move |_|sort_score.set(true)><svg class="model-sort-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z" /></svg><span class="model-sort-label">"按评分"</span></button><button type="button" title="按名称排序" aria-label="按名称" aria-pressed=move ||(!sort_score.get()).to_string() class:active=move ||!sort_score.get() on:click=move |_|sort_score.set(false)><svg class="model-sort-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 5-12 5 12M5 13h6M19 5v14m-3-3 3 3 3-3" /></svg><span class="model-sort-label">"按名称"</span></button></div></div>
+            <Show when=move || { visibility.get() == "enabled" && unavailable_enabled_count(&routes.get(), &tab.get(), &provider_filter.get(), &search.get()) > 0 }>
+                <div class="notice" role="status"><p>{move || format!("当前分类有 {} 个已启用模型暂无可用连接。请检查来源开关和该模型的路由范围。", unavailable_enabled_count(&routes.get(), &tab.get(), &provider_filter.get(), &search.get()))}</p><button type="button" class="ghost" on:click=move |_| visibility.set("disabled".into())>"查看无可用连接的模型"</button></div>
+            </Show>
             <div class="model-record-head" aria-hidden="true"><span>"模型与调用名"</span><span>"供应商 / 可用连接"</span><span>"全局状态"</span><span>"操作"</span></div><div class="score-model-list">{move ||{
                 let needle=search.get().to_lowercase();let selected=tab.get();
                 let mut list:Vec<_>=routes.get().into_iter().filter(|r|model_visible_in(r,&visibility.get())&&tab_of(purpose_kind(r))==selected && model_matches(r,&provider_filter.get(),&needle)).collect();
@@ -396,7 +406,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                 if list.is_empty(){return view!{<div class="model-empty">"当前分类暂无匹配模型"</div>}.into_any();}
                 list.into_iter().map(|r|{
                     let reorder_name=r.name.clone();let reorder_down=r.name.clone();
-                    let toggle_name=r.name.clone();let channel_available=!r.channels.is_empty();let model_enabled=r.enabled;
+                    let toggle_name=r.name.clone();let model_enabled=r.enabled;
                     let visible_name=r.name.clone();let s=r.runtime.clone();
                     let dialog_id=format!("model-details-{}",js_sys::encode_uri_component(&r.name));
                     let trigger_dialog=dialog_id.clone();let visibility_dialog=dialog_id.clone();
@@ -405,7 +415,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                     let supplier_summary=if labels.is_empty(){"未分组".to_string()}else{labels.join("、")};
                     let score=s.score.map(|v|format!("{v:.1}")).unwrap_or_else(||"—".into());
                     let confidence=if s.samples==0{"暂无评分"}else if s.samples<5{"样本不足"}else{"运行评分"};
-                    let status=if !channel_available{"已停用（无可用渠道）"}else if !r.enabled{"已停用"}else{"已配置"};
+                    let status=route_status(&r);
                     let source=if r.catalog_purpose.is_empty(){kind_source_label(&r.kind_source)}else{"目录分类"};
                     let catalog_label=purpose_label(&r).to_string();
                     let (context,context_title)=context_badge(&r);
@@ -444,6 +454,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn enabled_unroutable_models_remain_discoverable_in_the_current_scope() {
+        let mut stale = route("DeepSeek-V4.1-Flash", "chat", &[56], &[]);
+        stale.visible = true; stale.enabled = true;
+        stale.sources = vec![crate::model::ModelSource {provider_name: Some("DeepSeek 官方".into()), ..Default::default()}];
+        assert_eq!(unavailable_enabled_count(&[stale.clone()], "chat", "DeepSeek 官方", "flash"), 1);
+        assert_eq!(unavailable_enabled_count(&[stale.clone()], "embeddings", "", ""), 0);
+        assert_eq!(unavailable_enabled_count(&[stale.clone()], "chat", "Other", ""), 0);
+        assert_eq!(unavailable_enabled_count(&[stale.clone()], "chat", "", "missing"), 0);
+        stale.visible = false;
+        assert_eq!(unavailable_enabled_count(&[stale.clone()], "chat", "", ""), 0);
+        stale.visible = true; stale.enabled = false;
+        assert_eq!(unavailable_enabled_count(&[stale], "chat", "", ""), 0);
+    }
+    #[test]
+    fn enabled_without_a_route_is_not_labeled_globally_disabled() {
+        let mut r = route("alias", "chat", &[56], &[]); r.enabled = true;
+        assert_eq!(route_status(&r), "已启用，暂无可用连接");
+        r.enabled = false; assert_eq!(route_status(&r), "已停用");
+        r.enabled = true; r.routed = true; r.channels = vec![56]; assert_eq!(route_status(&r), "已配置");
+    }
     #[test]
     fn enabled_summary_excludes_hidden_and_unroutable_but_filters_restore_them(){let mut r=route("ordinary-name","chat",&[1],&[1]);r.enabled=true;r.visible=true;assert!(model_visible_in(&r,"enabled"));r.visible=false;assert!(!model_visible_in(&r,"enabled"));assert!(model_visible_in(&r,"hidden"));assert!(model_visible_in(&r,"all"));r.visible=true;r.routed=false;assert!(model_visible_in(&r,"disabled"));assert!(!model_visible_in(&r,"enabled"));}
     #[test]

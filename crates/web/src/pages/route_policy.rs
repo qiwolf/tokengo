@@ -71,6 +71,31 @@ fn select_target(targets:&mut Vec<i64>,channels:&[Channel],id:i64,selected:bool)
     targets.insert(at,id);
 }
 
+fn stale_targets(targets: &[i64], declared: &[i64]) -> Vec<i64> {
+    targets.iter().copied().filter(|id| !declared.contains(id)).collect()
+}
+
+/// Removing an obsolete target is a draft edit, never an implicit change to inheritance.
+fn remove_stale_target(draft: &mut PolicyDraft, id: i64, declared: &[i64]) -> bool {
+    if declared.contains(&id) { return false; }
+    let before = draft.targets.len();
+    draft.targets.retain(|target| *target != id);
+    draft.targets.len() != before
+}
+
+fn stale_target_label(id: i64, channels: &[Channel], labels: &BTreeMap<i64, String>) -> String {
+    match channels.iter().find(|channel| channel.id == id) {
+        Some(channel) => {
+            let label = labels.get(&id).filter(|label| !label.trim().is_empty())
+                .cloned().unwrap_or_else(|| channel.name.clone());
+            let provider = channel.provider_name.as_deref().filter(|name| !name.trim().is_empty())
+                .unwrap_or("未分组上游");
+            format!("{provider} · {label}（连接 {id}，已不再接入此模型）")
+        }
+        None => format!("已删除的连接（编号 {id}）"),
+    }
+}
+
 #[component]
 fn NumberOverride(id: &'static str, label: &'static str, value: Signal<String>, set: Callback<String>, max:u64, #[prop(default=0)] min:u64) -> impl IntoView {
     view!{<label for=id>{label}<input id=id type="number" min=min max=max step="1" placeholder="留空继承全局" prop:value=value on:input=move|e|set.run(event_target_value(&e))/></label>}
@@ -128,8 +153,8 @@ pub fn RoutePolicy(ctx: Ctx, open: RwSignal<bool>, #[prop(optional)] saving: Opt
         if !delete && draft.get_untracked().ordered {
             let declared=routes.get_untracked().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();
             let selected=draft.get_untracked().targets;
+            if !stale_targets(&selected,&declared).is_empty() {error.set("请先移除“失效的已选目标”中的项目，再保存策略。".into());return;}
             if selected.is_empty() || !selected.iter().any(|id|declared.contains(id)) {error.set("请至少勾选一个已接入此模型的上游 Key。".into());return;}
-            if selected.iter().any(|id|!declared.contains(id)) {error.set("已保存的 Key 范围包含不再接入此模型的项目，请重新选择服务商和 Key 后保存。".into());return;}
         }
         let payload=if delete{None}else{match draft.get_untracked().payload(){Ok(v)=>Some(v),Err(e)=>{error.set(e);return;}}};
         busy.set(true);error.set(String::new());message.set(String::new());
@@ -153,9 +178,27 @@ pub fn RoutePolicy(ctx: Ctx, open: RwSignal<bool>, #[prop(optional)] saving: Opt
         let name=loaded.get().unwrap_or_default();let ids=routes.get().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();
         let available:Vec<_>=channels.get().into_iter().filter(|c|ids.contains(&c.id)).collect();
         let selected=draft.get().targets;
-        let mut group_keys:Vec<_>=selected_groups(&selected,&available).iter().map(|g|target_group(g[0],&available)).collect();
+        let stale=stale_targets(&selected,&ids);
+        let active_selected:Vec<_>=selected.iter().copied().filter(|id|ids.contains(id)).collect();
+        let stale_notice=if stale.is_empty(){().into_any()}else{
+            view!{<section class="admin-section" aria-labelledby="routing-stale-targets-title">
+                <h4 id="routing-stale-targets-title">"失效的已选目标"</h4>
+                <p id="routing-stale-targets-help" class="muted small">"这些目标已删除或不再接入当前模型，仍保留在已保存的范围中。移除只修改本模型的待保存选择；请选择当前来源并保存策略后生效。"</p>
+                <ul>{stale.into_iter().map(|id|{
+                    let label=stale_target_label(id,&channels.get(),&key_labels.get());
+                    let action_label=format!("从本模型策略移除：{label}");
+                    view!{<li><span>{label}</span><button type="button" class="ghost" aria-label=action_label aria-describedby="routing-stale-targets-help" on:click=move|_|{
+                        let name=loaded.get_untracked().unwrap_or_default();
+                        let declared=routes.get_untracked().iter().find(|r|r.name==name).map(|r|r.declared_by.clone()).unwrap_or_default();
+                        draft.update(|d|{remove_stale_target(d,id,&declared);});
+                        error.set(String::new());message.set("已移除待保存的失效目标；保存策略后生效。".into());
+                    }>"移除失效目标"</button></li>}
+                }).collect_view()}</ul>
+            </section>}.into_any()
+        };
+        let mut group_keys:Vec<_>=selected_groups(&active_selected,&available).iter().map(|g|target_group(g[0],&available)).collect();
         for c in &available{let key=target_group(c.id,&available);if !group_keys.contains(&key){group_keys.push(key);}}
-        view!{<div>{group_keys.into_iter().map(|key|{
+        view!{<div>{stale_notice}{group_keys.into_iter().map(|key|{
             let rows:Vec<_>=available.iter().filter(|c|target_group(c.id,&available)==key).cloned().collect();
             let first=rows.first().map(|c|c.id).unwrap_or(key.1);
             let provider=rows.first().and_then(|c|c.provider_name.clone()).unwrap_or_else(||"未分组上游".into());
@@ -207,5 +250,38 @@ mod tests {
     #[test] fn provider_view_does_not_change_legacy_interleaved_order(){let ids=vec![1,3,2,4,5];assert_eq!(selected_groups(&ids,&sources()),vec![vec![1,2],vec![3],vec![4],vec![5]]);assert_eq!(ids,vec![1,3,2,4,5]);}
     #[test] fn moving_provider_moves_all_selected_keys_preserving_other_groups(){let mut ids=vec![1,3,2,4,5];move_provider_group(&mut ids,&sources(),3,true);assert_eq!(ids,vec![3,1,2,4,5]);move_provider_group(&mut ids,&sources(),4,false);assert_eq!(ids,vec![3,1,2,5,4]);let before=ids.clone();move_provider_group(&mut ids,&sources(),3,true);assert_eq!(ids,before);}
     #[test] fn adding_key_keeps_provider_keys_together_without_rewriting_others(){let mut ids=vec![1,3,4,5];select_target(&mut ids,&sources(),2,true);assert_eq!(ids,vec![1,2,3,4,5]);select_target(&mut ids,&sources(),2,true);assert_eq!(ids,vec![1,2,3,4,5]);select_target(&mut ids,&sources(),1,false);assert_eq!(ids,vec![2,3,4,5]);}
+
+    #[test]
+    fn stale_targets_remain_visible_until_explicitly_removed() {
+        let selected = vec![2, 70, 56, 99];
+        let declared = vec![56, 70];
+        assert_eq!(stale_targets(&selected, &declared), vec![2, 99]);
+        assert_eq!(selected, vec![2, 70, 56, 99]);
+        assert!(stale_targets(&selected, &selected).is_empty());
+    }
+
+    #[test]
+    fn removing_stale_targets_preserves_other_targets_and_policy_fields() {
+        let original = json!({"channel_ids":[2,70,56,3,99],"retry_times":0,"reprobe_interval_ms":12345,"probe_enabled":true,"include_in_auto":false,"local_strategy":"ordered","attempt_timeout_ms":8000,"nonstream_timeout_ms":8000,"request_budget_ms":16000});
+        let mut draft = PolicyDraft::read(&original);
+        let declared = vec![56, 70, 3];
+        assert!(remove_stale_target(&mut draft, 2, &declared));
+        assert!(remove_stale_target(&mut draft, 99, &declared));
+        assert!(!remove_stale_target(&mut draft, 56, &declared));
+        assert!(!remove_stale_target(&mut draft, 101, &declared));
+        let mut expected = original;
+        expected["channel_ids"] = json!([70, 56, 3]);
+        assert_eq!(draft.payload().unwrap(), expected);
+    }
+
+    #[test]
+    fn removing_last_stale_target_does_not_enable_inherited_routing() {
+        let mut draft = PolicyDraft::read(&json!({"channel_ids":[2],"attempt_timeout_ms":8000}));
+        assert!(remove_stale_target(&mut draft, 2, &[56]));
+        assert!(draft.ordered);
+        assert!(draft.payload().is_err());
+        select_target(&mut draft.targets, &[], 56, true);
+        assert_eq!(draft.payload().unwrap(), json!({"channel_ids":[56],"attempt_timeout_ms":8000}));
+    }
 
 }
