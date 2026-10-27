@@ -1,6 +1,6 @@
 # Linux x86_64 私有站部署与回滚
 
-本文随 **v0.34.0-qiwolf.20** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。这是构建快照，发布完成状态以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)及[发行收据](acceptance/2026-10-26-qiwolf20-release/README.md)为准。schema41→42只增加历史归属排序覆盖索引，不清空历史或变更Key；历史保留与降级限制见[保留规则](native-history-retention.md)。升级前一致备份数据库、主密钥、程序及配置；恢复写入后不能用旧冷备直接覆盖。
+本文随 **v0.34.0-qiwolf.21** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。这是构建快照，发布完成状态以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)及[发行收据](acceptance/2026-10-27-qiwolf21-release/README.md)为准。从qiwolf.20升级没有新迁移；失效路由目标的清理需管理员在界面明确选择，安装包不自动改私有来源范围。详见[维护说明](maintenance/stale-route-targets-20261027.md)。升级前一致备份数据库、主密钥、程序及配置，恢复写入后不能直接用旧冷备覆盖。
 
 历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
 
