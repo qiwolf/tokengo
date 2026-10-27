@@ -23,7 +23,7 @@ async fn source(State(source): State<Arc<Source>>, Json(body): Json<Value>) -> R
     let tool = body["tools"].as_array().is_some_and(|tools| !tools.is_empty())
         && !messages.iter().any(|m| m["role"] == "tool");
     let message = if tool {
-        json!({"role":"assistant","content":null,"reasoning_content":"I should call sum","tool_calls":[{"id":"call_sum","type":"function","function":{"name":"sum","arguments":"{\"a\":1}"}}]})
+        json!({"role":"assistant","content":null,"reasoning_content":"I should call sum","tool_calls":[{"index":0,"id":"call_sum","type":"function","function":{"name":"sum","arguments":"{\"a\":1}"}}]})
     } else { json!({"role":"assistant","content":"ROLE_OK"}) };
     let finish = if tool { "tool_calls" } else { "stop" };
     let usage = json!({"prompt_tokens":7,"completion_tokens":3,"total_tokens":10});
@@ -221,4 +221,52 @@ async fn deepseek_role_adapter_does_not_bypass_model_permissions_or_opaque_check
     let (code, wire) = f.call(Protocol::Responses, body).await;
     assert_eq!(code, 400, "{wire}");
     assert!(f.source.seen.lock().unwrap().is_empty());
+}
+
+
+fn indexed_tool_response() -> Value {
+    json!({"id":"chat_indexed","object":"chat.completion","created":1,"model":"deepseek-flash",
+        "choices":[{"index":0,"message":{"role":"assistant","content":null,
+            "tool_calls":[
+                {"index":0,"id":"call_first","type":"function","function":{"name":"sum","arguments":"{\"a\":1}"}},
+                {"index":1,"id":"call_second","type":"function","function":{"name":"double","arguments":"{\"n\":2}"}}
+            ]},"finish_reason":"tool_calls"}],
+        "usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}})
+}
+
+#[test]
+fn buffered_chat_tool_indexes_preserve_function_call_order_and_identity() {
+    let body = indexed_tool_response();
+    let converted = tokengo_server::protocol::convert_response(Protocol::Chat, Protocol::Responses, &body).unwrap();
+    let calls = converted["output"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    for (item, (id, name, arguments)) in calls.iter().zip([
+        ("call_first", "sum", "{\"a\":1}"),
+        ("call_second", "double", "{\"n\":2}"),
+    ]) {
+        assert_eq!(item["type"], "function_call");
+        assert_eq!(item["call_id"], id);
+        assert_eq!(item["name"], name);
+        assert_eq!(item["arguments"], arguments);
+        assert!(item.get("index").is_none());
+    }
+    assert_eq!(converted["usage"]["total_tokens"], 10);
+    // Response conversion does not mutate the native upstream response.
+    assert_eq!(body["choices"][0]["message"]["tool_calls"][0]["index"], 0);
+    assert_eq!(body["choices"][0]["message"]["tool_calls"][1]["index"], 1);
+}
+
+#[test]
+fn malformed_or_reordered_buffered_tool_indexes_and_unknown_fields_are_rejected() {
+    for indexes in [json!(["0",1]), json!([-1,1]), json!([0.5,1]), json!([null,1]),
+        json!([true,1]), json!([1,0]), json!([0,0]), json!([0,2])] {
+        let mut body = indexed_tool_response();
+        for index in 0..2 {
+            body["choices"][0]["message"]["tool_calls"][index]["index"] = indexes[index].clone();
+        }
+        assert!(tokengo_server::protocol::convert_response(Protocol::Chat, Protocol::Responses, &body).is_err(), "accepted malformed indexes: {indexes}");
+    }
+    let mut body = indexed_tool_response();
+    body["choices"][0]["message"]["tool_calls"][0]["unrecognized_provider_state"] = json!("must not discard");
+    assert!(tokengo_server::protocol::convert_response(Protocol::Chat, Protocol::Responses, &body).is_err());
 }

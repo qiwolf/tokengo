@@ -13,9 +13,24 @@ fn message(protocol: Protocol, body: &Value) -> Result<Value, String> {
             if c.get("logprobs").is_some_and(|v| !v.is_null()) {
                 return Err("Response logprobs cannot be converted".into());
             }
+            // Some Chat providers also return the SSE tool position in a
+            // buffered response. It is ordering metadata, not a tool argument.
+            // Accept it only when it agrees with the array order; retain the
+            // strict decoder for unknown fields and all invocation semantics.
+            let mut message = c["message"].clone();
+            if let Some(calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut) {
+                for (position, call) in calls.iter_mut().enumerate() {
+                    if let Some(index) = call.get("index") {
+                        if index.as_u64() != Some(position as u64) {
+                            return Err("Buffered Chat tool index must match its array position".into());
+                        }
+                        call.as_object_mut().ok_or("Expected tool call object")?.remove("index");
+                    }
+                }
+            }
             let v = super::request::decode_messages(
                 Protocol::Chat,
-                &json!({"messages":[c["message"]]}),
+                &json!({"messages":[message]}),
             )?;
             v
         }
