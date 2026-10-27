@@ -2072,8 +2072,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             last_policy_error=Some(ApiError::bad_request("Explicit reasoning parameter is excluded by this mapping's declared/manual capability")); continue 'channels;
                         }
                     }
+                    match crate::message_roles::adapt(&contract, &mut body) {
+                        Ok(changed) => source_parameter_changed |= changed,
+                        Err(note) => { last_policy_error = Some(ApiError::bad_request(note)); continue 'channels; }
+                    }
                     match if contract.is_oauth { Ok(false) } else { crate::parameter_contracts_china::adapt(&contract,&mut body) } {
-                        Ok(changed)=>source_parameter_changed=changed,
+                        Ok(changed)=>source_parameter_changed|=changed,
                         Err(note)=>{last_policy_error=Some(ApiError::bad_request(note));continue 'channels;}
                     }
                 }

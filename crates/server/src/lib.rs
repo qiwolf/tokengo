@@ -20,6 +20,7 @@ pub mod gateway;
 pub mod protocol;
 pub mod protocol_config;
 pub mod parameter_contracts;
+pub mod message_roles;
 pub mod parameter_contracts_china;
 pub mod parameter_budgets;
 pub mod protocol_sessions;
