@@ -38,3 +38,7 @@ cargo +1.98.0 test --locked --workspace -- --test-threads=1
 当前公开版本及其精确提交、代码门禁和发布运行链接见[验收状态](acceptance-status.md)；不能以本页描述代替实际运行结果。
 
 参考：[GitHub Actions 工作流语法](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)、[官方 cache action](https://github.com/actions/cache)。
+
+## 版本文档同步
+
+每次已授权的版本更新/发布必须同步[模型兼容核实清单](provider-verification-checklist.md)、CHANGELOG、对应版本说明与[验收状态](acceptance-status.md)，同批提交本地Git并一并推送GitHub。逐项记录真实调用、模拟/SDK、未核实及未实施范围；复用旧证据注明版本/范围，不把未补验提升为通过。发布后追加实际收据和清单状态，保留历史失败，不移动已发布标签。仅文档维护不触发重新打包或部署，必要检查通过后不重复无关测试。

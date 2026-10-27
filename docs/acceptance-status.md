@@ -1,6 +1,8 @@
 # 功能与验收状态
 
-当前正式版 **[v0.34.0-qiwolf.21](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.21)**，发行源码`153c9db127c3`，Cargo0.34.0/schema42。完整CI1398/0/5及正式发行流程成功；9个公开资产、匿名GHCR拉取与原生/容器独立运行及Key生命周期验收通过。私有Web更新不等于生产完整包升级，本轮未部署完整生产包。详见[发行收据](acceptance/2026-10-27-qiwolf21-release/README.md)。
+当前正式版 **[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)**，发行源码`f85eca9d6780`，Cargo0.34.0/schema42。精确main CI Rust1560通过/0失败/9忽略、Python13及WASM通过；9公开资产、匿名GHCR、原生/容器和Key生命周期独立验收通过。237已完整冷备并整包升级，公网Chat/Responses普通问答及账务通过。真实来源、模拟、未充分验收及未实施项见[持续核实清单](provider-verification-checklist.md)和[发行收据](acceptance/2026-10-28-qiwolf22-release/README.md)；未充分验收不作为停用现有可表达功能的条件。
+
+历史正式版 **[v0.34.0-qiwolf.21](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.21)**，发行源码`153c9db127c3`，Cargo0.34.0/schema42。完整CI1398/0/5及正式发行流程成功；9个公开资产、匿名GHCR拉取与原生/容器独立运行及Key生命周期验收通过。私有Web更新不等于生产完整包升级，本轮未部署完整生产包。详见[发行收据](acceptance/2026-10-27-qiwolf21-release/README.md)。
 
 历史正式版 **[v0.34.0-qiwolf.20](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.20)**，发行源码`8ea6c37b3a62`，Cargo0.34.0/schema42。完整CI1393通过/0失败/5忽略，正式发行与公开9资产、GHCR匿名拉取、配套原生/容器及Key生命周期独立验收通过。生产私有修复构建与完整公开包分别标识，详见[发行收据](acceptance/2026-10-26-qiwolf20-release/README.md)。
 
@@ -18,7 +20,7 @@
 
 历史公开版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](releases/v0.34.0-qiwolf.14.md)和[发行收据](acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
 
-更新日期：2026-10-26。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
+更新日期：2026-10-28。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
 

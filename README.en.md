@@ -10,9 +10,11 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current stable release: **[v0.34.0-qiwolf.21](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.21)** · [Release notes](docs/releases/v0.34.0-qiwolf.21.md) · [Publication record](docs/acceptance/2026-10-27-qiwolf21-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)** · [Release notes](docs/releases/v0.34.0-qiwolf.22.md) · [Publication record](docs/acceptance/2026-10-28-qiwolf22-release/README.md).
 
-当前正式版：**[v0.34.0-qiwolf.21](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.21)** · [版本说明](docs/releases/v0.34.0-qiwolf.21.md) · [发布记录](docs/acceptance/2026-10-27-qiwolf21-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)** · [版本说明](docs/releases/v0.34.0-qiwolf.22.md) · [发布记录](docs/acceptance/2026-10-28-qiwolf22-release/README.md)。
+
+[Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 
 ## Meet TokenGo in 84 seconds · 84 秒认识 TokenGo
 
