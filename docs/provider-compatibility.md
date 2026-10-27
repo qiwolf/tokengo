@@ -50,6 +50,8 @@ MiniMax 转换按具体来源处理 split 形态；工具 strict 保留转换后
 
 硅基流动本轮14次真实调用通过：`Qwen/Qwen3.8-27B`的8次覆盖Chat/Responses客户端JSON、SSE和工具往返；`deepseek-ai/DeepSeek-V4-Flash`、`zai-org/GLM-5.2`、`moonshotai/Kimi-K2.7-Code`各2次仅覆盖原生Chat JSON/SSE前导角色折叠。后者本地Price预算是估算，供应方思考量和总hard cap仍未验证；这些结果不外推为原厂官方API、其他型号或全部工具/推理档位已验。
 
-浏览器焦点修复尚待最终收据，不能用Web构建通过代替UI最终验收。phase6全量1535/0/8仅属于较早源码，不能称最终全量。精确源码清单、各收据和后续发布/部署边界见[第四批验收记录](acceptance/2026-10-28-provider-p1-batch4.md)。新增兼容接口仍按root/session入口使用，不自动扩大运维令牌的动作权限。
+焦点修复已完成分轮真实浏览器验收，三种探针HTTP及对应账本通过，临时环境已清理；原始失败记录保留归因。发行提交f85eca9d的最终main CI为Rust1560通过/0失败/9忽略、Python13通过及WASM成功；phase6全量1535/0/8仅属于较早源码，不与最终结果累加。精确源码清单、各收据和后续发布/部署边界见[第四批验收记录](acceptance/2026-10-28-provider-p1-batch4.md)。新增兼容接口仍按root/session入口使用，不自动扩大运维令牌的动作权限。
 
 回退到不认识rerank探针类型的旧程序前，停用或移除新增rerank探针。该类型复用原Config.input有界JSON，不引入数据库迁移；旧程序无法据此获得新请求类型支持。
+
+qiwolf.22已公开发行且237完成同公开包整包升级，公网Chat/Responses普通问答及账务通过，详见[最终收据](acceptance/2026-10-28-qiwolf22-release/README.md)。官方DeepSeek任意字面标识复述仍未充分验收（直连亦有不匹配）；不据此停用功能，也不通过改写答案掩盖该未知。

@@ -10,6 +10,7 @@
 - 保留cache/reasoning用量子集、raw usage与中性request_id；Messages JSON/SSE用有界tokengo_metadata携带trace，不将未知语义字段静默丢弃。
 - 新增静态兼容诊断、15秒可取消独立验证和运行时标准API采集；保存不联网，OAuth/向量/重排进入现有真实探针。修复弹窗卸载后的异步访问和键盘焦点。
 - 受影响服务端699项及Web171项通过；SDK对照24+3项、硅基流动4个精确托管型号14次实际调用通过。厂商官方账号、其他型号及可选新执行器未实测，不外推支持保证。
+- 已正式发行，精确main CI Rust1560/0/9、Python13及WASM通过；9资产/GHCR/原生/容器/Key生命周期独立验收通过，237已整包升级且公网普通问答与账务通过。[最终收据](docs/acceptance/2026-10-28-qiwolf22-release/README.md)保留字面标识复述未充分验收及原失败，不停用相关功能。
 - Cargo0.34.0/schema42不变。分批证据及限制见[第四批验收](docs/acceptance/2026-10-28-provider-p1-batch4.md)、[核心审计](docs/acceptance/2026-10-27-provider-core-audit.md)和[版本说明](docs/releases/v0.34.0-qiwolf.22.md)；公开发行与237升级分别附最终收据。
 
 ## v0.34.0-qiwolf.21 — 2026-10-27（北京时间）

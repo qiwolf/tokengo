@@ -6,7 +6,7 @@
 
 本批最新服务端/构建快照为phase13，清单SHA-256 `2cee5211fa646d4c8f8d25c2921cc4184e3467091cfbb9003e812600fe16f0bb`。build-test受影响范围699通过、0失败、2忽略（20组）；Web171/0/0、WASM/Trunk及live fixture编译退出0。phase11另有协议67、HTTP52、OpenAI SDK24对照、Anthropic SDK3对照均通过；不能与重叠测试简单累加。phase6的1535/0/8是旧快照全量，不是最终全量。
 
-硅基流动四个精确托管型号共14次实际调用均通过，范围见[第四批验收](2026-10-28-provider-p1-batch4.md)。browser13仍有焦点缺陷（退出1），待最终修复收据；不宣称UI最终验收或发布/237部署完成。下表历史来源仍按历史收据标注，当前具体通过范围以第四批收据为准。
+硅基流动四个精确托管型号共14次实际调用均通过，范围见[第四批验收](2026-10-28-provider-p1-batch4.md)。browser13发现的焦点缺陷已修复，focus-fix14分轮真实行为及最终audit退出0，失败原始记录保留；发布/237部署另有独立收据。下表历史来源仍按历史收据标注，当前具体通过范围以第四批收据为准。
 
 |核心项|实际代码/测试入口与已观察历史证据|能力边界、缺证及本批状态|
 |---|---|---|
@@ -29,7 +29,7 @@
 |G17 / W08 runtime|`runtime_identity.rs`、`protocol_config::w08_offline_identity_is_bounded_unverified_and_invalidates_cache`；batch3 `w08-green.log`通过|操作者/标准API都是未验证声明；template/parser/generation digest缺项unknown，身份变化隔离代次。W10独立采集/权限/限时取消、Embedding/Rerank用途独立采集由phase13 HTTP通过；候选仍unverified、不自动保存；无真实Ollama/vLLM部署实测。|
 |G18 / W11矩阵|新增 `provider_compatibility::versioned_provider_shapes_are_chunk_boundary_invariant` + `fixtures/provider_compatibility/v1`；现有 `protocol_conversion_faults`、`chat_opaque_ownership`、`provider_usage_metadata`与`provider_live_siliconflow`复用|本批9种合成形态×3种分块；SDK锁openai-python3.40.0，runner消费生产converter导出流对比raw HTTP。phase13矩阵通过，phase11 OpenAI Python3.40.0的24对照、Anthropic Python2.3.0的3对照通过，相关协议/fixture输入至phase13未变化；SF四型号14call绑定phase13重验通过。SDK样本不叫官方来源验收。|
 |G19 / W01证据/字段处置|本批 `contract_evidence.rs` p1.4补精确identity/model/API匹配与分层源证据；`request_plan.rs`实际转换/source roles→参数→mapping defaults→参数→validate原子流水线，gateway转换/预算实际接入固定路径处置记录；新增4项identity/证据测试与4项RequestPlan行为测试|phase13服务端库552/0/2及受影响HTTP通过，具体范围见第四批收据。metadata_record_sha256只哈希已归档研究记录，document_archive_sha256缺原文时null，模型真实revision仍unknown；不补造文档或实测。字段状态只用spec六态，operator默认是effect，不另造支持级别；known模型原样保留的未知字段仍unknown，有负例。|
-|G20 / W10诊断|phase13 provider_diagnostics 13/0、custom_probes 10/0；Web171/0/0；规则ID与none匹配、展示用途/执行种类分离、合法unknown原生估算、OAuth/工具/Embedding/Rerank探针入口|静态不联网/不改代次、总时限/取消/stale/脱敏、标准API候选不保存、真实重排协议结构与诊断账本均有HTTP证据。未充分验收不关闭合法请求；新机器权限不自动授予。browser13焦点缺陷仍在修复，最终目标视口/键盘验收待最终收据。|
+|G20 / W10诊断|phase13 provider_diagnostics 13/0、custom_probes 10/0；Web171/0/0；规则ID与none匹配、展示用途/执行种类分离、合法unknown原生估算、OAuth/工具/Embedding/Rerank探针入口|静态不联网/不改代次、总时限/取消/stale/脱敏、标准API候选不保存、真实重排协议结构与诊断账本均有HTTP证据。未充分验收不关闭合法请求；新机器权限不自动授予。focus-fix14目标视口/键盘、metadata和三种探针真实执行及最终audit已通过，临时环境已清理；62个Web输入逐文件匹配发行提交。|
 
 ## W11矩阵与复用边界
 
@@ -59,3 +59,5 @@ RequestPlan的记录来自实际执行的转换、角色、参数适配、默认
 本批没有补抓全部官方原文。可定位的原研究source record使用独立metadata hash；原文archive hash仅在已有档案确实提供时使用。文档revision和上游模型真实revision未获得证据时分别unknown，精确model ID不能当真实滚动revision。Ark冲突继续标未充分验收；不能借元数据修订宣称真实来源已验证，也不因此关闭整个合法原生接口。
 
 错误处置同样来自实际拒绝点：`prepare_source_detailed`/`prepare_conversion_detailed`返回独立typed报告，HTTP错误继续使用原有message。错误报告只包含固定stage/路径；实际转换拒绝后台执行时用 `/background` 的executor_gated，角色、参数、默认值或最终验证失败用unsupported。`detailed_rejection_reports_are_typed_secret_free_and_atomic`覆盖失败后原请求不变、callback错误正文不进报告及真实converter拒绝background的门禁。旧Result<String>入口作为兼容包装保留。
+
+最终提交全量CI：`f85eca9d67801a970ba93312a553da602deacea3`，[Rust/WASM CI 40559710708](https://github.com/qiwolf/tokengo/actions/runs/40559710708)成功，Rust1560/0/9、Python13通过。真实供应方与SDK证据仍按上文范围记载；完整发布和237版本见[发行收据](2026-10-28-qiwolf22-release/README.md)。

@@ -1,6 +1,6 @@
 # 供应方兼容第四批：W10–W12 验收记录
 
-日期：2026-10-28。本文记录已取得的源码、测试、SDK和真实来源证据；浏览器焦点修复及发行、部署尚须各自最终收据，不能据此宣称全部交付完成。
+日期：2026-10-28。本文记录已取得的源码、测试、SDK和真实来源证据；浏览器焦点及实际探针流程已取得最终收据，发行、部署按各自收据记录，不能据此宣称全部交付完成。
 
 未充分验收是状态与范围说明，不是关闭整个模型、合法原生接口或已有可表达转换的条件。原生输出语义未知、缺少独立来源总上界时，可使用明确标注的本地预算估算；具体参数冲突、鉴权、归属、执行器及账务保护继续生效。
 
@@ -31,7 +31,7 @@
 |phase11协议/trace等HTTP补验|52/0/0，8组|`root/logs/trace-http11.log`、`.json`|
 |OpenAI Python SDK 3.40.0 与raw HTTP对照|24/24通过，退出0|`root/openai-result11.json`、`root/logs/openai-compare11.json`|
 |Anthropic Python SDK 2.3.0 对照|3/3通过，退出0|`root/anthropic-result11.json`、`root/logs/anthropic-compare11.json`|
-|浏览器目标视口及键盘焦点|**待最终修复收据**；browser13退出1|`root/logs/browser-qa13.log`、`.exit`|
+|浏览器目标视口、焦点及实际探针|最终审计退出0；原始失败轮保留归因|`w10-ui/focus-fix14/acceptance.md`、`browser-qa14e-audit.json`、`cleanup.json`|
 
 phase11协议/SDK导出的相关 `src/protocol/`、fixture和矩阵测试文件在 phase11→phase13 两份清单间未变化；该补验仍按自身源码范围记载。SDK均消费生产转换器导出的合成loopback数据，不能称官方供应方真实调用。Anthropic覆盖JSON、早到trace SSE、晚到trace SSE；晚到扩展在 `message_delta` 中可见，不宣称 `get_final_message` 自动合并全部晚到扩展。
 
@@ -64,6 +64,10 @@ Ollama/vLLM的独立标准API采集与生成用途分开，Embedding/Rerank同�
 
 ## 尚待收口与回滚
 
-浏览器焦点缺陷正在修复，最终目标视口、键盘焦点及截图收据尚未取得；现有失败收据保留，不用构建成功替代浏览器验收。发行、GitHub发布与237升级由W12另记录真实版本、备份、部署和端到端结果，本文不提前宣告这些外部动作完成。
+焦点抢占与卸载后异步访问已修复。新Release包在1440/320/390/768视口、250ms延迟快速关闭重开、Tab/ShiftTab/外部焦点回收/Escape恢复、时钟偏移、重复/取消/15秒截止、metadata与保存不联网、动态stale及Chat/Embedding/Rerank探针实际执行均取得分轮真实证据。最终fresh浏览器审计退出0，三探针HTTP200且账本存在/debit0，零console/pageerror/请求失败及零新增调用。原始失败轮涉及已修复产品焦点、select标签含选项、幂等预置和续验401分类，全部原样保留；不伪改失败轮passed。临时进程、私密目录及监听已清理。62个受验Web输入逐文件匹配发行提交。W12已完成qiwolf.22发行和237整包升级，公开资产及实际公网问答/账务结果见[最终收据](2026-10-28-qiwolf22-release/README.md)。官方DeepSeek任意字面标识复述未充分验收，原失败和直连对照均保留，普通问答通过不覆盖该未知，相关功能保持可用。
 
 无新数据库迁移。回退到不认识 `rerank` 探针类型的旧程序前，停用或移除该类新增探针；其输入继续是原 `Config.input` 文本，没有新增持久化字段。已有非空 `runtime_identity` 的旧版读取边界见[兼容维护说明](../provider-compatibility.md)。回滚不能用旧整库覆盖新会话或账务。
+
+## 精确提交最终CI
+
+发行源码 `f85eca9d67801a970ba93312a553da602deacea3` 的[main CI](https://github.com/qiwolf/tokengo/actions/runs/40559710708)成功：87个唯一Rust harness合计1560通过、0失败、9忽略；MinerU Python13项通过，WASM检查成功。该结果替代较早phase6基线作为最终提交全量依据；受控SDK、SF和浏览器仍按各自源码范围分层，不与CI用例数相加。build-test另完成同提交原生服务端/CLI、Release Web、部署工具测试、打包和整包校验，产物及日志已取回Mac。

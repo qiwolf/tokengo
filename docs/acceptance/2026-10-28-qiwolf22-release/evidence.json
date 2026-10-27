@@ -1,0 +1,199 @@
+{
+  "source_commit": "f85eca9d67801a970ba93312a553da602deacea3",
+  "release_tag": "v0.34.0-qiwolf.22",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22",
+  "main_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40559710708",
+    "result": "success",
+    "rust": {
+      "passed": 1560,
+      "failed": 0,
+      "ignored": 9,
+      "measured": 0,
+      "filtered_out": 0
+    },
+    "mineru_python_passed": 13
+  },
+  "release_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/40561989772",
+    "result": "success"
+  },
+  "independent_build": {
+    "host": "build-test",
+    "result": "passed",
+    "archive_sha256": "00ef0ab8ec95079381a5cb46a403c9ea49f03ec193d33707c444d860273bc748",
+    "artifacts_retrieved_to_mac": true
+  },
+  "public_assets": [
+    {
+      "name": "compose.yaml",
+      "size": 797,
+      "sha256": "6a632cb945119ebd45867939e4a826b700d68b5526bc8885df9f0591f4fa73c3",
+      "github_digest_matches": true
+    },
+    {
+      "name": "container-deployment.md",
+      "size": 15347,
+      "sha256": "dbd2124b09001c4f09b06da2b0bc5782370dac906df093210625eda6f03e963d",
+      "github_digest_matches": true
+    },
+    {
+      "name": "container.env.example",
+      "size": 316,
+      "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+      "github_digest_matches": true
+    },
+    {
+      "name": "image-manifest.json",
+      "size": 199,
+      "sha256": "d6341e3b4e445c92ee4fbf9b58efe224690e4d63562d9fcac7d2868ad4764179",
+      "github_digest_matches": true
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "size": 564,
+      "sha256": "a3ffaeb30c5e93de44e2f49f2c2aba23124184dbc1fbf5f72dcc77989064c077",
+      "github_digest_matches": true
+    },
+    {
+      "name": "registry-image.txt",
+      "size": 95,
+      "sha256": "92e1722af71d23fcafac3cb04ddead137cb2adcd74f66e108ff515d4da77e7f9",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-f85eca9d6780-linux-x86_64.tar.gz",
+      "size": 21733849,
+      "sha256": "729cf853570736b47a5f85b1a288f6e3d83e48eb56b4c9054723da2c6be43d22",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-f85eca9d6780-linux-x86_64.tar.gz.sha256",
+      "size": 107,
+      "sha256": "f0eb56d50b5539b4c1122db1b5637c0d16e241973ba5ad4bd491723909a89941",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-f85eca9d67801a970ba93312a553da602deacea3-linux-amd64.tar.gz",
+      "size": 40737219,
+      "sha256": "c99f492ac641965cf522acba9c5b96b5411c18b1b6e5673abec790a9fed8c6c0",
+      "github_digest_matches": true
+    }
+  ],
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:187190dec8664793d9235e1ecf10c1e8c0efbf3fdd90bcee3a1630d475661fc0",
+  "public_runtime": {
+    "result": "passed",
+    "anonymous_downloads": true,
+    "native_and_container": true,
+    "key_lifecycle": true,
+    "ui_marker_count": 11,
+    "cleanup": "passed",
+    "assets_retrieved_to_mac": true
+  },
+  "source_acceptance": {
+    "affected_server_passed": 699,
+    "web_passed": 171,
+    "openai_sdk_comparisons": 24,
+    "anthropic_sdk_comparisons": 3,
+    "sf_gateway_calls": 14,
+    "sf_families": [
+      {
+        "family": "qwen",
+        "model": "Qwen/Qwen3.8-27B",
+        "calls": 8,
+        "passed": true
+      },
+      {
+        "family": "deepseek",
+        "model": "deepseek-ai/DeepSeek-V4-Flash",
+        "calls": 2,
+        "passed": true
+      },
+      {
+        "family": "glm",
+        "model": "zai-org/GLM-5.2",
+        "calls": 2,
+        "passed": true
+      },
+      {
+        "family": "kimi",
+        "model": "moonshotai/Kimi-K2.7-Code",
+        "calls": 2,
+        "passed": true
+      }
+    ],
+    "browser_final_audit": "passed",
+    "browser_web_input_identity_match": 62
+  },
+  "production": {
+    "instance": "237",
+    "commit": "f85eca9d67801a970ba93312a553da602deacea3",
+    "result": "updated",
+    "schema": 42,
+    "public_archive_sha256": "729cf853570736b47a5f85b1a288f6e3d83e48eb56b4c9054723da2c6be43d22",
+    "server_sha256": "e97aacef58efa9f49ef73bd547476824d11c822f494000566d68dbaa98aaffd1",
+    "cli_sha256": "04cdd789ea03b8f59ce682100ae8fe2fc89e9e34d7926f7feee4aeeddf052246",
+    "web_tree_sha256": "b9d0edb5adecdf4b83de294d9d9524b8e079d3d7e1914399d74b0786b1dd0240",
+    "static_files_verified": 24,
+    "protected_unchanged": true,
+    "config_routes_keysecrets_unchanged": true,
+    "unit_preserved": true,
+    "backup_retained_on_instance": true,
+    "public_https": {
+      "result": "passed",
+      "tls_verified": true,
+      "assets_verified": 24,
+      "normal_inference_cases": [
+        {
+          "answer_shape": {
+            "characters": 1,
+            "leading_or_trailing_whitespace": false,
+            "literal_equal": true,
+            "trimmed_characters": 1,
+            "trimmed_equal": true
+          },
+          "endpoint": "chat/completions",
+          "http_status": 200,
+          "terminal_valid": true,
+          "text_exact_after_outer_whitespace": true,
+          "usage": {
+            "input_tokens": 23,
+            "output_tokens": 1,
+            "total_reported": true,
+            "total_tokens": 24
+          }
+        },
+        {
+          "answer_shape": {
+            "characters": 1,
+            "leading_or_trailing_whitespace": false,
+            "literal_equal": true,
+            "trimmed_characters": 1,
+            "trimmed_equal": true
+          },
+          "endpoint": "responses",
+          "http_status": 200,
+          "terminal_valid": true,
+          "text_exact_after_outer_whitespace": true,
+          "usage": {
+            "input_tokens": 29,
+            "output_tokens": 1,
+            "total_reported": true,
+            "total_tokens": 30
+          }
+        }
+      ],
+      "request_count": 2,
+      "each_one_attempt_and_terminal_ledger": true,
+      "usage_matches": true,
+      "pending_hold_rows": 0,
+      "duplicate_settlement_rows": 0
+    }
+  },
+  "limits": [
+    "Exact arbitrary literal copying with the official DeepSeek account was not fully accepted; direct official calls also failed the same kind of sample. Original failures retained, no product capability disabled.",
+    "SF hosted-model acceptance does not imply original-vendor or other-model acceptance.",
+    "Ollama/vLLM real deployments and every official account were not exercised; G21-G29 remain optional unimplemented integrations.",
+    "Local output reservation estimates are not verified supplier hard caps."
+  ]
+}
