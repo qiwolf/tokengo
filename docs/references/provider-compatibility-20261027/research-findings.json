@@ -1,0 +1,758 @@
+[
+  {
+    "id": "major:MAJ-01",
+    "provider": "OpenAI",
+    "topic": "跨协议 strict 默认值",
+    "documented_fact": "Chat 默认非严格；Responses 省略 strict 尝试严格化后可回退。",
+    "code_evidence": "protocol/request.rs:418-485 仅显式 strict 存在才复制",
+    "gap_or_existing": "confirmed_semantic_gap",
+    "confidence": "high-static",
+    "required_work": "Chat→Responses 省略 strict 时显式 false 保持原意；Responses→Chat 需要按源端规则确定或明确拒绝，不能一律 false 冒充等价。",
+    "acceptance": "双向覆盖 omitted/true/false、可严格化与不可严格化 schema；比较实际工具 schema 回显和参数行为。",
+    "sources": [
+      "OA02"
+    ],
+    "priority": "P1",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:OA02"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-02",
+    "provider": "OpenAI OAuth",
+    "topic": "目录与访问权限",
+    "documented_fact": "OAuth 计划、公共 API Key、模型打包目录是不同能力来源。",
+    "code_evidence": "parameter_contracts.rs:99+ OAuth 仅 Responses；protocol_sessions.rs 源代际绑定",
+    "gap_or_existing": "existing_boundary",
+    "confidence": "high-static",
+    "required_work": "保留 OAuth executor 边界；UI/目录标示 catalog、configured、probe_verified 不同状态。",
+    "acceptance": "已列出但无权限模型不得标可用；完整推理成功才记录可访问；刷新 token 后保持会话。",
+    "sources": [
+      "OA03"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:OA03"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-03",
+    "provider": "OpenAI",
+    "topic": "历史与 phase/context",
+    "documented_fact": "手动重放需保留 output 原序；phase/context 具有模型范围。",
+    "code_evidence": "protocol/request.rs:664 native clone；跨协议 decode 严格拒绝未表示字段；protocol_sessions.rs reasoningscope",
+    "gap_or_existing": "existing_safe_boundary_with_extension",
+    "confidence": "high-static",
+    "required_work": "保持原生无损与未知模型不误判；单独制定 phase/context/summary 的转换能力，不通过删除历史换取成功。",
+    "acceptance": "原生手动工具续接不丢 phase/reasoning；跨协议不可表示字段明确拒绝；模型家族表测试。",
+    "sources": [
+      "OA01",
+      "OI01"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:OA01",
+      "major:OI01"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-04",
+    "provider": "Anthropic",
+    "topic": "新型号合同遗漏",
+    "documented_fact": "当前文档 Mythos5.1 也有 adaptive/forced tools 限制；API版本删除采样。",
+    "code_evidence": "parameter_contracts.rs:claude_current/validate_anthropic 固定四型号，不含 Mythos5.1；版本采样守卫已存在",
+    "gap_or_existing": "confirmed_registry_coverage_gap",
+    "confidence": "high-static",
+    "required_work": "增加经官方表核对的精确型号合同及 APIversion 测试；不把所有 claude-* 泛化。",
+    "acceptance": "同一型号不同 APIversion 采样；Mythos forcedtool；签名历史、redactedthinking、warmup 互斥均有 fixture。",
+    "sources": [
+      "AN01",
+      "AN03"
+    ],
+    "priority": "P1",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:AN01",
+      "major:AN03"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-05",
+    "provider": "Anthropic",
+    "topic": "官方 Chat兼容不是原生等价",
+    "documented_fact": "官方 Chat 层忽略 strict/response_format/reasoning_effort，合并 system/developer。",
+    "code_evidence": "parameter_contracts.rs:validate_anthropic 仅接受 Messages；request.rs developer→Messages 拒绝",
+    "gap_or_existing": "existing_safe_boundary",
+    "confidence": "high-static",
+    "required_work": "继续原生 Messages 优先；若新增官方 Chat 必须单独 profile 和降级提示，不能共用 Messages 验证冒充全兼容。",
+    "acceptance": "strict、JSON格式、developer 时序、thinking 不被静默削弱；不支持组合在 TokenGo 明确提示。",
+    "sources": [
+      "AN04"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:AN04"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-06",
+    "provider": "Gemini",
+    "topic": "Chat thought_signature 来源归属",
+    "documented_fact": "OpenAI兼容工具签名在 tool_calls[].extra_content.google.thought_signature，续接需原样。",
+    "code_evidence": "protocol_sessions.rs:203 opaque_history 无此 Chat 形态；:358 walk_artifacts 未遍历 tool_calls/extra_content；request.rs native clone 保留",
+    "gap_or_existing": "confirmed_static_coverage_gap_not_exploit_tested",
+    "confidence": "high-static",
+    "required_work": "按来源合同新增 opaque artifact extractor、限量和输入计量；绑定 key/source generation/model，不扫描任意文本；跨协议保持拒绝或提供明确载体。",
+    "acceptance": "两次工具调用原生续接成功；跨源/Key/代际重放被拒；嵌套假文本不误提取；流式和非流式都登记来源。",
+    "sources": [
+      "GE01",
+      "GE02"
+    ],
+    "priority": "P1",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:GE01",
+      "major:GE02"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-07",
+    "provider": "Gemini",
+    "topic": "SSE 上游差异调查",
+    "documented_fact": "官方仓库 open issue 报告部分指定型号工具SSE缺index/结束stop，维护者调查。",
+    "code_evidence": "protocol/sse.rs:1047 index 必填，缺失报错；finish_reason 原样记 stop",
+    "gap_or_existing": "candidate_external_issue_not_reproduced",
+    "confidence": "medium-issue-plus-static",
+    "required_work": "先对受影响精确型号取脱敏真实流；仅在唯一工具可证明身份时设计来源限定 normalization，歧义并行拒绝。",
+    "acceptance": "非流/流相同请求对照；缺index单/并行、stop+toolcall、终止usage；无法复现则不发布修复结论。",
+    "sources": [
+      "GI01"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:GI01"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-08",
+    "provider": "xAI",
+    "topic": "输出预算/usage 合同",
+    "documented_fact": "当前 xAI max_output_tokens 仅约束可见答案，reasoning/functioncall 不含在内。",
+    "code_evidence": "parameter_contracts.rs:20-55 无 xai profile；parameter_contracts_china.rs:373 Responses 直接 Total",
+    "gap_or_existing": "confirmed_missing_provider_contract",
+    "confidence": "high-static",
+    "required_work": "新增 xAI 精确来源 profile、模型 effort/有效采样约束、AnswerOnly 输出预算和 reasoning/tool 实际计费映射；区分 hostedtools。",
+    "acceptance": "推理超可见答案 cap 的真实调用不低估预占；工具费用不混入 token 计数；失败退款；SSE与非流账单一致。",
+    "sources": [
+      "XA01",
+      "XA02",
+      "XA03"
+    ],
+    "priority": "P1",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:XA01",
+      "major:XA02",
+      "major:XA03"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-09",
+    "provider": "Mistral",
+    "topic": "reasoning chunk codec",
+    "documented_fact": "指定型号高推理 content 与 delta.content 可为 thinking+text 块列表。",
+    "code_evidence": "protocol/sse.rs:1030 仅 as_str content/reasoning_content；response.rs 通用 Chat 严格消息解码",
+    "gap_or_existing": "confirmed_conversion_extension_gap",
+    "confidence": "high-static",
+    "required_work": "新增 Mistral profile、ThinkChunk/TextChunk codec 和预算合同；原生保留、目标无承载时明确失败。",
+    "acceptance": "指定模型 none/high 非流/流一致；块→字符串混合序列无漏字；reasoning 与答案分开计量/呈现。",
+    "sources": [
+      "MI01",
+      "MI02"
+    ],
+    "priority": "P1",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:MI01",
+      "major:MI02"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-10",
+    "provider": "Mistral",
+    "topic": "connector 多消息与服务端工具",
+    "documented_fact": "connector completions 可产生 choices[].messages 与引用/图像，不等同 functiontool。",
+    "code_evidence": "protocol/response.rs choices[0].message；request.rs onlyfunctiontoolconversion；无 Mistral executor",
+    "gap_or_existing": "missing_optional_executor",
+    "confidence": "high-static",
+    "required_work": "独立声明 connector 能力与计费、消息状态转换；未实现前 UI 不宣称任意 Mistral Chat全支持。",
+    "acceptance": "至少两条 assistant/tool 消息顺序不丢、引用保留、未知 connector 明确拒绝、流内失败正确结束。",
+    "sources": [
+      "MI03"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:MI03"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-11",
+    "provider": "Cohere",
+    "topic": "V2 专有协议",
+    "documented_fact": "/v2/chat envelope、thinking、strict_tools、billed_units 都与 OpenAI不同。",
+    "code_evidence": "protocol_config.rs 仅 Chat/Responses/Messages；parameter_contracts.rs 无 cohere profile",
+    "gap_or_existing": "missing_optional_executor",
+    "confidence": "high-static",
+    "required_work": "新建 CohereV2 原生 executor 和 usage/billed_units 双轨、top-levelstricttools、JSON/tool/doc 互斥合同；不是改 baseURL。",
+    "acceptance": "command-a-reasoning08-2025 开/关、工具多轮、strict/schema边界、RAG互斥、流/非流账单与官方usage一致。",
+    "sources": [
+      "CO01",
+      "CO02",
+      "CO03"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:CO01",
+      "major:CO02",
+      "major:CO03"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "major:MAJ-12",
+    "provider": "Cross-provider",
+    "topic": "媒体与有状态执行边界",
+    "documented_fact": "原生媒体/后台执行/缓存/托管工具分别需要专门执行和计费合同。",
+    "code_evidence": "gateway.rs:777-787 文件/视频等显式拒绝；parameter_contracts.rs:294 executorcontrols；request.rs:856 转Chat主动 include_usage",
+    "gap_or_existing": "existing_safe_boundary",
+    "confidence": "high-static",
+    "required_work": "文档明确现状；按需扩展 nativeGenerateContent/Interactions、文件、后台/资源CRUD，避免只放宽字段白名单。",
+    "acceptance": "不支持项稳定可解释拒绝；已支持文本图片/客户端工具回归；不因HTTP200/流心跳视为成功；usage累计不重复。",
+    "sources": [
+      "AN02",
+      "AN03",
+      "GE03",
+      "MI04"
+    ],
+    "priority": "P2",
+    "verification_boundary": "官方文档与当前代码静态对照；未执行真实上游调用",
+    "source_ids": [
+      "major:AN02",
+      "major:AN03",
+      "major:GE03",
+      "major:MI04"
+    ],
+    "research_group": "major"
+  },
+  {
+    "id": "china:CN-DS-01",
+    "provider": "deepseek",
+    "topic": "角色/工具序号/思考工具续接",
+    "documented_fact": "DeepSeek Chat为system/user/assistant/tool；思考工具历史需完整回放。",
+    "code_evidence": "crates/server/src/message_roles.rs:12-70; protocol/response.rs:16-37; tests/deepseek_roles_gateway.rs; review/deepseek-role-fix-20261027/acceptance-summary.json",
+    "gap_or_existing": "existing",
+    "priority": "done",
+    "confidence": "documented_and_code_observed",
+    "required_work": "保留已完成的定向规则和8次真实调用收据，不记为新待开发项。",
+    "acceptance": "回归必须继续覆盖JSON/SSE、思考工具完整回传、错误index拒绝、OpenAI不改。",
+    "source_ids": [
+      "china:CN-S01",
+      "china:CN-S02"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-DS-02",
+    "provider": "deepseek",
+    "topic": "原生Responses和强制工具的语义合同",
+    "documented_fact": "原生Responses若干状态/缓存/工具字段会被忽略，developer变user；Chat思考模式不能required/指定函数。",
+    "code_evidence": "parameter_contracts_china.rs:111-140 known不包含deepseek; parameter_contracts.rs:312-327; protocol_config.rs:74-83",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "补DeepSeek原生能力约束与native/conversion声明，显式有语义意图的参数不能以静默忽略算成功；不改已验收Responses→Chat路径。",
+    "acceptance": "store/previous_response_id/unsupported built-in tools等应明确拒绝或声明不支持；thinking+required需在上游前返回来源明确的错误。",
+    "source_ids": [
+      "china:CN-S01",
+      "china:CN-S03"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-ROLE-01",
+    "provider": "dashscope,moonshot,zai",
+    "topic": "其他来源角色合同",
+    "documented_fact": "官方Chat角色schema/消息变体未包含developer；QwQ/QVQ另有system限制，不能全厂商套用developer→system。",
+    "code_evidence": "message_roles.rs:13-17仅DeepSeek; protocol/request.rs:114-161同协议/转Chat保留角色",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "建立来源+协议+型号的角色规则与来源证据；可折叠文本指令时显式记录优先级变化，不可表示时本地拒绝。",
+    "acceptance": "三来源分别有developer/system顺序、文本块/非文本、晚置指令和原生OpenAI保持测试；不能用单个通用替换冒充覆盖。",
+    "source_ids": [
+      "china:CN-S04",
+      "china:CN-S07",
+      "china:CN-S11"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-QW-01",
+    "provider": "dashscope",
+    "topic": "Responses输出上限与预占",
+    "documented_fact": "官方Responses区分Qwen3.8总生成与较早Qwen及列明第三方的答案上限，最小16。",
+    "code_evidence": "parameter_contracts_china.rs:373-375非Chat/Messages一律Total; parameter_budgets.rs:81-163",
+    "gap_or_existing": "gap",
+    "priority": "P0",
+    "confidence": "documented_and_code_observed",
+    "required_work": "按部署商+型号+协议拆分输出上限语义，答案上限需叠加已知思考预算或使用已验证总上界；不得仅复制Chat表。",
+    "acceptance": "原生Responses Qwen3.8/3.7与GLM/DeepSeek测试不同预算；思考预算未知不低预占，min16和incomplete都覆盖。",
+    "source_ids": [
+      "china:CN-S05"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-QW-02",
+    "provider": "dashscope",
+    "topic": "新工作区端点身份",
+    "documented_fact": "官方现列WorkspaceId.cn-beijing.maas.aliyuncs.com等工作区入口。",
+    "code_evidence": "parameter_contracts.rs:45-47只识别旧DashScope精确主机；显式profile已有",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "保留精确识别安全边界，补工作区端点的显式配置提示/可靠注册身份，不靠任意DNS后缀或模型名赋予能力。",
+    "acceptance": "官方端点+显式profile触发对应规则；lookalike/任意代理仍unknown；原生SDK域/协议区别明确。",
+    "source_ids": [
+      "china:CN-S04",
+      "china:CN-S05"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-QW-03",
+    "provider": "dashscope",
+    "topic": "工具选择及并行声明",
+    "documented_fact": "Qwen thinking不支持强制指定；部分部署商/型号不保证required或parallel=false的含义。",
+    "code_evidence": "parameter_contracts_china.rs:274-308 validate_dashscope未校验tool_choice/parallel_tool_calls型号限制",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "增加具体型号/部署商工具控制规则、说明与上游前校验，不静默改required为auto。",
+    "acceptance": "thinking/nonthinking、required、named、parallel=false逐组合；Kimi/MiniMax等百炼托管型号不能继承Qwen规则。",
+    "source_ids": [
+      "china:CN-S04",
+      "china:CN-S06"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-KM-01",
+    "provider": "moonshot",
+    "topic": "K3/K2思考与采样",
+    "documented_fact": "K3 always thinking并支持low/high/max；K2.7Code只enabled keep=all，K2.6可关闭；固定采样/required规则不同。",
+    "code_evidence": "parameter_contracts_china.rs:185-227 validate_kimi已实现现有确切型号规则",
+    "gap_or_existing": "existing",
+    "priority": "done",
+    "confidence": "documented_and_code_observed",
+    "required_work": "保留已有已实现规则，补原始文档和模拟续接矩阵；不能把未真实接入记为已实测。",
+    "acceptance": "保留K3 none拒绝、K2Code disabled拒绝、K2.6 none转换和采样冲突测试。",
+    "source_ids": [
+      "china:CN-S08",
+      "china:CN-S10"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-KM-02",
+    "provider": "moonshot",
+    "topic": "原生Responses独立合同",
+    "documented_fact": "Kimi Responses无持久状态，当前schema tool_choice仅auto，reasoning summary事件和Chat不同。",
+    "code_evidence": "parameter_contracts_china.rs:131 validate_kimi仅Chat; protocol/sse.rs:846-853拒绝跨协议summary等事件; protocol/request.rs:plain_reasoning拒绝非空summary",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "建立独立Responses参数/事件声明与fixture；保留不支持有状态/summary跨协议的明确拒绝，不虚报完整OpenAI Responses兼容。",
+    "acceptance": "Chat K3 required可用但native Responses required按合同拒绝；store/previous_response_id语义、summary delta、incomplete/failed与完整output回放测试。",
+    "source_ids": [
+      "china:CN-S07",
+      "china:CN-S09"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-KM-03",
+    "provider": "moonshot",
+    "topic": "缓存读写计量完整性",
+    "documented_fact": "Kimi缓存读、写与未缓存输入是input总量内互斥细分，TTL会影响写成本。",
+    "code_evidence": "protocol/response.rs:111-138及后续usage重建只保留总量/思考细分；gateway.rs:Usage::read总量为正确入口，但无cache_write桶",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "跨协议保留缓存读写细分与TTL来源，区分用户收费合同和供应商成本，未知成本不能填零；不额外把细分再加到input总数。",
+    "acceptance": "Chat↔Responses input/cache_read/cache_write/uncached守恒，JSON/SSE一致；不将此项直接表述为已证实用户账单错误。",
+    "source_ids": [
+      "china:CN-S07",
+      "china:CN-S09",
+      "china:CN-I05"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-GL-01",
+    "provider": "zai",
+    "topic": "API与Coding Plan及新型号差异",
+    "documented_fact": "GLM5.3 API只low/high/max，Coding Plan对none等有不同映射；新Flash系列声明也不同。",
+    "code_evidence": "parameter_contracts_china.rs:32 GLM_MODELS固定表; :228-248只对glm-5.3分支；parameter_contracts.rs:49来源身份",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "增加产品/认证线路维度；根据确切目录ID维护型号合同，不能把Coding Plan的别名映射用于公共API。",
+    "acceptance": "同一effort none在API应拒绝、Coding Plan按证据映射；Flash系列先确认ID再注册，未知新型号不能继承错误默认。",
+    "source_ids": [
+      "china:CN-S11",
+      "china:CN-S12",
+      "china:CN-S14"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-GL-02",
+    "provider": "zai",
+    "topic": "响应元数据与跨协议转换",
+    "documented_fact": "GLM官方Chat响应schema包含request_id，另可带内容安全/搜索/媒体结果。",
+    "code_evidence": "protocol/response.rs:168-190 Chat顶层fields不含request_id；非原生转换会拒绝",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "分离来源追踪元数据与语义输出：类型化保留request_id；安全标记/引用/媒体不得顺手丢弃，必要时明确拒绝。",
+    "acceptance": "GLM纯文本+request_id在Chat→Responses JSON成功并保留追踪；content_filter/引用单独验证，未知不任意放行。",
+    "source_ids": [
+      "china:CN-S11"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "china:CN-GL-03",
+    "provider": "zai",
+    "topic": "工具与格式交叉约束",
+    "documented_fact": "GLM当前OpenAPI tool_choice只有auto、response_format枚举text/json_object，tool_stream必须配合stream。",
+    "code_evidence": "parameter_contracts_china.rs:228-248只布尔/数值校验，无tool_choice/format/stream联动；message_roles不覆盖GLM",
+    "gap_or_existing": "gap",
+    "priority": "P1",
+    "confidence": "documented_and_code_observed",
+    "required_work": "按schema补工具选择/格式与stream交叉校验；官方文字称三种但enum只两种的矛盾以枚举暂定并留待确认，不声称JSON Schema已支持。",
+    "acceptance": "required/named/json_schema与tool_stream=true+stream=false不被错误标成已适配；支持的JSON/SSE工具与reasoning delta有原始fixture。",
+    "source_ids": [
+      "china:CN-S11",
+      "china:CN-S13"
+    ],
+    "live_verified_this_research": false,
+    "research_group": "china"
+  },
+  {
+    "id": "ecosystem:ECO-01",
+    "provider": "minimax",
+    "topic": "cross_protocol_default_thinking",
+    "documented_fact": "M3 Chat omission means thought on; M3 Messages omission means off.",
+    "code_evidence": "parameter_contracts_china.rs::validate_minimax and describe; protocol/request.rs::convert_request",
+    "gap_or_existing": "derived_gap: conversion does not materialize or reject the source-specific omitted default",
+    "confidence": "derived_from_docs_and_code",
+    "required_work": "Create per-model/protocol omission semantics; preserve explicit intent/default equivalence or reject ambiguous conversion. Do not force defaults on native passthrough.",
+    "acceptance": "Fixture M3 Chat omitted thinking→Messages and reverse; explicit on/off wins; M3.1 always-on independent; test no budget/effort loss.",
+    "source_ids": [
+      "ecosystem:E-D01",
+      "ecosystem:E-D02"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-02",
+    "provider": "minimax",
+    "topic": "thinking_output_dialects",
+    "documented_fact": "Full assistant content may contain think tags, while reasoning_split true separates reasoning; M3.1 disallows false.",
+    "code_evidence": "parameter_contracts_china.rs::validate_minimax; protocol/request.rs::decode_messages; protocol/response.rs::message",
+    "gap_or_existing": "partial_existing: validation exists; plain content with think tags is not a first-class source-specific reasoning dialect",
+    "confidence": "observed_docs_code",
+    "required_work": "Define per-model output/replay dialect and test it; never strip arbitrary text resembling think tags; if selecting reasoning_split require known contract and preserve client explicit controls.",
+    "acceptance": "Buffered/SSE/no-split/split tool histories round-trip; full original assistant preserved; M3.1 false rejected; no reasoning silently shown/lost by a generic parser.",
+    "source_ids": [
+      "ecosystem:E-D01",
+      "ecosystem:E-D02"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-03",
+    "provider": "mimo",
+    "topic": "documented_constraints_and_tool_replay",
+    "documented_fact": "MiMo explicitly documents unsupported state controls and only auto tool choice; reasoning must be replayed for tool context.",
+    "code_evidence": "parameter_contracts_china.rs::validate_mimo/adapt; gateway.rs converted_chat_reasoning_replay guard",
+    "gap_or_existing": "existing_constraints_with_acceptance_gap: none mapping and non-auto rejection implemented; source-specific thought/tool replay and all transport modes not newly live-tested",
+    "confidence": "observed_docs_code",
+    "required_work": "Keep current gates; add MiMo-shaped buffered/SSE tool-history fixtures and capability configuration/evidence, then live probes after credentials exist.",
+    "acceptance": "none remains off, non-none not falsely advertised as intensity; required/specific choice rejected before upstream; previous_response_id denied; two-turn thought/tool roundtrip.",
+    "source_ids": [
+      "ecosystem:E-D03",
+      "ecosystem:E-D04",
+      "ecosystem:E-D05"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-04",
+    "provider": "ark",
+    "topic": "native_chat_opaque_history_ownership",
+    "documented_fact": "New Seed Chat history uses assistant.encrypted_content; Responses uses typed reasoning encrypted_content, and losing encrypted original can silently lower quality.",
+    "code_evidence": "protocol_sessions.rs::opaque_history lines203-236, walk_artifacts lines348-385; protocol/request.rs::decode_messages",
+    "gap_or_existing": "confirmed_shape_coverage_gap_by_static_trace; not a demonstrated exploit",
+    "confidence": "derived_from_exact_documented_shape_and_code",
+    "required_work": "Add provider-qualified opaque dialect recognition/issuance/replay and source-bound pin lifecycle for Ark Chat, or explicitly reject unsupported native encrypted history until covered. Never use a summary as a substitute.",
+    "acceptance": "Counterexample Chat assistant.encrypted_content must be identified; wrong key/session/source/model/generation rejected; native JSON/SSE issued ciphertext and multi-tool ordering preserved; same-name version rollover invalidates safely.",
+    "source_ids": [
+      "ecosystem:E-D12",
+      "ecosystem:E-D14"
+    ],
+    "priority": "P0",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-05",
+    "provider": "ark",
+    "topic": "versioned_contract_and_document_conflict",
+    "documented_fact": "Latest rolling model aliases and schema upgrade change opaque defaults and malformed-signature behavior; older guide says altered signatures error.",
+    "code_evidence": "parameter_contracts_china.rs::ARK_SEED and adapt; protocol_sessions.rs ownership protections",
+    "gap_or_existing": "documentation_conflict_and_versioning_gap: fixed metadata dates/model lists cannot settle rolling-alias behavior",
+    "confidence": "observed_conflict_derived_need",
+    "required_work": "Record official doc version/hash/date, endpoint/protocol/model revision and conflicting assertions. Do not rely on provider rejection for integrity, or normalize none/minimal across versions without evidence.",
+    "acceptance": "Conflict blocks capability promotion; regression for automatic encrypted output, invalid-signature acceptance upstream but local rejection, usage in terminal chunk, alias revision update.",
+    "source_ids": [
+      "ecosystem:E-D12",
+      "ecosystem:E-D13",
+      "ecosystem:E-D14"
+    ],
+    "priority": "P0",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-06",
+    "provider": "siliconflow",
+    "topic": "budget_and_platform_identity",
+    "documented_fact": "Platform max_tokens excludes thought and thinking_budget is separate; effort maps are hosted-model-specific.",
+    "code_evidence": "parameter_contracts_china.rs::OutputSemantics, validate_siliconflow, SF_MODELS; parameter_budgets.rs",
+    "gap_or_existing": "existing_for_named_models; exact-model drift and hosted-vendor acceptance remain pending",
+    "confidence": "observed_docs_code",
+    "required_work": "Retain current separate cap semantics; expand only verified hosted model IDs and metadata-backed ranges, with expiry/conflict rules instead of inheriting DeepSeek official profile.",
+    "acceptance": "Budget estimates include answer+thought; unknown budget uses verified conservative bound or rejects; SF low/medium alias semantics do not overwrite original provider facts; models absent from the list remain explicitly unknown.",
+    "source_ids": [
+      "ecosystem:E-D06"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-07",
+    "provider": "ollama",
+    "topic": "runtime_reasoning_metadata",
+    "documented_fact": "OpenAI compatibility depends on runtime /api/show named thinking metadata; stateful Responses is unsupported.",
+    "code_evidence": "parameter_contracts_china.rs::validate_ollama; reasoning_capabilities.rs::from_metadata / refresh; upstream.rs model catalog",
+    "gap_or_existing": "partial_existing: state guard exists, runtime-specific metadata acquisition/identity requires work or explicit operator contract",
+    "confidence": "observed_docs_code",
+    "required_work": "Add scoped read-only runtime capability discovery for configured Ollama sources, model revision and effective defaults; do not infer from localhost port or model name, or treat ignored upstream API key as removal of gateway auth.",
+    "acceptance": "Named levels/default and boolean-only model cases; unsupported name upstream fallback not misreported as applied; source/model change invalidates; stateful Responses rejected.",
+    "source_ids": [
+      "ecosystem:E-D07"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-08",
+    "provider": "vllm",
+    "topic": "runtime_template_and_defaults",
+    "documented_fact": "Chat template, tool/reasoning parser, server version and generation_config govern behavior; cache_salt is an extra provider field.",
+    "code_evidence": "parameter_contracts_china.rs::validate_vllm; protocol_config.rs::Capabilities; reasoning_capabilities source_identity",
+    "gap_or_existing": "capability_identity_and_acceptance_gap beyond existing extension validation",
+    "confidence": "derived",
+    "required_work": "Store operator-confirmed deployment/model/template/parser/version fingerprint or safe metadata evidence; do not enable dev endpoints to obtain it. Keep native extra fields and separate cache salt from authorization identity.",
+    "acceptance": "Same URL/model with parser/template change invalidates stale capability; absent template rejects Chat claims; generation defaults compared; parallel false and structured-output backend fixtures.",
+    "source_ids": [
+      "ecosystem:E-D08",
+      "ecosystem:E-D09"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-09",
+    "provider": "openrouter",
+    "topic": "aggregator_contract_and_reasoning_details",
+    "documented_fact": "Provider routing is independent of public model name, require_parameters defaults false, reasoning_details includes format-specific encrypted/summarized/text entries.",
+    "code_evidence": "parameter_contracts.rs::provider lacks openrouter; protocol/sse.rs::unsupported rejects nonempty reasoning_details on conversion; protocol_sessions.rs does not recognize its typed dialect",
+    "gap_or_existing": "new_provider_scope_gap; native generic passthrough is not complete aggregator compatibility",
+    "confidence": "observed_docs_code",
+    "required_work": "Create an explicit aggregator profile with routing-parameter preservation and capability pin policy; support native reasoning_details ownership/replay separately, or clear rejection for conversion. Do not apply original-vendor adapter based only on model slug.",
+    "acceptance": "Explicit forced tool/schema intent not silently ignored; selected provider/revision exposed in evidence; encrypted details not summarized/retyped; aggregation fallback cannot replay opaque state across sources.",
+    "source_ids": [
+      "ecosystem:E-D10",
+      "ecosystem:E-D11"
+    ],
+    "priority": "P2",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-10",
+    "provider": "cross_provider",
+    "topic": "stream_empty_tool_calls_and_terminal_usage",
+    "documented_fact": "Vercel merged a fix for empty tool arrays ending thought spans; SDK reports also show usage in different chunk shapes.",
+    "code_evidence": "protocol/sse.rs meaningful checks !is_empty; end_frames reads final usage and checks terminal; current stream tests",
+    "gap_or_existing": "largely_existing; targeted provider-shaped regression coverage to add rather than a confirmed code defect",
+    "confidence": "observed_code_and_merged_pr",
+    "required_work": "Keep semantic nonempty handling and terminal/usage separation; add empty-array, null, same-chunk usage, trailing usage-only and early-EOF fixtures across raw/converted paths.",
+    "acceptance": "Empty [] does not close reasoning; finish_reason does not discard later usage; missing terminal cannot count success; partial output must not trigger retry/replay.",
+    "source_ids": [
+      "ecosystem:E-PR20253",
+      "ecosystem:E-I20546",
+      "ecosystem:E-I4063",
+      "ecosystem:E-D14"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-11",
+    "provider": "cross_provider",
+    "topic": "stream_logical_tool_indexes",
+    "documented_fact": "openai-python issue3201 reports duplicate logical index fragments in one first chunk on vLLM/Kimi with SDK2.35.0; issue now closed, fixed release not established.",
+    "code_evidence": "protocol/sse.rs tool accumulator keyed by logical index; tests interleaving; protocol/response.rs buffered contiguous index validation",
+    "gap_or_existing": "existing_design_plus_missing_specific_fixture; not proven TokenGo defect",
+    "confidence": "issue_claim_plus_code_review",
+    "required_work": "Add captured synthetic shape with duplicate same-index fragments in first streamed chunk; distinguish buffered index invariant from streamed fragment aggregation.",
+    "acceptance": "One logical call ID/name and concatenated valid args; no duplicate call from two fragments; interleaved two-tool case and conflicting ID/index rejected.",
+    "source_ids": [
+      "ecosystem:E-I3201"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "ecosystem:ECO-12",
+    "provider": "cross_provider",
+    "topic": "sdk_workaround_not_provider_contract",
+    "documented_fact": "LiteLLM27439 closed while cited PR28134 closed-unmerged; old effort map differs from current official contract. Native passthrough must not collapse high/max to boolean thinking or invent empty prior reasoning.",
+    "code_evidence": "parameter_contracts_china.rs::adapt only explicit none for covered exact contracts; message_roles.rs DeepSeek scope; protocol/request.rs strict replay",
+    "gap_or_existing": "existing_policy_to_preserve; issue-derived regression/documentary process work",
+    "confidence": "observed_issue_metadata_and_code",
+    "required_work": "Record issue state, PR merge and released package separately. Take current official mappings over historical workaround, keep real history intact; add max/high/off conflict tests per provider.",
+    "acceptance": "No synthetic reasoning_content inserted; requested max remains explicit where supported; unresolved issue/report does not automatically enable adaptation; source-specific fixtures distinguish native vs aggregate routes.",
+    "source_ids": [
+      "ecosystem:E-I27439",
+      "ecosystem:E-PR28134"
+    ],
+    "priority": "P1",
+    "live_verified": false,
+    "research_group": "ecosystem"
+  },
+  {
+    "id": "root:ROOT-AZURE",
+    "provider": "Azure OpenAI / Foundry",
+    "topic": "部署身份、鉴权、API版本",
+    "documented_fact": "官方v1路径为/openai/v1/responses，支持api-key或令牌，api-version文档列v1/preview；模型调用采用部署名。推理/工具能力应依据具体部署对应型号和API版本。",
+    "code_evidence": [
+      "crates/server/src/parameter_contracts.rs:24",
+      "crates/server/src/gateway.rs:586",
+      "crates/server/src/parameter_contracts.rs:152"
+    ],
+    "gap_or_existing": "optional_extension",
+    "required_work": "新增Azure来源/部署身份与版本化参数合同，不将私有部署名直接当OpenAI公共型号；凭据刷新与鉴权类型独立验证。",
+    "acceptance": "覆盖API Key/Entra、v1/preview、部署别名、错误model与实际模型关联失效；未接入前不得标实测可用。",
+    "confidence": "official_document_and_static_code",
+    "source_ids": [
+      "root:ROOT-AZ01",
+      "root:ROOT-AZ02"
+    ],
+    "research_group": "root"
+  },
+  {
+    "id": "root:ROOT-VERTEX",
+    "provider": "Vertex / Google托管OpenAI兼容",
+    "topic": "兼容参数、签名、鉴权分离",
+    "documented_fact": "所读页面重定向至Google托管平台现有文档；列支持参数，未支持参数会被忽略，工具schema与OpenAPI有关，thought_signature在extra_content；不能将该托管端点与AI Studio公共端点混为同一合同。",
+    "code_evidence": [
+      "crates/server/src/parameter_contracts.rs:24",
+      "crates/server/src/protocol/request.rs:138",
+      "crates/server/src/protocol_sessions.rs:203"
+    ],
+    "gap_or_existing": "optional_extension",
+    "required_work": "建立独立认证/地域/项目/模型部署能力身份，检查schema子集与签名回放；保持显式profile临时路径不等于新增原生托管支持。",
+    "acceptance": "未知参数不得报告为已生效；签名原样与项目/来源绑定；Bearer刷新与权限错误可定位。",
+    "confidence": "official_document_and_static_code",
+    "source_ids": [
+      "root:ROOT-VX01",
+      "root:ROOT-VX02"
+    ],
+    "research_group": "root"
+  },
+  {
+    "id": "root:ROOT-BEDROCK",
+    "provider": "Amazon Bedrock",
+    "topic": "Converse独立传输与签名历史",
+    "documented_fact": "Converse使用system/messages/inferenceConfig/additionalModelRequestFields和自己的事件结构，reasoningContent签名与此前消息需原样续接；另有OpenAI兼容API路径，不能相互推定。",
+    "code_evidence": [
+      "crates/server/src/protocol/mod.rs:12",
+      "crates/server/src/oauth_external.rs",
+      "crates/server/src/passthrough.rs"
+    ],
+    "gap_or_existing": "optional_extension",
+    "required_work": "Converse作为独立执行器项目评估；明确HTTP兼容端点与AWS原生传输、鉴权和EventStream边界，不能只加参数profile。",
+    "acceptance": "地区/模型ID、鉴权、签名、工具结果、事件停止与metadata usage独立覆盖；不以透传成功宣称已实现Converse。",
+    "confidence": "official_document_and_static_code",
+    "source_ids": [
+      "root:ROOT-BR01",
+      "root:ROOT-BR02"
+    ],
+    "research_group": "root"
+  }
+]

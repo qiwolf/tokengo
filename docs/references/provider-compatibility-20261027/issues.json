@@ -1,0 +1,318 @@
+[
+  {
+    "id": "ISSUE-01",
+    "url": "https://github.com/googleapis/python-genai/issues/2868",
+    "source_ids": [
+      "major:GI01"
+    ],
+    "title": "Gemini OpenAI SSE tool finish reason/index mismatch",
+    "kind": "repository_issue",
+    "state": "open",
+    "state_reason": "unknown",
+    "reported_versions": "gemini-3.7-flash / gemini-3.1-flash-lite-preview; curl",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "https://github.com/googleapis/python-genai/issues/2868#issuecomment-5365791929",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "interpretation": "维护者表示交工程调查；未确认修复；不是本轮重现。"
+  },
+  {
+    "id": "ISSUE-02",
+    "url": "https://github.com/anthropics/anthropic-sdk-python/issues/1940",
+    "source_ids": [
+      "major:AI01"
+    ],
+    "title": "message_delta stop_reason omission",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "not_planned",
+    "reported_versions": "SDK1.7.0 Python3.11.15 synthetic stream",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "https://github.com/anthropics/anthropic-sdk-python/issues/1940#issuecomment-6179579778",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "interpretation": "维护者否定实际API前提：每消息一个 message_delta 含 stop fields，需真实捕获才重开。不能当已知线上漏洞。"
+  },
+  {
+    "id": "ISSUE-03",
+    "url": "https://github.com/openai/openai-python/issues/3009",
+    "source_ids": [
+      "major:OI01"
+    ],
+    "title": "Manual reasoning replay",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "duplicate",
+    "reported_versions": "SDK2.29.0; gpt-5.3-codex/o4-mini reported",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "https://github.com/openai/openai-python/issues/3009#issuecomment-5737816662",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "interpretation": "维护者要求保留 output 原序并使用 JSON 序列化，合并到 openai-openapi#536；不要用删除 reasoning 的用户 workaround。"
+  },
+  {
+    "id": "ISSUE-04",
+    "url": "https://github.com/BerriAI/litellm/issues/28045",
+    "source_ids": [
+      "china:CN-I01"
+    ],
+    "title": "[Bug]: API: deepseek+Litellm+Claude Code Can NOT Use Thinking",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "completed",
+    "reported_versions": "unknown",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-05-19T03:40:14Z",
+    "closed_at": "2026-05-19T03:40:14Z",
+    "interpretation": "上游项目经验，未证明为TokenGo现有故障；关闭不等于已发布修复。"
+  },
+  {
+    "id": "ISSUE-05",
+    "url": "https://github.com/BerriAI/litellm/issues/31439",
+    "source_ids": [
+      "china:CN-I02"
+    ],
+    "title": "[Bug] DeepSeek anthropic-compatible /v1/messages: assistant messages missing reasoning_content cause 400 in thinking mode",
+    "kind": "repository_issue",
+    "state": "open",
+    "state_reason": "unknown",
+    "reported_versions": "unknown",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-08-06T23:02:13Z",
+    "closed_at": "unknown",
+    "interpretation": "上游项目经验，未证明为TokenGo现有故障；关闭不等于已发布修复。"
+  },
+  {
+    "id": "ISSUE-06",
+    "url": "https://github.com/BerriAI/litellm/issues/37629",
+    "source_ids": [
+      "china:CN-I03"
+    ],
+    "title": "[Bug]: DeepSeek thinking-mode warnings scale with replayed history and obscure useful logs",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "completed",
+    "reported_versions": "unknown",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-20T09:32:50Z",
+    "closed_at": "2026-10-20T09:32:50Z",
+    "interpretation": "上游项目经验，未证明为TokenGo现有故障；关闭不等于已发布修复。"
+  },
+  {
+    "id": "ISSUE-07",
+    "url": "https://github.com/BerriAI/litellm/issues/31279",
+    "source_ids": [
+      "china:CN-I04"
+    ],
+    "title": "[Bug]: `/v1/messages` adapter replays `thinking_blocks` to OpenAI-compatible backends, causing repetition loops on long tool chains",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "not_planned",
+    "reported_versions": "unknown",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-02T00:03:28Z",
+    "closed_at": "2026-10-02T00:03:28Z",
+    "interpretation": "上游项目经验，未证明为TokenGo现有故障；关闭不等于已发布修复。"
+  },
+  {
+    "id": "ISSUE-08",
+    "url": "https://github.com/BerriAI/litellm/issues/32783",
+    "source_ids": [
+      "china:CN-I05"
+    ],
+    "title": "[Bug]: Incorrect cost calculation for openai/z-ai/glm-5.2 via OpenAI-compatible provider (api_base), appears to ignore prompt caching",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "completed",
+    "reported_versions": "unknown",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-07-10T23:13:57Z",
+    "closed_at": "2026-07-10T23:13:57Z",
+    "interpretation": "上游项目经验，未证明为TokenGo现有故障；关闭不等于已发布修复。"
+  },
+  {
+    "id": "ISSUE-09",
+    "url": "https://github.com/BerriAI/litellm/issues/27439",
+    "source_ids": [
+      "ecosystem:E-I27439"
+    ],
+    "title": "DeepSeek V4 reasoning_effort (\"high\"/\"max\") not passed through to API — stripped to `thinking: {\"type\": \"enabled\"}`",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "completed",
+    "reported_versions": "Reporter: LiteLLM v1.83.x / then-main, May 2026; current affected releases not independently established",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-25T01:03:07Z",
+    "closed_at": "2026-10-25T01:03:07Z",
+    "interpretation": "Reporter reproduction is a source-specific hypothesis, not a verified TokenGo bug."
+  },
+  {
+    "id": "ISSUE-10",
+    "url": "https://github.com/vercel/ai/issues/20546",
+    "source_ids": [
+      "ecosystem:E-I20546"
+    ],
+    "title": "[BUG]: deepseek, moonshotai, alibaba, groq, xai: empty `tool_calls: []` on reasoning deltas still fragments reasoning streams (siblings of #20253)",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "completed",
+    "reported_versions": "Reporter: ai 7.0.95, openai-compatible 3.0.45 control; deepseek 3.0.40 / moonshotai 3.0.46 / alibaba 2.0.42 / groq 4.0.38 / xai 4.0.55",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-13T04:01:35Z",
+    "closed_at": "2026-09-10T20:41:15Z",
+    "interpretation": "Reporter reproduction is a source-specific hypothesis, not a verified TokenGo bug."
+  },
+  {
+    "id": "ISSUE-11",
+    "url": "https://github.com/openai/openai-python/issues/3201",
+    "source_ids": [
+      "ecosystem:E-I3201"
+    ],
+    "title": "Streaming tool_call deltas with duplicate indexes in first chunk are accumulated incorrectly",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "completed",
+    "reported_versions": "Reporter: openai-python v2.35.0; vLLM Kimi 2.6 speculative decoding; runtime version not established",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-09-10T20:07:04Z",
+    "closed_at": "2026-09-10T20:07:04Z",
+    "interpretation": "Reporter reproduction is a source-specific hypothesis, not a verified TokenGo bug."
+  },
+  {
+    "id": "ISSUE-12",
+    "url": "https://github.com/vercel/ai/pull/20253",
+    "source_ids": [
+      "ecosystem:E-I20253",
+      "ecosystem:E-PR20253"
+    ],
+    "title": "fix: prevent empty tool-call deltas from fragmenting OpenAI-compatible reasoning streams",
+    "kind": "pull_request",
+    "state": "closed",
+    "state_reason": "unknown",
+    "reported_versions": "Merged commit identified; release package version unknown",
+    "release_fix_version": "unknown",
+    "merged": true,
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-09-04T21:49:29Z",
+    "closed_at": "2026-09-03T19:28:13Z",
+    "interpretation": "Merged status checked independently of closed issue state.",
+    "merged_at": "2026-09-03T19:28:13Z",
+    "merge_commit_sha": "e5a22f085dba1ea859207142c58cd801de0f9bb6"
+  },
+  {
+    "id": "ISSUE-13",
+    "url": "https://github.com/openai/openai-python/issues/4063",
+    "source_ids": [
+      "ecosystem:E-I4063"
+    ],
+    "title": "ChatCompletionStream.get_final_completion() can return an incomplete result after an early EOF",
+    "kind": "repository_issue",
+    "state": "open",
+    "state_reason": "unknown",
+    "reported_versions": "Reporter traced then-current default branch, not a completed runtime reproduction; affected release range unknown",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-17T21:29:38Z",
+    "closed_at": "unknown",
+    "interpretation": "Reporter reproduction is a source-specific hypothesis, not a verified TokenGo bug."
+  },
+  {
+    "id": "ISSUE-14",
+    "url": "https://github.com/BerriAI/litellm/issues/48238",
+    "source_ids": [
+      "ecosystem:E-I48238"
+    ],
+    "title": "[Bug]:  Vertex Model Garden (vertex_ai/openai/...) streaming drops reasoning_content, extra tool calls and usage details",
+    "kind": "repository_issue",
+    "state": "open",
+    "state_reason": "unknown",
+    "reported_versions": "Reporter: LiteLLM v1.105.0; Vertex dedicated endpoint GLM-5.3 SGLang",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-25T12:18:06Z",
+    "closed_at": "unknown",
+    "interpretation": "Reporter reproduction is a source-specific hypothesis, not a verified TokenGo bug."
+  },
+  {
+    "id": "ISSUE-15",
+    "url": "https://github.com/BerriAI/litellm/pull/28134",
+    "source_ids": [
+      "ecosystem:E-PR28134"
+    ],
+    "title": "fix(deepseek): pass reasoning_effort value through to DeepSeek V4 API",
+    "kind": "pull_request",
+    "state": "closed",
+    "state_reason": "unknown",
+    "reported_versions": "Closed unmerged head identified; no released fix established",
+    "release_fix_version": "unknown",
+    "merged": false,
+    "maintainer_comment": "unknown",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "merged_at": "unknown",
+    "merge_commit_sha": "d95feddf98d9250bc320f6228f96c365a61b090e",
+    "interpretation": "Merged status checked independently of closed issue state."
+  },
+  {
+    "id": "ISSUE-16",
+    "url": "https://github.com/openai/openai-python/issues/2643",
+    "source_ids": [
+      "root:ROOT-I01"
+    ],
+    "title": "Cancel for streaming Responses",
+    "kind": "repository_issue",
+    "state": "closed",
+    "state_reason": "not_planned",
+    "reported_versions": "Initial report SDK commit 0d85ca08; no merged fix/release asserted",
+    "release_fix_version": "unknown",
+    "merged": "unknown",
+    "maintainer_comment": "https://github.com/openai/openai-python/issues/2643#issuecomment-6428176818",
+    "normative": false,
+    "tokengo_reproduced_this_collection": false,
+    "updated_at": "2026-10-26T21:50:37Z",
+    "interpretation": "维护者区分关闭foreground stream与background cancel；issue closed/not_planned不证明取消后usage精确结算。TokenGo现有background门禁保持，本轮不要求改客户端。"
+  }
+]

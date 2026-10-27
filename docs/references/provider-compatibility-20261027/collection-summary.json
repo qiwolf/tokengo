@@ -1,0 +1,37 @@
+{
+  "document_date": "2026-10-27",
+  "baseline_commit": "fff38c01e771fed0523cfeb22d08baa88ae11b70",
+  "provider_source_classes": 20,
+  "provider_count_definition": "13个现有profile + xAI/Mistral/Cohere + OpenRouter + Azure/Vertex/Bedrock；公共API与OAuth为子线路不重复计数",
+  "source_record_count": 73,
+  "url_record_count": 72,
+  "unique_url_count": 71,
+  "by_evidence_class": {
+    "official_documentation": 55,
+    "repository_issue": 14,
+    "pull_request": 3,
+    "project_code": 1
+  },
+  "by_read_status": {
+    "read": 68,
+    "partial": 4,
+    "failed": 1
+  },
+  "documentation_by_read_status": {
+    "read": 50,
+    "partial": 4,
+    "failed": 1
+  },
+  "issue_or_pr_unique_url_count": 16,
+  "issue_state_counts": {
+    "open": 4,
+    "closed": 12
+  },
+  "new_implementation_changes": false,
+  "production_or_client_changes": false,
+  "build_or_test_executed": false,
+  "live_inference_this_collection": false,
+  "source_code_read_only": true,
+  "supersedes": "2026-10-25的未重新核实结论不作为本次事实；历史真实调用如被引用只说明旧验收范围",
+  "scope": "按明确章节收集，不是全站全文镜像；partial/failed不计为完整已核验来源。精确版本、地区、账号与托管来源决定能力。"
+}

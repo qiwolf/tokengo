@@ -1,0 +1,719 @@
+{
+  "summary": {
+    "date": "2026-10-27",
+    "baseline_commit": "fff38c01e771fed0523cfeb22d08baa88ae11b70",
+    "research_findings": 39,
+    "work_items": 29,
+    "by_kind": {
+      "confirmed_static_gap": 14,
+      "verify_before_enable": 1,
+      "planned_contract_extension": 2,
+      "validation_debt": 1,
+      "planned_infrastructure": 2,
+      "optional_onboarding": 9
+    },
+    "core_items": 20,
+    "optional_items": 9,
+    "priority_counts": {
+      "P0": 3,
+      "P1": 14,
+      "P2": 12
+    },
+    "implemented_now": false,
+    "runtime_tests_in_this_research": false
+  },
+  "items": [
+    {
+      "id": "G01",
+      "title": "百炼原生Responses总量/答案上限与预占",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P0",
+      "package": "W02",
+      "research_refs": [
+        "china:CN-QW-01"
+      ],
+      "source_refs": [
+        "china:CN-S05"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs",
+        "crates/server/src/parameter_budgets.rs",
+        "crates/server/src/gateway.rs"
+      ],
+      "acceptance": "精确模型/部署商/协议分型；答案上限不得当总预算；未知思考预算用已验证总上界或拒绝；覆盖min16与incomplete。",
+      "notes": "是已确认文档与源码缺口；未证明当前生产发生低预占。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G02",
+      "title": "Gemini/Ark原生Chat签名与密文归属形态",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P0",
+      "package": "W03",
+      "research_refs": [
+        "major:MAJ-06",
+        "ecosystem:ECO-04"
+      ],
+      "source_refs": [
+        "ecosystem:E-D12",
+        "ecosystem:E-D14",
+        "major:GE01",
+        "major:GE02"
+      ],
+      "files": [
+        "crates/server/src/protocol_sessions.rs",
+        "crates/server/src/gateway.rs",
+        "crates/server/src/protocol/sse.rs"
+      ],
+      "acceptance": "识别tool_calls.extra_content.google.thought_signature及assistant.encrypted_content；正确来源原样续接，跨Key/来源/模型/代次拒绝；JSON/SSE均覆盖。",
+      "notes": "只确认字段形态覆盖不足，未执行越权复现，不能称已证实漏洞。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G03",
+      "title": "Ark滚动版本与签名文档冲突核实",
+      "status": "proposed_not_implemented",
+      "kind": "verify_before_enable",
+      "priority": "P0",
+      "package": "W01",
+      "research_refs": [
+        "ecosystem:ECO-05"
+      ],
+      "source_refs": [
+        "ecosystem:E-D12",
+        "ecosystem:E-D13",
+        "ecosystem:E-D14"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs",
+        "crates/server/src/protocol_config.rs"
+      ],
+      "acceptance": "文档日期/hash/模型修订各自记录；冲突不自动晋升能力；未取得新型号实测前维持限制，本地所有权不依赖供应方报错。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G04",
+      "title": "函数工具strict省略值的跨协议语义",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W04",
+      "research_refs": [
+        "major:MAJ-01"
+      ],
+      "source_refs": [
+        "major:OA02"
+      ],
+      "files": [
+        "crates/server/src/protocol/request.rs"
+      ],
+      "acceptance": "Chat到Responses省略strict保持非严格意图；反向按来源默认分型，可判定时物化、不可判定时拒绝；不静默重写schema。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G05",
+      "title": "通义/Kimi/GLM消息角色合同",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W05",
+      "research_refs": [
+        "china:CN-ROLE-01"
+      ],
+      "source_refs": [
+        "china:CN-S04",
+        "china:CN-S07",
+        "china:CN-S11"
+      ],
+      "files": [
+        "crates/server/src/message_roles.rs",
+        "crates/server/src/gateway.rs"
+      ],
+      "acceptance": "按来源/型号/协议处理developer与system限制；保留优先级折叠提示和原子拒绝；原生OpenAI不改。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G06",
+      "title": "百炼工作区域名的可靠合同选择",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W08",
+      "research_refs": [
+        "china:CN-QW-02"
+      ],
+      "source_refs": [
+        "china:CN-S04",
+        "china:CN-S05"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/protocol_config.rs",
+        "crates/web/src/pages/provider_keys.rs"
+      ],
+      "acceptance": "新官方域或显式profile正确选择合同；近似域、任意代理仍unknown；不以模型名/任意后缀赋能力。",
+      "notes": "当前可显式选择profile，不应误报为所有新域均不能调用。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G07",
+      "title": "DeepSeek原生Responses与强制工具约束",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "china:CN-DS-02"
+      ],
+      "source_refs": [
+        "china:CN-S01",
+        "china:CN-S03"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs",
+        "crates/server/src/protocol_config.rs"
+      ],
+      "acceptance": "原生Responses与已验收转换路径分别声明；思考+强制工具、无效状态和被忽略显式控制在上游前给明确结果。",
+      "notes": "不重复开发已完成developer/index/8call修复。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G08",
+      "title": "百炼工具选择与并行组合约束",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "china:CN-QW-03"
+      ],
+      "source_refs": [
+        "china:CN-S04",
+        "china:CN-S06"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs"
+      ],
+      "acceptance": "thinking、required、named、parallel=false按实际托管型号覆盖；不悄悄改auto或套用原厂规则。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G09",
+      "title": "Kimi原生Responses独立合同",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "china:CN-KM-02"
+      ],
+      "source_refs": [
+        "china:CN-S07",
+        "china:CN-S09"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs",
+        "crates/server/src/protocol/sse.rs"
+      ],
+      "acceptance": "Chat K3 required可用、K2系列仍按既有合同限制；原生Responses当前仅auto；无状态控制、summary事件、失败和完整output续接有专用fixture；不可表示时拒绝。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G10",
+      "title": "缓存读写与usage细分守恒",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W07",
+      "research_refs": [
+        "china:CN-KM-03"
+      ],
+      "source_refs": [
+        "china:CN-I05",
+        "china:CN-S07",
+        "china:CN-S09"
+      ],
+      "files": [
+        "crates/server/src/protocol/response.rs",
+        "crates/server/src/protocol/sse.rs",
+        "crates/server/src/upstream.rs",
+        "crates/server/src/db/billing.rs"
+      ],
+      "acceptance": "JSON/SSE读写细分和总量守恒；cache与reasoning子集不重复加总；成本未知保持未知；用户定价与来源成本分开。",
+      "notes": "已确认转换细分丢失风险，不直接推断用户账单已错。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G11",
+      "title": "GLM公共API/Coding Plan与新型号合同",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "china:CN-GL-01"
+      ],
+      "source_refs": [
+        "china:CN-S11",
+        "china:CN-S12",
+        "china:CN-S14"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs",
+        "crates/server/src/reasoning_capabilities.rs"
+      ],
+      "acceptance": "认证产品线分离；none等映射不可跨线路照搬；新型号只凭明确目录/文档注册。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G12",
+      "title": "GLM响应追踪元数据与语义字段区分",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W07",
+      "research_refs": [
+        "china:CN-GL-02"
+      ],
+      "source_refs": [
+        "china:CN-S11"
+      ],
+      "files": [
+        "crates/server/src/protocol/response.rs",
+        "crates/server/src/protocol/sse.rs"
+      ],
+      "acceptance": "request_id类型化保留；content_filter/搜索引用/媒体不能一并丢弃；未知字段不全局放开。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G13",
+      "title": "GLM工具/格式/stream交叉约束",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "china:CN-GL-03"
+      ],
+      "source_refs": [
+        "china:CN-S11",
+        "china:CN-S13"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts_china.rs"
+      ],
+      "acceptance": "required/named/json_schema与tool_stream组合按官方schema判定；文字/enum冲突留证，未核验不标支持。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G14",
+      "title": "Anthropic精确型号与API版本覆盖",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "major:MAJ-04"
+      ],
+      "source_refs": [
+        "major:AN01",
+        "major:AN03"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/reasoning_capabilities.rs"
+      ],
+      "acceptance": "新型号不泛化claude前缀；API版本、adaptive/legacy、forcedtool、签名、预热与采样交叉回归。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G15",
+      "title": "MiniMax跨协议省略thinking的默认值",
+      "status": "proposed_not_implemented",
+      "kind": "confirmed_static_gap",
+      "priority": "P1",
+      "package": "W06",
+      "research_refs": [
+        "ecosystem:ECO-01"
+      ],
+      "source_refs": [
+        "ecosystem:E-D01",
+        "ecosystem:E-D02"
+      ],
+      "files": [
+        "crates/server/src/protocol/request.rs",
+        "crates/server/src/parameter_contracts_china.rs"
+      ],
+      "acceptance": "M3 Chat省略开与Messages省略关不得被转换悄悄改变；显式值优先，M3.1独立合同。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G16",
+      "title": "MiniMax思考输出与回放方言",
+      "status": "proposed_not_implemented",
+      "kind": "planned_contract_extension",
+      "priority": "P2",
+      "package": "W09",
+      "research_refs": [
+        "ecosystem:ECO-02"
+      ],
+      "source_refs": [
+        "ecosystem:E-D01",
+        "ecosystem:E-D02"
+      ],
+      "files": [
+        "crates/server/src/protocol/request.rs",
+        "crates/server/src/protocol/response.rs",
+        "crates/server/src/protocol/sse.rs"
+      ],
+      "acceptance": "按已知来源区分split/no-split，完整assistant回放；不对任意正文用通用think正则，不伪造空reasoning。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G17",
+      "title": "Ollama/vLLM运行时能力身份",
+      "status": "proposed_not_implemented",
+      "kind": "planned_contract_extension",
+      "priority": "P2",
+      "package": "W08",
+      "research_refs": [
+        "ecosystem:ECO-07",
+        "ecosystem:ECO-08"
+      ],
+      "source_refs": [
+        "ecosystem:E-D07",
+        "ecosystem:E-D08",
+        "ecosystem:E-D09"
+      ],
+      "files": [
+        "crates/server/src/upstream.rs",
+        "crates/server/src/reasoning_capabilities.rs",
+        "crates/server/src/protocol_config.rs"
+      ],
+      "acceptance": "使用已授权标准API或人工确认的模型/运行时/template/parser信息；缺信息保持unknown，不要求控制后端或打开开发端点。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G18",
+      "title": "供应方SSE形态、SDK和真实来源验收矩阵",
+      "status": "proposed_not_implemented",
+      "kind": "validation_debt",
+      "priority": "P1",
+      "package": "W11",
+      "research_refs": [
+        "major:MAJ-07",
+        "ecosystem:ECO-03",
+        "ecosystem:ECO-06",
+        "ecosystem:ECO-10",
+        "ecosystem:ECO-11",
+        "ecosystem:ECO-12"
+      ],
+      "source_refs": [
+        "ecosystem:E-D03",
+        "ecosystem:E-D04",
+        "ecosystem:E-D05",
+        "ecosystem:E-D06",
+        "ecosystem:E-D14",
+        "ecosystem:E-I20546",
+        "ecosystem:E-I27439",
+        "ecosystem:E-I3201",
+        "ecosystem:E-I4063",
+        "ecosystem:E-PR20253",
+        "ecosystem:E-PR28134",
+        "major:GI01"
+      ],
+      "files": [
+        "crates/server/src/protocol/sse.rs",
+        "crates/server/tests",
+        "crates/server/src/parameter_contracts_china.rs"
+      ],
+      "acceptance": "覆盖空tool_calls、首帧同index片段、末帧/尾帧usage、EOF、错误；原始HTTP与支持SDK比较；无凭据仅fixture，不改客户端。",
+      "notes": "已正确实现的行为只补回归或实测，不计为现有bug。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G19",
+      "title": "版本化证据与字段处置注册表",
+      "status": "proposed_not_implemented",
+      "kind": "planned_infrastructure",
+      "priority": "P1",
+      "package": "W01",
+      "research_refs": [
+        "major:MAJ-04",
+        "ecosystem:ECO-05",
+        "ecosystem:ECO-08",
+        "china:CN-GL-01"
+      ],
+      "source_refs": [
+        "china:CN-S11",
+        "china:CN-S12",
+        "china:CN-S14",
+        "ecosystem:E-D08",
+        "ecosystem:E-D09",
+        "ecosystem:E-D12",
+        "ecosystem:E-D13",
+        "ecosystem:E-D14",
+        "major:AN01",
+        "major:AN03"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/parameter_contracts_inventory.json",
+        "crates/server/src/protocol_config.rs"
+      ],
+      "acceptance": "将文档/账号目录/人工确认/实测分离；每项规则有版本、来源和适用范围；非语义文档更新不全局重置会话。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G20",
+      "title": "兼容诊断与独立验证入口",
+      "status": "proposed_not_implemented",
+      "kind": "planned_infrastructure",
+      "priority": "P2",
+      "package": "W10",
+      "research_refs": [
+        "major:MAJ-02",
+        "major:MAJ-03",
+        "major:MAJ-12",
+        "china:CN-QW-02"
+      ],
+      "source_refs": [
+        "china:CN-S04",
+        "china:CN-S05",
+        "major:AN02",
+        "major:AN03",
+        "major:GE03",
+        "major:MI04",
+        "major:OA01",
+        "major:OA03",
+        "major:OI01"
+      ],
+      "files": [
+        "crates/server/src/routes/admin.rs",
+        "crates/server/src/routes/providers.rs",
+        "crates/web/src/pages/model_reasoning.rs",
+        "crates/web/src/pages/provider_keys.rs"
+      ],
+      "acceptance": "显示规则ID/来源/字段路径/原生或转换/证据等级；保存不等待远程探测；不暴露消息/凭据，不把用途当执行能力。",
+      "notes": "",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G21",
+      "title": "xAI显式来源与答案/思考/工具预算",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O01",
+      "research_refs": [
+        "major:MAJ-08"
+      ],
+      "source_refs": [
+        "major:XA01",
+        "major:XA02",
+        "major:XA03"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/parameter_budgets.rs"
+      ],
+      "acceptance": "先落实可见答案cap外的思考/工具预算及状态成本，再进行真实多轮工具验收。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G22",
+      "title": "Mistral文本思考块codec",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O02",
+      "research_refs": [
+        "major:MAJ-09"
+      ],
+      "source_refs": [
+        "major:MI01",
+        "major:MI02"
+      ],
+      "files": [
+        "crates/server/src/protocol/request.rs",
+        "crates/server/src/protocol/response.rs",
+        "crates/server/src/protocol/sse.rs"
+      ],
+      "acceptance": "ThinkChunk/TextChunk与字符串buffered/SSE一致，随机种子/工具/schema按来源合同。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G23",
+      "title": "Mistral connector与服务端工具执行器",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O03",
+      "research_refs": [
+        "major:MAJ-10"
+      ],
+      "source_refs": [
+        "major:MI03"
+      ],
+      "files": [
+        "crates/server/src/gateway.rs",
+        "crates/server/src/protocol"
+      ],
+      "acceptance": "多消息choices[].messages、引用、服务端工具和费用单独验收，不冒充函数工具。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G24",
+      "title": "Cohere V2原生执行器",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O04",
+      "research_refs": [
+        "major:MAJ-11"
+      ],
+      "source_refs": [
+        "major:CO01",
+        "major:CO02",
+        "major:CO03"
+      ],
+      "files": [
+        "crates/server/src/protocol/mod.rs",
+        "crates/server/src/gateway.rs"
+      ],
+      "acceptance": "/v2/chat envelope、strict_tools、documents、usage/billed_units、思考工具续接均有专用验收。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G25",
+      "title": "OpenRouter聚合合同与reasoning_details",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O05",
+      "research_refs": [
+        "ecosystem:ECO-09"
+      ],
+      "source_refs": [
+        "ecosystem:E-D10",
+        "ecosystem:E-D11"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/protocol_sessions.rs"
+      ],
+      "acceptance": "路由require_parameters、供应商身份及不透明细节原样；聚合回退不能跨源重放。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G26",
+      "title": "Gemini原生GenerateContent/Interactions",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O06",
+      "research_refs": [
+        "major:MAJ-12"
+      ],
+      "source_refs": [
+        "major:AN02",
+        "major:AN03",
+        "major:GE03",
+        "major:MI04"
+      ],
+      "files": [
+        "crates/server/src/protocol/mod.rs",
+        "crates/server/src/gateway.rs"
+      ],
+      "acceptance": "独立传输、状态/签名、媒体与费用，不能只解除兼容层白名单。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G27",
+      "title": "Azure部署和鉴权线路",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O07",
+      "research_refs": [
+        "root:ROOT-AZURE"
+      ],
+      "source_refs": [
+        "root:ROOT-AZ01",
+        "root:ROOT-AZ02"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/oauth_external.rs"
+      ],
+      "acceptance": "部署名映射、v1/preview、Key/Entra、区域和模型修订分别核验。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G28",
+      "title": "Google托管/Vertex认证与能力合同",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O08",
+      "research_refs": [
+        "root:ROOT-VERTEX"
+      ],
+      "source_refs": [
+        "root:ROOT-VX01",
+        "root:ROOT-VX02"
+      ],
+      "files": [
+        "crates/server/src/parameter_contracts.rs",
+        "crates/server/src/oauth_external.rs"
+      ],
+      "acceptance": "项目/区域/令牌/模型身份、OpenAPI工具schema与签名不套AI Studio合同。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    },
+    {
+      "id": "G29",
+      "title": "Bedrock Converse/兼容API项目",
+      "status": "proposed_not_implemented",
+      "kind": "optional_onboarding",
+      "priority": "P2",
+      "package": "O09",
+      "research_refs": [
+        "root:ROOT-BEDROCK"
+      ],
+      "source_refs": [
+        "root:ROOT-BR01",
+        "root:ROOT-BR02"
+      ],
+      "files": [
+        "crates/server/src/protocol/mod.rs",
+        "crates/server/src/gateway.rs"
+      ],
+      "acceptance": "Converse和兼容API分线路，原生事件/鉴权/签名/工具/usage有独立执行器验收。",
+      "notes": "尚未宣称完整支持；是新接入工作，不是既有生产缺陷。",
+      "live_verified_in_this_research": false
+    }
+  ]
+}
