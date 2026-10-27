@@ -287,7 +287,12 @@ mod tests {
             let converted = convert_request(Protocol::Chat, target, &chat).unwrap();
             let back = convert_request(target, Protocol::Chat, &converted).unwrap();
             assert_eq!(back["messages"], chat["messages"], "{target:?}");
-            assert_eq!(back["tools"], chat["tools"]);
+            let mut expected_tools = chat["tools"].clone();
+            // Responses needs explicit false to retain Chat's omitted default.
+            if target == Protocol::Responses {
+                expected_tools[0]["function"]["strict"] = json!(false);
+            }
+            assert_eq!(back["tools"], expected_tools);
         }
     }
     #[test]

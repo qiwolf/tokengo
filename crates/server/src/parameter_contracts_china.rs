@@ -59,8 +59,24 @@ fn dashscope_responses_thinking_disabled(ctx: &Context<'_>, body: &Value) -> boo
 }
 
 const KIMI_K3: &[&str] = &["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3"];
+/// Exact native Responses summary replay contract, independent of model branding.
+pub(crate) fn kimi_native_summary(ctx: &Context<'_>) -> bool {
+    !ctx.is_oauth && ctx.protocol == Protocol::Responses
+        && super::parameter_contracts::provider(ctx) == "moonshot"
+        && KIMI_K3.contains(&ctx.model)
+}
 const KIMI_CODE: &[&str] = &["kimi-k2.7-code", "kimi-k2.7-code-highspeed"];
-const GLM_MODELS: &[&str] = &["glm-5.3", "glm-5.2", "glm-5.1", "glm-5", "glm-4.7", "glm-4.6"];
+// Exact IDs in the public Chat schema, including the Flash schema branch.
+const GLM_MODELS: &[&str] = &["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx", "glm-5.2", "glm-5.1", "glm-5-turbo", "glm-5", "glm-4.7", "glm-4.6"];
+const DEEPSEEK_MODELS: &[&str] = &["deepseek-flash", "deepseek-v4-pro"];
+fn glm53(model: &str) -> bool { ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"].contains(&model) }
+fn glm_coding_plan(ctx: &Context<'_>) -> bool {
+    let Ok(url) = url::Url::parse(ctx.base_url) else { return false; };
+    url.scheme() == "https" && url.username().is_empty() && url.password().is_none()
+        && url.port().is_none() && url.query().is_none() && url.fragment().is_none()
+        && matches!(url.host_str(), Some("open.bigmodel.cn" | "api.z.ai"))
+        && url.path().trim_end_matches('/') == "/api/coding/paas/v4"
+}
 const ARK_SEED: &[&str] = &[
     "doubao-seed-evolving", "doubao-seed-2-1-pro-260915", "doubao-seed-2-1-lite-260915",
     "doubao-seed-2-1-pro-260628", "doubao-seed-2-1-turbo-260628",
@@ -124,24 +140,32 @@ fn effort_path(protocol: Protocol) -> &'static str {
 fn effort<'a>(ctx: &Context<'_>, body: &'a Value) -> Option<&'a str> {
     body.pointer(effort_path(ctx.protocol)).and_then(Value::as_str)
 }
+// Keep off adaptation independent of registry membership: adding a hosted
+// model must not grant it Qwen's enable_thinking alias or shrink its budget.
+fn dashscope_off_adapter(model: &str) -> bool {
+    QWEN_HYBRID.contains(&model)
+        || (QWEN_TOTAL_CAP.contains(&model) && model != "glm-5.3")
+        || model == "glm-5.2"
+}
 fn disabled(ctx: &Context<'_>, body: &Value) -> bool {
     let toggle = body.get("enable_thinking") == Some(&json!(false))
         || body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled");
     let off_effort = effort(ctx, body) == Some("none");
     match provider(ctx) {
         "siliconflow" => SF_SWITCH_MODELS.contains(&ctx.model) && (toggle || off_effort),
-        "dashscope" => known(ctx) && ctx.model != "glm-5.3" && (toggle || off_effort),
+        "dashscope" => dashscope_off_adapter(ctx.model) && (toggle || off_effort),
         "moonshot" => ctx.model == "kimi-k2.6" && (toggle || off_effort),
         "minimax" => ctx.model == "MiniMax-M3" && (toggle || off_effort),
         "ark" => ARK_SEED.contains(&ctx.model) && (toggle || off_effort || effort(ctx, body) == Some("minimal")),
-        "zai" => GLM_MODELS.contains(&ctx.model) && ctx.model != "glm-5.3"
+        "zai" => GLM_MODELS.contains(&ctx.model) && !glm53(ctx.model)
             && (toggle || off_effort || (ctx.model == "glm-5.2" && effort(ctx, body) == Some("minimal"))),
         _ => false,
     }
 }
 fn known(ctx: &Context<'_>) -> bool {
     match provider(ctx) {
-        "dashscope" => (ctx.protocol == Protocol::Responses && known_dashscope_responses(ctx.model)) || QWEN_HYBRID.contains(&ctx.model) || QWEN_TOTAL_CAP.contains(&ctx.model) || ctx.model == "glm-5.2",
+        "dashscope" => (ctx.protocol == Protocol::Responses && known_dashscope_responses(ctx.model)) || QWEN_HYBRID.contains(&ctx.model) || QWEN_TOTAL_CAP.contains(&ctx.model) || ["glm-5.2", "kimi-k3", "kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed", "MiniMax/MiniMax-M3.1-Flash", "deepseek-v4.1-flash-1017"].contains(&ctx.model),
+        "deepseek" => DEEPSEEK_MODELS.contains(&ctx.model),
         "moonshot" => KIMI_K3.contains(&ctx.model) || KIMI_CODE.contains(&ctx.model) || ctx.model == "kimi-k2.6",
         "zai" => GLM_MODELS.contains(&ctx.model),
         "minimax" => ["MiniMax-M3", "MiniMax-M3.1-Flash"].contains(&ctx.model),
@@ -158,7 +182,9 @@ fn known(ctx: &Context<'_>) -> bool {
 pub fn validate(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
     if !known(ctx) { return Ok(()); }
     match provider(ctx) {
+        "deepseek" => validate_deepseek(ctx, body),
         "mimo" => validate_mimo(ctx, body),
+        "moonshot" if ctx.protocol == Protocol::Responses && KIMI_K3.contains(&ctx.model) => validate_kimi_responses(ctx, body),
         "moonshot" if ctx.protocol == Protocol::Chat => validate_kimi(ctx, body),
         "zai" if ctx.protocol == Protocol::Chat => validate_glm(ctx, body),
         "minimax" if matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => validate_minimax(ctx, body),
@@ -174,6 +200,100 @@ pub fn validate(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
         "vllm" => validate_vllm(body),
         _ => Ok(()),
     }
+}
+// CN-DS-02: native Responses silently ignores unsupported intent; reject it
+// before transport. These checks do not change the configured Chat conversion.
+fn validate_deepseek(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    if ctx.protocol == Protocol::Chat {
+        if let Some(tools)=body.get("tools").and_then(Value::as_array) {
+            if tools.iter().any(|tool|tool.pointer("/function/strict")==Some(&json!(true))) {
+                let beta=url::Url::parse(ctx.base_url).is_ok_and(|url|url.scheme()=="https"
+                    && url.host_str()==Some("api.deepseek.com") && url.path().trim_end_matches('/')=="/beta"
+                    && url.port().is_none() && url.username().is_empty() && url.password().is_none()
+                    && url.query().is_none() && url.fragment().is_none());
+                if !beta {
+                    return Err(invalid("tools.function.strict", "strict mode requires the documented official DeepSeek Beta source; configure that source or a native Responses route in TokenGo, never downgrade strict"));
+                }
+                if tools.iter().any(|tool|tool["type"]!="function" || tool.pointer("/function/strict")!=Some(&json!(true))) {
+                    return Err(invalid("tools.function.strict", "DeepSeek Beta requires every function to be strict; mixed strict semantics are not rewritten"));
+                }
+            }
+        }
+        object(body, "/thinking")?;
+        one_of(body, "/thinking/type", &["enabled", "disabled"])?;
+        if body.pointer("/thinking/type").and_then(Value::as_str) == Some("enabled") && effort(ctx, body) == Some("none") {
+            return Err(invalid("thinking", "enabled conflicts with explicit reasoning_effort=none"));
+        }
+        let off = body.pointer("/thinking/type").and_then(Value::as_str) == Some("disabled")
+            || effort(ctx, body) == Some("none");
+        if !off && present(body, "/tool_choice").is_some_and(|v| v == "required" || v.is_object()) {
+            return Err(invalid("tool_choice", "DeepSeek required/named tools require explicitly disabled thinking"));
+        }
+        one_of(body, "/response_format/type", &["text", "json_object"])?;
+        return Ok(());
+    }
+    if ctx.protocol != Protocol::Responses { return Ok(()); }
+    for path in ["/previous_response_id", "/conversation", "/metadata", "/include", "/prompt", "/truncation", "/service_tier", "/safety_identifier", "/prompt_cache_key", "/prompt_cache_retention", "/context_management", "/stream_options", "/max_tool_calls", "/text/verbosity"] {
+        if present(body, path).is_some() { return Err(invalid(path, "not supported by native DeepSeek Responses; upstream would ignore this intent")); }
+    }
+    for path in ["/store", "/background"] {
+        boolean(body, path)?;
+        if present(body, path) == Some(&json!(true)) { return Err(invalid(path, "native DeepSeek Responses is stateless and synchronous")); }
+    }
+    boolean(body, "/parallel_tool_calls")?;
+    if body.get("parallel_tool_calls") == Some(&json!(false)) { return Err(invalid("parallel_tool_calls", "DeepSeek always enables parallel tool calling")); }
+    if present(body, "/reasoning/summary").is_some_and(|v| v != "none") { return Err(invalid("reasoning.summary", "DeepSeek generates raw reasoning, not a summary")); }
+    if let Some(items) = present(body, "/input").and_then(Value::as_array) {
+        for item in items {
+            let kind = item.get("type").and_then(Value::as_str).unwrap_or("message");
+            if !["message", "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output", "web_search_call"].contains(&kind) {
+                return Err(invalid("input", "native DeepSeek Responses ignores this input item type"));
+            }
+            if kind == "message" && item.get("role").is_some_and(|v| v == "developer") {
+                return Err(invalid("input.role", "native DeepSeek Responses treats developer as user and cannot preserve instruction priority"));
+            }
+            if kind == "message" {
+                if let Some(parts) = item.get("content").and_then(Value::as_array) {
+                    for part in parts {
+                        if !["input_text", "output_text", "input_image"].contains(&part["type"].as_str().unwrap_or("")) {
+                            return Err(invalid("input.content", "native DeepSeek Responses does not support this content type, including file inputs"));
+                        }
+                        if part["type"] == "input_image" && !matches!(item["role"].as_str(), Some("user")) {
+                            return Err(invalid("input.content", "native DeepSeek Responses images require a user message"));
+                        }
+                    }
+                }
+            }
+            if kind == "reasoning" && (present(item, "/summary").is_some_and(|v| !v.as_array().is_some_and(Vec::is_empty)) || present(item, "/encrypted_content").is_some()) {
+                return Err(invalid("input.reasoning", "DeepSeek accepts raw reasoning content, not summary or encrypted content"));
+            }
+        }
+    }
+    if let Some(tools) = present(body, "/tools").and_then(Value::as_array) {
+        for tool in tools {
+            let supported = tool["type"] == "function" || (tool["type"] == "custom" && tool["name"] == "apply_patch") || (tool["type"] == "web_search" && ctx.model == "deepseek-v4-pro");
+            if !supported { return Err(invalid("tools", "this tool type/model combination is ignored or unsupported by native DeepSeek Responses")); }
+        }
+    }
+    Ok(())
+}
+// CN-KM-02: K3 native Responses has its own effort/tool schema. Summary events
+// returned by Kimi remain native; no summary is synthesized into raw reasoning.
+fn validate_kimi_responses(_ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    one_of(body, "/tool_choice", &["auto"])?;
+    object(body, "/reasoning")?;
+    one_of(body, "/reasoning/effort", &["low", "high", "max"])?;
+    if present(body, "/reasoning/summary").is_some() { return Err(invalid("reasoning.summary", "not a documented Kimi native Responses request control")); }
+    for path in ["/previous_response_id", "/conversation", "/context_management"] {
+        if present(body, path).is_some() { return Err(invalid(path, "Kimi native Responses is stateless")); }
+    }
+    for path in ["/store", "/background"] {
+        boolean(body, path)?;
+        if present(body, path) == Some(&json!(true)) { return Err(invalid(path, "Kimi native Responses is stateless and synchronous")); }
+    }
+    integer(body, "/max_output_tokens", 1, 1048576)?;
+    one_of(body, "/text/format/type", &["json_schema"])?;
+    Ok(())
 }
 fn validate_mimo(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
     number(body, "/temperature", 0.0, 1.5)?;
@@ -263,15 +383,24 @@ fn validate_kimi(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
 }
 fn validate_glm(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
     object(body, "/thinking")?;
-    one_of(body, "/thinking/type", if ctx.model == "glm-5.3" { &["enabled"] } else { &["enabled", "disabled"] })?;
+    one_of(body, "/thinking/type", if matches!(ctx.model, "glm-5.3" | "glm-5.3-flash") { &["enabled"] } else { &["enabled", "disabled"] })?;
     boolean(body, "/thinking/clear_thinking")?;
     boolean(body, "/do_sample")?;
     boolean(body, "/tool_stream")?;
     number(body, "/temperature", 0.0, 1.0)?;
     number(body, "/top_p", 0.01, 1.0)?;
     integer(body, "/max_tokens", 1, 131072)?;
-    if ctx.model == "glm-5.3" {
-        one_of(body, "/reasoning_effort", &["low", "high", "max"])?;
+    one_of(body, "/tool_choice", &["auto"])?;
+    object(body, "/response_format")?;
+    one_of(body, "/response_format/type", &["text", "json_object"])?;
+    if body.get("tool_stream") == Some(&json!(true)) && !["glm-5.3", "glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6"].contains(&ctx.model) {
+        return Err(invalid("tool_stream", "not documented for this exact GLM model"));
+    }
+    if body.get("tool_stream") == Some(&json!(true)) && body.get("stream") != Some(&json!(true)) {
+        return Err(invalid("tool_stream", "requires stream=true"));
+    }
+    if glm53(ctx.model) {
+        one_of(body, "/reasoning_effort", if glm_coding_plan(ctx) { &["none", "minimal", "low", "medium", "high", "xhigh", "max"] } else { &["low", "high", "max"] })?;
     } else if ctx.model == "glm-5.2" {
         one_of(body, "/reasoning_effort", &["none", "minimal", "low", "medium", "high", "xhigh", "max"])?;
     }
@@ -308,6 +437,34 @@ fn validate_minimax(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
     Ok(())
 }
 fn validate_dashscope(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
+    // CN-QW-03: Qwen required is not guaranteed even with thinking disabled.
+    if ctx.protocol == Protocol::Chat {
+        boolean(body, "/parallel_tool_calls")?;
+        if ["kimi-k3", "kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed", "MiniMax/MiniMax-M3.1-Flash", "deepseek-v4.1-flash-1017"].contains(&ctx.model) && effort(ctx, body) == Some("none") {
+            return Err(invalid("reasoning_effort", "this exact deployed model has no documented none alias; the gateway does not invent a thinking-off mapping"));
+        }
+        if ["kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed", "MiniMax/MiniMax-M3.1-Flash"].contains(&ctx.model)
+            && (body.get("enable_thinking") == Some(&json!(false)) || body.pointer("/thinking/type").is_some_and(|v| v == "disabled")) {
+            return Err(invalid("thinking", "this exact hosted model does not declare a thinking-off control"));
+        }
+        if QWEN_HYBRID.contains(&ctx.model) {
+            if body.get("tool_choice").is_some_and(|v| v == "required") {
+                return Err(invalid("tool_choice", "this exact Qwen model does not guarantee required tool calls"));
+            }
+            let explicit_off = effort(ctx, body) == Some("none")
+                || (effort(ctx, body).is_none() && body.get("enable_thinking") == Some(&json!(false)));
+            if body.get("tool_choice").is_some_and(Value::is_object) && !explicit_off {
+                return Err(invalid("tool_choice", "named tools require explicitly disabled thinking for this hybrid model"));
+            }
+        }
+        if ["kimi-k3", "MiniMax/MiniMax-M3.1-Flash"].contains(&ctx.model) && body.get("parallel_tool_calls") == Some(&json!(false)) {
+            return Err(invalid("parallel_tool_calls", "this deployed model cannot guarantee sequential tools"));
+        }
+        if ["kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed"].contains(&ctx.model) && present(body, "/parallel_tool_calls").is_some() {
+            return Err(invalid("parallel_tool_calls", "not supported by this deployed model"));
+        }
+        if ctx.model == "MiniMax/MiniMax-M3.1-Flash" { one_of(body, "/tool_choice", &["auto"])?; }
+    }
     boolean(body, "/enable_thinking")?;
     object(body, "/thinking")?;
     boolean(body, "/tool_stream")?;
@@ -473,7 +630,7 @@ pub fn adapt(ctx: &Context<'_>, body: &mut Value) -> Result<bool, String> {
     }
     let mut changed = body.clone();
     match provider(ctx) {
-        "dashscope" if ctx.model != "glm-5.3" && matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => {
+        "dashscope" if dashscope_off_adapter(ctx.model) && matches!(ctx.protocol, Protocol::Chat | Protocol::Messages) => {
             if ctx.protocol == Protocol::Chat {
                 if present(&changed, "/enable_thinking").is_some_and(|v| v != &json!(false)) {
                     return Err(invalid("enable_thinking", "explicit none conflicts with enabled thinking"));
@@ -552,6 +709,20 @@ mod tests {
     use super::*;
     fn ctx<'a>(profile: &'a str, model: &'a str, protocol: Protocol) -> Context<'a> {
         Context { base_url: "https://proxy.example.test/v1", model, protocol, api_version: None, is_oauth: false, profile_override: Some(profile) }
+    }
+    #[test]
+    fn p1_deepseek_strict_requires_documented_beta_source_and_uniform_tools() {
+        let mut c=ctx("deepseek","deepseek-flash",Protocol::Chat);
+        let body=json!({"tools":[{"type":"function","function":{"name":"f","strict":true,"parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}}]});
+        c.base_url="https://api.deepseek.com/v1";
+        assert!(validate(&c,&body).is_err());
+        c.base_url="https://api.deepseek.com/beta";
+        assert!(validate(&c,&body).is_ok());
+        let mut mixed=body.clone();mixed["tools"].as_array_mut().unwrap().push(json!({"type":"function","function":{"name":"g","strict":false}}));
+        assert!(validate(&c,&mixed).is_err());
+        c.base_url="https://proxy.invalid/beta";assert!(validate(&c,&body).is_err());
+        let nonstrict=json!({"tools":[{"type":"function","function":{"name":"f","strict":false}}]});
+        assert!(validate(&c,&nonstrict).is_ok());
     }
     #[test]
     fn unknown_model_and_unknown_native_extensions_are_not_removed_or_rejected() {
@@ -717,4 +888,78 @@ mod tests {
         assert_eq!(output_semantics(&r,&json!({"max_output_tokens":32})),OutputSemantics::Total);
     }
 
+}
+
+#[cfg(test)]
+mod p1_combinations {
+    use super::*;
+    fn ctx<'a>(p: &'a str, m: &'a str, protocol: Protocol) -> Context<'a> {
+        Context { base_url:"https://proxy.test/v1", model:m, protocol, api_version:None, is_oauth:false, profile_override:Some(p) }
+    }
+    #[test]
+    fn deepseek_native_responses_rejects_ignored_intent() {
+        let c=ctx("deepseek","deepseek-flash",Protocol::Responses);
+        for bad in [json!({"parallel_tool_calls":false}),json!({"reasoning":{"summary":"auto"}}),json!({"text":{"verbosity":"low"}}),json!({"tools":[{"type":"mcp"}]}),json!({"previous_response_id":"r"}),json!({"store":true}),json!({"input":[{"role":"developer","content":"rules"}]}),json!({"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"summary"}]}]}),json!({"input":[{"type":"unknown_item"}]}),json!({"input":[{"role":"user","content":[{"type":"input_file","file_id":"f"}]}]})] {
+            assert!(validate(&c,&bad).is_err(),"{bad}");
+        }
+        for good in [json!({"input":[{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"original"}]}]}),json!({}),json!({"parallel_tool_calls":true}),json!({"store":false}),json!({"reasoning":{"effort":"none"},"tool_choice":"required"}),json!({"text":{"format":{"type":"json_schema","schema":{}}}})] { assert!(validate(&c,&good).is_ok(),"{good}"); }
+    }
+    #[test]
+    fn deepseek_chat_forcing_requires_explicit_off() {
+        let c=ctx("deepseek","deepseek-v4-pro",Protocol::Chat);
+        for choice in [json!("required"),json!({"type":"function","function":{"name":"f"}})] {
+            assert!(validate(&c,&json!({"tool_choice":choice})).is_err());
+            assert!(validate(&c,&json!({"tool_choice":choice,"thinking":{"type":"disabled"}})).is_ok());
+        }
+        assert!(validate(&c,&json!({"tool_choice":"auto"})).is_ok());
+        assert!(validate(&c,&json!({"response_format":{"type":"json_schema"}})).is_err());
+    }
+    #[test]
+    fn qwen_tool_controls_are_model_and_mode_specific() {
+        let c=ctx("dashscope","qwen3.8-max",Protocol::Chat);
+        for off in [true,false] { assert!(validate(&c,&json!({"enable_thinking":off,"tool_choice":"required"})).is_err()); }
+        assert!(validate(&c,&json!({"tool_choice":{"type":"function","function":{"name":"f"}}})).is_err());
+        assert!(validate(&c,&json!({"enable_thinking":false,"tool_choice":{"type":"function","function":{"name":"f"}}})).is_ok());
+        assert!(validate(&c,&json!({"enable_thinking":false,"reasoning_effort":"high","tool_choice":{"type":"function","function":{"name":"f"}}})).is_err());
+        assert!(validate(&ctx("dashscope","kimi-k3",Protocol::Chat),&json!({"parallel_tool_calls":false})).is_err());
+        assert!(validate(&ctx("dashscope","deepseek-v4.1-flash-1017",Protocol::Chat),&json!({"tool_choice":"required"})).is_ok());
+    }
+    #[test]
+    fn kimi_responses_is_separate_from_chat_k3_and_k2() {
+        let c=ctx("moonshot","kimi-k3",Protocol::Responses);
+        for bad in [json!({"tool_choice":"required"}),json!({"reasoning":{"effort":"none"}}),json!({"reasoning":{"summary":"auto"}}),json!({"previous_response_id":"r"}),json!({"store":true}),json!({"background":true})] { assert!(validate(&c,&bad).is_err(),"{bad}"); }
+        assert!(validate(&c,&json!({"tool_choice":"auto","reasoning":{"effort":"max"}})).is_ok());
+        assert!(validate(&ctx("moonshot","kimi-k3",Protocol::Chat),&json!({"tool_choice":"required"})).is_ok());
+        assert!(validate(&ctx("moonshot","kimi-k2.6",Protocol::Chat),&json!({"tool_choice":"required"})).is_err());
+    }
+    #[test]
+    fn glm_format_tools_and_product_line_are_explicit() {
+        for m in ["glm-5.3","glm-5.3-flash","glm-5.3-flashx","glm-5-turbo"] {
+            let c=ctx("zai",m,Protocol::Chat);
+            for bad in [json!({"tool_choice":"required"}),json!({"response_format":{"type":"json_schema"}}),json!({"tool_stream":true})] { assert!(validate(&c,&bad).is_err(),"{m}: {bad}"); }
+            let stream=validate(&c,&json!({"tool_stream":true,"stream":true,"tool_choice":"auto","response_format":{"type":"json_object"}}));
+            assert_eq!(stream.is_ok(), ["glm-5.3","glm-5-turbo"].contains(&m));
+            assert!(validate(&c,&json!({"tool_choice":"auto","response_format":{"type":"json_object"}})).is_ok());
+        }
+        let mut c=ctx("zai","glm-5.3",Protocol::Chat);
+        assert!(validate(&c,&json!({"reasoning_effort":"none"})).is_err());
+        c.base_url="https://open.bigmodel.cn/api/coding/paas/v4";
+        assert!(validate(&c,&json!({"reasoning_effort":"none"})).is_ok());
+        assert!(validate(&c,&json!({"thinking":{"type":"disabled"}})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod p1_hosted_none {
+    use super::*;
+    #[test]
+    fn hosted_models_do_not_inherit_qwen_none_adapter() {
+        for model in ["kimi-k3", "kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed", "MiniMax/MiniMax-M3.1-Flash", "deepseek-v4.1-flash-1017"] {
+            let c=Context {base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",model,protocol:Protocol::Chat,api_version:None,is_oauth:false,profile_override:None};
+            let mut body=json!({"reasoning_effort":"none","future":"preserve"});let before=body.clone();
+            assert_eq!(adapt(&c,&mut body),Ok(false),"{model}");assert_eq!(body,before,"{model}");
+            assert!(validate(&c,&body).is_err(),"{model}: unsupported off must be explicit rejection");
+            assert_eq!(output_semantics(&c,&body),output_semantics(&c,&json!({})),"{model}: unsupported off must not shrink reservation");
+        }
+    }
 }

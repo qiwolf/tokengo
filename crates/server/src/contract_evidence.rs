@@ -4,7 +4,7 @@ use crate::{parameter_contracts::{self, Context}, protocol::Protocol};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const REVISION: &str = "2026-10-27-p0.1";
+pub const REVISION: &str = "2026-10-27-p1.1";
 
 #[derive(Debug, Serialize)]
 pub struct ProviderContractIdentity<'a> {
@@ -58,6 +58,90 @@ const RULES: &[ContractEvidence] = &[
         source: "https://docs.volcengine.com/docs/ark/api-schema-upgrade-notice?lang=zh",
         read_at: "2026-10-27", scope: "opaque-history ownership only; model/version acceptance remains unverified",
         confidence: "documentation_conflict", review_trigger: "resolve schema-versus-guide conflict on exact source version",
+    },
+    ContractEvidence {
+        rule_id: "G04", provider: "openai", protocol: Protocol::Responses,
+        field: "tools[].strict", source: "https://developers.openai.com/api/docs/guides/function-calling",
+        read_at: "2026-10-27", scope: "client protocol conversion only; proven strict schema subset, ambiguous defaults require native transport",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id: "G05-qwen", provider: "dashscope", protocol: Protocol::Chat,
+        field: "messages[].role", source: "https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions",
+        read_at: "2026-10-27", scope: "exact Chat model role table; QwQ/QVQ reject privileged instructions",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id: "G05-kimi", provider: "moonshot", protocol: Protocol::Chat,
+        field: "messages[].role", source: "https://platform.kimi.ai/docs/api/chat",
+        read_at: "2026-10-27", scope: "exact native Chat model role table, not hosted-brand inference",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id: "G05-glm", provider: "zai", protocol: Protocol::Chat,
+        field: "messages[].role", source: "https://docs.bigmodel.cn/api-reference/模型-api/对话补全",
+        read_at: "2026-10-27", scope: "exact public/Coding Plan model and role contracts",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id: "G05-siliconflow", provider: "siliconflow", protocol: Protocol::Chat,
+        field: "messages[].role", source: "https://docs.siliconflow.cn/docs/api/chat-completions-post",
+        read_at: "2026-10-27", scope: "independent hosted Qwen/Qwen3.8-27B role/single-system-prefix observations; no official-Qwen or other hosted-model inference",
+        confidence: "documentation_and_exact_source_observation", review_trigger: "hosted role schema or exact model change",
+    },
+    ContractEvidence {
+        rule_id: "G14", provider: "anthropic", protocol: Protocol::Messages,
+        field: "thinking/tool_choice", source: "https://platform.claude.com/docs/en/build-with-claude/thinking",
+        read_at: "2026-10-27", scope: "exact Mythos5.1 always-on/forced-tool/sampling/output limits; no account entitlement grant",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id: "G15-chat", provider: "minimax", protocol: Protocol::Chat,
+        field: "thinking", source: "https://platform.minimax.io/docs/api-reference/text-openai-api",
+        read_at: "2026-10-27", scope: "exact M3/M3.1 Chat↔Messages defaults/explicit mode and effort preservation",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id: "G15-messages", provider: "minimax", protocol: Protocol::Messages,
+        field: "thinking", source: "https://platform.minimax.io/docs/api-reference/text-anthropic-api",
+        read_at: "2026-10-27", scope: "native defaults differ; operator mapping defaults resolved before provider omission defaults",
+        confidence: "documentation_and_static_code", review_trigger: "exact model/API schema or source contract change",
+    },
+    ContractEvidence {
+        rule_id:"G07-chat", provider:"deepseek", protocol:Protocol::Chat,
+        field:"thinking/tool_choice/tools.function.strict", source:"https://api-docs.deepseek.com/guides/tool_calls/",
+        read_at:"2026-10-27", scope:"exact Chat models; forced thinking conflicts and documented official Beta strict source only",
+        confidence:"documentation_and_static_code", review_trigger:"source model/protocol schema change",
+    },
+    ContractEvidence {
+        rule_id:"G07-responses", provider:"deepseek", protocol:Protocol::Responses,
+        field:"native Responses intent controls", source:"https://api-docs.deepseek.com/guides/responses_api/",
+        read_at:"2026-10-27", scope:"exact models; ignored state/role/media intent rejected before transport",
+        confidence:"documentation_and_static_code", review_trigger:"source model/protocol schema change",
+    },
+    ContractEvidence {
+        rule_id:"G08", provider:"dashscope", protocol:Protocol::Chat,
+        field:"tool_choice/parallel_tool_calls", source:"https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions",
+        read_at:"2026-10-27", scope:"exact source/model combinations; hosted Kimi/MiniMax never inherit Qwen off rules",
+        confidence:"documentation_and_static_code", review_trigger:"source model/protocol schema change",
+    },
+    ContractEvidence {
+        rule_id:"G09", provider:"moonshot", protocol:Protocol::Responses,
+        field:"native request and full summary history", source:"https://platform.kimi.com/docs/api/responses",
+        read_at:"2026-10-27", scope:"exact K3 native models; independent complete summary proof, not raw thinking",
+        confidence:"documentation_and_static_code", review_trigger:"source model/protocol schema change",
+    },
+    ContractEvidence {
+        rule_id:"G11", provider:"zai", protocol:Protocol::Chat,
+        field:"reasoning_effort API line", source:"https://docs.bigmodel.cn/cn/guide/capabilities/thinking",
+        read_at:"2026-10-27", scope:"public versus exact official Coding Plan endpoints; no proxy product-line guess",
+        confidence:"documentation_and_static_code", review_trigger:"source model/protocol schema change",
+    },
+    ContractEvidence {
+        rule_id:"G13", provider:"zai", protocol:Protocol::Chat,
+        field:"tool_choice/response_format/tool_stream", source:"https://docs.bigmodel.cn/api-reference/模型-api/对话补全",
+        read_at:"2026-10-27", scope:"exact public schema including Flash subtype; stream constraints and schema/text conflict preserved",
+        confidence:"documentation_and_static_code", review_trigger:"source model/protocol schema change",
     },
 ];
 

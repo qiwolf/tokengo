@@ -1761,10 +1761,29 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             } else {
                 match (req.endpoint.protocol(), upstream_protocol) {
                     (Some(from), Some(to)) => {
-                        match crate::protocol::convert_request(from, to, &req.body) {
+                        let conversion_contract=parameter_context(channel,channel.upstream_model(name),to,protocols,false);
+                        let conversion_input=if crate::parameter_contracts::minimax_thinking_conversion(&conversion_contract,from)
+                            && req.body.get("thinking").is_none_or(Value::is_null)
+                        {
+                            // Mapping defaults outrank provider omission defaults, but
+                            // never an explicit native thinking control. Only this source
+                            // path needs another private copy; native traffic stays on
+                            // the original generic converter path.
+                            let mut input=req.body.clone();
+                            if let Err(note)=crate::reasoning_capabilities::apply_defaults_and_validate(
+                                &state.conn(),channel.id.0,name,channel.upstream_model(name),from,&mut input,
+                            ) {
+                                last_policy_error=Some(ApiError::bad_request(note));continue;
+                            }
+                            Some(input)
+                        }else{None};
+                        let conversion_input=conversion_input.as_ref().unwrap_or(&req.body);
+                        match crate::parameter_contracts::convert_request_for_source(
+                            &conversion_contract,from,conversion_input,
+                        ) {
                             Ok(mut body) => {
                                 if let Err(note) = crate::reasoning_capabilities::restore_disable_intent(
-                                    &state.conn(), channel.id.0, name, from, to, &req.body, &mut body,
+                                    &state.conn(), channel.id.0, name, from, to, conversion_input, &mut body,
                                 ) {
                                     last_policy_error = Some(ApiError::bad_request(note));
                                     continue;
@@ -2607,6 +2626,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 attempt_timeout,
                                 &mut guard,
                                 pin_key.is_some(),
+                                candidate_pin.as_ref().map(|pin| crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(), pin)).transpose()?.unwrap_or_default(),
                             )
                             .await
                             {
@@ -4012,7 +4032,7 @@ async fn buffer_passthrough(
                 }
             }
             if let Some((state,owner,pin))=provenance {
-                let mut artifacts=crate::protocol_sessions::ArtifactCollector::default();artifacts.value(&validated);
+                let mut artifacts=match crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(),pin) {Ok(v)=>v,Err(error)=>{let mut invalid=invalid_buffer(crate::protocol_sessions::persistence_note(&error));invalid.4=usage;return invalid;}};artifacts.value(&validated);
                 if let Err(error)=artifacts.persist(&state.conn(),owner,pin){let mut invalid=invalid_buffer(crate::protocol_sessions::persistence_note(&error));invalid.4=usage;return invalid;}
             }
             usage_from_value(&v)
@@ -4079,7 +4099,7 @@ async fn buffer_responses_stream(
     };
     let bytes=match serde_json::to_vec(&converted) {Ok(b)=>b,Err(_)=>return fail("Invalid collected Responses JSON".into())};
     if let Some((state,owner,pin))=provenance {
-        let mut artifacts=crate::protocol_sessions::ArtifactCollector::default();artifacts.value(&value);
+        let mut artifacts=match crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(),pin) {Ok(v)=>v,Err(error)=>return fail(crate::protocol_sessions::persistence_note(&error))};artifacts.value(&value);
         if let Err(error)=artifacts.persist(&state.conn(),owner,pin) {return fail(crate::protocol_sessions::persistence_note(&error));}
     }
     let response=Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE,"application/json")
@@ -4188,9 +4208,9 @@ struct PreparedStream {
     artifacts:crate::protocol_sessions::ArtifactCollector,
 }
 async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Protocol,client:crate::protocol::Protocol,
-    remaining:Duration,idle:Duration,guard:&mut RequestGuard,track_artifacts:bool)->Result<PreparedStream,String> {
+    remaining:Duration,idle:Duration,guard:&mut RequestGuard,track_artifacts:bool,artifacts:crate::protocol_sessions::ArtifactCollector)->Result<PreparedStream,String> {
     let mut prepared=PreparedStream {observer:crate::protocol::sse::Observer::new(source),
-        transcoder:(source!=client).then(||crate::protocol::sse::Transcoder::new(source,client)),prefix:Bytes::new(),eof:false,artifacts:Default::default()};
+        transcoder:(source!=client).then(||crate::protocol::sse::Transcoder::new(source,client)),prefix:Bytes::new(),eof:false,artifacts};
     let deadline=tokio::time::Instant::now()+remaining;
     let mut prefix=Vec::new();
     loop {

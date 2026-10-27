@@ -47,9 +47,11 @@ pub fn resolve_anonymous(
     candidates: &[Pin],
     body: &Value,
 ) -> db::Result<Option<(String, Pin)>> {
-    if !matches!(bounded_values(body), Ok(values) if !values.is_empty()) {
-        return Ok(None);
-    }
+    let Ok(values) = bounded_values(body) else { return Ok(None); };
+    // A candidate-specific summary proof may establish ownership, but an empty
+    // generic digest set never does. No explicit owner is searched here.
+    let summaries = summary_items(body);
+    if values.is_empty() && summaries.is_empty() { return Ok(None); }
     let mut found: Option<(String, Pin)> = None;
     let mut visited = std::collections::BTreeSet::new();
     for pin in candidates.iter().filter(|p| matches!(p.protocol, Protocol::Chat | Protocol::Responses)) {
@@ -57,6 +59,7 @@ pub fn resolve_anonymous(
         if !visited.insert(owner.clone()) {
             continue;
         }
+        if values.is_empty() && summary_policy(c, pin)? != SummaryPolicy::Kimi { continue; }
         if verify_artifacts(c, &owner, pin, body)? {
             if found.is_some() {
                 return Ok(None);
@@ -343,6 +346,77 @@ fn artifact_key(owner: &str, pin: &Pin, value: &str) -> String {
     let bytes = serde_json::json!([owner, pin, value]).to_string();
     format!("{:x}", Sha256::digest(bytes.as_bytes()))
 }
+/// A structural discriminator keeps these proofs disjoint from the legacy
+/// opaque string domain. Hash the full original item; never derive raw thinking.
+fn summary_key(owner: &str, pin: &Pin, item: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::json!([owner, pin, {"kind":"kimi_summary_v1","summary":item}]).to_string();
+    format!("{:x}", Sha256::digest(bytes.as_bytes()))
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SummaryPolicy { InvalidSource, Legacy, Kimi }
+/// Invalid sources never fall back to legacy verification. Legacy is reserved
+/// for a currently valid native Responses source that does not use this codec.
+fn summary_policy(c: &rusqlite::Connection, pin: &Pin) -> db::Result<SummaryPolicy> {
+    if pin.protocol != Protocol::Responses || pin.channel <= 0 { return Ok(SummaryPolicy::InvalidSource); }
+    let Some(channel) = db::channels::get(c, tokengo_shared::ChannelId(pin.channel))? else { return Ok(SummaryPolicy::InvalidSource); };
+    if !channel.enabled || !channel.provider_enabled { return Ok(SummaryPolicy::InvalidSource); }
+    let generation: i64 = c.query_row("SELECT binding_generation FROM channels WHERE id=?1", [pin.channel], |r| r.get(0))?;
+    if generation != pin.generation { return Ok(SummaryPolicy::InvalidSource); }
+    let caps = crate::protocol_config::load(c, pin.channel)?;
+    if !caps.native.contains(&Protocol::Responses) { return Ok(SummaryPolicy::InvalidSource); }
+    let kimi = crate::parameter_contracts_china::kimi_native_summary(&crate::parameter_contracts::Context {
+        base_url: &channel.base_url, model: &pin.upstream_model, protocol: pin.protocol,
+        api_version: None, is_oauth: false, profile_override: caps.parameter_profile.as_deref(),
+    });
+    Ok(if kimi { SummaryPolicy::Kimi } else { SummaryPolicy::Legacy })
+}
+/// Only Responses item envelopes are inspected, not metadata, tool arguments or
+/// arbitrary nested user content. A non-plain reasoning item without ciphertext
+/// needs its own summary proof, including malformed or empty summary claims.
+fn summary_items(value: &Value) -> Vec<&Value> {
+    fn visit<'a>(value: &'a Value, items: &mut Vec<&'a Value>) {
+        if items.len() > 512 { return; }
+        match value {
+            Value::Array(values) => for value in values { visit(value, items); },
+            Value::Object(_) => {
+                if value["type"] == "reasoning"
+                    && !value.get("encrypted_content").and_then(Value::as_str).is_some_and(|s| !s.is_empty())
+                    && !crate::protocol::is_plain_reasoning(value)
+                { items.push(value); }
+                for field in ["response", "output", "input", "item", "messages", "content"] {
+                    if let Some(value) = value.get(field) { visit(value, items); }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut items = vec![]; visit(value, &mut items); items
+}
+fn valid_summary(item: &Value) -> bool {
+    let Some(object) = item.as_object() else { return false; };
+    object.keys().all(|key| matches!(key.as_str(), "type"|"id"|"status"|"summary"|"encrypted_content"|"content"))
+        && item["type"] == "reasoning"
+        && item.get("status").is_none_or(|v| v == "completed")
+        && item.get("id").is_none_or(|v| v.as_str().is_some_and(|s| !s.trim().is_empty() && !s.chars().any(char::is_control)))
+        && item.get("encrypted_content").is_none_or(Value::is_null)
+        && item.get("content").is_none_or(|v| v.as_array().is_some_and(Vec::is_empty))
+        && item["summary"].as_array().is_some_and(|parts| !parts.is_empty() && parts.iter().all(|part| {
+            part.as_object().is_some_and(|map| map.len() == 2)
+                && part["type"] == "summary_text" && part["text"].is_string()
+        }))
+}
+fn bounded_summaries(value: &Value) -> Result<Vec<Value>, ()> {
+    let items = summary_items(value);
+    if items.len() > 512 { return Err(()); }
+    let mut bytes = 0usize;
+    for item in &items {
+        if !valid_summary(item) { return Err(()); }
+        let size = item.to_string().len(); bytes = bytes.saturating_add(size);
+        if size > 1 << 20 || bytes > 16 << 20 { return Err(()); }
+    }
+    Ok(items.into_iter().cloned().collect())
+}
 // Only inspect documented Chat state paths. Function arguments, tool results,
 // provider metadata and user text cannot create ownership artifacts.
 fn chat_opaque_present(message: &Value) -> bool {
@@ -453,6 +527,16 @@ pub fn verify_artifacts(
     let Ok(values) = bounded_values(body) else {
         return Ok(false);
     };
+    let summaries = if summary_items(body).is_empty() { vec![] } else {
+        match summary_policy(c, pin)? {
+            SummaryPolicy::InvalidSource => return Ok(false),
+            SummaryPolicy::Legacy => vec![],
+            SummaryPolicy::Kimi => match bounded_summaries(body) { Ok(values) => values, Err(()) => return Ok(false) },
+        }
+    };
+    if values.len() + summaries.len() > 512
+        || values.iter().map(String::len).sum::<usize>() + summaries.iter().map(|v| v.to_string().len()).sum::<usize>() > 16 << 20
+    { return Ok(false); }
     db::in_tx(c, |c| {
         let now = db::now_ms();
         cleanup(c, now)?;
@@ -460,7 +544,8 @@ pub fn verify_artifacts(
             return Ok(false);
         }
         let digests: std::collections::BTreeSet<_> =
-            values.iter().map(|v| artifact_key(owner, pin, v)).collect();
+            values.iter().map(|v| artifact_key(owner, pin, v))
+                .chain(summaries.iter().map(|v| summary_key(owner, pin, v))).collect();
         for digest in &digests {
             let exists: bool = c.query_row(
                 "SELECT EXISTS(SELECT 1 FROM protocol_artifacts WHERE owner=?1 AND key_digest=?2)",
@@ -489,12 +574,35 @@ pub struct ArtifactCollector {
     signatures: std::collections::HashMap<u64, String>,
     redacted: std::collections::HashMap<u64, String>,
     pending: Vec<String>,
+    pending_summary: Vec<Value>,
+    summary_enabled: bool,
     // (choice index, optional tool index); None is Ark message ciphertext.
     chat: std::collections::HashMap<(u64, Option<u64>), String>,
     overflowed: bool,
 }
 impl ArtifactCollector {
+    /// Select the source codec before seeing provider output. Default retains
+    /// the pre-existing opaque collector for every other provider.
+    pub fn for_source(c: &rusqlite::Connection, pin: &Pin) -> db::Result<Self> {
+        Ok(Self { summary_enabled: summary_policy(c, pin)? == SummaryPolicy::Kimi, ..Self::default() })
+    }
     pub fn value(&mut self, v: &Value) {
+        self.value_opaque(v);
+        self.summaries(v);
+    }
+    fn summaries(&mut self, v: &Value) {
+        if self.overflowed || !self.summary_enabled { return; }
+        // Invalid summary shapes never become authority. Other providers' native
+        // output stays untouched; their summary fields are not issued below.
+        if let Ok(values) = bounded_summaries(v) {
+            self.pending_summary.extend(values);
+            if self.pending.len() + self.pending_summary.len() > 512
+                || self.pending.iter().map(String::len).sum::<usize>()
+                    + self.pending_summary.iter().map(|v| v.to_string().len()).sum::<usize>() > 16 << 20
+            { self.overflowed = true; }
+        }
+    }
+    fn value_opaque(&mut self, v: &Value) {
         if self.overflowed {
             return;
         }
@@ -581,8 +689,12 @@ impl ArtifactCollector {
                     | "response.created"
                     | "message_start"
             ) {
-                self.value(&v);
+                self.value_opaque(&v);
             }
+
+            // Summary deltas/parts/added events cannot issue replay authority.
+            if event == "response.output_item.done" { self.summaries(&v["item"]); }
+            if event == "response.completed" { self.summaries(&v["response"]); }
 
             if event == "content_block_start" && v["content_block"]["type"] == "redacted_thinking" {
                 if self.signatures.len() + self.redacted.len() >= 128 {
@@ -627,8 +739,9 @@ impl ArtifactCollector {
             }
         }
         if self.overflowed
-            || self.pending.len() > 512
+            || self.pending.len() + self.pending_summary.len() > 512
             || self.pending.iter().map(String::len).sum::<usize>()
+                + self.pending_summary.iter().map(|v| v.to_string().len()).sum::<usize>()
                 + self.signatures.values().map(String::len).sum::<usize>()
                 + self.redacted.values().map(String::len).sum::<usize>()
                 + self.chat.values().map(String::len).sum::<usize>()
@@ -650,9 +763,10 @@ impl ArtifactCollector {
         limits: Limits,
     ) -> db::Result<()> {
         if self.overflowed
-            || self.pending.len() > 512
+            || self.pending.len() + self.pending_summary.len() > 512
             || self.pending.iter().any(|v| v.len() > 1 << 20)
             || self.pending.iter().map(String::len).sum::<usize>()
+                + self.pending_summary.iter().map(|v| v.to_string().len()).sum::<usize>()
                 + self.signatures.values().map(String::len).sum::<usize>()
                 + self.redacted.values().map(String::len).sum::<usize>()
                 + self.chat.values().map(String::len).sum::<usize>()
@@ -661,10 +775,9 @@ impl ArtifactCollector {
             return Err(error("Opaque artifact count or size bound exceeded"));
         }
         if pin.protocol == Protocol::Chat && self.pending.is_empty() { return Ok(()); }
-        let digests: std::collections::BTreeSet<_> = self
-            .pending
-            .iter()
-            .map(|v| artifact_key(owner, pin, v))
+        let issue_summary = !self.pending_summary.is_empty() && summary_policy(c, pin)? == SummaryPolicy::Kimi;
+        let digests: std::collections::BTreeSet<_> = self.pending.iter().map(|v| artifact_key(owner, pin, v))
+            .chain(self.pending_summary.iter().filter(|_| issue_summary).map(|v| summary_key(owner, pin, v)))
             .collect();
         db::in_tx(c, |c| {
             cleanup(c, now)?;
@@ -693,6 +806,7 @@ impl ArtifactCollector {
             Ok(())
         })?;
         self.pending.clear();
+        self.pending_summary.clear();
         Ok(())
     }
 }

@@ -130,7 +130,9 @@ async fn deepseek_chat_and_responses_preserve_instructions_alias_usage_and_wire_
 async fn deepseek_responses_function_call_and_output_history_round_trip() {
     let f = Fixture::new("deepseek", true).await;
     let mut first = request(Protocol::Responses, false, false);
-    let tools = json!([{"type":"function","name":"sum","description":"Sum a number","parameters":{"type":"object","properties":{"a":{"type":"integer"}},"required":["a"],"additionalProperties":false}}]);
+    // This history fixture intentionally requests non-strict tools. Strict
+    // default/Beta-source admission has separate contract coverage.
+    let tools = json!([{"type":"function","name":"sum","description":"Sum a number","strict":false,"parameters":{"type":"object","properties":{"a":{"type":"integer"}},"required":["a"],"additionalProperties":false}}]);
     first["tools"] = tools.clone();
     let (code, wire) = f.call(Protocol::Responses, first.clone()).await;
     assert_eq!(code, 200, "{wire}");

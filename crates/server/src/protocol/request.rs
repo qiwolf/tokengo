@@ -415,6 +415,67 @@ pub(super) fn encode_messages(
     }
     Ok(())
 }
+// This is a proof of an already-strict, deliberately small schema subset, not
+// OpenAI's unpublished normalization/fallback algorithm. Never rewrite optional
+// fields, additionalProperties, refs or unknown constraints to force a match.
+fn already_strict_tool_schema(schema: &Value) -> bool {
+    fn node(schema: &Value, depth: usize, properties_left: &mut usize) -> bool {
+        if depth > 8 { return false; }
+        let Some(map) = schema.as_object() else { return false; };
+        for key in ["title", "description"] {
+            if map.get(key).is_some_and(|v| !v.is_string()) { return false; }
+        }
+        if let Some(branches) = map.get("anyOf") {
+            return map.keys().all(|k| ["anyOf", "title", "description"].contains(&k.as_str()))
+                && branches.as_array().is_some_and(|a| !a.is_empty() && a.len() <= 16
+                    && a.iter().all(|v| node(v, depth + 1, properties_left)));
+        }
+        let kind = match map.get("type") {
+            Some(Value::String(kind)) => kind.as_str(),
+            Some(Value::Array(types)) if types.len() == 2 => {
+                let Some(kind) = types.iter().find(|v| v.as_str() != Some("null")).and_then(Value::as_str) else { return false; };
+                if !types.iter().any(|v| v.as_str() == Some("null")) { return false; }
+                kind
+            }
+            _ => return false,
+        };
+        match kind {
+            "object" => {
+                if !map.keys().all(|k| ["type", "title", "description", "properties", "required", "additionalProperties"].contains(&k.as_str()))
+                    || map.get("additionalProperties") != Some(&Value::Bool(false)) { return false; }
+                let (Some(properties), Some(required)) = (map.get("properties").and_then(Value::as_object), map.get("required").and_then(Value::as_array)) else { return false; };
+                if properties.len() > *properties_left || required.len() != properties.len() { return false; }
+                *properties_left -= properties.len();
+                if !properties.keys().all(|name| required.iter().filter(|v| v.as_str() == Some(name.as_str())).count() == 1) { return false; }
+                properties.values().all(|v| node(v, depth + 1, properties_left))
+            }
+            "array" => map.keys().all(|k| ["type", "title", "description", "items"].contains(&k.as_str()))
+                && map.get("items").is_some_and(|v| node(v, depth + 1, properties_left)),
+            "string" | "number" | "integer" | "boolean" | "null" => {
+                map.keys().all(|k| ["type", "title", "description", "enum"].contains(&k.as_str()))
+                    && map.get("enum").is_none_or(|v| v.as_array().is_some_and(|a| !a.is_empty() && a.len() <= 64 && a.iter().all(|v| {
+                        if v.is_null() {
+                            return kind == "null" || schema["type"].as_array().is_some();
+                        }
+                        match kind {
+                            "string" => v.is_string(),
+                            "number" => v.is_number(),
+                            "integer" => v.is_i64() || v.is_u64(),
+                            "boolean" => v.is_boolean(),
+                            _ => false,
+                        }
+                    })))
+            }
+            _ => false,
+        }
+    }
+    // Keep far below provider schema size/property/depth limits. Larger or more
+    // expressive schemas require the native Responses route to resolve defaults.
+    schema.get("type").and_then(Value::as_str) == Some("object")
+        && schema.to_string().len() <= 16 * 1024
+        && node(schema, 0, &mut 64)
+}
+
 fn tools(from: Protocol, to: Protocol, v: &Value) -> Result<Value, String> {
     let mut out = Vec::new();
     for tool in v.as_array().ok_or("tools must be an array")? {
@@ -461,16 +522,26 @@ fn tools(from: Protocol, to: Protocol, v: &Value) -> Result<Value, String> {
         } else {
             "parameters"
         }] = schema;
-        if let Some(strict) = f.get("strict") {
-            if !strict.is_boolean() {
-                return Err("strict must be boolean".into());
+        let strict = match f.get("strict") {
+            Some(Value::Bool(strict)) => *strict,
+            Some(_) => return Err("strict must be boolean".into()),
+            None if from == Protocol::Responses => {
+                // The public Responses API attempts strict normalization and may
+                // fall back. Only an already-compatible subset is provable here.
+                if !already_strict_tool_schema(&target[if to == Protocol::Messages { "input_schema" } else { "parameters" }]) {
+                    return Err("Responses omitted strict cannot be converted losslessly for this schema; select a native Responses route in TokenGo".into());
+                }
+                true
             }
-            if to == Protocol::Messages && strict == true {
-                return Err("Strict function semantics cannot be converted to Messages".into());
-            }
-            if to != Protocol::Messages {
-                target["strict"] = strict.clone();
-            }
+            None => false,
+        };
+        if to == Protocol::Messages && strict {
+            return Err("Strict function semantics cannot be converted to Messages; select a native Responses route in TokenGo".into());
+        }
+        if to != Protocol::Messages
+            && (to == Protocol::Responses || from == Protocol::Responses || f.get("strict").is_some())
+        {
+            target["strict"] = json!(strict);
         }
         out.push(if to == Protocol::Chat {
             json!({"type":"function","function":target})

@@ -45,14 +45,74 @@ pub fn provider(ctx: &Context<'_>) -> &'static str {
         (Some("api.deepseek.com"), "" | "/v1" | "/beta" | "/anthropic/v1") => "deepseek",
         (Some("dashscope.aliyuncs.com"), "/compatible-mode/v1" | "/apps/anthropic/v1")
         | (Some("dashscope-intl.aliyuncs.com"), "/compatible-mode/v1") => "dashscope",
-        (Some("api.moonshot.ai"), "/v1") => "moonshot",
-        (Some("open.bigmodel.cn"), "/api/paas/v4") | (Some("api.z.ai"), "/api/paas/v4") => "zai",
+        (Some("api.moonshot.ai" | "api.moonshot.cn"), "/v1") => "moonshot",
+        (Some("open.bigmodel.cn"), "/api/paas/v4") | (Some("api.z.ai"), "/api/paas/v4")
+        | (Some("open.bigmodel.cn"), "/api/coding/paas/v4") | (Some("api.z.ai"), "/api/coding/paas/v4") => "zai",
         (Some("api.minimax.io"), "/v1" | "/anthropic/v1") => "minimax",
         (Some("ark.cn-beijing.volces.com"), "/api/v3") => "ark",
         (Some("api.siliconflow.cn"), "/v1") => "siliconflow",
         (Some("api.xiaomimimo.com"), "/v1" | "/anthropic/v1") => "mimo",
         _ => "unknown",
     }
+}
+
+/// Preserve defaults of the selected provider's source protocol during a
+/// conversion. This does not alter native requests or infer a model family.
+pub(crate) fn minimax_thinking_conversion(ctx: &Context<'_>, from: Protocol) -> bool {
+    !ctx.is_oauth && provider(ctx)=="minimax"
+        && matches!((from,ctx.protocol),(Protocol::Chat,Protocol::Messages)|(Protocol::Messages,Protocol::Chat))
+        && matches!(ctx.model,"MiniMax-M3"|"MiniMax-M3.1-Flash")
+}
+
+pub fn convert_request_for_source(ctx: &Context<'_>, from: Protocol, original: &Value) -> Result<Value, String> {
+    if !minimax_thinking_conversion(ctx, from) {
+        return crate::protocol::convert_request(from,ctx.protocol,original);
+    }
+    let explicit = original.get("thinking").filter(|v|!v.is_null());
+    if let Some(thinking) = explicit {
+        let object=thinking.as_object().ok_or("MiniMax thinking must be an object")?;
+        if object.len()!=1 || !matches!(thinking["type"].as_str(),Some("adaptive" | "disabled")) {
+            return Err("MiniMax thinking conversion requires the documented type-only adaptive/disabled shape; select its native protocol for other fields".into());
+        }
+        if ctx.model=="MiniMax-M3.1-Flash" && thinking["type"]=="disabled" {
+            return Err("MiniMax-M3.1-Flash cannot disable thinking".into());
+        }
+    }
+    let source_effort=match from { Protocol::Chat=>original.get("reasoning_effort"),Protocol::Messages=>original.pointer("/output_config/effort"),_=>None }
+        .filter(|v|!v.is_null()).map(|v|v.as_str().filter(|s|matches!(*s,"none"|"low"|"medium"|"high"|"xhigh"|"max"))
+            .ok_or("MiniMax effort has no documented cross-protocol mapping; select its native protocol")).transpose()?;
+    let explicit_off=source_effort==Some("none");
+    if explicit_off && (ctx.model=="MiniMax-M3.1-Flash" || explicit.is_some_and(|v|v["type"]!="disabled")) {
+        return Err("MiniMax explicit none conflicts with the selected model or thinking mode".into());
+    }
+    let mut input=original.clone();
+    input.as_object_mut().ok_or("Request must be an object")?.remove("thinking");
+    // Extract only the documented effort field. Other output_config fields
+    // still go through the generic converter's strict format validation.
+    if original.get("reasoning_effort").is_some() || original.pointer("/output_config/effort").is_some() {
+        if from==Protocol::Chat { input.as_object_mut().unwrap().remove("reasoning_effort"); }
+        else if let Some(config)=input.get_mut("output_config").and_then(Value::as_object_mut) {
+            config.remove("effort");
+            if config.is_empty() { input.as_object_mut().unwrap().remove("output_config"); }
+        }
+    }
+    let mut outgoing=crate::protocol::convert_request(from,ctx.protocol,&input)?;
+    if let Some(thinking)=explicit {
+        outgoing["thinking"]=thinking.clone();
+    } else if ctx.model=="MiniMax-M3" {
+        outgoing["thinking"]=json!({"type":if explicit_off || from==Protocol::Messages {"disabled"}else{"adaptive"}});
+    }
+    if let Some(effort)=source_effort.filter(|value|*value!="none") {
+        if ctx.protocol==Protocol::Chat { outgoing["reasoning_effort"]=json!(effort); }
+        else {
+            if outgoing.get("output_config").is_none() {outgoing["output_config"]=json!({});}
+            outgoing["output_config"]["effort"]=json!(effort);
+        }
+    }
+    if outgoing.pointer("/thinking/type").and_then(Value::as_str)!=Some("disabled") {
+        return Err("MiniMax active-thinking output/history has no lossless Chat/Messages codec on this route; select the matching native protocol in TokenGo instead of changing client fields".into());
+    }
+    Ok(outgoing)
 }
 
 fn value<'a>(body: &'a Value, key: &str) -> Option<&'a Value> {
@@ -87,7 +147,7 @@ fn gpt6(model: &str) -> bool {
     matches!(model, "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna")
 }
 fn claude_current(model: &str) -> bool {
-    matches!(model, "claude-fable-5-1" | "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5")
+    matches!(model, "claude-fable-5-1" | "claude-mythos-5-1" | "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5")
 }
 fn claude_extended(model: &str) -> bool {
     matches!(model, "claude-opus-4-5" | "claude-sonnet-4-5" | "claude-haiku-4-5")
@@ -203,12 +263,12 @@ fn validate_anthropic(ctx: &Context<'_>, body: &Value) -> Result<(), String> {
         if matches!(effort, Some("none" | "adaptive")) {
             return Err("Claude output_config.effort is distinct from a thinking mode; none/adaptive are not native effort values".into());
         }
-        if matches!(ctx.model, "claude-opus-5-5" | "claude-fable-5-1" | "claude-sonnet-5-5") && forced {
+        if matches!(ctx.model, "claude-opus-5-5" | "claude-fable-5-1" | "claude-mythos-5-1" | "claude-sonnet-5-5") && forced {
             return Err("This exact Claude model rejects forced tool use; keep native intent rather than silently changing tool_choice".into());
         }
         match (ctx.model, thinking_type) {
             (_, Some("enabled")) => return Err("This exact Claude model is adaptive-only; do not invent a manual thinking budget".into()),
-            ("claude-opus-5-5" | "claude-fable-5-1", Some("disabled" | "between_tools")) => return Err("Thinking cannot be disabled on this exact Claude model".into()),
+            ("claude-opus-5-5" | "claude-fable-5-1" | "claude-mythos-5-1", Some("disabled" | "between_tools")) => return Err("Thinking cannot be disabled on this exact Claude model".into()),
             ("claude-sonnet-5-5", Some("disabled")) => return Err("Claude Sonnet 5.5 does not support disabled; between_tools is a different, not fully-off mode".into()),
             ("claude-haiku-5-5", Some("between_tools")) => return Err("Claude Haiku 5.5 does not support between_tools".into()),
             _ => {}
@@ -380,9 +440,47 @@ mod tests {
         Context { base_url:url, model, protocol, api_version:None, is_oauth:false, profile_override:None }
     }
     #[test]
+    fn p1_minimax_effort_bridge_keeps_native_levels_and_modes_separate() {
+        for model in ["MiniMax-M3","MiniMax-M3.1-Flash"] {
+            let c=Context{model,profile_override:Some("minimax"),..ctx("https://example.invalid/v1",model,Protocol::Messages)};
+            let body=json!({"model":"logical","messages":[{"role":"user","content":"hi"}],"max_tokens":64,"reasoning_effort":"low","thinking":{"type":"disabled"}});
+            if model=="MiniMax-M3.1-Flash" {
+                assert!(convert_request_for_source(&c,Protocol::Chat,&body).is_err());
+                let native=Context{protocol:Protocol::Chat,..c};
+                let raw=json!({"model":"logical","messages":[],"thinking":{"type":"adaptive"},"reasoning_effort":"max"});
+                assert_eq!(convert_request_for_source(&native,Protocol::Chat,&raw).unwrap(),raw);
+                continue;
+            }
+            let converted=convert_request_for_source(&c,Protocol::Chat,&body).unwrap();
+            assert_eq!(converted["output_config"]["effort"],"low");
+            let reverse=Context{protocol:Protocol::Chat,..c};
+            let body=json!({"model":"logical","messages":[{"role":"user","content":"hi"}],"max_tokens":64,"output_config":{"effort":"max"},"thinking":{"type":"disabled"}});
+            assert_eq!(convert_request_for_source(&reverse,Protocol::Messages,&body).unwrap()["reasoning_effort"],"max");
+        }
+    }
+    #[test]
+    fn p1_anthropic_mythos_and_coding_lines_have_exact_contracts() {
+        let mut c=ctx("https://api.anthropic.com/v1","claude-mythos-5-1",Protocol::Messages);
+        assert!(validate(&c,&json!({"tool_choice":{"type":"any"}})).is_err());
+        assert!(validate(&c,&json!({"thinking":{"type":"disabled"}})).is_err());
+        assert!(validate(&c,&json!({"thinking":{"type":"enabled","budget_tokens":2048},"max_tokens":4096})).is_err());
+        assert!(validate(&c,&json!({"thinking":{"type":"adaptive"},"temperature":0.1})).is_err());
+        assert!(validate(&c,&json!({"thinking":{"type":"adaptive"},"max_tokens":128001})).is_err());
+        assert!(validate(&c,&json!({"thinking":{"type":"adaptive"},"max_tokens":128000})).is_ok());
+        c.api_version=Some("2026-10-21");
+        assert!(validate(&c,&json!({"temperature":1})).is_err());
+        let unknown=ctx("https://api.anthropic.com/v1","claude-future-unknown",Protocol::Messages);
+        assert!(validate(&unknown,&json!({"thinking":{"type":"disabled"},"temperature":0.1})).is_ok());
+        for url in ["https://open.bigmodel.cn/api/coding/paas/v4","https://api.z.ai/api/coding/paas/v4"] {
+            assert_eq!(provider(&ctx(url,"glm-5.3",Protocol::Chat)),"zai");
+        }
+        assert_eq!(provider(&ctx("https://api.z.ai.attacker.invalid/api/coding/paas/v4","glm-5.3",Protocol::Chat)),"unknown");
+        assert_eq!(provider(&ctx("https://api.moonshot.cn/v1","kimi-k3",Protocol::Responses)),"moonshot");
+    }
+    #[test]
     fn versioned_evidence_identity_does_not_grant_runtime_capabilities() {
         let a = describe(&ctx("https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-2-0-pro", Protocol::Chat));
-        assert_eq!(a["contract_evidence"]["revision"], "2026-10-27-p0.1");
+        assert_eq!(a["contract_evidence"]["revision"], "2026-10-27-p1.1");
         assert_eq!(a["contract_evidence"]["identity"]["model"], "doubao-seed-2-0-pro");
         assert_eq!(a["contract_evidence"]["identity"]["authentication_line"], "externally_configured_credentials");
         assert_eq!(a["contract_evidence"]["version_verification"], "required_before_new_capability");

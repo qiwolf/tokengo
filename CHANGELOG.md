@@ -2,6 +2,13 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
+## 未发布 — 2026-10-27 多厂商兼容第二批（W04–W06）
+
+- 保留工具 strict 三态：Chat/Messages 省略值转 Responses 显式 false；Responses 省略值仅在 schema 已严格可证明时转 Chat true，其余在 TokenGo 选择原生路线，不静默收紧或降级。
+- 补精确 Qwen/Kimi/GLM 前导文本 developer、来源/型号参数组合、GLM Coding Plan、Claude Mythos5.1；实测后独立补硅基流动 Qwen27B 角色适配，托管型号不继承其他品牌的关闭思考能力。
+- Kimi K3 原生 Responses 完整 summary 历史新增来源绑定证明，保留 JSON/SSE 原形及其他来源已有显式历史行为。MiniMax M3 关闭思考跨协议可用，active 跨协议先拒绝，完整方言留待 W09。
+- DeepSeek strict 明确要求文档所列官方 Beta 来源及统一严格函数；普通 `/v1` 或未知代理不自动切端点。只改 TokenGo，不修改客户端、生产配置或数据库。范围与限制见[第二批验收记录](docs/acceptance/2026-10-27-provider-p1.md)。本条不代表发布或部署。
+
 ## 未发布 — 2026-10-27 多厂商兼容第一批
 
 - 按精确来源/协议/型号区分百炼原生Responses输出预算；仅答案或未知语义要求可信总上界，最终请求在副本完成计量及合同复核，失败不修改原请求。
