@@ -1070,3 +1070,94 @@ async fn catalog_purpose_is_display_only_and_optional_updates_preserve_or_clear_
     assert_eq!(db::model_routes::list(&f.state.conn()).unwrap(),before_routes);
     assert_eq!(db::kinds::all(&f.state.conn()).unwrap(),before_kinds);assert_eq!(settings(),before_settings);
 }
+
+#[tokio::test]
+async fn new_unknown_model_catalog_purpose_round_trips_without_changing_runtime_contract() {
+    let f = Fixture::new().await;
+    let name = "gpt-6.1-terra";
+    let display_name = "GPT 6.1 Terra · 工作模型";
+    let (status, created) = f.req("POST", "/api/channels", json!({
+        "name":"new subscription model", "base_url":"http://127.0.0.1:1",
+        "key":"fixed-terra-test-secret", "models":[{"model":name,"upstream":name}]
+    })).await;
+    assert_eq!(status, 200, "{created}");
+    let channel = created["id"].as_i64().unwrap();
+    let provider = f.provider("Terra purpose fixture").await;
+    f.assign(channel, Some(provider)).await;
+    {
+        let c = f.state.conn();
+        tokengo_server::protocol_config::save(&c, channel, &tokengo_server::protocol_config::Capabilities {
+            native: vec![tokengo_server::protocol::Protocol::Responses],
+            allow_conversion: true,
+            ..Default::default()
+        }).unwrap();
+        db::route_policy::save(&c, name, &db::route_policy::RoutePolicy {
+            channel_ids: Some(vec![channel]), retry_times: Some(0), include_in_auto: Some(false),
+            ..Default::default()
+        }).unwrap();
+        let mut user = db::identity::user(&c, 1).unwrap().unwrap();
+        user.policy.allowed_models = Some(vec![name.into()]);
+        user.policy.allowed_channels = Some(vec![channel]);
+        db::identity::update_user(&c, &user).unwrap();
+        let mut key = db::identity::keys(&c, 1).unwrap().remove(0);
+        key.policy.allowed_models = Some(vec![name.into()]);
+        key.policy.allowed_channels = Some(vec![channel]);
+        db::identity::update_key(&c, &key).unwrap();
+        db::model_access::set_display_name(&c, name, display_name).unwrap();
+        assert!(db::kinds::get(&c, name).unwrap().is_none(), "new model has no learned or manual kind");
+        assert_eq!(db::model_access::catalog_purpose(&c, name).unwrap(), "");
+        let route = db::model_routes::routes_for(&c, name).unwrap().unwrap();
+        assert_eq!(route.kind, tokengo_shared::ModelKind::Unknown);
+        assert_eq!(route.kind_source, tokengo_shared::KindSource::Unknown);
+    }
+    let protected = || {
+        protected_connection_snapshot(&f.state.conn()).into_iter()
+            .filter(|(table, _)| table != "settings").collect::<Vec<_>>()
+    };
+    let settings = || db::settings::all(&f.state.conn()).unwrap().into_iter()
+        .filter(|(key, _)| !key.starts_with("model_catalog_purpose_v1:")).collect::<Vec<_>>();
+    let before_protected = protected();
+    let before_settings = settings();
+    let before_routes = db::model_routes::list(&f.state.conn()).unwrap();
+    let before_kinds = db::kinds::all(&f.state.conn()).unwrap();
+    let mut before_public = f.models().await;
+    for model in before_public["data"].as_array_mut().unwrap() { model.as_object_mut().unwrap().remove("created"); }
+    for purpose in ["chat", ""] {
+        let (status, saved) = f.req("PUT", "/api/model-presentation?model=gpt-6.1-terra",
+            json!({"display_name":display_name,"purpose":purpose})).await;
+        assert_eq!(status, 200, "{saved}");
+        assert_eq!(saved["model"], name);
+        assert_eq!(saved["display_name"], display_name);
+        assert_eq!(saved["catalog_purpose"], purpose);
+        assert_eq!(saved["catalog_purpose_label"], if purpose == "chat" { "对话" } else { "" });
+        let (status, routes) = f.req("GET", "/api/model-routes", Value::Null).await;
+        assert_eq!(status, 200, "{routes}");
+        let model = routes["models"].as_array().unwrap().iter().find(|model| model["name"] == name).unwrap();
+        assert_eq!(model["name"], name);
+        assert_eq!(model["display_name"], display_name);
+        assert_eq!(model["kind"], "");
+        assert_eq!(model["kind_label"], "还没定");
+        assert_eq!(model["catalog_purpose"], purpose);
+        assert_eq!(model["catalog_purpose_label"], if purpose == "chat" { "对话" } else { "" });
+        let (status, providers) = f.req("GET", "/api/providers", Value::Null).await;
+        assert_eq!(status, 200, "{providers}");
+        let row = providers["providers"].as_array().unwrap().iter().find(|row| row["id"] == provider).unwrap();
+        let model = row["models"].as_array().unwrap().iter().find(|model| model["name"] == name).unwrap();
+        assert_eq!(model["display_name"], display_name);
+        assert_eq!(model["kind"], "");
+        assert_eq!(model["kind_label"], "还没定");
+        assert_eq!(model["catalog_purpose"], purpose);
+        assert_eq!(model["catalog_purpose_label"], if purpose == "chat" { "对话" } else { "" });
+        let c = f.state.conn();
+        assert!(db::kinds::get(&c, name).unwrap().is_none());
+        assert_eq!(db::kinds::all(&c).unwrap(), before_kinds);
+        assert_eq!(db::model_routes::list(&c).unwrap(), before_routes);
+        assert_eq!(db::model_access::display_name(&c, name).unwrap(), display_name);
+        drop(c);
+        assert_eq!(protected(), before_protected, "presentation cannot change models, keys, source bindings or authorization");
+        assert_eq!(settings(), before_settings, "route allowlist and protocol declarations remain unchanged");
+        let mut public = f.models().await;
+        for model in public["data"].as_array_mut().unwrap() { model.as_object_mut().unwrap().remove("created"); }
+        assert_eq!(public, before_public, "API model identifiers and executable capabilities do not follow directory classification");
+    }
+}

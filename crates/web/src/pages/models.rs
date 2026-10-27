@@ -294,23 +294,30 @@ fn ModelAccess(ctx:Ctx,name:String,internal_only:bool)->impl IntoView {
 }
 
 #[component]
-fn ModelPresentation(ctx:Ctx,name:String,display_name:String,dialog_id:String,on_saved:Callback<()>)->impl IntoView {
-    let value=RwSignal::new(display_name);let busy=RwSignal::new(false);let error=RwSignal::new(String::new());
+pub(crate) fn ModelPresentation(ctx:Ctx,name:String,display_name:String,catalog_purpose:String,dialog_id:String,on_saved:Callback<()>)->impl IntoView {
+    let value=RwSignal::new(display_name);
+    let purpose=RwSignal::new(catalog_purpose);
+    let busy=RwSignal::new(false);
+    let error=RwSignal::new(String::new());
     let input_id=format!("model-display-{}",js_sys::encode_uri_component(&name));
+    let purpose_id=format!("model-purpose-{}",js_sys::encode_uri_component(&name));
     let save=move |ev:leptos::ev::SubmitEvent| {
         ev.prevent_default();if busy.get_untracked(){return;}busy.set(true);error.set(String::new());
         let name=name.clone();let dialog_id=dialog_id.clone();let display_name=value.get_untracked().trim().to_string();
+        let purpose=purpose.get_untracked();
         leptos::task::spawn_local(async move {
             let path=format!("/api/model-presentation?model={}",js_sys::encode_uri_component(&name));
-            match api::call("PUT",&path,Some(serde_json::json!({"display_name":display_name}))).await {
+            match api::call("PUT",&path,Some(serde_json::json!({"display_name":display_name,"purpose":purpose}))).await {
                 Ok(_)=>{
-                    if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&dialog_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}
-                    ctx.say("展示名称已保存，API 调用名和授权保持不变");on_saved.run(());
+                    if !dialog_id.is_empty() {
+                        if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&dialog_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}
+                    }
+                    ctx.say("展示名称与用途已保存");on_saved.run(());
                 },Err(e)=>{ctx.note_err(&e);error.set(e.message);}
             }busy.set(false);
         });
     };
-    view!{<section><h3>"展示名称"</h3><form on:submit=save><div class="account-field"><label for=input_id.clone()>"目录显示名称"</label><input id=input_id maxlength="128" prop:value=value on:input=move|e|value.set(event_target_value(&e))/></div><p class="muted small">"仅用于目录展示；API 调用名、回退顺序和授权不变。留空恢复原名称。"</p><button type="submit" class="ghost" disabled=move||busy.get()>{move||if busy.get(){"正在保存…"}else{"保存展示名称"}}</button><p role="alert">{move||error.get()}</p></form></section>}
+    view!{<section><h3>"展示名称与用途"</h3><form on:submit=save><div class="account-field"><label for=input_id.clone()>"目录显示名称"</label><input id=input_id maxlength="128" disabled=move||busy.get() prop:value=value on:input=move|e|value.set(event_target_value(&e))/></div><div class="account-field"><label for=purpose_id.clone()>"目录用途"</label><select id=purpose_id disabled=move||busy.get() prop:value=purpose on:change=move|e|purpose.set(event_target_value(&e))><option value="">"跟随已识别用途"</option><option value="chat">"对话与推理"</option><option value="embeddings">"文本嵌入"</option><option value="rerank">"重排"</option><option value="image">"图像"</option><option value="video">"视频"</option><option value="audio">"音频"</option><option value="tools">"工具"</option></select></div><p class="muted small">"用途用于模型目录分类；API 调用名、实际路由类型、回退顺序和授权不变。显示名称留空恢复原名称，用途选择跟随则使用已识别类型。"</p><button type="submit" class="ghost" disabled=move||busy.get()>{move||if busy.get(){"正在保存…"}else{"保存展示与用途"}}</button><p role="alert">{move||error.get()}</p></form></section>}
 }
 
 #[component]
@@ -425,7 +432,7 @@ pub fn Models(ctx:Ctx)->impl IntoView {
                         {ordering.get().then(||view!{<div class="policy-controls"><button on:click=move |_|move_model(reorder_name.clone(),true)>"上移"</button><button on:click=move |_|move_model(reorder_down.clone(),false)>"下移"</button></div>})}
                         <dialog class="compact-model-dialog model-detail-drawer" id=dialog_id.clone() aria-label=detail_title><div class="compact-model-dialog-head"><h2>{title}</h2><form method="dialog"><button type="submit" class="ghost" autofocus>"关闭"</button></form></div><div class="model-detail-grid">
                             <section class="compact-model-statistics"><h3>"运行统计"</h3><div class="model-telemetry"><span><small>{confidence}</small><b>{score}</b></span><span><small>"成功率"</small><b>{if s.samples>0 {fmt::pct(s.successes,s.samples)}else{"—".into()}}</b></span><span><small>"成功平均耗时"</small><b>{s.avg_ms.map(fmt::dur).unwrap_or_else(||"—".into())}</b></span><span><small>"总调用"</small><b>{r.total_calls}</b></span></div></section>
-                            <ModelPresentation ctx=ctx name=r.name.clone() display_name=r.display_name.clone() dialog_id=dialog_id.clone() on_saved=Callback::new(move|_:()|reload())/><ModelAccess ctx=ctx name=r.name.clone() internal_only=r.internal_only/><section><h3>"展示与连接"</h3><p class="muted small">"兼容隐藏仅从模型清单和 auto 排除，有权用户仍可显式调用；仅内部调用会拒绝用户直调，全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();let close_id=visibility_dialog.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>{if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&close_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}ctx.say("模型展示设置已保存");reload();},Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
+                            <ModelPresentation ctx=ctx name=r.name.clone() display_name=r.display_name.clone() catalog_purpose=r.catalog_purpose.clone() dialog_id=dialog_id.clone() on_saved=Callback::new(move|_:()|reload())/><ModelAccess ctx=ctx name=r.name.clone() internal_only=r.internal_only/><section><h3>"展示与连接"</h3><p class="muted small">"兼容隐藏仅从模型清单和 auto 排除，有权用户仍可显式调用；仅内部调用会拒绝用户直调，全局停用则拒绝该逻辑名。"</p><button class="ghost" on:click=move|_|{let n=visible_name.clone();let close_id=visibility_dialog.clone();leptos::task::spawn_local(async move{let path=format!("/api/model-visibility?model={}",js_sys::encode_uri_component(&n));match crate::api::call("PUT",&path,Some(serde_json::json!({"visible":!r.visible}))).await{Ok(_)=>{if let Some(d)=web_sys::window().and_then(|w|w.document()).and_then(|d|d.get_element_by_id(&close_id)){if let Ok(f)=js_sys::Reflect::get(d.as_ref(),&"close".into()).and_then(|v|v.dyn_into::<js_sys::Function>()){let _=f.call0(d.as_ref());}}ctx.say("模型展示设置已保存");reload();},Err(e)=>ctx.say(e.message)}});}>{if r.visible{"设为兼容隐藏"}else{"恢复公开展示"}}</button>{r.declared_by.iter().map(|id|view!{<p>{channel_name(*id)}</p>}).collect_view()}</section><section><h3>"原生推理档位"</h3><p class="muted small">"以每条连接真实声明为准；客户端显式参数优先。"</p>{r.sources.iter().map(|s|{let cap=s.reasoning.clone().unwrap_or_default();view!{<p>{format!("{}：{}",s.provider_name.clone().unwrap_or_else(||"未分组".into()),super::model_reasoning::capability_label(&cap))}</p>}}).collect_view()}</section><section><h3>"累计调用"</h3><dl><div><dt>"总调用"</dt><dd>{r.total_calls}</dd></div><div><dt>"探索调用"</dt><dd>{r.exploration_count}</dd></div></dl></section>
                             <section><h3>"近2小时表现"</h3><dl><div><dt>"成功 / 失败"</dt><dd>{format!("{} / {}",s.successes,s.faults)}</dd></div><div><dt>"评分尝试数"</dt><dd>{s.samples}</dd></div><div><dt>"平均首字节"</dt><dd>{s.avg_first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}</dd></div><div><dt>"最近调用"</dt><dd>{s.last_at.map(fmt::ts).unwrap_or_else(||"无记录".into())}</dd></div></dl></section>
                             <section><h3>"能力信息"</h3><dl><div><dt>"实际路由类型"</dt><dd>{r.kind_label.clone()}</dd></div><div><dt>"类型来源"</dt><dd>{source}</dd></div><div><dt>"识别状态"</dt><dd>{if r.detection_status.is_empty(){"无待处理检测".into()}else{r.detection_status.clone()}}</dd></div><div><dt>"上下文"</dt><dd>{context}</dd></div></dl></section>
                             {s.last_error.map(|e|view!{<details class="model-last-error"><summary>"最近失败原因"</summary><p>{e}</p></details>})}
@@ -596,6 +603,30 @@ mod tests {
         let rows=build_rows(&[asr.clone(),tools]);
         assert_eq!(rows_in_tab(&rows,"audio").len(),1);assert_eq!(rows_in_tab(&rows,"tools").len(),1);assert!(rows_in_tab(&rows,"chat").is_empty());
         assert_eq!(purpose_label(&asr),"语音识别");assert_eq!(purpose_kind(&asr),"audio");assert_eq!(rows[0].kind,"chat");assert_eq!(asr.kind,"chat");assert_eq!(asr.channels,vec![2,1]);assert_eq!(asr.name,"asr-api");
+    }
+
+    #[test]
+    fn unknown_model_purpose_can_enter_chat_and_return_to_detected_classification() {
+        let mut terra=route("gpt-6.1-terra","",&[27],&[27]);
+        let original=terra.clone();
+        assert_eq!(rows_in_tab(&build_rows(&[terra.clone()]),"").len(),1);
+        terra.catalog_purpose="chat".into();
+        terra.catalog_purpose_label="对话".into();
+        let rows=build_rows(&[terra.clone()]);
+        assert_eq!(rows_in_tab(&rows,"chat").len(),1);
+        assert!(rows_in_tab(&rows,"").is_empty());
+        assert_eq!(tab_counts(&rows)[0],1);
+        assert_eq!(terra.name,original.name);
+        assert_eq!(terra.kind,original.kind);
+        assert_eq!(terra.channels,original.channels);
+        terra.catalog_purpose.clear();
+        terra.catalog_purpose_label.clear();
+        let rows=build_rows(&[terra.clone()]);
+        assert_eq!(rows_in_tab(&rows,"").len(),1);
+        assert!(rows_in_tab(&rows,"chat").is_empty());
+        assert_eq!(terra.name,original.name);
+        assert_eq!(terra.kind,original.kind);
+        assert_eq!(terra.channels,original.channels);
     }
 
     /// 每一档的数字与行数对得上（分档按钮上的数字就是这么来的）。
