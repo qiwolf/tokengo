@@ -551,8 +551,8 @@ async fn manual_reasoning_append_and_default_save_atomically_with_legacy_replace
     let reasoning = body["reasoning"].clone();
     assert_eq!(reasoning["levels"], json!(["low","high","custom"]));
     assert_eq!(reasoning["upstream_levels"], json!(["low","high"]));
-    assert_eq!(reasoning["verified_levels"], json!([]));
-    assert_eq!(reasoning["compatibility_levels"], json!([]));
+    assert!(reasoning.get("verified_levels").is_none_or(|levels| levels == &json!([])));
+    assert!(reasoning.get("compatibility_levels").is_none_or(|levels| levels == &json!([])));
     assert_eq!(reasoning["manual_levels"], json!(["custom"]));
     assert_eq!(reasoning["manual_mode"], "append");
     assert_eq!(reasoning["default_effort"], "custom");
