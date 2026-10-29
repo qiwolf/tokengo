@@ -1,8 +1,8 @@
 # 功能与验收状态
 
-**2026-10-29：v0.34.0-qiwolf.23 发布准备中。** Terra `none`来源限定修复与自定义推理档位UI已本地实现，build-test定向202项及WASM、隔离浏览器通过；当前OAuth账号的上游Responses单条`none`实测成功。生产部署后的DSH Default、真实UI追加/覆盖/一次保存、精确main CI与公开资产独立验收待补录，不能提前称为已发布或生产验收通过。见[候选版本说明](releases/v0.34.0-qiwolf.23.md)。
+**2026-10-29：v0.34.0-qiwolf.23 已正式发行并生产部署，公开资产独立验收通过。** 源码`5c6efa71da32`的Terra `none`来源限定修复与自定义推理档位UI已整包上线；DSH Terra Default、线上追加/覆盖及档位与默认一次保存、无效默认拒绝和临时对象清理通过。build-test完整Rust1570通过/0失败/9忽略，Python三组13/6/3、native release及WASM check通过；Web产物沿用有源码一致性证明的既有WASM release构建。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40884046534)与[发行流程](https://github.com/qiwolf/tokengo/actions/runs/40884478643)均成功，[正式Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)于2026-10-29T13:53:57Z公开9个资产；公开9资产下载、匿名GHCR及原生/容器独立验收通过。见[版本说明](releases/v0.34.0-qiwolf.23.md)与[本轮收据](acceptance/2026-10-29-qiwolf23-release/README.md)。
 
-当前正式版 **[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)**，发行源码`f85eca9d6780`，Cargo0.34.0/schema42。精确main CI Rust1560通过/0失败/9忽略、Python13及WASM通过；9公开资产、匿名GHCR、原生/容器和Key生命周期独立验收通过。237已完整冷备并整包升级，公网Chat/Responses普通问答及账务通过。真实来源、模拟、未充分验收及未实施项见[持续核实清单](provider-verification-checklist.md)和[发行收据](acceptance/2026-10-28-qiwolf22-release/README.md)；未充分验收不作为停用现有可表达功能的条件。
+历史正式版 **[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)**，发行源码`f85eca9d6780`，Cargo0.34.0/schema42。精确main CI Rust1560通过/0失败/9忽略、Python13及WASM通过；9公开资产、匿名GHCR、原生/容器和Key生命周期独立验收通过。237已完整冷备并整包升级，公网Chat/Responses普通问答及账务通过。真实来源、模拟、未充分验收及未实施项见[持续核实清单](provider-verification-checklist.md)和[发行收据](acceptance/2026-10-28-qiwolf22-release/README.md)；未充分验收不作为停用现有可表达功能的条件。
 
 历史正式版 **[v0.34.0-qiwolf.21](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.21)**，发行源码`153c9db127c3`，Cargo0.34.0/schema42。完整CI1398/0/5及正式发行流程成功；9个公开资产、匿名GHCR拉取与原生/容器独立运行及Key生命周期验收通过。私有Web更新不等于生产完整包升级，本轮未部署完整生产包。详见[发行收据](acceptance/2026-10-27-qiwolf21-release/README.md)。
 

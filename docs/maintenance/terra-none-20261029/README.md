@@ -1,5 +1,7 @@
 # Terra none：限定来源的兼容修复
 
+2026-10-29后续：本功能已随源码`5c6efa71da32`整包部署，生产DSH及UI验收通过；精确main CI与正式发行已成功，公开资产独立验收通过，见[本轮收据](../../acceptance/2026-10-29-qiwolf23-release/README.md)。以下保留实施阶段的证据与当时边界。
+
 2026-10-29 当前OAuth账号1在TokenGo主机实际出站代理下直接调用gpt-6.1-terra，reasoning.effort=none、store=false、stream=true，返回200/completed，reasoning_tokens=0。最新目录仍仅声明low/medium/high/xhigh/max/ultra，默认low。脱敏收据见upstream-receipt.json。
 
 根因：上游账号目录未穷尽实际接受值；TokenGo解析与缓存内容一致，但严格列表校验误拦有效none请求。

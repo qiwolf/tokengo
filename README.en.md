@@ -10,14 +10,15 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current stable release: **[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)** · [Release notes](docs/releases/v0.34.0-qiwolf.22.md) · [Publication record](docs/acceptance/2026-10-28-qiwolf22-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)** · [Release notes](docs/releases/v0.34.0-qiwolf.23.md) · [Publication record](docs/acceptance/2026-10-29-qiwolf23-release/README.md).
 
-发布准备 / Release preparation：**v0.34.0-qiwolf.23** — Terra `none` 来源限定修复、自定义推理档位追加/覆盖及一次保存。[待发布版本说明 / Pending release notes](docs/releases/v0.34.0-qiwolf.23.md)。生产与公开发行验收尚待完成 / Production and public-release acceptance are pending.
-
-
-当前正式版：**[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)** · [版本说明](docs/releases/v0.34.0-qiwolf.22.md) · [发布记录](docs/acceptance/2026-10-28-qiwolf22-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)** · [版本说明](docs/releases/v0.34.0-qiwolf.23.md) · [发布记录](docs/acceptance/2026-10-29-qiwolf23-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
+
+Terra `none`来源限定修复与自定义推理档位已生产验收；精确main CI和正式发行成功，9资产已公开，公开9资产、匿名GHCR及原生/容器独立验收通过。
+
+Terra `none` and custom reasoning controls have passed production acceptance. Exact-commit main CI and publication succeeded; nine assets are public, and independent public-asset, anonymous GHCR and native/container acceptance has passed.
 
 ## Meet TokenGo in 84 seconds · 84 秒认识 TokenGo
 

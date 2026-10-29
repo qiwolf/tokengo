@@ -1,0 +1,109 @@
+{
+  "date": "2026-10-29",
+  "source_commit": "5c6efa71da32803c6624f91515c01b323bc26c72",
+  "cargo_version": "0.34.0",
+  "schema": 42,
+  "build_test": {
+    "host": "build-test",
+    "status": "passed",
+    "source_unchanged": true,
+    "rust": {
+      "passed": 1570,
+      "failed": 0,
+      "ignored": 9
+    },
+    "python": {
+      "python-mineru": 13,
+      "python-deploy": 6,
+      "python-container": 3
+    },
+    "native_release": "passed",
+    "wasm_check": "passed",
+    "wasm_release_reuse": {
+      "built_code_commit": "4e7cffd",
+      "final_package_commit": "5c6efa71da32803c6624f91515c01b323bc26c72",
+      "checked_all_frontend_and_shared_files": 69,
+      "files_equal": true,
+      "web_artifact_sha256": "e4a62c360919fc7c749ab0e85e1e85a2609b37c7ffe48b6814397fc0f9a24a92",
+      "backend_only_fix_does_not_change_web": true
+    }
+  },
+  "local_archive": {
+    "archive_sha256": "6854bde81fa4a5f144d860b2b98bab0386e31dcb4c56767bb0f7e67b03b82cfc",
+    "files_verified": 339,
+    "server_sha256": "c3a79a42d66a2efc42ae764398086a20ea6f53e9b214e647da5c0ae594a9f436"
+  },
+  "production": {
+    "executed": true,
+    "business_and_schema_unchanged": true,
+    "runtime_config_unchanged": true,
+    "served_assets_verified": true,
+    "graceful_ingress_restored": true,
+    "no_forced_request_termination": true
+  },
+  "dsh": {
+    "model": "gpt-6.1-terra",
+    "selected_effort": "Default",
+    "message": "请仅回复 TERRA_DEFAULT_OK。",
+    "reply": "TERRA_DEFAULT_OK",
+    "completed_seconds": 3,
+    "requests": [
+      109268,
+      109269
+    ],
+    "channel": 27,
+    "status": "ok"
+  },
+  "ui": {
+    "append": {
+      "manual": "light",
+      "default": "light",
+      "single_save": true,
+      "rendered": "支持档位：low / medium / light · 上游声明 + 人工追加",
+      "success": "推理参数已保存，客户端显式参数仍优先。"
+    },
+    "invalid_default": {
+      "action": "change mode to replace and list to high, leaving selected light, click save",
+      "rendered_selected": "light（已移除，请重新选择）",
+      "rendered_error": "默认档位已不在最终生效列表中，请重新选择默认值。",
+      "database_after_attempt": "append light/default light unchanged",
+      "network_request_observed": false,
+      "network_boundary": "No network trace captured; do not assert zero HTTP from this live test. Isolated browser test separately covers no request."
+    },
+    "replace": {
+      "manual": "high",
+      "default": "high",
+      "single_save": true,
+      "rendered": "支持档位：high · 上游声明 + 人工覆盖",
+      "success": "推理参数已保存，客户端显式参数仍优先。"
+    }
+  },
+  "fixture_cleanup": {
+    "cleaned": true,
+    "channel": 57,
+    "requests": 0
+  },
+  "rollback": {
+    "prepared": true,
+    "live_database_preserved": true,
+    "same_connection_multiple_append_simulation": "passed",
+    "production_rollback_executed": false,
+    "deepseek_append_requires_explicit_handling": true
+  },
+  "publication": {
+    "tag_pushed": true,
+    "exact_main_ci": "success",
+    "formal_release": "published",
+    "public_assets_independent_acceptance": "passed",
+    "ghcr_independent_acceptance": "passed",
+    "main_ci_url": "https://github.com/qiwolf/tokengo/actions/runs/40884046534",
+    "release_workflow": "success",
+    "release_workflow_url": "https://github.com/qiwolf/tokengo/actions/runs/40884478643",
+    "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23",
+    "published_at": "2026-10-29T13:53:57Z",
+    "public_asset_count": 9,
+    "native_container_key_runtime": "passed",
+    "cleanup": "passed"
+  },
+  "evidence_boundary": "Production UI did not capture a network trace; no assertion of zero HTTP requests. Isolated actual WASM browser test separately validates no save request. Model invocation success does not cover tools, multiple turns or other accounts/models."
+}

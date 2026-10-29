@@ -1,0 +1,11 @@
+{
+  "final-public-audit.py": "cd32b4800cf4b7d26744da2c40b76c3347ebc04c2bc7d8109ab9c3eaed680c78",
+  "verify-release.py": "241ab127175f776a2583aaf2a3b4d43ac5cf01b4c4c83672d504534226e633ef",
+  "manage.py": "79218480977ebd8112db27bf9d9770a36c13a82612e15804b34822f52304dd09",
+  "smoke.py": "ccef4d3dc104458ff57c59d216cfbc6eba76f9e757eabe503479b11eee5aba8a",
+  "verify-assets.py": "3bf3b9ab70186f71faad9f2c11acdb3d43ede5217a5985c299d44bbfccaa3541",
+  "fresh_defaults.py": "47404e4496fee9449461e50b417bc11e3ebdb0b265f79d854702d9f3592cd079",
+  "key_runtime.py": "a109f04be22dcf7113a20f4a8d0438496cf7925531cde3d47c61ba680815bf47",
+  "run-public.py": "c1680c10efa30eadde43b5eb754b2267ef7ac24e848dc5a8eeb3813df7de7cd3",
+  "native-runtime.py": "4edc6ba0f7df55ad6d2ddfe4e136aa88fc0496c2e36f88e320c04ead305d8e48"
+}

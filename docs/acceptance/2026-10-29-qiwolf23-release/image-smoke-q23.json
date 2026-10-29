@@ -1,0 +1,18 @@
+{
+  "image": "ghcr.io/qiwolf/tokengo:sha-5c6efa71da32803c6624f91515c01b323bc26c72",
+  "image_id": "sha256:8d4c6ac18363509f3b90fdc947fdfdd76352a5248e643fa0d886b5a4fdad55d5",
+  "result": "passed",
+  "checks": [
+    "nonroot",
+    "read-only-root",
+    "readyz-json",
+    "wasm-served",
+    "admin-auth",
+    "fresh-setup",
+    "persistent-db-and-master-key",
+    "key-permissions",
+    "cli-version",
+    "graceful-stop-and-restart",
+    "container-recreation-with-existing-volume"
+  ]
+}

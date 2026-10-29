@@ -1,0 +1,42 @@
+{
+  "result": "passed",
+  "source_commit": "5c6efa71da32803c6624f91515c01b323bc26c72",
+  "native_manifest_commit": "5c6efa71da32803c6624f91515c01b323bc26c72",
+  "archive": "tokengo-5c6efa71da32-linux-x86_64.tar.gz",
+  "required_utf8_markers": [
+    "上游声明",
+    "实测补充",
+    "内置兼容",
+    "已保存的人工设置",
+    "人工设置方式",
+    "追加档位",
+    "覆盖支持列表",
+    "最终生效档位预览：",
+    "默认推理档位",
+    "沿用服务商默认",
+    "保存推理参数"
+  ],
+  "missing_markers": [],
+  "wasm_members": [
+    {
+      "member": "web/tokengo-web-41c83f93dcd569af_bg.wasm",
+      "sha256": "8ad2dfd3e79bc19a968650e9a0ad5c2f40c6332a7194d4c214065b71a7ffe8b8",
+      "markers_present": [
+        "上游声明",
+        "实测补充",
+        "内置兼容",
+        "已保存的人工设置",
+        "人工设置方式",
+        "追加档位",
+        "覆盖支持列表",
+        "最终生效档位预览：",
+        "默认推理档位",
+        "沿用服务商默认",
+        "保存推理参数"
+      ]
+    }
+  ],
+  "check_kind": "static UTF-8 marker identity in verified public native bundle WASM",
+  "browser_behavior_executed": false,
+  "production_access": false
+}

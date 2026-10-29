@@ -1,0 +1,79 @@
+{
+  "result": "passed",
+  "source_commit": "5c6efa71da32803c6624f91515c01b323bc26c72",
+  "runtime": "native Linux x86_64 build-test; no emulation",
+  "checks": [
+    "native-manifest-checksums",
+    "cli-version",
+    "readyz",
+    "exact-index-and-wasm",
+    "root-auth",
+    "passthrough-crud-secret-mask-hidden-channel",
+    "ops-mint-me-90-actions-forbidden-new-route-revoke401",
+    "graceful-stop"
+  ],
+  "production_access": false,
+  "credentials": "synthetic memory only",
+  "key_recovery_checks": [
+    "owner-and-admin-key-create",
+    "exact-owner-and-admin-reveal-no-store",
+    "metadata-no-plaintext",
+    "anonymous-csrf-bearer-and-ops-isolation",
+    "revoked-key-viewable-but-authentication-denied",
+    "deleted-key-404-and-hidden",
+    "owner-and-admin-revoked-and-deleted-key-contract",
+    "active-key-delete-409",
+    "admin-disabled-owner-key-owner-and-admin-delete",
+    "admin-disabled-key-owner-cannot-enable-403",
+    "disabled-delete-permanently-revokes",
+    "disabled-delete-cross-surface-idempotent",
+    "disabled-delete-reveal404-auth401-hidden",
+    "disabled-delete-cannot-restore",
+    "legacy-public-managed-active-delete409",
+    "legacy-public-disabled-delete-idempotent-reveal404-auth401-hidden",
+    "legacy-public-delete-retains-history-contract",
+    "native-encrypted-storage-no-plaintext",
+    "native-physical-key-and-audit-preserved-without-plaintext",
+    "isolated-hash-only-history-409-no-magic-recovery"
+  ],
+  "fresh_install_checks": {
+    "schema": {
+      "schema_version": 42,
+      "table_count": 60,
+      "integrity": "ok",
+      "foreign_key_violations": 0,
+      "preexisting_oauth_state": false,
+      "history_owner_recent_index": true
+    },
+    "oauth": {
+      "public_client_defaults": [
+        "kimi",
+        "minimax-cn",
+        "minimax-global",
+        "copilot"
+      ],
+      "available": true,
+      "authentication_available": true,
+      "inference_available": true,
+      "device_start_attempted": false,
+      "upstream_login_attempted": false,
+      "paid_inference_attempted": false
+    },
+    "none": {
+      "fresh_database": true,
+      "positive_source": "explicit MiMo-compatible profile on loopback metadata fixture",
+      "model": "mimo-v2.6-pro",
+      "catalog_declared_levels": [
+        "low",
+        "high"
+      ],
+      "compiled_none_rule_augmented": true,
+      "unknown_source_not_inferred": true,
+      "changed_source_identity_rejects_stale_cache": true,
+      "metadata_requests": 2,
+      "custom_reasoning_append_replace_atomic_defaults": true,
+      "upstream_inference_requests": 0,
+      "limits": "Controlled metadata contract, not a real MiMo or DeepSeek account/inference acceptance."
+    }
+  }
+}

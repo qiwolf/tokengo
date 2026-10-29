@@ -2,12 +2,12 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## v0.34.0-qiwolf.23 — 2026-10-29（北京时间，待发布）
+## v0.34.0-qiwolf.23 — 2026-10-29（北京时间）
 
 - 修复已验证OpenAI OAuth连接与精确Terra模型的`none`误拦；最新目录与实际接口能力不一致时，以来源身份限定的实测补充保留有效请求，不全局放开、不改写客户端语义。
 - 推理设置区分上游声明、实测补充、内置兼容及人工设置，支持跟随来源、追加、覆盖；列表与默认值一次事务保存，保留旧配置语义及来源变化失效保护。
 - 修复追加模式误收窄DeepSeek原生别名及编辑档位后默认选项显示/提交不一致的风险。
-- Cargo0.34.0/schema42不变；build-test定向202项及WASM、隔离浏览器通过。生产验收、精确main CI、公开发行与资产独立验收待补录，见[版本说明](docs/releases/v0.34.0-qiwolf.23.md)。
+- Cargo0.34.0/schema42不变；源码5c6efa71da32的build-test完整Rust1570/0/9、Python13/6/3、native release及WASM check通过。生产整包冷备升级、DSH Terra Default及线上追加/覆盖/默认一次保存、无效默认保护与清理通过。Web沿用经源码一致性核对的既有WASM release产物。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40884046534)与[发行流程](https://github.com/qiwolf/tokengo/actions/runs/40884478643)均成功，[正式Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)于2026-10-29T13:53:57Z公开9个资产；公开9资产下载、匿名GHCR及原生/容器独立验收通过，见[版本说明](docs/releases/v0.34.0-qiwolf.23.md)及[收据](docs/acceptance/2026-10-29-qiwolf23-release/README.md)。
 
 ## v0.34.0-qiwolf.22 — 2026-10-28（北京时间）
 
