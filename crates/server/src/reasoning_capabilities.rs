@@ -18,13 +18,13 @@ pub struct ReasoningCapabilities {
     pub upstream_default: Option<String>,
     pub configured_default: bool,
     pub manual_levels: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub upstream_levels: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verified_levels: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compatibility_levels: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manual_mode: Option<String>,
     pub source: String,
     pub reason: String,
