@@ -1,0 +1,184 @@
+{
+  "CATALOG": {
+    "status": 200,
+    "elapsed": 0.68,
+    "sha256": "0b163565d78c0363cd837a05faa314b00e506d36ebeb5f28e31e5f035e24e050",
+    "rows": [
+      {
+        "slug": "gpt-6.1-sol",
+        "supported_reasoning_levels": [
+          {
+            "effort": "low",
+            "description": "Fast responses with lighter reasoning"
+          },
+          {
+            "effort": "medium",
+            "description": "Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "effort": "high",
+            "description": "Greater reasoning depth for complex problems"
+          },
+          {
+            "effort": "xhigh",
+            "description": "Extra high reasoning depth for complex problems"
+          },
+          {
+            "effort": "max",
+            "description": "Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "effort": "ultra",
+            "description": "Maximum reasoning with automatic task delegation"
+          }
+        ],
+        "default_reasoning_level": "low",
+        "supported_in_api": true,
+        "minimal_client_version": "0.153.0"
+      },
+      {
+        "slug": "gpt-6.1-terra",
+        "supported_reasoning_levels": [
+          {
+            "effort": "low",
+            "description": "Fast responses with lighter reasoning"
+          },
+          {
+            "effort": "medium",
+            "description": "Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "effort": "high",
+            "description": "Greater reasoning depth for complex problems"
+          },
+          {
+            "effort": "xhigh",
+            "description": "Extra high reasoning depth for complex problems"
+          },
+          {
+            "effort": "max",
+            "description": "Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "effort": "ultra",
+            "description": "Maximum reasoning with automatic task delegation"
+          }
+        ],
+        "default_reasoning_level": "low",
+        "supported_in_api": true,
+        "minimal_client_version": "0.153.0"
+      },
+      {
+        "slug": "gpt-6-luna",
+        "supported_reasoning_levels": [
+          {
+            "effort": "low",
+            "description": "Fast responses with lighter reasoning"
+          },
+          {
+            "effort": "medium",
+            "description": "Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "effort": "high",
+            "description": "Greater reasoning depth for complex problems"
+          },
+          {
+            "effort": "xhigh",
+            "description": "Extra high reasoning depth for complex problems"
+          },
+          {
+            "effort": "max",
+            "description": "Maximum reasoning depth for the hardest problems"
+          }
+        ],
+        "default_reasoning_level": "medium",
+        "supported_in_api": true,
+        "minimal_client_version": "0.155.0"
+      }
+    ],
+    "error": null
+  },
+  "TEST_BODY": {
+    "model": "gpt-6.1-terra",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Reply OK."
+          }
+        ]
+      }
+    ],
+    "instructions": "Respond briefly.",
+    "reasoning": {
+      "effort": "none"
+    },
+    "store": false,
+    "stream": true
+  },
+  "TEST_RESULT": {
+    "status": 200,
+    "elapsed": 1.92,
+    "error": null,
+    "message": null,
+    "detail": null,
+    "type": null,
+    "body_keys": [
+      "id",
+      "object",
+      "created_at",
+      "completed_at",
+      "status",
+      "background",
+      "frequency_penalty",
+      "presence_penalty",
+      "moderation",
+      "model",
+      "access_programs",
+      "previous_response_id",
+      "instructions",
+      "output",
+      "error",
+      "incomplete_details",
+      "tools",
+      "tool_choice",
+      "parallel_tool_calls",
+      "prompt_cache_key",
+      "prompt_cache_retention",
+      "text",
+      "top_p",
+      "top_logprobs",
+      "temperature",
+      "reasoning",
+      "user",
+      "usage",
+      "tool_usage",
+      "safety_identifier",
+      "store",
+      "metadata",
+      "max_output_tokens",
+      "max_tool_calls",
+      "service_tier",
+      "truncation"
+    ],
+    "body_excerpt": null,
+    "model": "gpt-6.1-terra",
+    "response_status": "completed",
+    "usage": {
+      "input_tokens": 16,
+      "output_tokens": 6,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 22
+    }
+  },
+  "checked_at": "2026-10-29T20:28:43.209314+08:00",
+  "execution_host": "tokengo-geren-wangguan",
+  "account_id": 1,
+  "gateway_bypassed": true,
+  "configuration_modified": false
+}

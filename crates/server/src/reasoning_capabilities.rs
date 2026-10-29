@@ -307,7 +307,10 @@ pub(crate) fn for_model_with_identity(
         .map_err(|_| DbError::Other("Invalid reasoning capability cache".into()))?;
     // A provider compatibility rule augments a valid same-identity declaration;
     // it never manufactures support from an empty, unsupported or invalid cache.
-    let compatible = match compatibility_provider(c, id)? {
+    let provider = compatibility_provider(c, id)?;
+    let verified_terra = provider == Some(CompatibilityProvider::OpenAi)
+        && verified_terra_none(id, upstream, current_identity);
+    let compatible = verified_terra || match provider {
         Some(CompatibilityProvider::DeepSeek) => true,
         Some(CompatibilityProvider::OpenAi) => upstream == "gpt-6-luna",
         None => false,
@@ -316,10 +319,23 @@ pub(crate) fn for_model_with_identity(
         && !caps.levels.iter().any(|level| level == "none") && compatible
     {
         caps.levels.insert(0, "none".into());
-        caps.source = "upstream_with_compatibility".into();
-        caps.reason = "上游模型目录声明的档位，加上官方来源已验证的关闭推理兼容值；保留服务商默认，未对当前账号执行推理探测".into();
+        if verified_terra {
+            caps.source = "upstream_with_compatibility".into();
+            caps.reason = "上游目录档位，加上2026-10-29对此接入及来源身份实测成功的Terra none；保留服务商默认，原始目录未改写".into();
+        } else {
+            caps.source = "upstream_with_compatibility".into();
+            caps.reason = "上游模型目录声明的档位，加上官方来源已验证的关闭推理兼容值；保留服务商默认，未对当前账号执行推理探测".into();
+        }
     }
     Ok(caps)
+}
+
+// Deliberately pinned to the deployment source that was directly verified.
+// New accounts/connections need their own evidence; do not widen by model prefix.
+fn verified_terra_none(id: i64, upstream: &str, identity: &str) -> bool {
+    id == 27
+        && upstream == "gpt-6.1-terra"
+        && identity == "d4a9bb5b350c329ccdfaaf5b09d7566f7c5463b4cdddc636e69b7d50fa7539c1"
 }
 
 fn runtime_profile(c: &Connection, id: i64) -> db::Result<bool> {
@@ -913,6 +929,55 @@ mod tests {
         assert!(for_model(&c, id, "gpt-6-luna").unwrap().levels.contains(&"none".into()));
         let (c, id) = portable_source("https://api.openai.com/v1", "another-gpt", deepseek_metadata());
         assert!(!for_model(&c, id, "another-gpt").unwrap().levels.contains(&"none".into()));
+    }
+
+    #[test]
+    fn verified_terra_none_scope_is_exact() {
+        let identity = "d4a9bb5b350c329ccdfaaf5b09d7566f7c5463b4cdddc636e69b7d50fa7539c1";
+        assert!(verified_terra_none(27, "gpt-6.1-terra", identity));
+        for (id, model, source) in [
+            (28, "gpt-6.1-terra", identity),
+            (27, "gpt-6.1-sol", identity),
+            (27, "gpt-6.1-terra-other", identity),
+            (27, "gpt-6.1-terra", "different-account-or-protocol"),
+        ] {
+            assert!(!verified_terra_none(id, model, source));
+        }
+    }
+
+    #[test]
+    fn verified_terra_none_augments_only_current_supported_catalog() {
+        let identity = "d4a9bb5b350c329ccdfaaf5b09d7566f7c5463b4cdddc636e69b7d50fa7539c1";
+        for metadata in [deepseek_metadata(), json!({}), json!({"reasoning":false})] {
+            let (c, id) = portable_source("https://api.openai.com/v1", "gpt-6.1-terra", metadata);
+            c.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+            c.execute("UPDATE channels SET id=27 WHERE id=?1", [id]).unwrap();
+            c.execute("UPDATE channel_reasoning_catalog SET channel_id=27,source_identity=?1", [identity]).unwrap();
+            let before: String = c.query_row("SELECT capability_json FROM channel_reasoning_catalog", [], |r|r.get(0)).unwrap();
+            let caps = for_model_with_identity(&c, 27, "gpt-6.1-terra", identity).unwrap();
+            assert_eq!(caps.levels.contains(&"none".into()), caps.status == "supported");
+            if caps.status == "supported" {
+                assert_eq!(caps.default_effort.as_deref(), Some("high"));
+                assert!(!caps.configured_default);
+                assert_eq!(caps.source, "upstream_with_compatibility");
+            }
+            let stale = for_model_with_identity(&c, 27, "gpt-6.1-terra", "changed").unwrap();
+            assert_eq!(stale.status, "unknown");
+            assert!(!stale.levels.contains(&"none".into()));
+            let after: String = c.query_row("SELECT capability_json FROM channel_reasoning_catalog", [], |r|r.get(0)).unwrap();
+            assert_eq!(before, after, "raw catalog must never be rewritten");
+        }
+    }
+
+    #[test]
+    fn verified_terra_none_still_requires_official_openai_endpoint() {
+        let identity = "d4a9bb5b350c329ccdfaaf5b09d7566f7c5463b4cdddc636e69b7d50fa7539c1";
+        let (c, id) = portable_source("https://proxy.example.test/v1", "gpt-6.1-terra", deepseek_metadata());
+        c.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+        c.execute("UPDATE channels SET id=27 WHERE id=?1", [id]).unwrap();
+        c.execute("UPDATE channel_reasoning_catalog SET channel_id=27,source_identity=?1", [identity]).unwrap();
+        let caps = for_model_with_identity(&c, 27, "gpt-6.1-terra", identity).unwrap();
+        assert!(!caps.levels.contains(&"none".into()));
     }
 
     #[test]

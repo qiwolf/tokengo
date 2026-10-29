@@ -1,0 +1,47 @@
+build-test
+56e78831d4d78509559c41062ac952e7db288d3472f843ea33d8bee96ccd0e19  crates/server/src/reasoning_capabilities.rs
+   Compiling tokengo-server v0.34.0 (/srv/build/terra-none-fix-20261029/crates/server)
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib test) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.84s
+     Running unittests src/lib.rs (target/debug/deps/tokengo_server-07d1de65b07586ae)
+
+running 22 tests
+test reasoning_capabilities::tests::booleans_absence_and_names_do_not_invent_levels ... ok
+test reasoning_capabilities::tests::deepseek_effort_metadata_is_explicit_and_conflicts_fail_closed ... ok
+test reasoning_capabilities::tests::malformed_conflicting_or_unknown_defaults_fail_closed ... ok
+test reasoning_capabilities::tests::siwc_levels_and_default_are_read_without_descriptions_or_name_guesses ... ok
+test reasoning_capabilities::tests::defaults_are_per_logical_mapping_and_explicit_native_effort_wins ... ok
+test reasoning_capabilities::tests::verified_terra_none_scope_is_exact ... ok
+test reasoning_capabilities::tests::catalog_removing_a_configured_default_never_restores_legacy_defaults ... ok
+test reasoning_capabilities::tests::deepseek_none_uses_native_wire_toggle_and_reports_mutation_without_defaults ... ok
+test reasoning_capabilities::tests::deepseek_catalog_discovery_preserves_documented_native_client_aliases ... ok
+test reasoning_capabilities::tests::cache_is_scoped_to_exact_source_and_upstream_but_not_mapping_changes ... ok
+test reasoning_capabilities::tests::remapping_alias_to_another_upstream_never_reuses_manual_claims ... ok
+test reasoning_capabilities::tests::none_manual_exclusion_and_explicit_default_remain_authoritative ... ok
+test reasoning_capabilities::tests::messages_none_conversion_does_not_reenable_deepseek_reasoning ... ok
+test reasoning_capabilities::tests::deepseek_none_rejects_conflicting_or_unknown_thinking_without_mutation ... ok
+test reasoning_capabilities::tests::verified_terra_none_still_requires_official_openai_endpoint ... ok
+test reasoning_capabilities::tests::cross_protocol_none_preserves_openai_and_explicit_third_party_capabilities ... ok
+test reasoning_capabilities::tests::responses_none_conversion_restores_declared_deepseek_off_intent ... ok
+test reasoning_capabilities::tests::verified_terra_none_augments_only_current_supported_catalog ... ok
+test reasoning_capabilities::tests::cross_protocol_none_rejects_known_exclusions_and_preserves_unknown_legacy_contract ... ok
+test reasoning_capabilities::tests::none_compatibility_never_revives_unknown_unsupported_or_stale_catalogs ... ok
+test reasoning_capabilities::tests::portable_none_augments_only_exact_official_provider_contracts ... ok
+test reasoning_capabilities::tests::provider_names_and_lookalike_endpoints_do_not_grant_none ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 535 filtered out; finished in 5.32s
+

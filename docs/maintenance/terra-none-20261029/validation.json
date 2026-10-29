@@ -1,0 +1,17 @@
+{
+  "host": "build-test",
+  "remote_directory": "/srv/build/terra-none-fix-20261029",
+  "base_commit": "330b5b2",
+  "source_sha256": "56e78831d4d78509559c41062ac952e7db288d3472f843ea33d8bee96ccd0e19",
+  "command": "CARGO_HOME=/srv/cache/tokengo-cargo RUSTUP_HOME=/srv/cache/tokengo-rustup PATH=/srv/cache/tokengo-cargo/bin:$PATH cargo test -p tokengo-server --lib reasoning_capabilities::tests -- --nocapture",
+  "exit_code": 0,
+  "tests_passed": 22,
+  "tests_failed": 0,
+  "red_phase": {
+    "tests_failed": 2,
+    "exit_code": 101
+  },
+  "artifacts": "test log only; no release binary requested",
+  "review": "No blocking findings after source-label compatibility correction and third-party endpoint regression",
+  "deployed": false
+}
