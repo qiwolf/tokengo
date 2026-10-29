@@ -1,0 +1,43 @@
+warning: function `billing_bound_with_context` is never used
+   --> crates/server/src/gateway.rs:713:4
+    |
+713 | fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i6...
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:785:4
+    |
+785 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:835:15
+    |
+835 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running tests/provider_channels.rs (target/debug/deps/provider_channels-91964f36d3185d43)
+
+running 3 tests
+test pulled_reasoning_metadata_maps_exact_model_and_configures_only_explicit_defaults ... ok
+test manual_reasoning_append_and_default_save_atomically_with_legacy_replace ... ok
+test reasoning_defaults_reach_real_chat_and_explicit_invalid_null_and_other_alias_remain_distinct ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 2.23s
+

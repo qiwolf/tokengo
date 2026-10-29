@@ -1,0 +1,28 @@
+{
+  "host": "build-test",
+  "remote_directory": "/srv/build/reasoning-ui-20261029",
+  "source_base_commit": "6498183",
+  "source_manifest_verified": true,
+  "web_unit_passed": 173,
+  "reasoning_unit_passed": 26,
+  "reasoning_http_passed": 3,
+  "wasm_release_build": "passed",
+  "browser": "passed with isolated mock API against actual built WASM; no production access",
+  "browser_cases": [
+    "append new levels and select new default in one save",
+    "adding another level retains selected default and submitted value",
+    "removed default blocks save without HTTP request",
+    "replace mode only sends replacement levels",
+    "desktop1280x1000 and mobile390x844",
+    "mobile document scrollWidth390 equals viewport390",
+    "no page errors"
+  ],
+  "deployed": false,
+  "review": "no unresolved blocking findings",
+  "artifacts_retrieved": [
+    "logs",
+    "source hashes",
+    "desktop and mobile screenshots",
+    "web.tar.gz"
+  ]
+}

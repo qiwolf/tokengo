@@ -1,0 +1,13 @@
+{
+  "crates/server/src/gateway.rs": "b56f7c5fafeab3a199593ef34046a5a7d239029da9f0f79b9ddd17c0a2aa27fd",
+  "crates/server/src/reasoning_capabilities.rs": "55c544083ed53f41fbadae8baeecae2e98d8aaa581a79b28d5d31331fc86159d",
+  "crates/server/src/routes/providers.rs": "5571a869c55a60769b3f12fc6a227280edf7072bfb49ed40ef3b732c18102433",
+  "crates/server/tests/provider_channels.rs": "5bf772eecefd0172e04efb45a7c206ae045bae2d9065993e0ffd6c84a33a76dd",
+  "crates/web/src/model.rs": "c0e36b9b525a8492f94585fce29c4ac9c5b4ffc688d73660a4799f22fdc0d916",
+  "crates/web/src/pages/model_reasoning.rs": "34125658da003fd36c693d53a7ff5619a4982ce93883f78d11bfa24c98a4a93e",
+  "crates/web/style.css": "323b54c6c84731ed6497f268a92d1fe01161a8443b2bbf827de9dca989d7c49d",
+  "Cargo.toml": "d5961be7b2803859f9a582527f42ef9170d7499cd2a05da28e2436089f822aa6",
+  "Cargo.lock": "ed95e82fb1d74caa825951c4c3435fffec05ae528fc589b860d5726a1b55d134",
+  "crates/web/Trunk.toml": "7aeab0a221348aac3967dd9a814594fce89b9e19886d601a30ebb8cdcf820737",
+  "crates/web/index.html": "a5ef1470bc039dbb2546780554ab2082289387ed8a960fb1db5a1cc88873ca73"
+}

@@ -536,6 +536,51 @@ async fn pulled_reasoning_metadata_maps_exact_model_and_configures_only_explicit
     t.abort();
 }
 #[tokio::test]
+async fn manual_reasoning_append_and_default_save_atomically_with_legacy_replace() {
+    let (up, task) = serve(Router::new().route("/models", axum::routing::get(|| async {
+        Json(json!({"data":[{"id":"exact-M","reasoning_effort_levels":["low","high"],"default_reasoning_level":"low"}]}))
+    }))).await;
+    let f = Fixture::new().await;
+    let id = f.channel(&up).await;
+    let (status, body) = f.req("POST", &format!("/api/channels/{id}/models"), json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    let path = format!("/api/channels/{id}/models/reasoning");
+    let (status, body) = f.req("PUT", &path,
+        json!({"model":"m","manual_mode":"append","manual_levels":["custom"],"default_effort":"custom"})).await;
+    assert_eq!(status, 200, "{body}");
+    let reasoning = body["reasoning"].clone();
+    assert_eq!(reasoning["levels"], json!(["low","high","custom"]));
+    assert_eq!(reasoning["upstream_levels"], json!(["low","high"]));
+    assert_eq!(reasoning["verified_levels"], json!([]));
+    assert_eq!(reasoning["compatibility_levels"], json!([]));
+    assert_eq!(reasoning["manual_levels"], json!(["custom"]));
+    assert_eq!(reasoning["manual_mode"], "append");
+    assert_eq!(reasoning["default_effort"], "custom");
+    assert_eq!(reasoning["source"], "user_confirmed");
+    let before_generation: i64 = f.state.conn().query_row(
+        "SELECT binding_generation FROM channels WHERE id=?1", [id], |r|r.get(0)).unwrap();
+    // A new manual list plus an invalid default must not persist either field.
+    let (status, _) = f.req("PUT", &path,
+        json!({"model":"m","manual_mode":"replace","manual_levels":["another"],"default_effort":"custom"})).await;
+    assert_eq!(status, 400);
+    let (status, body) = f.req("GET", "/api/channels", json!(null)).await;
+    assert_eq!(status, 200);
+    let model = body["channels"].as_array().unwrap().iter().find(|row| row["id"] == id).unwrap()["models"]
+        .as_array().unwrap().iter().find(|row| row["model"] == "m").unwrap().clone();
+    assert_eq!(model["reasoning"], reasoning);
+    assert_eq!(f.state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1", [id], |r|r.get::<_,i64>(0)).unwrap(), before_generation);
+    // Old clients omit manual_mode and continue replacing, never appending.
+    let (status, body) = f.req("PUT", &path,
+        json!({"model":"m","manual_levels":["high"],"default_effort":"high"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reasoning"]["levels"], json!(["high"]));
+    assert_eq!(body["reasoning"]["manual_mode"], "replace");
+    assert_eq!(body["reasoning"]["upstream_levels"], json!(["low","high"]));
+    assert_eq!(body["reasoning"]["default_effort"], "high");
+    task.abort();
+}
+
+#[tokio::test]
 async fn reasoning_defaults_reach_real_chat_and_explicit_invalid_null_and_other_alias_remain_distinct(
 ) {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));

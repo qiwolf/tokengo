@@ -2255,3 +2255,8 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
   .compatibility-diagnostics dd { margin-bottom:12px; }
   .compatibility-diagnostics .compatibility-actions > button { width:100%; }
 }
+
+.reasoning-sources { display:grid; grid-template-columns:minmax(7em, auto) minmax(0, 1fr); gap:8px 16px; margin:16px 0; }
+.reasoning-sources dt { color:var(--muted); }
+.reasoning-sources dd { margin:0; overflow-wrap:anywhere; }
+@media (max-width:480px) { .reasoning-sources { grid-template-columns:minmax(0, 1fr); gap:4px; } .reasoning-sources dd { margin-bottom:8px; } }

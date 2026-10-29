@@ -382,6 +382,7 @@ async fn visibility(
 struct ReasoningBody {
     model: String,
     manual_levels: Option<Vec<String>>,
+    manual_mode: Option<String>,
     default_effort: Option<String>,
 }
 async fn reasoning(
@@ -396,12 +397,13 @@ async fn reasoning(
     connection(&c, id)?;
     let name = model(&b.model)?;
     let caps = db::in_tx(&c, |c| {
-        crate::reasoning_capabilities::configure(
+        crate::reasoning_capabilities::configure_with_mode(
             c,
             id,
             &name,
             b.manual_levels.as_deref(),
             b.default_effort.as_deref(),
+            b.manual_mode.as_deref(),
         )
     })
     .map_err(|_| ApiError::bad_request("Invalid model reasoning configuration"))?;

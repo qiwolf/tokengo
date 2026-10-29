@@ -2121,7 +2121,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     }.and_then(Value::as_str);
                     if let Some(effort)=explicit_effort {
                         let caps=crate::reasoning_capabilities::for_mapping(&state.conn(),channel.id.0,name)?;
-                        if caps.status=="unsupported" || caps.manual_levels.as_ref().is_some_and(|levels|!levels.iter().any(|level|level==effort)) {
+                        if caps.status=="unsupported" || caps.manual_excludes(effort) {
                             last_policy_error=Some(ApiError::bad_request("Explicit reasoning parameter is excluded by this mapping's declared/manual capability")); continue 'channels;
                         }
                     }

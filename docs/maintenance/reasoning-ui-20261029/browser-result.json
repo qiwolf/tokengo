@@ -1,0 +1,27 @@
+{
+  "saves": [
+    {
+      "default_effort": "custom",
+      "manual_levels": [
+        "custom",
+        "light"
+      ],
+      "manual_mode": "append",
+      "model": "gpt-6.1-terra"
+    },
+    {
+      "default_effort": "high",
+      "manual_levels": [
+        "high"
+      ],
+      "manual_mode": "replace",
+      "model": "gpt-6.1-terra"
+    }
+  ],
+  "geometry": {
+    "viewport": 390,
+    "scroll": 390
+  },
+  "errors": [],
+  "passed": true
+}

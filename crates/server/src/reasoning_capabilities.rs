@@ -18,6 +18,14 @@ pub struct ReasoningCapabilities {
     pub upstream_default: Option<String>,
     pub configured_default: bool,
     pub manual_levels: Option<Vec<String>>,
+    #[serde(default)]
+    pub upstream_levels: Vec<String>,
+    #[serde(default)]
+    pub verified_levels: Vec<String>,
+    #[serde(default)]
+    pub compatibility_levels: Vec<String>,
+    #[serde(default)]
+    pub manual_mode: Option<String>,
     pub source: String,
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -29,6 +37,13 @@ impl Default for ReasoningCapabilities {
     }
 }
 impl ReasoningCapabilities {
+    /// Only a replacement list narrows the source contract. Appending never
+    /// removes native source aliases that are validated after request planning.
+    pub(crate) fn manual_excludes(&self, effort: &str) -> bool {
+        self.manual_levels.is_some()
+            && self.manual_mode.as_deref() != Some("append")
+            && !self.levels.iter().any(|level| level == effort)
+    }
     fn unknown(reason: &str) -> Self {
         Self {
             status: "unknown".into(),
@@ -39,6 +54,7 @@ impl ReasoningCapabilities {
             upstream_default: None,
             configured_default: false,
             manual_levels: None,
+            upstream_levels: vec![], verified_levels: vec![], compatibility_levels: vec![], manual_mode: None,
             source: "unknown".into(),
             reason: reason.into(),
             runtime_identity: None,
@@ -210,6 +226,7 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
     }
     ReasoningCapabilities {
         status: if explicitly_no_effort { "unsupported" } else if levels.is_empty() { "unknown" } else { "supported" }.into(),
+        upstream_levels: levels.clone(),
         levels,
         thinking_modes,
         effort_wire,
@@ -217,6 +234,7 @@ pub fn from_metadata(v: &Value) -> ReasoningCapabilities {
         default_effort: default,
         configured_default: false,
         manual_levels: None,
+        verified_levels: vec![], compatibility_levels: vec![], manual_mode: None,
         source: "upstream".into(),
         reason: "上游模型目录明确声明；思考模式与推理强度分别记录；未执行付费推理探测".into(),
         runtime_identity: None,
@@ -305,6 +323,11 @@ pub(crate) fn for_model_with_identity(
     }
     let mut caps: ReasoningCapabilities = serde_json::from_str(&json)
         .map_err(|_| DbError::Other("Invalid reasoning capability cache".into()))?;
+    // Raw catalog and evidence supplements remain separately visible after manual edits.
+    caps.upstream_levels = caps.levels.clone();
+    caps.verified_levels.clear();
+    caps.compatibility_levels.clear();
+    caps.manual_mode = None;
     // A provider compatibility rule augments a valid same-identity declaration;
     // it never manufactures support from an empty, unsupported or invalid cache.
     let provider = compatibility_provider(c, id)?;
@@ -320,9 +343,11 @@ pub(crate) fn for_model_with_identity(
     {
         caps.levels.insert(0, "none".into());
         if verified_terra {
+            caps.verified_levels.push("none".into());
             caps.source = "upstream_with_compatibility".into();
             caps.reason = "上游目录档位，加上2026-10-29对此接入及来源身份实测成功的Terra none；保留服务商默认，原始目录未改写".into();
         } else {
+            caps.compatibility_levels.push("none".into());
             caps.source = "upstream_with_compatibility".into();
             caps.reason = "上游模型目录声明的档位，加上官方来源已验证的关闭推理兼容值；保留服务商默认，未对当前账号执行推理探测".into();
         }
@@ -457,6 +482,23 @@ fn mapping(c: &Connection, id: i64, model: &str) -> db::Result<crate::db::channe
         .find(|m| tokengo_shared::same_model_name(&m.model, model))
         .ok_or_else(|| DbError::Other("模型未配置在此连接".into()))
 }
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppendLevels { mode: String, levels: Vec<String> }
+fn manual_settings(raw: &str) -> db::Result<(String, Vec<String>)> {
+    if let Ok(levels) = serde_json::from_str::<Vec<String>>(raw) {
+        return Ok(("replace".into(), levels));
+    }
+    let value: AppendLevels = serde_json::from_str(raw)
+        .map_err(|_| DbError::Other("Invalid manual reasoning configuration".into()))?;
+    if value.mode != "append" { return Err(DbError::Other("Invalid manual reasoning mode".into())); }
+    Ok((value.mode, value.levels))
+}
+fn combined_levels(base: &[String], manual: &[String], mode: &str) -> Vec<String> {
+    let mut result = if mode == "append" { base.to_vec() } else { Vec::new() };
+    for level in manual { if !result.contains(level) { result.push(level.clone()); } }
+    result
+}
 type Settings = (String, String, Option<String>, Option<String>);
 fn settings(c: &Connection, id: i64, model: &str) -> db::Result<Option<Settings>> {
     Ok(c.query_row("SELECT source_identity,upstream_model,manual_levels,default_effort FROM channel_reasoning_settings WHERE channel_id=?1 AND model_name=?2",params![id,tokengo_shared::normalize_model_name(model)],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?)
@@ -480,13 +522,15 @@ pub(crate) fn for_loaded_mapping(c: &Connection, id: i64, m: &db::channels::Mode
         result.configured_default = true;
         result.default_effort = default;
         if let Some(manual) = manual {
-            let levels: Vec<String> = serde_json::from_str(&manual)
-                .map_err(|_| DbError::Other("Invalid manual reasoning configuration".into()))?;
-            result.levels = levels.clone();
+            let (mode, levels) = manual_settings(&manual)?;
+            result.levels = combined_levels(&result.levels, &levels, &mode);
             result.manual_levels = Some(levels);
+            result.manual_mode = Some(mode.clone());
             result.status = "supported".into();
             result.source = "user_confirmed".into();
-            result.reason = "管理员明确确认的档位；不是自动探测结果".into();
+            result.reason = if mode == "append" {
+                format!("{}；管理员追加的档位，非自动探测结果", result.reason)
+            } else { format!("{}；管理员明确覆盖支持列表，非自动探测结果", result.reason) };
         }
         if result
             .default_effort
@@ -508,6 +552,18 @@ pub fn configure(
     manual: Option<&[String]>,
     default: Option<&str>,
 ) -> db::Result<ReasoningCapabilities> {
+    configure_with_mode(c, id, model, manual, default, None)
+}
+/// Save both the manual mode/list and default as one mapping operation.
+/// Callers wrap this operation in their existing database transaction.
+pub fn configure_with_mode(
+    c: &Connection, id: i64, model: &str, manual: Option<&[String]>,
+    default: Option<&str>, manual_mode: Option<&str>,
+) -> db::Result<ReasoningCapabilities> {
+    let mode = manual_mode.unwrap_or("replace");
+    if !matches!(mode, "append" | "replace") || (manual.is_none() && manual_mode.is_some()) {
+        return Err(DbError::Other("人工档位模式须为追加或覆盖，且必须同时提供档位".into()));
+    }
     let m = mapping(c, id, model)?;
     let detected = for_model(c, id, m.upstream.as_deref().unwrap_or(&m.model))?;
     if let Some(items) = manual {
@@ -517,16 +573,17 @@ pub fn configure(
             ));
         }
     }
-    let available = manual.unwrap_or(&detected.levels);
+    let available = manual.map(|values| combined_levels(&detected.levels, values, mode)).unwrap_or_else(|| detected.levels.clone());
+    if available.len() > 16 { return Err(DbError::Other("最终支持列表最多16个档位".into())); }
     if default.is_some_and(|value| !valid_level(value) || !available.iter().any(|v| v == value)) {
         return Err(DbError::Other(
             "默认档位必须在当前已声明或手工确认的档位中".into(),
         ));
     }
-    let json = manual
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|_| DbError::Other("Invalid manual reasoning configuration".into()))?;
+    let json = manual.map(|values| {
+        if mode == "append" { serde_json::to_string(&AppendLevels { mode: mode.into(), levels: values.to_vec() }) }
+        else { serde_json::to_string(values) }
+    }).transpose().map_err(|_| DbError::Other("Invalid manual reasoning configuration".into()))?;
     c.execute("INSERT INTO channel_reasoning_settings(channel_id,model_name,upstream_model,source_identity,manual_levels,default_effort,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(channel_id,model_name) DO UPDATE SET upstream_model=excluded.upstream_model,source_identity=excluded.source_identity,manual_levels=excluded.manual_levels,default_effort=excluded.default_effort,updated_at_ms=excluded.updated_at_ms",params![id,tokengo_shared::normalize_model_name(model),m.upstream.as_deref().unwrap_or(&m.model),fingerprint(c,id)?,json,default,db::now_ms()])?;
     c.execute(
         "UPDATE channels SET binding_generation=binding_generation+1 WHERE id=?1",
@@ -565,8 +622,9 @@ pub fn apply_defaults_and_validate(
             .ok_or("Reasoning effort must be a bounded native parameter value")?;
         // DeepSeek documents native effort aliases beyond its catalog's recommended
         // levels. Preserve accepted client payloads rather than narrowing them after
-        // adding catalog discovery. A manual list remains an explicit restriction.
-        let native_alias = if deepseek && caps.manual_levels.is_none() {
+        // adding catalog discovery. Only replacement lists are restrictions;
+        // an append operation must preserve previously accepted native aliases.
+        let native_alias = if deepseek && (caps.manual_levels.is_none() || caps.manual_mode.as_deref() == Some("append")) {
             match value {
                 "minimal" => Some("low"),
                 "medium" | "xhigh" => Some("high"),
@@ -929,6 +987,92 @@ mod tests {
         assert!(for_model(&c, id, "gpt-6-luna").unwrap().levels.contains(&"none".into()));
         let (c, id) = portable_source("https://api.openai.com/v1", "another-gpt", deepseek_metadata());
         assert!(!for_model(&c, id, "another-gpt").unwrap().levels.contains(&"none".into()));
+    }
+
+    #[test]
+    fn manual_append_keeps_source_levels_and_saves_custom_default_together() {
+        let (c, id) = portable_source("https://proxy.example.test/v1", "exact", deepseek_metadata());
+        let caps = db::in_tx(&c, |c| configure_with_mode(c, id, "public", Some(&["custom".into()]), Some("custom"), Some("append"))).unwrap();
+        assert_eq!(caps.upstream_levels, vec!["low", "high", "max"]);
+        assert_eq!(caps.manual_levels, Some(vec!["custom".into()]));
+        assert_eq!(caps.manual_mode.as_deref(), Some("append"));
+        assert_eq!(caps.levels, vec!["low", "high", "max", "custom"]);
+        assert_eq!(caps.default_effort.as_deref(), Some("custom"));
+        let mut explicit = json!({"reasoning":{"effort":"low"}});
+        apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Responses, &mut explicit).unwrap();
+        assert_eq!(explicit["reasoning"]["effort"], "low");
+        let mut omitted = json!({});
+        apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Responses, &mut omitted).unwrap();
+        assert_eq!(omitted["reasoning"]["effort"], "custom");
+        let models = crate::upstream::parse_model_catalog(&json!({"data":[{"id":"exact","reasoning_effort_levels":["medium"],"default_reasoning_level":"medium"}]}).to_string());
+        store_catalog(&c, id, &models, 2).unwrap();
+        let refreshed = for_mapping(&c, id, "public").unwrap();
+        assert_eq!(refreshed.levels, vec!["medium", "custom"]);
+        assert_eq!(refreshed.upstream_levels, vec!["medium"]);
+    }
+
+    #[test]
+    fn manual_append_preserves_deepseek_native_aliases_but_replace_can_exclude() {
+        let (c, id) = portable_source("https://api.deepseek.com/v1", "exact", deepseek_metadata());
+        let appended = configure_with_mode(&c, id, "public", Some(&["custom".into()]), None, Some("append")).unwrap();
+        for alias in ["minimal", "medium", "xhigh", "ultra"] {
+            assert!(!appended.manual_excludes(alias), "gateway preflight must preserve append semantics");
+            for protocol in [Protocol::Chat, Protocol::Responses, Protocol::Messages] {
+                let mut body = match protocol {
+                    Protocol::Chat => json!({"reasoning_effort":alias}),
+                    Protocol::Responses => json!({"reasoning":{"effort":alias}}),
+                    Protocol::Messages => json!({"output_config":{"effort":alias}}),
+                };
+                let before = body.clone();
+                apply_defaults_and_validate(&c, id, "public", "exact", protocol, &mut body).unwrap();
+                assert_eq!(body, before, "explicit native alias must remain unchanged");
+            }
+        }
+        let replaced = configure_with_mode(&c, id, "public", Some(&["custom".into()]), None, Some("replace")).unwrap();
+        for alias in ["medium", "xhigh"] {
+            assert!(replaced.manual_excludes(alias));
+            let mut body = json!({"reasoning":{"effort":alias}});
+            assert!(apply_defaults_and_validate(&c, id, "public", "exact", Protocol::Responses, &mut body).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_manual_lists_keep_replace_semantics_and_provenance() {
+        let (c, id) = portable_source("https://api.openai.com/v1", "gpt-6-luna", deepseek_metadata());
+        let caps = configure(&c, id, "public", Some(&["custom".into()]), Some("custom")).unwrap();
+        assert_eq!(caps.manual_mode.as_deref(), Some("replace"));
+        assert_eq!(caps.levels, vec!["custom"]);
+        assert_eq!(caps.upstream_levels, vec!["low", "high", "max"]);
+        assert_eq!(caps.compatibility_levels, vec!["none"]);
+        assert!(caps.verified_levels.is_empty());
+        let mut excluded = json!({"reasoning":{"effort":"none"}});
+        assert!(apply_defaults_and_validate(&c, id, "public", "gpt-6-luna", Protocol::Responses, &mut excluded).is_err());
+        let raw: String = c.query_row("SELECT manual_levels FROM channel_reasoning_settings", [], |r|r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Vec<String>>(&raw).unwrap(), vec!["custom"]);
+    }
+
+    #[test]
+    fn invalid_manual_mode_or_default_does_not_partially_save() {
+        let (c, id) = portable_source("https://proxy.example.test/v1", "exact", deepseek_metadata());
+        configure(&c, id, "public", Some(&["high".into()]), Some("high")).unwrap();
+        let before = settings(&c, id, "public").unwrap();
+        let generation: i64 = c.query_row("SELECT binding_generation FROM channels WHERE id=?1", [id], |r|r.get(0)).unwrap();
+        for (mode, manual, default) in [
+            (Some("unknown"), Some(vec!["custom".into()]), Some("custom")),
+            (Some("append"), None, None),
+            (Some("replace"), Some(vec!["custom".into()]), Some("high")),
+            (Some("append"), Some(vec!["custom".into(), "custom".into()]), None),
+        ] {
+            assert!(db::in_tx(&c, |c| configure_with_mode(c, id, "public", manual.as_deref(), default, mode)).is_err());
+            assert_eq!(settings(&c, id, "public").unwrap(), before);
+            assert_eq!(c.query_row("SELECT binding_generation FROM channels WHERE id=?1", [id], |r|r.get::<_,i64>(0)).unwrap(), generation);
+        }
+        c.execute("UPDATE channels SET base_url='https://changed.example.test/v1' WHERE id=?1", [id]).unwrap();
+        let stale = for_mapping(&c, id, "public").unwrap();
+        assert_eq!(stale.status, "unknown");
+        assert!(stale.manual_levels.is_none());
+        assert!(stale.manual_mode.is_none());
+        assert!(stale.upstream_levels.is_empty());
     }
 
     #[test]

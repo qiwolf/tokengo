@@ -1,0 +1,7 @@
+2026-10-29T12:51:53.904199Z  INFO 🚀 Starting trunk 0.21.14
+2026-10-29T12:51:53.904926Z  INFO 📦 starting build
+2026-10-29T12:51:53.906053Z  INFO ⏫ Found an update of trunk: 0.21.14 -> 0.22.1
+   Compiling tokengo-web v0.34.0 (/srv/build/reasoning-ui-20261029/source/crates/web)
+    Finished `release` profile [optimized] target(s) in 2m 51s
+2026-10-29T12:54:59.102703Z  INFO applying new distribution
+2026-10-29T12:54:59.104786Z  INFO ✅ success
