@@ -1,5 +1,15 @@
 # 模型兼容核实清单
 
+## 2026-10-29 候选增量：v0.34.0-qiwolf.23（待发布）
+
+|项|已确认依据|当前边界|
+|---|---|---|
+|OpenAI OAuth、精确`gpt-6.1-terra`的`none`|当前账号最新目录HTTP200但不含none；同账号同出口直接Responses最小流式请求返回200/completed，reasoning_tokens=0|只对已验证连接与来源身份补充，不推广到其他账号/接入/Sol；尚不等于部署后的DSH Default验收|
+|自定义推理档位与默认|本地代码及build-test173前端、26推理能力、3HTTP事务回归通过；WASM及真实产物＋隔离模拟接口浏览器通过|人工追加/覆盖不标为实测；本次生产UI保存与回滚验证仍待补录|
+|发布与生产|用户已授权备份、部署、验收通过后推送发布；当前仅文档准备|精确main CI、公开原生/容器资产、GHCR和线上DSH/UI验收结果尚待取得|
+
+证据：[来源限定修复](maintenance/terra-none-20261029/README.md)、[实测脱敏收据](maintenance/terra-none-20261029/upstream-receipt.json)、[UI本地验证](maintenance/reasoning-ui-20261029/README.md)、[候选版本说明](releases/v0.34.0-qiwolf.23.md)。以下既有qiwolf.22记录保持历史范围，不冒充本版新测。
+
 更新日期：2026-10-28。对应发行版：[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)，产品源码 `f85eca9d67801a970ba93312a553da602deacea3`。
 
 本清单区分真实来源调用、源码/模拟上游/SDK对照、未充分验收和尚未实施。20项核心工作实现及本次交付完成，不代表所有厂商、账号、型号和参数组合均已实测。未充分验收只标注，不据此停用现有可表达功能；真实权限、归属、明确转换开关及具体无法表达请求的校验继续有效。

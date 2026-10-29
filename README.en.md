@@ -12,6 +12,9 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 Current stable release: **[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)** · [Release notes](docs/releases/v0.34.0-qiwolf.22.md) · [Publication record](docs/acceptance/2026-10-28-qiwolf22-release/README.md).
 
+发布准备 / Release preparation：**v0.34.0-qiwolf.23** — Terra `none` 来源限定修复、自定义推理档位追加/覆盖及一次保存。[待发布版本说明 / Pending release notes](docs/releases/v0.34.0-qiwolf.23.md)。生产与公开发行验收尚待完成 / Production and public-release acceptance are pending.
+
+
 当前正式版：**[v0.34.0-qiwolf.22](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.22)** · [版本说明](docs/releases/v0.34.0-qiwolf.22.md) · [发布记录](docs/acceptance/2026-10-28-qiwolf22-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
