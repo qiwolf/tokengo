@@ -1,0 +1,28 @@
+{
+  "status": "observed",
+  "main": "0e393f8be1f9eba9e28aa30183fc0252ca0ab2bf",
+  "rust_ci_run": "https://github.com/qiwolf/tokengo/actions/runs/41200992060",
+  "attempt": 1,
+  "conclusion": "success",
+  "jobs": [
+    {
+      "id": 124536595572,
+      "name": "Native workspace tests (Rust 1.98.0)",
+      "conclusion": "success"
+    },
+    {
+      "id": 124536595808,
+      "name": "Web WASM check (Rust 1.98.0)",
+      "conclusion": "success"
+    }
+  ],
+  "error_response": "11 passed; 0 failed",
+  "tag_ref_unchanged": true,
+  "tag_target": "5c6efa71da32803c6624f91515c01b323bc26c72",
+  "release_assets_unchanged": true,
+  "asset_count": 9,
+  "release_or_deploy_performed": false,
+  "scope": "Historical result for test-fix commit 0e393f8; this documentation update is not a new CI run or production acceptance.",
+  "decision_date": "2026-10-31",
+  "user_confirmed_decision": "Do not release or deploy; continue production qiwolf.23."
+}
