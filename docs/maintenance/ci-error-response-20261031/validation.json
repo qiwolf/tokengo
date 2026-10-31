@@ -1,0 +1,460 @@
+{
+  "base_commit": "22fb7897c955d482b14e5d3f7f3e6927aa9ffcb5",
+  "execution_host": "build-test",
+  "toolchain": "1.98.0",
+  "baseline_rounds": 9,
+  "patched_rounds": 6,
+  "expected_negative_controls": 3,
+  "original_ci_failures_reproduced": false,
+  "full_workspace_ci_rerun": false,
+  "invalidated_phase": "patched-pressure",
+  "runs": [
+    {
+      "host": "build-test",
+      "phase": "baseline",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 33.02584481239319,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.29s"
+      ],
+      "log_sha256": "0b67c64e8d30d58574b81f9a7666938fc9280834863422ca5c216affd2b392e6",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 4.967214345932007,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.73s"
+      ],
+      "log_sha256": "c16542acc83d3bd6ec479b0de998e43626d9a0719afe712627c60cd2a3653df0",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 4.640724182128906,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.41s"
+      ],
+      "log_sha256": "3560f0865ef144a7990960a45e62b6a9248f1b1aa2b077e3117d4217c89b2e6e",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline-onecpu-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 3.199936866760254,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.98s"
+      ],
+      "log_sha256": "c1836412f719d58ab72e9b7e6bc7853b861cd163231391e0d5a8a1fd2634ffb1",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline-onecpu-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 3.1956186294555664,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.97s"
+      ],
+      "log_sha256": "da375f40860352e7dd378b9c62a0d46e0941580cd1878f29118577eb847a830c",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline-onecpu-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 3.196869373321533,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.98s"
+      ],
+      "log_sha256": "c7ea8f3c2e7e5a8961e21d187e646584db269f65016a7babbd02079a18f0719d",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 3.7916512489318848,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.55s"
+      ],
+      "log_sha256": "205a840234e49d1fca00e16769b493b7086b25adfe65a33fed12cd8b52edb2ff",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 3.8850700855255127,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.66s"
+      ],
+      "log_sha256": "261b81652d40d9e8a0cbb7deed69f638fceb97cce1e99b461a0da1656cbfa713",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "baseline-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 3.8298492431640625,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.60s"
+      ],
+      "log_sha256": "eb1d9708b9c033f7cd96b0a92d7b8ad4af91942d52c713c1eacd53907c249268",
+      "source_manifest_sha256": "9380f73536309d1bb76db462e3fcecce726bf366af04b14aca7eed0e584d4eef",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "mutant",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "continuously_dripping_error_has_total_attempt_deadline",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 101,
+      "seconds": 33.386741161346436,
+      "result_lines": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 5.19s"
+      ],
+      "log_sha256": "e3fe2d2ca44647bfc0291bc8971ef18d879bc5a2431dea31b571a5e9c23bf50f",
+      "source_manifest_sha256": "22b014b447554c1ac0aaebbacc1d378fa56bc2571f9a6eed837660a9160e78dd",
+      "expected_exit_code": 101
+    },
+    {
+      "host": "build-test",
+      "phase": "mutant",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "heartbeat_only_200_has_precommit_deadline_and_falls_back",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 101,
+      "seconds": 5.431923151016235,
+      "result_lines": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 5.19s"
+      ],
+      "log_sha256": "61fe9e8d322dce7586e25d4397420d1b8e3955f7e669c358d046c1429910bc8f",
+      "source_manifest_sha256": "22b014b447554c1ac0aaebbacc1d378fa56bc2571f9a6eed837660a9160e78dd",
+      "expected_exit_code": 101
+    },
+    {
+      "host": "build-test",
+      "phase": "mutant",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "terminal_event_completes_without_waiting_for_connection_eof",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 101,
+      "seconds": 2.451362133026123,
+      "result_lines": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 2.19s"
+      ],
+      "log_sha256": "7f114314209c4f522301e53389940afbc8f0226a147a1b8c5e1288980a3212c2",
+      "source_manifest_sha256": "22b014b447554c1ac0aaebbacc1d378fa56bc2571f9a6eed837660a9160e78dd",
+      "expected_exit_code": 101
+    },
+    {
+      "host": "build-test",
+      "phase": "patched",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 8.139909267425537,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.82s"
+      ],
+      "log_sha256": "9ab908cb62e0517168738c899e89a6162d598206c1eb4dd35dabf65ef9c5abab",
+      "source_manifest_sha256": "666570d33f083a29d30928b97834fa70956d9aa6cc7c3b9541c88a7aa93b9ef7",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "patched",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 6.767855167388916,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.55s"
+      ],
+      "log_sha256": "4c2c01b8b0cb526b3947c298c2dda395e80c7fe6a78aad4dd7a750c2850af564",
+      "source_manifest_sha256": "666570d33f083a29d30928b97834fa70956d9aa6cc7c3b9541c88a7aa93b9ef7",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "patched",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 6.996916055679321,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.77s"
+      ],
+      "log_sha256": "3fa152d5aaa9387ebd0def5942e7981a1ea12f850341fd364966030b2301decc",
+      "source_manifest_sha256": "666570d33f083a29d30928b97834fa70956d9aa6cc7c3b9541c88a7aa93b9ef7",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "patched-restored-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 37.64078950881958,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.34s"
+      ],
+      "log_sha256": "7475ff76c4e58c316971c1765657af0fd244cd87d5a0bd609b50e5262f8c825e",
+      "source_manifest_sha256": "666570d33f083a29d30928b97834fa70956d9aa6cc7c3b9541c88a7aa93b9ef7",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "patched-restored-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 5.456408262252808,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.23s"
+      ],
+      "log_sha256": "3b8731b586d24c35daa6ef6f3691bc8d9ad00e50d73059d9506d2392f1b127b4",
+      "source_manifest_sha256": "666570d33f083a29d30928b97834fa70956d9aa6cc7c3b9541c88a7aa93b9ef7",
+      "expected_exit_code": 0
+    },
+    {
+      "host": "build-test",
+      "phase": "patched-restored-pressure",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tokengo-server",
+        "--test",
+        "error_response",
+        "--",
+        "--nocapture",
+        "--test-threads=11"
+      ],
+      "cwd": "/srv/build/tokengo-ci-error-response-20261031/source",
+      "exit_code": 0,
+      "seconds": 5.389067649841309,
+      "result_lines": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.15s"
+      ],
+      "log_sha256": "288a282933bcfc4a91448d1088ad68b49e422168e0b877b340345b8a85df2e6d",
+      "source_manifest_sha256": "666570d33f083a29d30928b97834fa70956d9aa6cc7c3b9541c88a7aa93b9ef7",
+      "expected_exit_code": 0
+    }
+  ]
+}

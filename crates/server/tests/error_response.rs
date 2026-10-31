@@ -14,6 +14,12 @@ use tokengo_server::{
     AppState, Config,
 };
 
+// Keep protocol deadlines below the watchdog and request budget. A slow runner
+// must still fail if drip/heartbeat activity incorrectly renews an attempt.
+const ATTEMPT_MS: u64 = 1_000;
+const REQUEST_BUDGET_MS: u64 = 10_000;
+const REQUEST_WATCHDOG: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Copy)]
 enum Mode {
     EmptyTerminal,
@@ -144,8 +150,8 @@ impl Fixture {
             primary,
         }
     }
-    async fn request(&self) -> (StatusCode, Bytes, Option<String>) {
-        let response = gateway::forward(
+    async fn response(&self) -> Response {
+        gateway::forward(
             self.state.clone(),
             ForwardRequest {
                 auth: None,
@@ -160,7 +166,10 @@ impl Fixture {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+    }
+    async fn request(&self) -> (StatusCode, Bytes, Option<String>) {
+        let response = self.response().await;
         let status = response.status();
         let retry = response
             .headers()
@@ -219,8 +228,8 @@ impl Fixture {
 #[tokio::test]
 async fn hanging_400_429_and_500_bodies_fail_over_and_release_capacity() {
     for status in [400, 429, 500] {
-        let f = Fixture::new(Mode::Hang, status, true, 80, 600).await;
-        let (s, b, _) = tokio::time::timeout(Duration::from_millis(500), f.request())
+        let f = Fixture::new(Mode::Hang, status, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
+        let (s, b, _) = tokio::time::timeout(REQUEST_WATCHDOG, f.request())
             .await
             .expect("error body must have an idle deadline");
         assert_eq!(s, StatusCode::OK);
@@ -230,8 +239,8 @@ async fn hanging_400_429_and_500_bodies_fail_over_and_release_capacity() {
 }
 #[tokio::test]
 async fn continuously_dripping_error_has_total_attempt_deadline() {
-    let f = Fixture::new(Mode::Drip, 500, true, 90, 600).await;
-    let (s, _, _) = tokio::time::timeout(Duration::from_millis(500), f.request())
+    let f = Fixture::new(Mode::Drip, 500, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
+    let (s, _, _) = tokio::time::timeout(REQUEST_WATCHDOG, f.request())
         .await
         .expect("small chunks cannot extend an attempt forever");
     assert_eq!(s, StatusCode::OK);
@@ -239,14 +248,14 @@ async fn continuously_dripping_error_has_total_attempt_deadline() {
 }
 #[tokio::test]
 async fn oversized_error_is_rejected_before_fallback() {
-    let f = Fixture::new(Mode::Huge, 500, true, 100, 600).await;
+    let f = Fixture::new(Mode::Huge, 500, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
     assert_eq!(f.request().await.0, StatusCode::OK);
     f.assert_ledger(true, "65536");
 }
 #[tokio::test]
 async fn error_body_remaining_request_budget_terminates_without_fallback() {
-    let f = Fixture::new(Mode::Drip, 429, false, 1000, 90).await;
-    let (s, _, _) = tokio::time::timeout(Duration::from_millis(450), f.request())
+    let f = Fixture::new(Mode::Drip, 429, false, 10_000, 500).await;
+    let (s, _, _) = tokio::time::timeout(Duration::from_secs(3), f.request())
         .await
         .expect("remaining request budget must bound error reading");
     assert!(s.is_server_error());
@@ -255,7 +264,7 @@ async fn error_body_remaining_request_budget_terminates_without_fallback() {
 #[tokio::test]
 async fn finite_errors_preserve_status_body_and_retry_after() {
     for status in [400, 429, 500] {
-        let f = Fixture::new(Mode::Finite, status, false, 100, 600).await;
+        let f = Fixture::new(Mode::Finite, status, false, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
         let (s, b, retry) = f.request().await;
         assert_eq!(s.as_u16(), status);
         assert_eq!(&b[..], br#"{"error":{"message":"limited"}}"#);
@@ -270,7 +279,7 @@ async fn finite_errors_preserve_status_body_and_retry_after() {
 }
 #[tokio::test]
 async fn broken_error_transport_can_fall_back() {
-    let f = Fixture::new(Mode::Broken, 500, true, 100, 600).await;
+    let f = Fixture::new(Mode::Broken, 500, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
     assert_eq!(f.request().await.0, StatusCode::OK);
     // Hyper may reject before delivering headers; either network or body fault is valid.
     f.state.drain_writes();
@@ -284,8 +293,8 @@ async fn broken_error_transport_can_fall_back() {
 
 #[tokio::test]
 async fn heartbeat_only_200_has_precommit_deadline_and_falls_back() {
-    let f = Fixture::new(Mode::Heartbeat, 200, true, 90, 600).await;
-    let (s, b, _) = tokio::time::timeout(Duration::from_millis(500), f.request())
+    let f = Fixture::new(Mode::Heartbeat, 200, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
+    let (s, b, _) = tokio::time::timeout(REQUEST_WATCHDOG, f.request())
         .await
         .expect("heartbeats must not keep an empty stream alive forever");
     assert_eq!(s, StatusCode::OK);
@@ -294,7 +303,7 @@ async fn heartbeat_only_200_has_precommit_deadline_and_falls_back() {
 }
 #[tokio::test]
 async fn error_event_before_first_output_uses_fallback() {
-    let f = Fixture::new(Mode::StreamError, 200, true, 90, 600).await;
+    let f = Fixture::new(Mode::StreamError, 200, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
     let (s, b, _) = f.request().await;
     assert_eq!(s, StatusCode::OK);
     assert!(String::from_utf8_lossy(&b).contains("fallback"));
@@ -304,7 +313,7 @@ async fn error_event_before_first_output_uses_fallback() {
 
 #[tokio::test]
 async fn native_error_after_output_is_preserved_without_replay() {
-    let f = Fixture::new(Mode::OutputThenError, 200, true, 150, 600).await;
+    let f = Fixture::new(Mode::OutputThenError, 200, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
     let (s, b, _) = f.request().await;
     assert_eq!(s, StatusCode::OK);
     let body = String::from_utf8_lossy(&b);
@@ -328,11 +337,21 @@ async fn native_error_after_output_is_preserved_without_replay() {
 }
 #[tokio::test]
 async fn terminal_event_completes_without_waiting_for_connection_eof() {
-    let f = Fixture::new(Mode::TerminalThenHang, 200, false, 200, 600).await;
-    let (s, b, _) = tokio::time::timeout(Duration::from_millis(100), f.request())
+    // Acquisition includes routing, durable writes and cold HTTP-client creation.
+    // Test closure separately, with a watchdog shorter than the stream idle limit:
+    // waiting for EOF (the upstream never sends it) must still fail this test.
+    let f = Fixture::new(Mode::TerminalThenHang, 200, false, 10_000, 20_000).await;
+    let response = tokio::time::timeout(Duration::from_secs(15), f.response())
         .await
-        .expect("valid terminal event must close response");
-    assert_eq!(s, StatusCode::OK);
+        .expect("terminal response must be acquired");
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = tokio::time::timeout(
+        Duration::from_secs(2),
+        axum::body::to_bytes(response.into_body(), 1 << 20),
+    )
+    .await
+    .expect("valid terminal event must close response before the idle timeout")
+    .unwrap();
     assert!(String::from_utf8_lossy(&b).contains("finished"));
     f.state.drain_writes();
     let status: String = f
@@ -349,7 +368,7 @@ async fn terminal_event_completes_without_waiting_for_connection_eof() {
 
 #[tokio::test]
 async fn empty_terminal_event_is_rejected_before_client_commit() {
-    let f = Fixture::new(Mode::EmptyTerminal, 200, true, 100, 600).await;
+    let f = Fixture::new(Mode::EmptyTerminal, 200, true, ATTEMPT_MS, REQUEST_BUDGET_MS).await;
     let (s, b, _) = f.request().await;
     assert_eq!(s, StatusCode::OK);
     assert!(String::from_utf8_lossy(&b).contains("fallback"));
