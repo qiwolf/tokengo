@@ -206,6 +206,8 @@ UMask=0077
 WantedBy=multi-user.target
 ```
 
+For multiple proxy layers, [trust only known proxy sources and preserve the client IP](reverse-proxy-client-ip.md). Program upgrades do not automatically change Nginx configuration.
+
 Place HTTPS in front of the loopback listener. Preserve Authorization headers and disable reverse-proxy response buffering for SSE; give long responses an appropriate proxy read timeout. Restrict the administration surface rather than assuming an API key alone protects every deployment mistake. Initialize locally before exposing the service. This unit is a generic example, not an automatically installed deployment package.
 
 ## Backup, Upgrade and Recovery

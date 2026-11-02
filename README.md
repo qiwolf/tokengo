@@ -10,13 +10,15 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)** · [版本说明](docs/releases/v0.34.0-qiwolf.23.md) · [发布记录](docs/acceptance/2026-10-29-qiwolf23-release/README.md)。
+本次版本：**[v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24)**（发行准备中）· [版本说明](docs/releases/v0.34.0-qiwolf.24.md) · [发行进度与收据](docs/acceptance/2026-11-02-qiwolf24-release/README.md)。
 
-Current stable release: **[v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)** · [Release notes](docs/releases/v0.34.0-qiwolf.23.md) · [Publication record](docs/acceptance/2026-10-29-qiwolf23-release/README.md).
+Current release preparation: **[v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24)** · [Release notes](docs/releases/v0.34.0-qiwolf.24.md) · [Publication status and receipt](docs/acceptance/2026-11-02-qiwolf24-release/README.md).
 
-Terra `none`来源限定修复与自定义推理档位已生产验收；精确main CI和正式发行成功，9资产已公开，公开9资产、匿名GHCR及原生/容器独立验收通过。
+本版交付可信反代来源 IP 指南和此前 CI 测试维护；237 的 Nginx 配置已验证上线，应用业务逻辑不变。升级程序不会自动修改反代；新版本公开资产与独立运行验收另行记录。
 
-Terra `none` and custom reasoning controls have passed production acceptance. Exact-commit main CI and publication succeeded; nine assets are public, and independent public-asset, anonymous GHCR and native/container acceptance has passed.
+This release documents trusted-proxy client IP handling and includes prior CI test maintenance. The Nginx configuration fix is verified on 237; application business logic is unchanged. Upgrading the program does not modify your proxy. New public assets and independent runtime acceptance are tracked separately.
+
+已公开稳定基线 / Published stable baseline: [v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)。此前模型与发行验收见[历史收据 / historical receipt](docs/acceptance/2026-10-29-qiwolf23-release/README.md)。
 
 ## 84 秒认识 TokenGo · Meet TokenGo in 84 seconds
 
@@ -84,7 +86,7 @@ Native signatures and opaque state retain source ownership; committed streams ar
 | 主题 / Topic | 入口 / Read more |
 | --- | --- |
 | 完整使用、配置与示例 / Full usage, configuration and examples | [中文指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) |
-| 部署、升级与备份 / Deployment, upgrades and backups | [Deployment](docs/deployment.md) · [Containers](docs/container-deployment.md) |
+| 部署、升级与备份 / Deployment, upgrades and backups | [Deployment](docs/deployment.md) · [Containers](docs/container-deployment.md) · [来源 IP / Client IP](docs/reverse-proxy-client-ip.md) |
 | 渠道、凭据与 OAuth / Channels, credentials and OAuth | [接入流程 / Provider setup](docs/provider-channels.md) · [Key pools](docs/provider-key-pools.md) · [OAuth](docs/oauth-providers.md) |
 | 参数、推理关闭与网络 / Parameters, reasoning off and networking | [参数合同 / Parameter matching](docs/references/provider-parameter-contracts.md) · [Reasoning off](docs/reasoning-compatibility.md) · [代理 / Proxies](docs/outbound-proxy.md) |
 | 用户、自助密钥与权限 / Users, self-service keys and access | [Accounts](docs/account-login.md) · [Identity and metering](docs/identity-metering.md) |

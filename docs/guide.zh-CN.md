@@ -148,7 +148,7 @@ curl -N http://127.0.0.1:3160/v1/chat/completions \
 
 使用专用低权限账号和持久化数据目录，成套部署程序与完整面板。用 systemd 等工具管理进程；可直接参考 [通用 systemd 示例](guide.en.md#production-deployment)，需先准备账号、目录及文件。
 
-公网通过 HTTPS 反向代理接入本机监听。保留 Authorization 请求头，SSE 关闭响应缓冲，设置适当的长响应读取超时。先完成管理员初始化，再开放访问；必要时额外限制面板访问。
+公网通过 HTTPS 反向代理接入本机监听。保留 Authorization 请求头，SSE 关闭响应缓冲，设置适当的长响应读取超时。先完成管理员初始化，再开放访问；必要时额外限制面板访问。 多层反代须[限定可信代理并保留真实来源 IP](reverse-proxy-client-ip.md)；升级程序不会自动修正已有 Nginx。
 
 数据库、对应 `master.key` 与 `.billing-outbox` / dead-letter 必须成套备份，备份也按凭据保密。主密钥丢失后无法解密存储的秘密。WAL 数据库写入期间不能只复制 `.db`：使用 SQLite backup API，或者干净停服后备份持久数据。
 
