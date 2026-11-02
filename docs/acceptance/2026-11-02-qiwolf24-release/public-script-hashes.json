@@ -1,0 +1,12 @@
+{
+  "final-public-audit.py": "eb5ac8d916cdadf39e91e1894352dffe89cdb5cbb20af091df94349802995721",
+  "verify-release.py": "9ee9531fcd0bbd88559d3c6783aa126bbb05c178b65480e6e31b9bbf80b77059",
+  "manage.py": "79218480977ebd8112db27bf9d9770a36c13a82612e15804b34822f52304dd09",
+  "smoke.py": "ccef4d3dc104458ff57c59d216cfbc6eba76f9e757eabe503479b11eee5aba8a",
+  "verify-assets.py": "3bf3b9ab70186f71faad9f2c11acdb3d43ede5217a5985c299d44bbfccaa3541",
+  "fresh_defaults.py": "737408f57d50e5f588c93ef7337315fe95897e9d72b7e87bed37b724f75c9962",
+  "verify-source-ip-documents.py": "ddf386350dbfc258227c043f15a9b1de683d6e4d1eaa976a1352ce2da8c22ed7",
+  "key_runtime.py": "fa2d390920fd5bfc0696d150b6eb01ed258ed827044e4c4331005ef01151ad9b",
+  "run-public.py": "aa877e510dcbd99901a318c22662b84058ecd3f077b8a384843d35da7a0f7189",
+  "native-runtime.py": "eec1d1466a5df34b4bd38144a31b1399c54808edcc69e40c6278ed72b04479f5"
+}

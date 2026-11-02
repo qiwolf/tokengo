@@ -1,0 +1,22 @@
+{
+  "result": "passed",
+  "source_commit": "589f02c6a60bdfab9affed67fda398dba3e092a4",
+  "platform": "linux/amd64",
+  "native_archive": "tokengo-589f02c6a60b-linux-x86_64.tar.gz",
+  "native_sha256": "2f40fc9f1146eeb9cfeef124f53fac398bc69ac5cadc6eee438bb7c42966b103",
+  "image_archive": "tokengo-589f02c6a60bdfab9affed67fda398dba3e092a4-linux-amd64.tar.gz",
+  "image_sha256": "cd66000eb6269886541846a23619abdbc0d4d622b9f95b77fc29cc1456f90fa7",
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:07ffb081be6402825488f03c20fad1600ae415d2d629f9edce0e3159f1f4c8f5",
+  "native_helper_result": "Bundle verified: 589f02c6a60bdfab9affed67fda398dba3e092a4 x86_64-unknown-linux-gnu",
+  "checks": [
+    "native-archive-sha256",
+    "native-per-file-checksums",
+    "source-manifest",
+    "server-cli-license-notice",
+    "wasm-magic-and-js",
+    "image-all-checksums",
+    "image-source-and-platform",
+    "registry-digest-format"
+  ],
+  "limits": "Does not pull or run images; root performs registry and runtime acceptance separately."
+}

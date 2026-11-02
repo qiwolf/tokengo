@@ -7,7 +7,7 @@
 - 补齐多层反代来源 IP 运维指南及可信代理配置，归档 237 已上线的 Nginx 修复；公网请求来源链路及伪造头覆盖检查通过，模型推理与新增公网请求数据库记录未在此次配置验收中复测。
 - 纳入此前 main 的错误响应测试时序维护 `0e393f8`，分离行为截止与外层 watchdog，不改变生产超时、回退或终止逻辑。
 - Cargo0.34.0/schema42不变；应用业务逻辑、依赖和模型能力没有新增。更新二进制或镜像不会自动修改现有 Nginx，须按[来源 IP 指南](docs/reverse-proxy-client-ip.md)单独核对配置。
-- 本次公开发行准备中，精确提交与新资产验收以[版本说明](docs/releases/v0.34.0-qiwolf.24.md)和[发行收据](docs/acceptance/2026-11-02-qiwolf24-release/README.md)为准；此前版本的 CI、真实模型和生产证据不冒称本版新测。
+- 本次已正式发行，精确提交与新资产验收见[版本说明](docs/releases/v0.34.0-qiwolf.24.md)和[发行收据](docs/acceptance/2026-11-02-qiwolf24-release/README.md)；此前版本的 CI、真实模型和生产证据不冒称本版新测。
 
 ## v0.34.0-qiwolf.23 — 2026-10-29（北京时间）
 

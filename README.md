@@ -10,15 +10,15 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-本次版本：**[v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24)**（发行准备中）· [版本说明](docs/releases/v0.34.0-qiwolf.24.md) · [发行进度与收据](docs/acceptance/2026-11-02-qiwolf24-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24)**· [版本说明](docs/releases/v0.34.0-qiwolf.24.md) · [发行收据](docs/acceptance/2026-11-02-qiwolf24-release/README.md)。
 
-Current release preparation: **[v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24)** · [Release notes](docs/releases/v0.34.0-qiwolf.24.md) · [Publication status and receipt](docs/acceptance/2026-11-02-qiwolf24-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24)** · [Release notes](docs/releases/v0.34.0-qiwolf.24.md) · [Publication receipt](docs/acceptance/2026-11-02-qiwolf24-release/README.md).
 
-本版交付可信反代来源 IP 指南和此前 CI 测试维护；237 的 Nginx 配置已验证上线，应用业务逻辑不变。升级程序不会自动修改反代；新版本公开资产与独立运行验收另行记录。
+本版交付可信反代来源 IP 指南和此前 CI 测试维护；237 的 Nginx 配置已验证上线，应用业务逻辑不变。升级程序不会自动修改反代；精确 main CI、发行工作流、公开 9 资产及原生/容器独立验收已通过。
 
-This release documents trusted-proxy client IP handling and includes prior CI test maintenance. The Nginx configuration fix is verified on 237; application business logic is unchanged. Upgrading the program does not modify your proxy. New public assets and independent runtime acceptance are tracked separately.
+This release documents trusted-proxy client IP handling and includes prior CI test maintenance. The Nginx configuration fix is verified on 237; application business logic is unchanged. Upgrading the program does not modify your proxy. Exact-commit main CI, publication, all nine public assets, and independent native/container acceptance have passed.
 
-已公开稳定基线 / Published stable baseline: [v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)。此前模型与发行验收见[历史收据 / historical receipt](docs/acceptance/2026-10-29-qiwolf23-release/README.md)。
+上一公开版 / Previous release: [v0.34.0-qiwolf.23](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.23)。此前模型与发行验收见[历史收据 / historical receipt](docs/acceptance/2026-10-29-qiwolf23-release/README.md)。
 
 ## 84 秒认识 TokenGo · Meet TokenGo in 84 seconds
 

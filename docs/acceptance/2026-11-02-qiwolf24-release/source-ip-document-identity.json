@@ -1,0 +1,30 @@
+{
+  "result": "passed",
+  "host": "build-test",
+  "source_commit": "589f02c6a60bdfab9affed67fda398dba3e092a4",
+  "archive": "tokengo-589f02c6a60b-linux-x86_64.tar.gz",
+  "checks": [
+    {
+      "path": "docs/reverse-proxy-client-ip.md",
+      "member": "tokengo-589f02c6a60b-linux-x86_64/docs/reverse-proxy-client-ip.md",
+      "expected_git_sha256": "ffcfd67214ac9f1295e5330b02c72848526930530dddc83e028d53c4a85fac58",
+      "archive_sha256": "ffcfd67214ac9f1295e5330b02c72848526930530dddc83e028d53c4a85fac58",
+      "matches": true
+    },
+    {
+      "path": "docs/releases/v0.34.0-qiwolf.24.md",
+      "member": "tokengo-589f02c6a60b-linux-x86_64/docs/releases/v0.34.0-qiwolf.24.md",
+      "expected_git_sha256": "aeab68451d2e3b3f404088e80a55114f63b7e1fd2218ad5f68f024ad68719285",
+      "archive_sha256": "aeab68451d2e3b3f404088e80a55114f63b7e1fd2218ad5f68f024ad68719285",
+      "matches": true
+    },
+    {
+      "path": "docs/maintenance/source-ip-20261102/nginx-after.conf",
+      "member": "tokengo-589f02c6a60b-linux-x86_64/docs/maintenance/source-ip-20261102/nginx-after.conf",
+      "expected_git_sha256": "efdec1300034087ed53e8708209177777b96ff02eb81a56d8a5de39a51406672",
+      "archive_sha256": "efdec1300034087ed53e8708209177777b96ff02eb81a56d8a5de39a51406672",
+      "matches": true
+    }
+  ],
+  "scope": "Static delivered document/config identity against Mac git objects only; no model inference, request database client-IP verification or Nginx deployment performed."
+}

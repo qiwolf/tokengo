@@ -1,0 +1,32 @@
+{
+  "source_commit": "589f02c6a60bdfab9affed67fda398dba3e092a4",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24",
+  "main_ci": "https://github.com/qiwolf/tokengo/actions/runs/41415141711",
+  "publication_workflow": "https://github.com/qiwolf/tokengo/actions/runs/41416249807",
+  "assets": 9,
+  "local_build": {
+    "result": "passed",
+    "host": "build-test",
+    "source_commit": "589f02c6a60bdfab9affed67fda398dba3e092a4",
+    "source_clean": true,
+    "steps": 8,
+    "rust_tests": {
+      "passed": 1570,
+      "failed": 0,
+      "ignored": 9
+    },
+    "artifacts_retrieved_to_mac": true,
+    "artifact_hashes": {
+      "tokengo-589f02c6a60b-linux-x86_64.tar.gz.sha256": "11cad3c073ac7e9b3633b1e26223aa421d9fa4fb7f5789bd7589563f4cb52ecd",
+      "tokengo-589f02c6a60b-linux-x86_64.tar.gz": "84a5b9f10e8bf9dd07caee76457c671c49c3bd8594635e5bee814fb88c42d3a4"
+    },
+    "local_results_path": "/Users/andy/Documents/ChatGPT/LLM \u4e2d\u8f6c\u7ad9\u5f00\u53d1/review/release-qiwolf24-20261102",
+    "preflight_failure": "first Git ownership check failed before tests; fixed task directory ownership, resynced unchanged reviewed source; log retained"
+  },
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:07ffb081be6402825488f03c20fad1600ae415d2d629f9edce0e3159f1f4c8f5",
+  "public_native_sha256": "2f40fc9f1146eeb9cfeef124f53fac398bc69ac5cadc6eee438bb7c42966b103",
+  "public_image_sha256": "cd66000eb6269886541846a23619abdbc0d4d622b9f95b77fc29cc1456f90fa7",
+  "production_program_upgraded": false,
+  "production_proxy_config_verified": true,
+  "public_runtime_production_access": false
+}
