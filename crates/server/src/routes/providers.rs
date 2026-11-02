@@ -607,6 +607,10 @@ async fn credentials_create(
   }
   let source=channels::create(c,&channels::NewChannel{name:label.clone(),base_url:url.clone(),enabled:true,unwrap_envelope:false,max_concurrent:0})?;
   if let Some(key)=&body.key{channels::set_secret(c,&s.secrets,source,key)?;}
+  if kind=="api_key" {
+   let headers=crate::upstream::opencode_go_default_headers(&url);
+   if !headers.is_empty(){channels::set_headers(c,&s.secrets,source,&headers)?;}
+  }
   channels::set_models(c,source,&models)?;providers::set_membership(c,source.0,Some(id))?;
   // Inherit declared protocol semantics, not another account's credentials or headers.
   let first:Option<i64>=c.query_row("SELECT channel_id FROM provider_connections WHERE provider_id=?1 AND channel_id<>?2 AND (?3=0 OR channel_id IN (SELECT id FROM channels WHERE base_url=?4)) ORDER BY channel_id LIMIT 1",rusqlite::params![id,source.0,is_local,url],|r|r.get(0)).optional()?;

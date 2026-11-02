@@ -133,6 +133,73 @@ async fn keyed_catalog(headers: HeaderMap) -> Json<Value> {
     Json(json!({"data":[{"id":name}]}))
 }
 #[tokio::test]
+async fn new_opencode_go_credentials_have_their_own_stable_session_headers() {
+    let f = Fixture::new().await;
+    for base in [
+        "https://opencode.ai/inference/go/openai/v1",
+        "https://opencode.ai/inference/go/anthropic/v1",
+        "https://opencode.ai/inference/go/google/v1beta",
+        "https://opencode.ai/zen/go/v1",
+    ] {
+        let provider = f.provider(base).await;
+        for key in ["go-key-a", "go-key-b"] {
+            let credential = f.key(provider, key).await;
+            let source = db::provider_pool::credentials(&f.state.conn(), provider)
+                .unwrap().into_iter().find(|c| c.id == credential).unwrap().source_ids[0];
+            let headers = db::channels::headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(source)).unwrap();
+            assert!(headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("user-agent") && value == &format!("TokenGo/{}", env!("CARGO_PKG_VERSION"))), "missing client identity for {base}");
+            assert!(headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("x-opencode-session") && value == "{{session_id}}"), "missing stable session template for {base}");
+            assert!(!serde_json::to_string(&headers).unwrap().contains(key), "defaults must not embed the credential");
+            // A later key may initialize its own defaults, but must never overwrite this source.
+            db::channels::set_headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(source), &[("User-Agent".into(), "custom-client".into())]).unwrap();
+        }
+        let credentials = db::provider_pool::credentials(&f.state.conn(), provider).unwrap();
+        for credential in credentials {
+            let headers = db::channels::headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(credential.source_ids[0])).unwrap();
+            assert_eq!(headers, vec![("User-Agent".into(), "custom-client".into())]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn opencode_defaults_do_not_leak_to_payg_proxies_or_unrecognized_sources() {
+    let f = Fixture::new().await;
+    for base in [
+        "https://opencode.ai/inference/openai/v1",
+        "https://opencode.ai/inference/go/unknown/v1",
+        "https://opencode.ai.evil.example/inference/go/openai/v1",
+        "https://proxy.example/inference/go/openai/v1",
+        "https://opencode.ai:8443/inference/go/openai/v1",
+        "http://opencode.ai/inference/go/openai/v1",
+    ] {
+        let provider = f.provider(base).await;
+        let credential = f.key(provider, "ordinary-key").await;
+        let source = db::provider_pool::credentials(&f.state.conn(), provider)
+            .unwrap().into_iter().find(|c| c.id == credential).unwrap().source_ids[0];
+        let headers = db::channels::headers(&f.state.conn(), &f.state.secrets, tokengo_shared::ChannelId(source)).unwrap();
+        assert!(headers.is_empty(), "must not invent Go headers for {base}");
+    }
+}
+
+#[tokio::test]
+async fn compatible_proxy_catalog_keeps_its_configured_protocol_path() {
+    let upstream = serve(Router::new().route(
+        "/inference/go/openai/v1/models",
+        get(keyed_catalog),
+    )).await;
+    let f = Fixture::new().await;
+    let p = f.provider(&format!("{}/inference/go/openai/v1", upstream.base)).await;
+    let before = f.snapshot();
+    let (status, value) = f.post(
+        &format!("/api/providers/{p}/models/discover"),
+        json!({"key":"key-a"}),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["models"], json!(["only-A"]));
+    assert_eq!(before, f.snapshot(), "catalog lookup must remain read-only");
+}
+
+#[tokio::test]
 async fn saved_and_draft_keys_discover_independent_catalogs_without_configuration_writes() {
     let upstream = serve(Router::new().route("/v1/models", get(keyed_catalog))).await;
     let f = Fixture::new().await;

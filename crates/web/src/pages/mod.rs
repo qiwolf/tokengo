@@ -14,6 +14,7 @@ pub mod custom_probes;
 pub mod provider_channels;
 pub mod provider_keys;
 pub mod family_picker;
+pub mod provider_presets;
 pub mod oauth_enrollment;
 pub mod connection_parameters;
 pub mod proxy_settings;

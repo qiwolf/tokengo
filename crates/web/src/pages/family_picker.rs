@@ -32,7 +32,7 @@ pub fn FamilyPicker(draft: RwSignal<Value>, on_changed: Callback<()>) -> impl In
                 class:mobile-visible=move||expanded.get()||collapsed_ids(draft.get()["_model_family"].as_str().unwrap_or(""),4).contains(&id)
                 aria-pressed=move||(draft.get()["_model_family"]==id).to_string()
                 aria-label=format!("选择 {label}")
-                on:click=move |_|{draft.update(|d|{d["_model_family"]=json!(id);d["oauth_account_id"]=Value::Null;d["_oauth_provider"]=Value::Null;});on_changed.run(());}>
+                on:click=move |_|{draft.update(|d|{d["_model_family"]=json!(id);d["_provider_preset"]=Value::Null;d["oauth_account_id"]=Value::Null;d["_oauth_provider"]=Value::Null;});on_changed.run(());}>
                 {if id=="other" {view!{<span class="family-other" aria-hidden="true"><i></i><i></i><i></i><i></i></span>}.into_any()}
                 else {view!{<img src=format!("/ui/family-logos/{id}.svg") alt="" width="30" height="30"/>}.into_any()}}
                 <span>{label}</span><span class="family-selected-mark" aria-hidden="true">{move||if draft.get()["_model_family"]==id{"✓"}else{""}}</span>

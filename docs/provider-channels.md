@@ -10,6 +10,21 @@
 2. **选择模型**：保存凭据后读取该来源目录并保存模型映射。Kimi/Copilot使用账号目录；MiniMax是明确标记的官方公共型号目录，不等于该账号订阅权益。首次绑定仍需核实输入、输出Token边界。
 3. **参数与转发**：检查刚保存来源的协议、参数与代理。客户端接入协议是用户调用TokenGo的协议，供应方接口协议是TokenGo调用上游的协议；可用性受来源原生声明及转换开关约束。
 
+新建渠道还提供带品牌图标的常用服务商预设，点击后选择API认证并填入地址和默认渠道名称；自填渠道名称会保留，地址仍可修改。以下地址于2026-11-02核对：
+
+| 选项 | 默认API URL |
+| --- | --- |
+| OpenCode Go | `https://opencode.ai/inference/go/openai/v1` |
+| OpenCode 按量 | `https://opencode.ai/inference/openai/v1` |
+| CommandGo | `https://api.commandcode.ai/provider/v1` |
+| OpenDesign | `https://amr-link.open-design.ai/v1` |
+
+服务商预设默认归入“其他 / 多家族”，不会凭品牌推断模型权限、协议或参数能力。随后改选模型家族会退出服务商预设；已手工填写的地址仍保留。CommandGo对应Command Code服务，应使用具有API权限的套餐账号。
+
+OpenCode新版推理入口和模型目录分开：TokenGo仅对官方HTTPS标准端口的已知协议前缀使用同源共享目录，不改推理地址、不影响第三方代理。新建OpenCode Go API凭据会加上独立客户端标识及稳定会话头模板；已有凭据不会自动重写。Responses客户端应提供稳定的 `x-session-id` 或 `x-opencode-session`，不能把每次变化的UUID或 `prompt_cache_key` 当成对话身份。
+
+官方依据：[OpenCode入口与会话](https://opencode.ai/v2/docs/console/harnesses)、[Command Code Provider API](https://commandcode.ai/docs/provider)、[OpenDesign Cloud API设置](https://open-design.ai/zh/help/cloud-api/#api-keys)。OpenDesign完整地址由官方页面的连接设置截图核对；预设不代表账号额度或真实调用已通过验收。
+
 ChatGPT/Codex沿用既有PKCE流程；Kimi、MiniMax中国/Global与Copilot默认内置有出处的公开客户端标识，不要求新使用者先配置独立Client ID占位。OAuth仍须用户在官方页面完成自己的账号确认，不能用API Key冒充；Copilot授权页显示注册应用OpenCode，目前只接账号目录明确支持Chat的模型。真实账号权限和调用结果仍需逐账号验证，详见[OAuth来源与边界](oauth-providers.md)。
 
 首次保存凭据前关闭或取消，不会新增空渠道。首次保存后渠道及凭据已持久化，关闭流程保留配置，可从“管理上游Key”继续。保存响应丢失或读回结果不确定时，界面会阻止重复提交；关闭并刷新列表确认结果，不要重复新建，也不会自动级联删除可能已保存的凭据。

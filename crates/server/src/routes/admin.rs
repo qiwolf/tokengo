@@ -897,7 +897,7 @@ async fn channels_probe(
 }
 
 /// 面板上的「拉取上游模型清单」：用这条渠道自己的 URL、key、自定义头真打
-/// `GET {base_url}/models`，把上游说它支持的模型名列出来。
+/// 读取上游模型目录（默认 `GET {base_url}/models`），把上游说它支持的模型名列出来。
 ///
 /// 和探活同纪律：**不写记账、不动路由状态** —— 它是面板上的一次人工查询，
 /// 不是用户请求，不该污染统计（否则"请求总数"会莫名其妙涨）。
@@ -928,7 +928,7 @@ async fn channels_models(
         .fetch_models(&channel, secret.as_deref(), timeout, &crate::upstream::new_uuid(), now_ms())
         .await;
     let latency = now_ms() - t0;
-    let url = crate::upstream::join_url(&channel.base_url, "models");
+    let url = crate::upstream::model_catalog_url(&channel.base_url);
 
     // 拉回来的不只是名字：上游自己报的归属方/上下文/价钱/能不能收图也一并带回去
     // （`UpstreamModel`）。上游没说的字段就是空，界面据此决定显示哪些小标签。

@@ -340,7 +340,8 @@ impl Upstream {
         serde_json::from_slice(&bytes).map_err(|_|fault())
     }
 
-    /// 拉这条渠道支持的模型清单：`GET {base_url}/models`，用这条渠道自己的
+    /// 拉这条渠道支持的模型清单，默认 `GET {base_url}/models`；官方 OpenCode
+    /// 协议入口使用同源共享目录。使用这条渠道自己的
     /// URL、key 和自定义请求头（头里的模板照旧逐请求求值）。
     ///
     /// **面板专用的只读动作**，和探活一个纪律：不写记账、不动路由状态。
@@ -354,7 +355,7 @@ impl Upstream {
         uuid: &str,
         now_ms: i64,
     ) -> Result<(u16, String), ChannelFault> {
-        let url = join_url(&channel.base_url, "models");
+        let url = model_catalog_url(&channel.base_url);
         let client=self.egress_client(channel,crate::egress::Purpose::Catalog)?;
         let mut rb = client
             .get(&url)
@@ -748,6 +749,43 @@ pub fn join_url(base_url: &str, path: &str) -> String {
     format!("{base}/{path}")
 }
 
+/// Resolve a provider's catalog without changing its inference base URL.
+pub fn model_catalog_url(base_url: &str) -> String {
+    let path = official_opencode_path(base_url);
+    let catalog = match path.as_deref() {
+        Some("/inference/go/openai/v1" | "/inference/go/anthropic/v1" | "/inference/go/google/v1beta") => Some("inference/go/v1/models"),
+        Some("/inference/openai/v1" | "/inference/anthropic/v1" | "/inference/google/v1beta") => Some("inference/v1/models"),
+        _ => None,
+    };
+    if let Some(catalog) = catalog {
+        return format!("https://opencode.ai/{catalog}");
+    }
+    join_url(base_url, "models")
+}
+
+/// Restrict provider-specific behavior to a credential-free official HTTPS origin.
+fn official_opencode_path(base_url: &str) -> Option<String> {
+    let url = url::Url::parse(base_url.trim().trim_end_matches('/')).ok()?;
+    if url.scheme() != "https" || url.host_str() != Some("opencode.ai")
+        || url.port_or_known_default() != Some(443) || !url.username().is_empty()
+        || url.password().is_some() || url.query().is_some() || url.fragment().is_some()
+    {
+        return None;
+    }
+    Some(url.path().to_owned())
+}
+
+/// Initialize only newly created Go API sources; never migrate saved headers.
+pub(crate) fn opencode_go_default_headers(base_url: &str) -> Vec<(String, String)> {
+    match official_opencode_path(base_url).as_deref() {
+        Some("/inference/go/openai/v1" | "/inference/go/anthropic/v1" | "/inference/go/google/v1beta" | "/zen/go/v1") => vec![
+            ("User-Agent".into(), format!("TokenGo/{}", env!("CARGO_PKG_VERSION"))),
+            ("x-opencode-session".into(), "{{session_id}}".into()),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// 只留正文开头这么多字符（按字符数不算字节数，中文不会被切半个字）。
 pub fn cap_chars(s: &str, max: usize) -> String {
     let t = s.trim();
@@ -994,6 +1032,43 @@ mod tests {
                 .map(|(a, b)| (a.to_string(), b.to_string()))
                 .collect(),
                 max_concurrent: 0,
+        }
+    }
+
+    #[test]
+    fn opencode_catalog_uses_the_official_shared_directory() {
+        for (base, expected) in [
+            ("https://opencode.ai/inference/go/openai/v1", "https://opencode.ai/inference/go/v1/models"),
+            ("https://opencode.ai/inference/openai/v1", "https://opencode.ai/inference/v1/models"),
+            ("https://opencode.ai/inference/go/openai/v1/", "https://opencode.ai/inference/go/v1/models"),
+            ("https://opencode.ai:443/inference/go/openai/v1", "https://opencode.ai/inference/go/v1/models"),
+            ("https://opencode.ai/inference/go/anthropic/v1", "https://opencode.ai/inference/go/v1/models"),
+            ("https://opencode.ai/inference/go/google/v1beta", "https://opencode.ai/inference/go/v1/models"),
+            ("https://opencode.ai/inference/anthropic/v1", "https://opencode.ai/inference/v1/models"),
+            ("https://opencode.ai/inference/google/v1beta", "https://opencode.ai/inference/v1/models"),
+        ] {
+            assert_eq!(model_catalog_url(base), expected, "catalog for {base}");
+            assert_eq!(join_url(base, "chat/completions"), format!("{}/chat/completions", base.trim_end_matches('/')), "inference must retain its protocol-specific prefix");
+        }
+    }
+
+    #[test]
+    fn opencode_catalog_mapping_never_applies_to_other_origins_or_unknown_paths() {
+        for base in [
+            "https://opencode.ai.evil.example/inference/go/openai/v1",
+            "https://evil-opencode.ai/inference/go/openai/v1",
+            "https://opencode.ai@evil.example/inference/go/openai/v1",
+            "https://user@opencode.ai/inference/go/openai/v1",
+            "http://opencode.ai/inference/go/openai/v1",
+            "https://opencode.ai:8443/inference/go/openai/v1",
+            "https://opencode.ai/inference/go/unknown/v1",
+            "https://opencode.ai/zen/go/v1",
+            "https://api.openai.com/v1",
+            "https://proxy.example/inference/go/openai/v1",
+            "https://opencode.ai/inference/go/openai/v1?account=other",
+            "https://opencode.ai/inference/go/openai/v1#other",
+        ] {
+            assert_eq!(model_catalog_url(base), join_url(base, "models"), "must preserve {base}");
         }
     }
 

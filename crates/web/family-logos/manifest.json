@@ -132,6 +132,39 @@
       "sha256": "84d0ee3cbe66f030e5a18cb2c86da9166ab2137c7a98781693bb1fbf31e392b9",
       "bytes": 769,
       "svg_safe_static": true
+    },
+    {
+      "id": "opencode",
+      "file": "opencode.svg",
+      "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/master/packages/static-svg/icons/opencode.svg",
+      "sha256": "7cfa6e9d6726f7c9fa26c7d9aef0dfec52d20a137380454340f30f12ccbfd302",
+      "bytes": 235,
+      "svg_safe_static": true,
+      "observed_at": "2026-11-02",
+      "license": "MIT; retain copyright and permission notice",
+      "license_source": "https://raw.githubusercontent.com/lobehub/lobe-icons/master/LICENSE"
+    },
+    {
+      "id": "commandcode",
+      "file": "commandcode.svg",
+      "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/master/packages/static-svg/icons/commandcode.svg",
+      "sha256": "0b3090f6e9194f32520e5b98ea43c5bc1a0f04644c94d1bade69fab7413e1531",
+      "bytes": 877,
+      "svg_safe_static": true,
+      "observed_at": "2026-11-02",
+      "license": "MIT; retain copyright and permission notice",
+      "license_source": "https://raw.githubusercontent.com/lobehub/lobe-icons/master/LICENSE"
+    },
+    {
+      "id": "opendesign",
+      "file": "opendesign.svg",
+      "source": "https://raw.githubusercontent.com/nexu-io/open-design/main/apps/web/public/logo-mark.svg",
+      "sha256": "922d2643ed66e24c9587766a4371232a304fdc48402f3ddc0c29f4c3f1631a30",
+      "bytes": 1205,
+      "svg_safe_static": true,
+      "observed_at": "2026-11-02",
+      "license": "Apache-2.0 repository license (trademark rights excluded by section6)",
+      "license_source": "https://raw.githubusercontent.com/nexu-io/open-design/main/LICENSE"
     }
   ]
 }
