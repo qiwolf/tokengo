@@ -1,0 +1,43 @@
+{
+  "result": "passed",
+  "source_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "check_kind": "Packaged release documents match reviewed git objects byte for byte",
+  "checks": [
+    {
+      "path": "docs/releases/v0.34.0-qiwolf.25.md",
+      "expected_git_sha256": "65a1af6bd4422048e89843627060bfc34006dad4689985b6454d5f4474fbb55d",
+      "archive_sha256": "65a1af6bd4422048e89843627060bfc34006dad4689985b6454d5f4474fbb55d",
+      "matches": true
+    },
+    {
+      "path": "docs/deployment.md",
+      "expected_git_sha256": "fcaf1bd5c395c8219e9305e9106114e90ea404c09dfb20c7c9908d0cd71c2795",
+      "archive_sha256": "fcaf1bd5c395c8219e9305e9106114e90ea404c09dfb20c7c9908d0cd71c2795",
+      "matches": true
+    },
+    {
+      "path": "docs/container-deployment.md",
+      "expected_git_sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+      "archive_sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+      "matches": true
+    },
+    {
+      "path": "docs/maintenance/request-channel-20261103/README.md",
+      "expected_git_sha256": "1764ddef5da0f5bb0c299ab5c524151f5c01403c42f4c47dd85ceca80ecfdecf",
+      "archive_sha256": "1764ddef5da0f5bb0c299ab5c524151f5c01403c42f4c47dd85ceca80ecfdecf",
+      "matches": true
+    },
+    {
+      "path": "docs/maintenance/provider-presets-20261102/README.md",
+      "expected_git_sha256": "bce6b8448bcf4fc87036f574cb049f668e330f43fa38699e73433a41efa060d5",
+      "archive_sha256": "bce6b8448bcf4fc87036f574cb049f668e330f43fa38699e73433a41efa060d5",
+      "matches": true
+    },
+    {
+      "path": "docs/provider-verification-checklist.md",
+      "expected_git_sha256": "04bff4cc9e96980831cf798f9a14c2038b38fad00b745e1413db73b0e17b4402",
+      "archive_sha256": "04bff4cc9e96980831cf798f9a14c2038b38fad00b745e1413db73b0e17b4402",
+      "matches": true
+    }
+  ]
+}

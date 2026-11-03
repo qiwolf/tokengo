@@ -1,0 +1,203 @@
+{
+  "release_source": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "tag": "v0.34.0-qiwolf.25",
+  "main_ci": {
+    "conclusion": "success",
+    "headSha": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+    "status": "completed",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/41574671111"
+  },
+  "release_workflow": {
+    "conclusion": "success",
+    "headSha": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+    "status": "completed",
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/41574711093"
+  },
+  "build_test_workspace": {
+    "passed": 1579,
+    "failed": 0,
+    "ignored": 9
+  },
+  "python": {
+    "mineru": 13,
+    "deploy": 6,
+    "container": 3
+  },
+  "public_acceptance": {
+    "result": "passed",
+    "source_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+    "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25",
+    "assets": 9,
+    "host": "build-test Linux x86_64",
+    "anonymous_downloads": true,
+    "anonymous_registry": true,
+    "offline_archive_two_tags": true,
+    "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+    "smoke_restart_recreation": true,
+    "native_runtime": true,
+    "recoverable_key_runtime": true,
+    "container_key_runtime": true,
+    "production_access": false,
+    "created_release": false
+  },
+  "native_sha256": "13edc20146aa73dc6cb196932feda57b561792d49d9376c0f7f524bec1507606",
+  "production_access": false,
+  "production_upgraded": false,
+  "local_release_rebuild": {
+    "result": "passed",
+    "host": "build-test",
+    "source_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+    "source_clean": true,
+    "steps": 8
+  },
+  "local_results": "review/release-qiwolf25-20261103/",
+  "build_test_commands": [
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--workspace",
+        "--",
+        "--test-threads=4"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 745.24
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 4.94
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "deploy/container",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 0.06
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "deploy",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 0.75
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "trunk",
+        "build",
+        "--release",
+        "--locked"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source/crates/web",
+      "exit_code": 0,
+      "seconds": 214.64
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "python3",
+        "-B",
+        "deploy/manage.py",
+        "verify",
+        "/srv/build/tokengo-release25-20261103/artifacts/tokengo-3368cd6a29d8-linux-x86_64.tar.gz"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 0.72
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--workspace",
+        "--target",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 312.72
+    },
+    {
+      "host": "build-test",
+      "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+      "command": [
+        "python3",
+        "-B",
+        "deploy/package.py",
+        "/srv/build/tokengo-release25-20261103/artifacts"
+      ],
+      "cwd": "/srv/build/tokengo-release25-20261103/source",
+      "exit_code": 0,
+      "seconds": 4.25
+    }
+  ],
+  "local_artifacts": [
+    {
+      "name": "tokengo-3368cd6a29d8-linux-x86_64.tar.gz",
+      "bytes": 21851762,
+      "sha256": "519289b5707c2cbf94b6cf6c37e8685308818e40ca4a015ce6550bef71d3675d"
+    },
+    {
+      "name": "tokengo-3368cd6a29d8-linux-x86_64.tar.gz.sha256",
+      "bytes": 107,
+      "sha256": "e85f35819850027410872dfb51f495ef80fd7d06bd12213863c0ecb2aadff78f"
+    }
+  ],
+  "artifacts_recovered_to_mac": true,
+  "source_verified": {
+    "host": "build-test",
+    "commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+    "files": 707,
+    "all_hashes_match": true
+  }
+}

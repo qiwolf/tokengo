@@ -2,12 +2,12 @@
 
 本文件记录本 fork 的变化。Cargo 版本仍沿用上游 **0.34.0**；fork 分发标签使用 `v0.34.0-qiwolf.N`，不改写上游版本含义。标签及可下载资产以 GitHub Releases 实际发布内容为准，源码发布与生产升级分别验收。服务端与 Web 资产须使用同一审阅提交构建。上游历史请参阅原项目发布记录。
 
-## v0.34.0-qiwolf.25 — 2026-11-03（北京时间，发行准备中）
+## v0.34.0-qiwolf.25 — 2026-11-03（北京时间）
 
 - 新建接入增加 OpenCode Go/按量、CommandGo 和 OpenDesign 服务商预设；OpenCode 官方协议入口读取对应共享目录，新建 Go API 凭据初始化独立客户端标识及稳定会话模板头，保留已有配置。
 - 最近调用和请求详情展示实际渠道名称/ID与选中模型，保留虚拟入口；运行日志补齐请求、渠道、逻辑模型和真实上游模型的关联，覆盖 JSON/SSE、失败与取消。
 - 纳入 `1491d08` OpenCode Go 端点/session-header 运维记录、`862ceb7` 服务商预设及 `d631011` 请求渠道可见性。Cargo0.34.0/schema42不变，无新原厂模型验收。
-- build-test服务端定向751通过/2项原有忽略、Web176通过、release WASM构建及1440/390合成API浏览器验收通过；此前实测按原版本引用，不相加或冒充新测。完整workspace、精确main CI、正式发行及公开资产独立验收待完成，见[版本说明](docs/releases/v0.34.0-qiwolf.25.md)与[本轮收据](docs/acceptance/2026-11-03-qiwolf25-release/README.md)。
+- build-test服务端定向751通过/2项原有忽略、Web176通过、release WASM构建及1440/390合成API浏览器验收通过；此前实测按原版本引用，不相加或冒充新测。精确源码`3368cd6a29d8`的build-test完整Rust1579/0/9与Python13/6/3通过，[main CI](https://github.com/qiwolf/tokengo/actions/runs/41574671111)和[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41574711093)成功，[正式Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25)已公开9资产；与此前定向数量不累加。公开9资产/GHCR/原生/容器独立验收通过；公开WASM静态身份已核对，浏览器行为沿用源码一致的先前证据。本地原生/WASM发布构建、打包及校验均通过，全部日志和产物已取回Mac，生产未升级，见[版本说明](docs/releases/v0.34.0-qiwolf.25.md)与[本轮收据](docs/acceptance/2026-11-03-qiwolf25-release/README.md)。
 
 ## v0.34.0-qiwolf.24 — 2026-11-02（北京时间）
 

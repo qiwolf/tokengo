@@ -1,0 +1,11 @@
+{
+  "browser_verified_commit": "d631011",
+  "release_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "scope": [
+    "crates/web",
+    "crates/shared"
+  ],
+  "changed_files": [],
+  "source_equal": true,
+  "limitations": "Earlier build-test browser used synthetic API fixtures; public WASM binary identity is separately inspected, not a live production browser acceptance"
+}

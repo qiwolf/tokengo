@@ -1,15 +1,16 @@
 # 模型兼容核实清单
 
-## 2026-11-03 增量：v0.34.0-qiwolf.25（发行准备中）
+## 2026-11-03 增量：v0.34.0-qiwolf.25（已正式发行，公开产物独立验收通过）
 
 |项|已确认依据|当前边界|
 |---|---|---|
 |服务商预设与模型目录|OpenCode Go/按量、CommandGo、OpenDesign四预设及来源限定的OpenCode共享目录适配已交付；新建Go API凭据初始化独立User-Agent及稳定会话模板头，已有配置保留|预设不授予模型能力；此前只读目录和浏览器证据按原记录引用；Responses仍应传稳定显式会话ID，不扩展匿名会话规则|
 |请求渠道可见性|recent/detail新增可空channel_name；虚拟入口失败切换、逻辑模型/上游别名、JSON/SSE成功与失败、删除渠道保留ID及安全日志均有合成上游回归|名称取当前渠道配置，不是历史名称快照；served_model仍指逻辑模型，上游别名见attempts及运行日志；历史文件日志不回填|
-|本轮隔离验证|build-test服务端定向751通过/2项原有忽略、Web176通过，release WASM构建成功；1440/390合成API浏览器通过，8张截图，无水平溢出及浏览器错误|不是完整workspace、线上业务或原厂真实模型验收；此前预设238项等与本轮重叠，不累加|
-|真实来源与公开发行|无新增原厂模型验收；Cargo0.34.0/schema42不变，完整workspace、精确main CI、发行和公开资产独立验收待完成|OpenCode Go此前真实生成受月额度HTTP429阻塞，不把目录成功当作生成/工具/参数通过；不把历史q24发行收据作为本版收据|
+|先前定向与页面验证|build-test服务端定向751通过/2项原有忽略、Web176通过，release WASM构建成功；1440/390合成API浏览器通过，8张截图，无水平溢出及浏览器错误|该行751项为定向覆盖，不与后续完整workspace及此前预设238项重复累加；合成页面不是线上业务或原厂实测|
+|精确源码与全量验证|源码`3368cd6a29d8`在build-test完整Rust1579/0/9、Python MinerU/部署/容器13/6/3通过；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/41574671111)成功，Rust同为1579/0/9|GitHub与build-test及先前定向结果重复覆盖，不累加；本地原生构建尚在进行|
+|真实来源与公开发行|[发行工作流](https://github.com/qiwolf/tokengo/actions/runs/41574711093)成功；[正式Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25)于2026-11-03T04:03:28Z公开9资产；Cargo0.34.0/schema42不变，无新原厂模型验收|9资产匿名下载/digest/包内校验、GHCR按digest实际拉取和原生/容器/Key/Compose生命周期独立验收通过，生产未升级；公开WASM仅核对静态身份，浏览器沿用d631011一致源码证据；OpenCode此前生成仍受月额度HTTP429阻塞，不外推生成/工具/参数|
 
-证据：[预设原交付](maintenance/provider-presets-20261102/README.md)、[OpenCode现场记录及失败边界](maintenance/opencode-go-20261102/README.md)、[请求渠道交付](maintenance/request-channel-20261103/README.md)、[本轮定向验证摘要](maintenance/request-channel-20261103/validation.json)、[版本说明](releases/v0.34.0-qiwolf.25.md)、[待补发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)。以下历史版本保持原范围，不冒充本版新测。
+证据：[预设原交付](maintenance/provider-presets-20261102/README.md)、[OpenCode现场记录及失败边界](maintenance/opencode-go-20261102/README.md)、[请求渠道交付](maintenance/request-channel-20261103/README.md)、[本轮定向验证摘要](maintenance/request-channel-20261103/validation.json)、[版本说明](releases/v0.34.0-qiwolf.25.md)、[本轮发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)。以下历史版本保持原范围，不冒充本版新测。
 
 ## 2026-11-02 增量：v0.34.0-qiwolf.24（已正式发行及公开产物独立验收；237 来源 IP 配置已上线）
 
@@ -131,6 +132,6 @@ DeepSeek角色对照：官方直接developer为422；相同单条控制经TokenG
 
 |版本|日期|记录|
 |---|---|---|
-|qiwolf.25|2026-11-03|发行准备；服务商预设与请求渠道可见性已定向验证，完整workspace、精确main CI、公开发行及资产验收待完成；无新增原厂模型验收。|
+|qiwolf.25|2026-11-03|已正式发行9资产；精确main CI/发行流程及build-test完整Rust1579/0/9、Python13/6/3通过；公开独立验收通过，本地原生/WASM发布构建、打包及校验均通过，全部日志和产物已取回Mac；无新原厂模型验收，生产未升级。|
 |qiwolf.23|2026-10-29|Terra none及自定义推理设置已生产验收，精确main CI和正式发行成功；9资产已公开，独立验收通过。|
 |qiwolf.22|2026-10-28|建立此持续维护清单；核心实现、分层验收、公开发行与237升级范围按上述收据记录；原厂/字面复述等未知继续保留。|

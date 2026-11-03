@@ -1,0 +1,70 @@
+{
+  "result": "passed",
+  "reviewed_at": "2026-11-03T04:04:51.275433+00:00",
+  "host": "build-test",
+  "source_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "github_asset_digest_checks": [
+    {
+      "name": "compose.yaml",
+      "size": 797,
+      "sha256": "a687d78655be0f5ceb8f396f6376083f1d0360b48cb86f97bea6317210d4bc1c",
+      "github_digest_matches": true
+    },
+    {
+      "name": "container-deployment.md",
+      "size": 15358,
+      "sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+      "github_digest_matches": true
+    },
+    {
+      "name": "container.env.example",
+      "size": 316,
+      "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+      "github_digest_matches": true
+    },
+    {
+      "name": "image-manifest.json",
+      "size": 199,
+      "sha256": "8bdddf831a45c34868d346ee8c0042da1818ef3cb40ba6a154c3b31f6e34fead",
+      "github_digest_matches": true
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "size": 564,
+      "sha256": "f6fc1b7ec2814d33c436a7134f7615da9fe80b9365697079721134d7068d26a1",
+      "github_digest_matches": true
+    },
+    {
+      "name": "registry-image.txt",
+      "size": 95,
+      "sha256": "ff3d7233386e40d5dc35f0e5fa3ffec5b43ed65b3aad5977f3b4675104485893",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-3368cd6a29d8-linux-x86_64.tar.gz",
+      "size": 21836985,
+      "sha256": "13edc20146aa73dc6cb196932feda57b561792d49d9376c0f7f524bec1507606",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-3368cd6a29d8-linux-x86_64.tar.gz.sha256",
+      "size": 107,
+      "sha256": "da537af924713bca2a34cf607402198caffabc20fc8ce73b69819bb7dd0c53b8",
+      "github_digest_matches": true
+    },
+    {
+      "name": "tokengo-3368cd6a29d87b76ec0d206f57be5e3440e952d4-linux-amd64.tar.gz",
+      "size": 40767986,
+      "sha256": "df274d8177000a904860dfea66847a3758c5496906ecf17bd0a6d7dd98fad9b3",
+      "github_digest_matches": true
+    }
+  ],
+  "assets": 9,
+  "temporary_runtime_directories_remaining": 0,
+  "test_containers_remaining": 0,
+  "test_volumes_remaining": 0,
+  "test_native_processes_remaining": 0,
+  "canonical_and_local_aliases_removed": true,
+  "production_access": false,
+  "note": "Verified public assets retained in task cache; task image aliases and digest reference, disposable state, DBs, master keys, sessions and passwords removed. Preexisting containers and volumes preserved."
+}

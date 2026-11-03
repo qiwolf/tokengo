@@ -1,0 +1,42 @@
+{
+  "result": "passed",
+  "source_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "image_id": "sha256:04c1ec56a0ae8e95e2826dc9d499f2792297a86f6f49844fb5aaf03e1e08fc6f",
+  "checks": [
+    "owner-and-admin-key-create",
+    "exact-owner-and-admin-reveal-no-store",
+    "metadata-no-plaintext",
+    "anonymous-csrf-bearer-and-ops-isolation",
+    "revoked-key-viewable-but-authentication-denied",
+    "deleted-key-404-and-hidden",
+    "owner-and-admin-revoked-and-deleted-key-contract",
+    "active-key-delete-409",
+    "admin-disabled-owner-key-owner-and-admin-delete",
+    "admin-disabled-key-owner-cannot-enable-403",
+    "disabled-delete-permanently-revokes",
+    "disabled-delete-cross-surface-idempotent",
+    "disabled-delete-reveal404-auth401-hidden",
+    "disabled-delete-cannot-restore",
+    "legacy-public-managed-active-delete409",
+    "legacy-public-disabled-delete-idempotent-reveal404-auth401-hidden",
+    "legacy-public-delete-retains-history-contract",
+    {
+      "fresh_oauth_defaults": {
+        "public_client_defaults": [
+          "kimi",
+          "minimax-cn",
+          "minimax-global",
+          "copilot"
+        ],
+        "available": true,
+        "authentication_available": true,
+        "inference_available": true,
+        "device_start_attempted": false,
+        "upstream_login_attempted": false,
+        "paid_inference_attempted": false
+      }
+    }
+  ],
+  "production_access": false,
+  "fixture_database_checks": "native receipt only"
+}

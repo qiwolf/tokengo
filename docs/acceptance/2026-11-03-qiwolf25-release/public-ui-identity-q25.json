@@ -1,0 +1,30 @@
+{
+  "result": "passed",
+  "source_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "native_manifest_commit": "3368cd6a29d87b76ec0d206f57be5e3440e952d4",
+  "archive": "tokengo-3368cd6a29d8-linux-x86_64.tar.gz",
+  "required_utf8_markers": [
+    "实际渠道",
+    "名称未记录或已删除",
+    "OpenCode Go",
+    "CommandGo",
+    "OpenDesign"
+  ],
+  "missing_markers": [],
+  "wasm_members": [
+    {
+      "member": "web/tokengo-web-7746457cf4e46c7c_bg.wasm",
+      "sha256": "7c42f458bc4ad10bb645393fa782bae317df25376095ae72db4986d921e08723",
+      "markers_present": [
+        "实际渠道",
+        "名称未记录或已删除",
+        "OpenCode Go",
+        "CommandGo",
+        "OpenDesign"
+      ]
+    }
+  ],
+  "check_kind": "static UTF-8 marker identity in verified public native bundle WASM",
+  "browser_behavior_executed": false,
+  "production_access": false
+}
