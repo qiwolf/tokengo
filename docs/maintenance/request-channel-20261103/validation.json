@@ -1,0 +1,161 @@
+{
+  "host": "build-test",
+  "base_commit": "862ceb7f18f53389f5ba4201fd9d15dca945885a",
+  "branch": "codex/request-channel-20261103",
+  "server_passed": 751,
+  "server_ignored": 2,
+  "web_passed": 176,
+  "full_workspace_tested": false,
+  "scope": "Server lib + logging_runtime + proxy + routes; shared_virtual_routes rerun after test-only cleanup/subscriber fixes; Web lib; release WASM build",
+  "local_results": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/request-channel-20261103/build-test",
+  "wasm_artifact": {
+    "file": "web-dist.tar.gz",
+    "sha256": "7700c85e8224748b889e842d490f97531fc8ef4afbe6c84aafeff1abc37c8e29"
+  },
+  "production_modified": false,
+  "initial_failures_preserved": [
+    "red-fallback.log",
+    "missing-fixture.log",
+    "server-regressions.log (new test capture/cleanup; replaced by shared-regressions.log success)",
+    "web-ownership-error.log"
+  ],
+  "stage_receipts": {
+    "red-result.json": {
+      "host": "build-test",
+      "source_manifest_sha256": "38b332dade6d570e343c3385b4634fe979ab9659eac008d39a36a51f84f14cb1",
+      "source_matches": true,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tokengo-server",
+            "--test",
+            "shared_virtual_routes",
+            "shared_fallback_reports_final_channel_in_list_detail_and_runtime_logs"
+          ],
+          "cwd": "/srv/build/tokengo-request-channel-20261103/source",
+          "exit_code": 101,
+          "elapsed_seconds": 5.56,
+          "log": "red-fallback.log"
+        }
+      ]
+    },
+    "green-result.json": {
+      "host": "build-test",
+      "source_manifest_sha256": "324bacee4ff0594a977b5abee410b5ace8797da011ea7d1ad7eb6fdc8886fa53",
+      "source_matches": true,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tokengo-server",
+            "--lib",
+            "--test",
+            "shared_virtual_routes",
+            "--test",
+            "routes",
+            "--test",
+            "logging_runtime",
+            "--test",
+            "proxy"
+          ],
+          "cwd": "/srv/build/tokengo-request-channel-20261103/source",
+          "exit_code": 101,
+          "elapsed_seconds": 211.17,
+          "log": "server-regressions.log"
+        }
+      ]
+    },
+    "server-result.json": {
+      "host": "build-test",
+      "source_manifest_sha256": "8f7dd544a1d808c55aab5c1c85108437edd2ca6062bdcc91b04c02c5cc90efab",
+      "source_matches": true,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tokengo-server",
+            "--test",
+            "shared_virtual_routes"
+          ],
+          "cwd": "/srv/build/tokengo-request-channel-20261103/source",
+          "exit_code": 0,
+          "elapsed_seconds": 39.47,
+          "log": "shared-regressions.log"
+        }
+      ]
+    },
+    "ui-result.json": {
+      "host": "build-test",
+      "source_manifest_sha256": "8f7dd544a1d808c55aab5c1c85108437edd2ca6062bdcc91b04c02c5cc90efab",
+      "source_matches": true,
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tokengo-web",
+            "--lib"
+          ],
+          "cwd": "/srv/build/tokengo-request-channel-20261103/source",
+          "exit_code": 0,
+          "elapsed_seconds": 37.7,
+          "log": "web-tests.log"
+        },
+        {
+          "command": [
+            "trunk",
+            "build",
+            "--release",
+            "--locked"
+          ],
+          "cwd": "/srv/build/tokengo-request-channel-20261103/source/crates/web",
+          "exit_code": 0,
+          "elapsed_seconds": 185.44,
+          "log": "wasm-build.log"
+        }
+      ]
+    }
+  },
+  "browser": {
+    "passed": true,
+    "source_manifest_sha256": "8f7dd544a1d808c55aab5c1c85108437edd2ca6062bdcc91b04c02c5cc90efab",
+    "checks": [
+      "1440px and 390px: recent list shows actual model and named channel ID; deleted channel preserves ID; pending source stays pending",
+      "request details distinguish actual model, virtual entry and actual channel; deleted channel fallback shown",
+      "document and open dialog have no horizontal overflow; detail values remain inside dialog",
+      "Escape closes every request detail; no browser errors or failed/unhandled API requests"
+    ],
+    "page_errors": [],
+    "request_failures": [],
+    "viewports": [
+      1440,
+      390
+    ],
+    "screenshots": 8,
+    "receipt": {
+      "host": "build-test",
+      "command": [
+        "node",
+        "/srv/build/tokengo-request-channel-20261103/qa-browser.cjs"
+      ],
+      "cwd": "/srv/build/tokengo-request-channel-20261103",
+      "exit_code": 0,
+      "elapsed_seconds": 2.79,
+      "script_sha256": "9c69dfcd6013e9cf68ba8b296b4d2d8e4616f2ea6137597a34237127464186f2",
+      "log": "qa-browser.log",
+      "artifacts": "browser-evidence/"
+    }
+  }
+}

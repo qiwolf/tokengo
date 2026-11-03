@@ -1239,7 +1239,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 wants_vision,
             )?
         };
-        let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+        let mut guard = RequestGuard::new(state.clone(), request_id, started_ms, &req.model);
         record_client_app(&state, request_id, req.user_agent.as_deref());
         guard.identify(req.auth.as_ref())?;
         guard.finish(
@@ -1327,7 +1327,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             wants_vision,
         )?
     };
-    let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+    let mut guard = RequestGuard::new(state.clone(), request_id, started_ms, &req.model);
     record_client_app(&state, request_id, req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
     crate::parameter_budgets::normalize_null_caps(&mut req.body);
@@ -1810,7 +1810,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 body
                             }
                             Err(error) => {
-                                tracing::debug!(request_id,dispositions=%error.disposition_report(),"Source protocol conversion rejected");
+                                tracing::debug!(request_id,model=%req.model,channel_id=channel.id.0,channel_name=%channel.name,served_model=%name,upstream_model=%channel.upstream_model(name),dispositions=%error.disposition_report(),"Source protocol conversion rejected");
                                 last_policy_error = Some(ApiError::bad_request(error.message));
                                 continue;
                             }
@@ -2138,7 +2138,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         }) {
                         Ok(value)=>value,
                         Err(error)=>{
-                            tracing::debug!(request_id,dispositions=%error.disposition_report(),"Source request contract rejected");
+                            tracing::debug!(request_id,model=%req.model,channel_id=channel.id.0,channel_name=%channel.name,served_model=%name,upstream_model=%channel.upstream_model(name),dispositions=%error.disposition_report(),"Source request contract rejected");
                             last_policy_error=Some(ApiError::bad_request(error.message));continue 'channels;
                         }
                     };
@@ -2521,6 +2521,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 last_channel = channel.id;
                 guard.note_served(name);
                 guard.channel_id = Some(channel.id.0);
+                guard.channel_name = Some(channel.name.clone());
+                guard.upstream_model = Some(sent_model.clone());
+                tracing::info!(request_id, model=%req.model, channel_id=channel.id.0,
+                    channel_name=%channel.name, served_model=%name, upstream_model=%sent_model,
+                    ordinal, streamed=req.stream, "上游请求开始");
                 state.enqueue_write(crate::state::WriteJob::Progress(requests::ProgressArgs {
                     request_id,
                     channel_id: channel.id.0,
@@ -2940,8 +2945,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             );
                             ordinal += 1;
                             tracing::warn!(
-                                "渠道 {} 回了 200 但一句话没说，按这条渠道的毛病处理",
-                                channel.name
+                                request_id, model=%req.model, channel_id=channel.id.0,
+                                channel_name=%channel.name, served_model=%name, upstream_model=%sent_model,
+                                "渠道回了 200 但一句话没说，按这条渠道的毛病处理"
                             );
                             last_fault = Some(format!("{}：{note}", channel.name));
                             if cooldown.failure(&note, pending_retry_ms) {
@@ -3605,12 +3611,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 );
                 drop(r);
                 state.persist_state(&plan.route)?;
-                tracing::warn!("渠道 {} 连续 {} 次失败，切换", channel.name, max_attempts);
+                tracing::warn!(request_id, model=%req.model, channel_id=channel.id.0, channel_name=%channel.name, served_model=%name, upstream_model=%channel.upstream_model(name), attempts=max_attempts, "渠道连续失败，切换");
             } else {
                 tracing::warn!(
-                    "（带图请求，不动路由状态）渠道 {} 连续 {} 次失败",
-                    channel.name,
-                    max_attempts
+                    request_id, model=%req.model, channel_id=channel.id.0, channel_name=%channel.name,
+                    served_model=%name, upstream_model=%channel.upstream_model(name), attempts=max_attempts,
+                    "（带图请求，不动路由状态）渠道连续失败"
                 );
             }
         }
@@ -3712,7 +3718,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         false,
         Some(&note),
     );
-    tracing::error!("请求 {request_id} 全部渠道失败：{note}");
+    tracing::error!(request_id, model=%req.model, channel_id=guard.channel_id,
+        channel_name=%guard.channel_name.as_deref().unwrap_or(""), served_model=%guard.served_model.as_deref().unwrap_or(""),
+        upstream_model=%guard.upstream_model.as_deref().unwrap_or(""), "请求全部渠道失败：{note}");
     Ok(match last_http {
         Some(err) => err.into_response(),
         None => ApiError::new(
@@ -4829,7 +4837,7 @@ fn record_routing_refusal_with_code(
             }
         }
     };
-    let mut guard = RequestGuard::new(state.clone(), request_id, started_ms);
+    let mut guard = RequestGuard::new(state.clone(), request_id, started_ms, &req.model);
     record_client_app(&state,request_id,req.user_agent.as_deref());
     if let Err(e)=guard.identify(req.auth.as_ref()) { tracing::error!("refusal identity write failed: {e:?}"); }
     guard.error_code = Some(code.into());
@@ -4862,6 +4870,9 @@ pub fn record_client_app(state:&SharedState,id:i64,agent:Option<&str>) {
 }
 
 struct RequestGuard {
+    requested_model: String,
+    channel_name: Option<String>,
+    upstream_model: Option<String>,
     admission: Option<crate::admission::AdmissionPermit>,
     reservation: Option<i64>,
     billing_nonchat: bool,
@@ -4883,8 +4894,11 @@ struct RequestGuard {
 }
 
 impl RequestGuard {
-    pub fn new(state: SharedState, request_id: i64, started_ms: i64) -> Self {
+    pub fn new(state: SharedState, request_id: i64, started_ms: i64, requested_model: &str) -> Self {
         Self {
+            requested_model: requested_model.to_string(),
+            channel_name: None,
+            upstream_model: None,
             state,
             request_id,
             started_ms,
@@ -4967,6 +4981,10 @@ impl RequestGuard {
         if matches!(status, Status::ClientError) && self.error_code.is_none() {
             self.error_code=Some(if http_status==Some(422) && error.map(|s|s.contains("图片")).unwrap_or(false) {"vision_not_ready"} else {"request_invalid"}.into());
         }
+        tracing::info!(request_id=self.request_id, model=%self.requested_model,
+            channel_id=channel_id.or(self.channel_id), channel_name=%self.channel_name.as_deref().unwrap_or(""),
+            served_model=%self.served_model.as_deref().unwrap_or(""), upstream_model=%self.upstream_model.as_deref().unwrap_or(""),
+            status=%status.as_str(), http_status, streamed, latency_ms=now_ms()-started_ms, "请求完成");
         // 记账不许把请求带崩：抢不到库锁就丢给后台落账员（2026-10-18 压测踩出来的规矩）
         let args = requests::FinishArgs {
             input_tokens_known: self.usage.input.is_some(),
@@ -5009,6 +5027,10 @@ impl Drop for RequestGuard {
         self.settle_billing("canceled");
         self.admission.take();
         self.done = true;
+        tracing::info!(request_id=self.request_id, model=%self.requested_model,
+            channel_id=self.channel_id, channel_name=%self.channel_name.as_deref().unwrap_or(""),
+            served_model=%self.served_model.as_deref().unwrap_or(""), upstream_model=%self.upstream_model.as_deref().unwrap_or(""),
+            status=%"canceled", streamed=self.streamed, latency_ms=now_ms()-self.started_ms, "请求完成");
         // 请求被中断（客户端断开等）也要记上一条 canceled —— 以前这里抢不到库锁就整条丢掉，
         // 面板上那一发就永远停在「进行中」。现在抢不到就丢给后台落账员补写。
         let args = requests::FinishArgs {
@@ -5293,7 +5315,7 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             let state=crate::AppState::init(crate::Config{db_path:dir.join("state.db"),master_key_path:dir.join("master.key").to_string_lossy().into_owned(),..Default::default()}).unwrap();
             let id=requests::start(&state.conn(),"responses","test",None,false).unwrap();
-            let mut guard=RequestGuard::new(state.clone(),id,now_ms());
+            let mut guard=RequestGuard::new(state.clone(),id,now_ms(),"test");
             let (out,input,output,error,usage)=tokio::time::timeout(Duration::from_secs(1),buffer_responses_stream(response,crate::protocol::Protocol::Chat,None,Duration::from_millis(300),Duration::from_millis(100),&mut guard)).await.unwrap();
             assert_eq!(usage.input,Some(expected_input));assert_eq!(guard.usage.input,Some(expected_input));
             if expected_ok {

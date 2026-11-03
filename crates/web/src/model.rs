@@ -372,6 +372,8 @@ pub struct LogRow {
     pub status: String,
     pub http_status: Option<i64>,
     pub channel_id: Option<i64>,
+    #[serde(default)]
+    pub channel_name: Option<String>,
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,

@@ -261,8 +261,10 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                                         {move || row.get().map(|r| {
                                             let time = fmt::ts(r.ts_ms);
                                             let clock = time.get(11..).unwrap_or(&time).to_string();
+                                            let channel = actual_channel(&r);
+                                            let channel_title = channel.clone();
                                             view! {
-                                                <time title=time>{clock}</time><span class="recent-channel">{channel_name(r.channel_id)}</span>
+                                                <time title=time>{clock}</time><span class="recent-channel" title=channel_title>{channel}</span>
                                                 {r.has_image.then(|| view! { <span class="tag vision">"带图"</span> })}
                                             }
                                         })}
@@ -413,13 +415,25 @@ fn actual_model(r:&LogRow)->String {
     else {r.model.clone()}
 }
 
+fn actual_channel(r: &LogRow) -> String {
+    match r.channel_id {
+        Some(id) => match r.channel_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(name) => format!("{name}（#{id}）"),
+            None => format!("渠道 #{id}（名称未记录或已删除）"),
+        },
+        None if r.status == "running" => "等待调用上游".into(),
+        None => "未调用上游".into(),
+    }
+}
+
 #[component]
 fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
     let r=detail.request;
     let actual=actual_model(&r);
+    let channel=actual_channel(&r);
     let label=match r.error_code.as_deref(){Some("model_not_configured")=>"模型未配置",Some("vision_not_ready")=>"视觉未就绪",Some("models_cooling")=>"模型冷却中",Some("auto_no_candidate")=>"无可用候选",Some("request_invalid")=>"请求参数错误",_=>status_label(&r.status).0};
     let fields=vec![
-        ("实际模型",actual),("请求入口",r.model.clone()),("结果",label.into()),
+        ("实际模型",actual),("实际渠道",channel),("请求入口",r.model.clone()),("结果",label.into()),
         ("请求时间",fmt::ts(r.ts_ms)),("总耗时",if r.status=="running" {"进行中…".into()}else{fmt::dur(r.latency_ms)}),
         ("首字节延迟",if r.status=="running" {"等待上游响应".into()}else if r.channel_id.is_none(){"不适用".into()}else{r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}),
         ("输入 Token",usage_number(r.input_tokens,r.input_tokens_known,&r.usage_source)),("输出 Token",usage_number(r.output_tokens,r.output_tokens_known,&r.usage_source)),
@@ -431,7 +445,7 @@ fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
         ("接口",r.endpoint),
     ];
     view!{
-        <dl class="call-facts">{fields.into_iter().map(|(k,v)|view!{<div><dt>{k}</dt><dd>{v}</dd></div>}).collect_view()}</dl>
+        <dl class="call-facts">{fields.into_iter().map(|(k,v)|view!{<div class:fact-wide=matches!(k,"请求应用"|"接口")><dt>{k}</dt><dd>{v}</dd></div>}).collect_view()}</dl>
         <div class="call-flags">{r.has_image.then(||view!{<span class="tag vision">"图片输入"</span>})}{r.explored.then(||view!{<span class="tag">"模型探索"</span>})}</div>
         {r.error.filter(|e|!e.trim().is_empty()).map(|e|view!{<div class="call-error"><b>"错误信息"</b><p>{e}</p></div>})}
     }
@@ -447,6 +461,24 @@ pub fn StatusTag(status: String) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use crate::model::KindStat;
+
+    #[test]
+    fn actual_channel_keeps_virtual_route_destination_and_unknown_channel_identity() {
+        let mut r = crate::model::LogRow {
+            model: "deepseek-fallback".into(), served_model: "DeepSeek-V4.1-Flash".into(),
+            channel_id: Some(17), channel_name: Some("备用渠道".into()), status: "ok".into(),
+            ..Default::default()
+        };
+        assert_eq!(super::actual_channel(&r), "备用渠道（#17）");
+        r.channel_name = None;
+        assert_eq!(super::actual_channel(&r), "渠道 #17（名称未记录或已删除）");
+        r.channel_name = Some("  ".into());
+        assert_eq!(super::actual_channel(&r), "渠道 #17（名称未记录或已删除）");
+        r.channel_id = None;
+        assert_eq!(super::actual_channel(&r), "未调用上游");
+        r.status = "running".into();
+        assert_eq!(super::actual_channel(&r), "等待调用上游");
+    }
 
     #[test]
     fn actual_model_never_presents_auto_as_executed_model(){

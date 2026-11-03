@@ -123,6 +123,11 @@ async fn upstream(
         return Json(json!({"title":"Synthetic shared page","content":"shared evidence"})).into_response();
     }
     if uri.path().ends_with("chat/completions") {
+        if body["stream"] == true {
+            let chunk=json!({"id":"chat_shared_fixture","object":"chat.completion.chunk","model":body["model"],"choices":[{"index":0,"delta":{"role":"assistant","content":"shared streamed response"},"finish_reason":null}]});
+            let done=json!({"id":"chat_shared_fixture","object":"chat.completion.chunk","model":body["model"],"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}});
+            return ([("content-type","text/event-stream")],format!("data: {chunk}\n\ndata: {done}\n\ndata: [DONE]\n\n")).into_response();
+        }
         return Json(json!({"choices":[{"message":{"role":"assistant","content":"shared upstream response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}})).into_response();
     }
     if uri.path().ends_with("embeddings") {
@@ -560,6 +565,90 @@ async fn shared_chat_explicit_400_and_429_switches_still_control_fallback() {
         assert_eq!(status.is_success(), allow, "HTTP {code}, allow={allow}: {body}");
         assert_eq!(f.upstreams[0].count(), 1);
         assert_eq!(f.upstreams[1].count(), usize::from(allow));
+    }
+}
+
+
+#[tokio::test]
+async fn shared_fallback_reports_final_channel_in_list_detail_and_runtime_logs() {
+    use std::io::Write;
+    #[derive(Clone)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+    impl Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    // Gateway futures may resume on a different worker; a process-wide subscriber
+    // also avoids callsite-interest races with the other parallel integration tests.
+    let bytes=Arc::new(Mutex::new(Vec::new()));
+    let capture=Capture(bytes.clone());
+    let subscriber=tracing_subscriber::fmt().with_ansi(false).without_time()
+        .with_max_level(tracing::Level::INFO).with_writer(move || capture.clone()).finish();
+    tracing::subscriber::set_global_default(subscriber).expect("this test binary has no other global subscriber");
+    for (streamed, success) in [(false,true),(true,true),(false,false),(true,false)] {
+        bytes.lock().unwrap().clear();
+        let mut f=Fixture::new(ModelKind::Chat).await;
+        // Unique among concurrently running fixtures, so unrelated request IDs cannot
+        // satisfy this test's completion-log assertions.
+        f.config.name="request-channel-identity".into();
+        db::channels::set_models(&f.state.conn(),f.sources[1],&[
+            db::channels::ModelMapping::new("bottom-1",Some("backend-model".into()),false)
+        ]).unwrap();
+        f.publish().await;
+        f.allow_alias_only();
+        f.clear();
+        f.upstreams[0].set(Behavior::Status(503));
+        if !success { f.upstreams[1].set(Behavior::Status(503)); }
+        let mut body=f.body("request-channel-identity");
+        body["stream"]=json!(streamed);
+        let (status,reply)=f.request("POST","/v1/chat/completions",Some(&f.key),None,body).await;
+        assert_eq!(status.is_success(),success,"streamed={streamed}: {reply}");
+        assert_eq!(f.upstreams[0].count(),1);
+        assert_eq!(f.upstreams[1].count(),1);
+        assert_eq!(f.upstreams[1].state.seen.lock().unwrap()[0]["model"],"backend-model");
+        f.flush().await;
+        let (status,list)=f.admin("GET","/api/logs?limit=1",Value::Null).await;
+        assert_eq!(status,StatusCode::OK,"{list}");
+        let row=&list["logs"][0];
+        assert_eq!(row["model"],"request-channel-identity");
+        assert_eq!(row["served_model"],"bottom-1");
+        assert_eq!(row["channel_id"],f.sources[1].0);
+        assert_eq!(row["channel_name"],"bottom-1");
+        assert_eq!(row["streamed"],streamed && success);
+        assert_eq!(row["status"],if success {"ok"} else {"failed"});
+        let (_,detail)=f.admin("GET",&format!("/api/requests/{}",row["id"]),Value::Null).await;
+        assert_eq!(detail["request"],*row);
+        assert_eq!(detail["attempts"].as_array().unwrap().len(),2);
+        assert_eq!(detail["attempts"][1]["model_name"],"bottom-1");
+        assert_eq!(detail["attempts"][1]["upstream_model"],"backend-model");
+        let captured=String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+        let logs=captured.lines().filter(|line|line.contains("model=request-channel-identity")).collect::<Vec<_>>().join("\n");
+        let completions=logs.lines().filter(|line| line.contains("请求完成") && line.contains(&format!("request_id={}",row["id"]))).collect::<Vec<_>>();
+        assert_eq!(completions.len(),1,"exactly one matching request completion must be logged: {logs}");
+        let final_line=completions[0];
+        for expected in [format!("request_id={}",row["id"]),"model=request-channel-identity".into(),
+            format!("channel_id={}",f.sources[1].0),"channel_name=bottom-1".into(),
+            "served_model=bottom-1".into(),"upstream_model=backend-model".into(),
+            format!("streamed={}",streamed && success),format!("status={}",if success {"ok"}else{"failed"})] {
+            assert!(final_line.contains(&expected),"missing {expected}: {final_line}");
+        }
+        assert!(!logs.contains("synthetic-shared-upstream"));
+        assert!(!logs.contains("shared model test"));
+        let (status,deleted_source)=f.admin("DELETE",&format!("/api/channels/{}",f.sources[1].0),Value::Null).await;
+        assert_eq!(status,StatusCode::OK,"normal source lifecycle must release credential references: {deleted_source}");
+        let (_,list)=f.admin("GET","/api/logs?limit=1",Value::Null).await;
+        let deleted=&list["logs"][0];
+        assert_eq!(deleted["id"],row["id"]);
+        assert_eq!(deleted["channel_id"],f.sources[1].0);
+        assert!(deleted["channel_name"].is_null());
+        assert_eq!(deleted["served_model"],"bottom-1");
+        let (_,detail)=f.admin("GET",&format!("/api/requests/{}",row["id"]),Value::Null).await;
+        assert_eq!(detail["request"],*deleted);
+        assert_eq!(detail["attempts"][1]["channel_id"],f.sources[1].0);
+        assert!(detail["attempts"][1]["channel_name"].is_null());
     }
 }
 

@@ -968,6 +968,8 @@ async fn request_detail_is_authenticated_exact_and_orders_attempts() {
     let (_, empty) = send(test_app(&f), "GET", &format!("/api/requests/{empty_id}"), Some(&token), None).await;
     assert_eq!(empty["attempts"], json!([]));
     assert_eq!(empty["request"]["error"], "model not configured");
+    assert!(empty["request"]["channel_id"].is_null());
+    assert!(empty["request"]["channel_name"].is_null());
 }
 
 #[tokio::test]
