@@ -167,6 +167,17 @@ pub fn budgets(conn: &Connection, scope: Option<&str>, id: Option<i64>) -> Resul
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(out)
 }
+/// Read only this owner's Key budgets, without the generic administration list cap.
+/// Key-list responses must not turn every row into another HTTP round trip.
+pub fn key_budgets_for_user(conn: &Connection, user_id: i64) -> Result<Vec<Budget>> {
+    let mut query = conn.prepare(
+        "SELECT b.scope,b.scope_id,b.limit_micro,b.spent_micro,b.reserved_micro,b.frozen
+         FROM gateway_keys g JOIN billing_budgets b ON b.scope='key' AND b.scope_id=g.id
+         WHERE g.user_id=?1 ORDER BY g.id",
+    )?;
+    let rows = query.query_map([user_id], budget_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
 pub fn set_budget(
     conn: &Connection,
     scope: &str,

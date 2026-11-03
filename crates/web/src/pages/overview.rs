@@ -415,11 +415,31 @@ fn resolved_channel_name(id: Option<i64>, provided: Option<&str>, channels: &[cr
 }
 
 fn actual_model(r:&LogRow)->String {
-    if !r.served_model.trim().is_empty(){r.served_model.clone()}
+    if is_passthrough(r) {r.channel_name.as_deref().map(str::trim).filter(|s|!s.is_empty()).unwrap_or("未记录").to_owned()}
+    else if !r.served_model.trim().is_empty(){r.served_model.clone()}
     else if r.status=="running" {"等待调用上游".into()}
     else if r.channel_id.is_none(){"未调用上游".into()}
     else if r.model.eq_ignore_ascii_case("auto"){"实际模型未记录".into()}
     else {r.model.clone()}
+}
+
+fn is_passthrough(r:&LogRow)->bool {r.endpoint.starts_with("passthrough:")}
+
+fn recorded_path(path:Option<&str>)->String {
+    path.filter(|s|!s.trim().is_empty()).unwrap_or("未记录").to_owned()
+}
+
+/// These four fields are used directly by the request detail view. Never infer
+/// historical paths from a current channel, route prefix or upstream setting.
+fn request_identity_fields(r:&LogRow)->[(&'static str,String);4] {
+    if is_passthrough(r) {
+        [("透传服务（当前名称）",actual_model(r)),("实际渠道",actual_channel(r)),
+         ("请求入口",recorded_path(r.request_path.as_deref())),
+         ("上游接口",recorded_path(r.upstream_path.as_deref()))]
+    } else {
+        [("实际模型",actual_model(r)),("实际渠道",actual_channel(r)),
+         ("请求入口",r.model.clone()),("接口",r.endpoint.clone())]
+    }
 }
 
 fn actual_channel(r: &LogRow) -> String {
@@ -436,11 +456,10 @@ fn actual_channel(r: &LogRow) -> String {
 #[component]
 fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
     let r=detail.request;
-    let actual=actual_model(&r);
-    let channel=actual_channel(&r);
+    let [(model_label,actual),(channel_label,channel),(entry_label,entry),(interface_label,interface)]=request_identity_fields(&r);
     let label=match r.error_code.as_deref(){Some("model_not_configured")=>"模型未配置",Some("vision_not_ready")=>"视觉未就绪",Some("models_cooling")=>"模型冷却中",Some("auto_no_candidate")=>"无可用候选",Some("request_invalid")=>"请求参数错误",_=>status_label(&r.status).0};
     let fields=vec![
-        ("实际模型",actual),("实际渠道",channel),("请求入口",r.model.clone()),("结果",label.into()),
+        (model_label,actual),(channel_label,channel),(entry_label,entry),("结果",label.into()),
         ("请求时间",fmt::ts(r.ts_ms)),("总耗时",if r.status=="running" {"进行中…".into()}else{fmt::dur(r.latency_ms)}),
         ("首字节延迟",if r.status=="running" {"等待上游响应".into()}else if r.channel_id.is_none(){"不适用".into()}else{r.first_byte_ms.map(fmt::dur).unwrap_or_else(||"未记录".into())}),
         ("输入 Token",usage_number(r.input_tokens,r.input_tokens_known,&r.usage_source)),("输出 Token",usage_number(r.output_tokens,r.output_tokens_known,&r.usage_source)),
@@ -449,10 +468,10 @@ fn RequestDetailView(detail: RequestDetail) -> impl IntoView {
         ("HTTP 状态",r.http_status.map(|n|n.to_string()).unwrap_or_else(||"未记录".into())),
         ("来源 IP",r.client_ip.unwrap_or_else(||"未提供".into())),
         ("请求应用",r.user_agent.unwrap_or_else(||"未提供".into())),
-        ("接口",r.endpoint),
+        (interface_label,interface),
     ];
     view!{
-        <dl class="call-facts">{fields.into_iter().map(|(k,v)|view!{<div class:fact-wide=matches!(k,"请求应用"|"接口")><dt>{k}</dt><dd>{v}</dd></div>}).collect_view()}</dl>
+        <dl class="call-facts">{fields.into_iter().map(|(k,v)|view!{<div class:fact-wide=matches!(k,"请求应用"|"接口"|"请求入口"|"上游接口")><dt>{k}</dt><dd>{v}</dd></div>}).collect_view()}</dl>
         <div class="call-flags">{r.has_image.then(||view!{<span class="tag vision">"图片输入"</span>})}{r.explored.then(||view!{<span class="tag">"模型探索"</span>})}</div>
         {r.error.filter(|e|!e.trim().is_empty()).map(|e|view!{<div class="call-error"><b>"错误信息"</b><p>{e}</p></div>})}
     }
@@ -520,6 +539,39 @@ mod tests {
         assert_eq!(super::actual_channel(&r), "未调用上游");
         r.status = "running".into();
         assert_eq!(super::actual_channel(&r), "等待调用上游");
+    }
+
+    #[test]
+    fn passthrough_request_identity_never_displays_internal_model_identifiers() {
+        let mut row=crate::model::LogRow{endpoint:"passthrough:11".into(),model:"passthrough:11".into(),served_model:"passthrough:11".into(),channel_name:Some("synthetic photo service".into()),status:"ok".into(),..Default::default()};
+        assert_eq!(super::actual_model(&row),"synthetic photo service");
+        row.channel_name=None;
+        assert_eq!(super::actual_model(&row),"未记录");
+    }
+
+    #[test]
+    fn passthrough_detail_fields_keep_both_real_paths_and_neutral_history() {
+        let mut row=crate::model::LogRow{endpoint:"passthrough:11".into(),model:"passthrough:11".into(),served_model:"passthrough:11".into(),channel_id:Some(51),channel_name:Some("synthetic photo service".into()),request_path:Some("/photos/clip/txt".into()),upstream_path:Some("/engine/clip/txt".into()),status:"ok".into(),..Default::default()};
+        assert_eq!(super::request_identity_fields(&row),[
+            ("透传服务（当前名称）","synthetic photo service".into()),
+            ("实际渠道","synthetic photo service（#51）".into()),
+            ("请求入口","/photos/clip/txt".into()),("上游接口","/engine/clip/txt".into())]);
+        row.request_path=None;row.upstream_path=None;
+        let historical=super::request_identity_fields(&row);
+        assert_eq!(historical[0],("透传服务（当前名称）","synthetic photo service".into()));
+        assert_eq!(historical[2],("请求入口","未记录".into()));
+        assert_eq!(historical[3],("上游接口","未记录".into()));
+        assert!(historical.iter().all(|(_,v)|!v.contains("passthrough:")));
+        row.channel_name=None;
+        assert_eq!(super::request_identity_fields(&row)[0],("透传服务（当前名称）","未记录".into()));
+    }
+
+    #[test]
+    fn llm_detail_identity_preserves_actual_model_virtual_entry_and_endpoint() {
+        let row=crate::model::LogRow{endpoint:"/v1/responses".into(),model:"virtual-fallback".into(),served_model:"selected-logical-model".into(),channel_id:Some(7),channel_name:Some("synthetic provider".into()),request_path:Some("/must-not-replace-llm-entry".into()),upstream_path:Some("/must-not-replace-llm-interface".into()),status:"ok".into(),..Default::default()};
+        assert_eq!(super::request_identity_fields(&row),[
+            ("实际模型","selected-logical-model".into()),("实际渠道","synthetic provider（#7）".into()),
+            ("请求入口","virtual-fallback".into()),("接口","/v1/responses".into())]);
     }
 
     #[test]

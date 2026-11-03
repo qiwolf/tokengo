@@ -145,6 +145,33 @@ mod tests {
     }
 
     #[test]
+    fn request_paths_migration_preserves_v42_rows_and_history() {
+        let c=Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL DEFAULT (datetime('now')))").unwrap();
+        for (v,sql) in schema::MIGRATIONS.iter().filter(|(v,_)|*v<=42) {
+            c.execute_batch(sql).unwrap();
+            c.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?1,'preserved-v42')",[v]).unwrap();
+        }
+        c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,served_model,error) VALUES(1,'passthrough:7','passthrough:7','ok','passthrough:7','synthetic historical detail')",[]).unwrap();
+        let columns:Vec<String>=c.prepare("PRAGMA table_info(requests)").unwrap().query_map([],|r|r.get(1)).unwrap().map(|r|r.unwrap()).collect();
+        let projection=format!("SELECT {} FROM requests ORDER BY id",columns.join(","));
+        let rows=|c:&Connection| {
+            let mut s=c.prepare(&projection).unwrap();let n=s.column_count();
+            let out=s.query_map([],|r|(0..n).map(|i|r.get::<_,rusqlite::types::Value>(i)).collect::<rusqlite::Result<Vec<_>>>()).unwrap().map(|r|r.unwrap()).collect::<Vec<_>>();out
+        };
+        let before=rows(&c);
+        migrate(&c).unwrap();migrate(&c).unwrap();
+        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),43);
+        assert_eq!(rows(&c),before,"all preexisting request columns remain byte/value-equivalent");
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=42 AND applied_at='preserved-v42'",[],|r|r.get::<_,i64>(0)).unwrap(),42);
+        assert_eq!(c.query_row("SELECT request_path IS NULL AND upstream_path IS NULL FROM requests",[],|r|r.get::<_,bool>(0)).unwrap(),true);
+        let info:Vec<(String,String,i64,Option<String>)>=c.prepare("PRAGMA table_info(requests)").unwrap().query_map([],|r|Ok((r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap().map(|r|r.unwrap()).collect();
+        for name in ["request_path","upstream_path"] {
+            let col=info.iter().find(|r|r.0==name).unwrap();assert_eq!((&col.1,col.2,&col.3),(&"TEXT".to_owned(),0,&None));
+        }
+    }
+
+    #[test]
     fn migrations_create_the_expected_tables() {
         let conn = open_in_memory().unwrap();
         let got = table_names(&conn);

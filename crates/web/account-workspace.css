@@ -88,6 +88,9 @@
 .console-layout .console-content :is(.user-workspace, .workspace-key-task) .account-help {
   margin: 0; font-size: 12px; line-height: 1.7;
 }
+.console-layout .console-content .user-workspace > .account-help {
+  margin: 16px;
+}
 .console-layout .console-content .workspace-field-grid,
 .console-layout .console-content .workspace-budget-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start;

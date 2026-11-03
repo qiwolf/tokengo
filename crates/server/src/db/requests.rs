@@ -228,6 +228,10 @@ pub struct RequestRow {
     pub id: i64,
     pub ts_ms: i64,
     pub endpoint: String,
+    /// Exact incoming path captured for new passthrough requests; never a query.
+    pub request_path: Option<String>,
+    /// Exact outgoing URL path captured at dispatch; never reconstructed later.
+    pub upstream_path: Option<String>,
     pub model: String,
     pub status: String,
     pub http_status: Option<i64>,
@@ -248,6 +252,8 @@ fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
         key_id: r.get(23)?,
         key_display_name: r.get(24)?,
         channel_name: r.get(25)?,
+        request_path: r.get(26)?,
+        upstream_path: r.get(27)?,
         input_tokens_known:r.get(19)?,output_tokens_known:r.get(20)?,usage_source:r.get(21)?,
         explored:r.get::<_,i64>(18)?!=0,
         error_code:r.get(17)?,
@@ -295,7 +301,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let request = conn.query_row(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
                 input_tokens, output_tokens, has_image, error, served_model, first_byte_ms,
-                client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name, (SELECT c.name FROM channels c WHERE c.id=requests.channel_id) AS channel_name FROM requests WHERE id = ?1",
+                client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name, (SELECT c.name FROM channels c WHERE c.id=requests.channel_id) AS channel_name, request_path, upstream_path FROM requests WHERE id = ?1",
         [id], request_row,
     ).optional()?;
     let Some(request) = request else { return Ok(None); };
@@ -316,7 +322,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, ts_ms, endpoint, model, status, http_status, channel_id, latency_ms,
-                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name, (SELECT c.name FROM channels c WHERE c.id=requests.channel_id) AS channel_name
+                input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name, (SELECT c.name FROM channels c WHERE c.id=requests.channel_id) AS channel_name, request_path, upstream_path
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
     let rows = stmt

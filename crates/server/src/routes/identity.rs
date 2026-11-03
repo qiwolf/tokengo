@@ -226,7 +226,13 @@ async fn admin_keys(
 ) -> Result<Json<Value>, ApiError> {
     let c = state.conn();
     missing_user(&c, id)?;
-    let keys=identity::keys(&c,id)?.iter().map(|key|key_view(&c,key)).collect::<db::Result<Vec<_>>>()?;
+    let budgets = db::billing::key_budgets_for_user(&c, id)?.into_iter()
+        .map(|budget| (budget.scope_id, budget)).collect::<std::collections::HashMap<_, _>>();
+    let keys=identity::keys(&c,id)?.iter().map(|key| {
+        let mut row = key_view(&c,key)?;
+        row["budget"] = json!(budgets.get(&key.id));
+        Ok(row)
+    }).collect::<db::Result<Vec<_>>>()?;
     Ok(Json(json!({"keys":keys})))
 }
 #[derive(Deserialize)]

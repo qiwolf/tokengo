@@ -11,6 +11,13 @@ fn key_label(key: &Value, personal: bool) -> String {
     }
     api::text(key,"name")
 }
+fn key_list_rows(value: &Value, personal: bool) -> Result<Vec<Value>, &'static str> {
+    let rows = api::rows(value, "keys");
+    if !personal && rows.iter().any(|key| key.get("budget").is_none()) {
+        return Err("密钥列表缺少额度信息，请刷新页面以使用配套面板后重试。");
+    }
+    Ok(rows)
+}
 fn key_copy_notice(copied: bool) -> &'static str {
     if copied { "完整 API Key 已复制到系统剪贴板，请安全保存。" }
     else { "复制未成功。请点击“复制 Key”重试，或选中上方 Key 手动复制；也可稍后从列表再次显示。" }
@@ -120,46 +127,14 @@ pub fn KeyManager(
             match api::request("GET", &path, None).await {
                 Ok(v) => {
                     if owner.get_untracked() == id && generation.get_untracked() == token {
-                        let mut loaded = api::rows(&v, "keys");
-                        if !personal {
-                            for row in &mut loaded {
-                                let key_id = row["id"].as_i64().unwrap_or(0);
-                                match api::request(
-                                    "GET",
-                                    &format!("/api/budgets?scope=key&scope_id={key_id}"),
-                                    None,
-                                )
-                                .await
-                                {
-                                    Ok(b) => {
-                                        if owner.get_untracked() != id
-                                            || generation.get_untracked() != token
-                                        {
-                                            return;
-                                        }
-                                        row["budget"] = api::rows(&b, "budgets")
-                                            .into_iter()
-                                            .find(|b| b["scope_id"] == key_id)
-                                            .unwrap_or(Value::Null);
-                                    }
-                                    Err(e) => {
-                                        if owner.get_untracked() == id
-                                            && generation.get_untracked() == token
-                                        {
-                                            error.set(format!(
-                                                "密钥额度读取失败：{}。请刷新，未覆盖旧额度。",
-                                                e.message
-                                            ));
-                                            loading.set(false);
-                                        }
-                                        return;
-                                    }
-                                }
+                        let loaded = match key_list_rows(&v, personal) {
+                            Ok(rows) => rows,
+                            Err(message) => {
+                                error.set(message.into());
+                                loading.set(false);
+                                return;
                             }
-                        }
-                        if owner.get_untracked() != id || generation.get_untracked() != token {
-                            return;
-                        }
+                        };
                         rows.set(loaded);
                         if personal {
                             services.set(v["services"].as_array().cloned().unwrap_or_default());
@@ -499,6 +474,16 @@ pub fn KeyManager(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn key_lists_preserve_budget_values_and_reject_missing_admin_budget_metadata() {
+        let response = json!({"keys":[{"id":1,"budget":null},{"id":2,"budget":{"limit_micro":0,"spent_micro":17,"reserved_micro":3,"frozen":true}}]});
+        let rows = key_list_rows(&response, false).unwrap();
+        assert!(rows[0]["budget"].is_null());
+        assert_eq!(rows[1]["budget"], response["keys"][1]["budget"]);
+        assert!(key_list_rows(&json!({"keys":[{"id":1}]}), false).is_err());
+        assert!(key_list_rows(&json!({"keys":[]}), false).unwrap().is_empty());
+        assert!(key_list_rows(&json!({"keys":[{"id":1}]}), true).is_ok());
+    }
     #[test]
     fn key_labels_distinguish_admin_and_personal_views_without_changing_name() {
         let key=json!({"name":"Memory","display_name":"Memory - Cyber"});

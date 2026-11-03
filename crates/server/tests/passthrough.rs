@@ -83,6 +83,47 @@ async fn mock(handler: Router) -> (String, tokio::task::JoinHandle<()>) {
     (url, task)
 }
 #[tokio::test]
+async fn request_paths_are_captured_without_query_and_not_guessed_from_later_routes() {
+    let (url,task)=mock(Router::new().fallback(|r:Request|async move {
+        assert_eq!(r.uri().to_string(),"/engine/clip/txt?token=SYNTHETIC-QUERY");
+        assert_eq!(to_bytes(r.into_body(),1024).await.unwrap().as_ref(),b"SYNTHETIC-BODY");
+        "ok"
+    })).await;
+    let f=Fixture::new();
+    let route=f.route(&(url+"/engine"),"/photos/",serde_json::json!({}));
+    let response=f.call("/photos/clip/txt?token=SYNTHETIC-QUERY",b"SYNTHETIC-BODY".to_vec()).await;
+    assert_eq!(response.status(),200);
+    assert_eq!(to_bytes(response.into_body(),1024).await.unwrap().as_ref(),b"ok");
+    f.state.drain_writes();
+    let id:i64=f.state.conn().query_row("SELECT MAX(id) FROM requests",[],|r|r.get(0)).unwrap();
+    let detail=serde_json::to_value(db::requests::detail(&f.state.conn(),id).unwrap().unwrap()).unwrap();
+    assert_eq!(detail["request"]["request_path"],"/photos/clip/txt");
+    assert_eq!(detail["request"]["upstream_path"],"/engine/clip/txt");
+    assert_eq!(detail["request"]["endpoint"],format!("passthrough:{}",route.id));
+    assert_eq!(detail["request"]["model"],format!("passthrough:{}",route.id));
+    assert!(!detail.to_string().contains("SYNTHETIC-QUERY"));
+    assert!(!detail.to_string().contains("SYNTHETIC-BODY"));
+    {
+        let c=f.state.conn();
+        c.execute("UPDATE passthrough_routes SET prefix='/changed/',upstream='http://127.0.0.1:1/new-base' WHERE id=?1",[route.id]).unwrap();
+        c.execute("UPDATE channels SET name='renamed current service' WHERE id=?1",[route.channel_id]).unwrap();
+    }
+    let again=serde_json::to_value(db::requests::detail(&f.state.conn(),id).unwrap().unwrap()).unwrap();
+    assert_eq!(again["request"]["request_path"],"/photos/clip/txt");
+    assert_eq!(again["request"]["upstream_path"],"/engine/clip/txt");
+    assert_eq!(again["request"]["channel_name"],"renamed current service");
+    let recent=serde_json::to_value(db::requests::recent(&f.state.conn(),10).unwrap()).unwrap();
+    assert_eq!(recent[0]["request_path"],"/photos/clip/txt");
+    assert_eq!(recent[0]["upstream_path"],"/engine/clip/txt");
+    let old=db::requests::start(&f.state.conn(),&format!("passthrough:{}",route.id),&format!("passthrough:{}",route.id),None,false).unwrap();
+    f.state.conn().execute("UPDATE requests SET channel_id=?2 WHERE id=?1",rusqlite::params![old,route.channel_id]).unwrap();
+    let legacy=serde_json::to_value(db::requests::detail(&f.state.conn(),old).unwrap().unwrap()).unwrap();
+    assert!(legacy["request"]["request_path"].is_null());
+    assert!(legacy["request"]["upstream_path"].is_null());
+    task.abort();
+}
+
+#[tokio::test]
 async fn forwards_binary_query_and_only_backend_auth_and_counts_one_without_tokens() {
     let bytes = vec![0, 255, 1, 2, 13, 10, 0, 128];
     let expected = bytes.clone();

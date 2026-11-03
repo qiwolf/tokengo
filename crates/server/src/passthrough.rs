@@ -264,13 +264,15 @@ async fn forward(
             false,
         )?;
         c.execute(
-            "UPDATE requests SET user_id=?2,key_id=?3,auth_snapshot=?4 WHERE id=?1",
+            "UPDATE requests SET user_id=?2,key_id=?3,auth_snapshot=?4,request_path=?5,upstream_path=?6 WHERE id=?1",
             rusqlite::params![
                 id,
                 key.auth.user_id,
                 key.auth.key_id,
                 serde_json::to_string(&key.auth)
-                    .map_err(|_| ApiError::internal("Identity snapshot failed"))?
+                    .map_err(|_| ApiError::internal("Identity snapshot failed"))?,
+                parts.uri.path(),
+                path
             ],
         )
         .map_err(db::DbError::from)?;

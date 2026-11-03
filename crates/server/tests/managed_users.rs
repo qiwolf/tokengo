@@ -6,6 +6,46 @@ use serde_json::{Value, json};
 use tokengo_server::{AppState, Config, SharedState, app, db};
 use tower::ServiceExt;
 const PASSWORD: &str = "legacy-password";
+
+#[tokio::test]
+async fn admin_key_list_includes_exact_owner_budgets_without_extra_requests() {
+    let f = Fixture::new();
+    let c = f.state.conn();
+    let policy = db::identity::Policy::default();
+    let owner = db::identity::create_user(&c, "Budget owner", "user", &policy).unwrap();
+    let other = db::identity::create_user(&c, "Other budget owner", "user", &policy).unwrap();
+    let mut ids = Vec::new();
+    for name in ["zero", "unlimited", "unconfigured", "deleted"] {
+        ids.push(db::identity::create_key(&c, owner.id, name, &policy, None, None).unwrap().0.id);
+    }
+    let foreign = db::identity::create_key(&c, other.id, "foreign", &policy, None, None).unwrap().0.id;
+    for (id, limit, spent, reserved, frozen) in [
+        (ids[0], Some(0i64), 17, 3, true),
+        (ids[1], None, 23, 5, false),
+        (ids[3], Some(456), 0, 0, false),
+        (foreign, Some(999), 0, 0, false),
+    ] {
+        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen) VALUES('key',?1,?2,?3,?4,?5)",rusqlite::params![id,limit,spent,reserved,frozen]).unwrap();
+    }
+    c.execute("UPDATE gateway_keys SET enabled=0 WHERE id=?1", [ids[1]]).unwrap();
+    c.execute("INSERT INTO settings(key,value) VALUES(?1,'1')", [format!("deleted_key:{}", ids[3])]).unwrap();
+    drop(c);
+    let (status, response, _) = f.admin("GET", &format!("/api/users/{}/keys", owner.id), json!(null)).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let keys = response["keys"].as_array().unwrap();
+    assert_eq!(keys.len(), 3);
+    for key in keys {
+        assert!(ids[..3].contains(&key["id"].as_i64().unwrap()));
+        assert!(key.get("secret").is_none() && key.get("key_hash").is_none());
+        assert!(key.get("budget").is_some());
+    }
+    let budget = |id| &keys.iter().find(|key| key["id"] == id).unwrap()["budget"];
+    assert_eq!(budget(ids[0]), &json!({"scope":"key","scope_id":ids[0],"limit_micro":0,"spent_micro":17,"reserved_micro":3,"frozen":true}));
+    assert_eq!(budget(ids[1]), &json!({"scope":"key","scope_id":ids[1],"limit_micro":null,"spent_micro":23,"reserved_micro":5,"frozen":false}));
+    assert_eq!(keys.iter().find(|key|key["id"]==ids[1]).unwrap()["enabled"],false);
+    assert!(budget(ids[2]).is_null());
+    assert_eq!(db::billing::budgets(&f.state.conn(), Some("key"), Some(ids[0])).unwrap()[0].spent_micro, 17);
+}
 #[derive(Clone)]
 struct Fixture {
     state: SharedState,

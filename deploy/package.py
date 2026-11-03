@@ -47,6 +47,10 @@ def main():
             raise ValueError('Trunk release output missing index, WASM, or JS')
         shutil.copytree(web, tree / 'web')
         shutil.copytree(ROOT / 'deploy', tree / 'deploy', ignore=shutil.ignore_patterns('__pycache__'))
+        migration_source = ROOT / 'crates/server/src/db/request_paths.sql'
+        migration_archive = 'deploy/migrations/43-request-paths.sql'
+        (tree / migration_archive).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(migration_source, tree / migration_archive)
         for document in ['deployment.md', 'operations-tokens.md', 'account-login.md']:
             shutil.copy2(ROOT / 'docs' / document, tree / document)
         # Ship the complete matching development/user docs and an optional
@@ -57,7 +61,11 @@ def main():
         shutil.copy2(ROOT / 'LICENSE', tree / 'LICENSE')
         shutil.copy2(ROOT / 'NOTICE', tree / 'NOTICE')
         manifest = {'commit': commit, 'target': 'x86_64-unknown-linux-gnu', 'rust': '1.98.0',
-                    'trunk': '0.21.14', 'cargo_lock_sha256': digest(ROOT / 'Cargo.lock')}
+                    'trunk': '0.21.14', 'cargo_lock_sha256': digest(ROOT / 'Cargo.lock'),
+                    'schema_version': 43,
+                    'migrations': {'43': {'source_path': 'crates/server/src/db/request_paths.sql',
+                                          'archive_path': migration_archive,
+                                          'sha256': digest(migration_source)}}}
         (tree / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         checksums = {str(p.relative_to(tree)): digest(p) for p in tree.rglob('*') if p.is_file()}
         (tree / 'checksums.json').write_text(json.dumps(checksums, sort_keys=True, indent=2) + '\n')
