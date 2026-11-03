@@ -10,15 +10,15 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current stable release: **[v0.34.0-qiwolf.26](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26)** · [Release notes](docs/releases/v0.34.0-qiwolf.26.md) · [Publication and 237 receipt](docs/acceptance/2026-11-03-qiwolf26-release/README.md).
+Current local release candidate: **v0.34.0-qiwolf.27** · [Release notes](docs/releases/v0.34.0-qiwolf.27.md) · [Publication and 237 receipt](docs/acceptance/2026-11-03-qiwolf27-release/README.md).
 
-This release fixes passthrough service names and neutral missing-name labels. The paired server/web update is live on 237. Exact source `c93975b5fe52` passed [main CI](https://github.com/qiwolf/tokengo/actions/runs/41637257354) and the [release workflow](https://github.com/qiwolf/tokengo/actions/runs/41637262505); nine public assets passed independent acceptance. Build-test passed 26 server route tests, 177 web tests and paired release packaging. GitHub full Rust workspace results are 1,581 passed, 0 failed and 9 ignored, plus 13 MinerU Python tests and WASM checking; overlapping counts are not added. Real Chrome labels and six existing local-model/passthrough calls passed. No broader original-provider, tool or multi-turn acceptance is claimed; passthrough success-rate accounting is unchanged.
+This local candidate labels channel statistics by provider and Key remark while preserving passthrough service names. Each connection ID remains a separate group, distinct from model statistics. Build-test passed 28 server route tests, 178 web tests and a fresh optimized WASM build. Paired native packaging and deployment/online acceptance on 237 come before pushing and publication. Cargo 0.34.0/schema 42 and stored names, Key remarks and routing are unchanged.
 
-当前正式版：**[v0.34.0-qiwolf.26](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26)** · [版本说明](docs/releases/v0.34.0-qiwolf.26.md) · [发行与237收据](docs/acceptance/2026-11-03-qiwolf26-release/README.md)。
+当前本地发行候选：**v0.34.0-qiwolf.27** · [版本说明](docs/releases/v0.34.0-qiwolf.27.md) · [发行与237收据](docs/acceptance/2026-11-03-qiwolf27-release/README.md)。
 
-本版修复总览透传服务名称及缺名误报已删除，237配套程序和面板已更新。精确源码`c93975b5fe52`的[main CI](https://github.com/qiwolf/tokengo/actions/runs/41637257354)与[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41637262505)成功，9资产已公开并完成独立验收。build-test定向26项服务端/177项Web及配套发行构建通过；GitHub全量Rust1581/0/9、MinerU Python13及WASM check通过，不重复累加。真实Chrome名称显示和6项现有本地模型/透传调用通过；未扩展原厂、工具或多轮验收，透传成功率口径未改。
+本地候选版将总览“按渠道”显示为供应商 · Key备注，透传保留服务名；按连接ID分别统计，与按模型区分。build-test28项服务端路由、178项Web及本轮全新优化WASM通过；配套原生包和237部署/线上验收准备中，完成后再推送发行。Cargo0.34.0/schema42不变，不修改原始名称、Key备注或路由。
 
-上一公开版 / Previous release: [v0.34.0-qiwolf.25](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25) · [历史发行收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf25-release/README.md)。
+当前公开版 / Current public release: [v0.34.0-qiwolf.26](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26) · [历史发行收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf26-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 
