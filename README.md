@@ -10,15 +10,15 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.27](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27)** · [版本说明](docs/releases/v0.34.0-qiwolf.27.md) · [发行与生产收据](docs/acceptance/2026-11-03-qiwolf27-release/README.md)。
+当前版本候选：**v0.34.0-qiwolf.28** · [版本说明](docs/releases/v0.34.0-qiwolf.28.md) · [验收状态](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
 
-本版仅将总览“按渠道”显示为供应商 · Key备注，透传保留服务名，连接编号区分同Key多连接，与按模型统计分开。生产程序/面板和真实UI/6项现有调用验收完成后才推送发行；9公开资产及GHCR/原生容器独立验收通过。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/41644499984)完整Rust1584/0/9、Python13与WASM通过；build-test206项定向及新WASM/原生配套构建通过，重复覆盖不相加。原始备注、名称、路由和模型归因不变，不扩大原厂能力或成功率计数范围。
+本版候选修复透传请求详情：显示当前服务名称、实际记录的客户端入口与上游接口，历史未记录路径明确显示“未记录”。用户Key列表将额度随列表一次返回，移除逐Key串行查询，并对齐管理说明。schema43只追加两个可空路径列，不回填历史，不保存query；账务分类、路由、鉴权及模型归因保留。build-test定向检查和旧q27程序读写schema43隔离验证已通过；配套构建、生产验收、正式CI与公开发行仍按阶段补充收据。
 
-Current stable release: **[v0.34.0-qiwolf.27](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27)** · [Release notes](docs/releases/v0.34.0-qiwolf.27.md) · [Publication and production receipt](docs/acceptance/2026-11-03-qiwolf27-release/README.md).
+Current release candidate: **v0.34.0-qiwolf.28** · [Release notes](docs/releases/v0.34.0-qiwolf.28.md) · [Acceptance status](docs/acceptance/2026-11-04-qiwolf28-release/README.md).
 
-This release labels channel statistics by provider and Key remark while preserving passthrough service names. Connection IDs distinguish connections sharing one Key, independently of model statistics. Production server/web, live UI and six existing-call checks passed before pushing and publication. All nine public assets and GHCR/native/container acceptance passed. [Exact main CI](https://github.com/qiwolf/tokengo/actions/runs/41644499984) passed 1584 Rust tests with 0 failures and 9 ignored, plus 13 MinerU Python tests and WASM checking. Build-test passed 206 targeted tests and fresh WASM/native packaging; overlapping counts are not added. Stored remarks, names, routing and model attribution remain unchanged; no broader original-provider or success-rate accounting change is claimed.
+This candidate fixes passthrough request details with the current service name and recorded client/upstream paths; missing historical paths are explicit. User Key lists now include budgets in one response, removing serial per-Key requests, with aligned management help text. Schema43 adds two nullable path columns without backfilling history or storing queries. Accounting categories, routing, authentication and model attribution retain their contracts. Targeted build-test checks and isolated q27-binary read/write compatibility with schema43 passed; paired packaging, production acceptance, official CI and publication receipts are pending.
 
-上一公开版 / Previous release: [v0.34.0-qiwolf.26](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26) · [历史收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf26-release/README.md)。
+上一正式版 / Previous stable release: [v0.34.0-qiwolf.27](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27) · [历史收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf27-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 

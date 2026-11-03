@@ -1,0 +1,16 @@
+{
+  "release": "v0.34.0-qiwolf.28",
+  "status": "local-candidate",
+  "behavior_commit": "23b26e9",
+  "schema_version": 43,
+  "migration_sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3",
+  "targeted_build_test": "passed",
+  "old_q27_binary_schema43_synthetic_read_write": "passed",
+  "final_paired_package": "pending",
+  "production": "pending",
+  "official_ci": "pending",
+  "publication": "pending",
+  "public_artifact_qa": "pending",
+  "new_original_provider_test": false,
+  "historical_success_rate_semantics_changed": false
+}
