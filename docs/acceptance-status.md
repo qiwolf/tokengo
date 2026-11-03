@@ -1,5 +1,7 @@
 # 功能与验收状态
 
+**2026-11-03：v0.34.0-qiwolf.25 发行准备中。** 本版纳入既有 OpenCode Go 端点/会话头运维记录、常用服务商预设与请求实际渠道可见性；Cargo0.34.0/schema42不变。build-test已取得服务端定向751通过/2项原有忽略、Web176通过及release WASM构建成功；新页面1440/390合成API浏览器验收通过，渠道名称/ID、实际模型与虚拟入口、删除渠道和等待状态及无水平溢出已核对。上述是本地隔离验证，完整workspace、精确main CI、发行工作流、公开资产与原生/容器独立验收仍待完成，不代表生产整包升级。本版没有新增原厂模型调用验收，历史证据保留原日期/版本与HTTP429等限制。见[版本说明](releases/v0.34.0-qiwolf.25.md)、[请求渠道验证](maintenance/request-channel-20261103/README.md)及[本轮发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)。
+
 **2026-11-02：v0.34.0-qiwolf.24 已正式发行，公开资产独立验收通过；237 来源 IP 配置已上线。** 237 的内网 Nginx 已改为仅从明确受信任的 VPS 来源恢复 `X-Real-IP`，再覆盖转发给 TokenGo 的两个来源头。公网健康请求的 VPS/237 来源一致，公网和不可信直连伪造头检查通过；Nginx 语法、重载与服务健康正常。没有改应用取 IP 逻辑、历史请求或数据库，没有为本项生成付费模型调用；新增公网模型请求的数据库记录未独立验收。配置实测见[现场记录](maintenance/source-ip-20261102/README.md)，新包精确 CI、发布与公开产物验收已通过，见[本轮发行收据](acceptance/2026-11-02-qiwolf24-release/README.md)。既有模型能力沿用注明版本的历史证据，不当作本次新测。更新程序不会自动修改反代，部署要求见[来源 IP 指南](reverse-proxy-client-ip.md)。
 
 **2026-10-31：main 测试时序修复已通过完整 Rust 持续集成（CI），用户确认不重新发版，线上继续使用 v0.34.0-qiwolf.23。** 测试修复提交 `0e393f8be1f9eba9e28aa30183fc0252ca0ab2bf` 的 [Rust CI](https://github.com/qiwolf/tokengo/actions/runs/41200992060) 首次运行成功，完整工作区、MinerU 客户端与 Web WASM 检查通过，`error_response.rs` 11/11 通过。本次仅涉及测试和记录，未改产品业务代码、生产配置或依赖；未重新发版或部署，qiwolf.23 标签、9 个发行资产和既有发行验收结论不变。详见[调查与处理记录](maintenance/ci-error-response-20261031/README.md)。

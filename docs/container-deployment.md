@@ -1,6 +1,6 @@
 # 容器部署与分发
 
-本文随 **v0.34.0-qiwolf.24** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。这是构建快照，公开发行状态以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)及[本轮发行收据](acceptance/2026-11-02-qiwolf24-release/README.md)为准。本版补齐[可信反代来源 IP 指南](reverse-proxy-client-ip.md)并纳入此前 CI 测试维护；没有新增业务逻辑、模型能力或数据库迁移。237 已上线的是 Nginx 配置修复，不表示新程序整包已部署。升级二进制或镜像不会自动修改反代；升级前仍须一致备份数据库、主密钥、程序与配置，恢复写入后不能用旧整库覆盖。
+本文随 **v0.34.0-qiwolf.25** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。本版新增供应方预设及请求渠道可见性，无数据库迁移。公开发行与独立验收状态见[本轮发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)，具体功能见[版本说明](releases/v0.34.0-qiwolf.25.md)。发行不自动升级现有实例，也不会修改反代。升级前一致备份数据库、主密钥、程序、Web 与配置；恢复写入后不能用旧整库覆盖新增账务。既有[可信反代来源 IP 指南](reverse-proxy-client-ip.md)继续适用。
 
 历史公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 

@@ -1,6 +1,6 @@
 # Linux x86_64 私有站部署与回滚
 
-本文随 **v0.34.0-qiwolf.24** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。这是构建快照，公开发行状态以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)及[本轮发行收据](acceptance/2026-11-02-qiwolf24-release/README.md)为准。本版补齐[可信反代来源 IP 指南](reverse-proxy-client-ip.md)并纳入此前 CI 测试维护；没有新增业务逻辑、模型能力或数据库迁移。237 已上线的是 Nginx 配置修复，不表示新程序整包已部署。升级二进制或镜像不会自动修改反代；升级前仍须一致备份数据库、主密钥、程序与配置，恢复写入后不能用旧整库覆盖。
+本文随 **v0.34.0-qiwolf.25** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。本版新增供应方预设及请求渠道可见性，无数据库迁移。公开发行与独立验收状态见[本轮发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)，具体功能见[版本说明](releases/v0.34.0-qiwolf.25.md)。发行不自动升级现有实例，也不会修改反代。升级前一致备份数据库、主密钥、程序、Web 与配置；恢复写入后不能用旧整库覆盖新增账务。既有[可信反代来源 IP 指南](reverse-proxy-client-ip.md)继续适用。
 
 历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
 
