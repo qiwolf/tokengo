@@ -1771,15 +1771,12 @@ async fn stats(
     let s = requests::stats_since(&conn, now_ms() - hours * 3600 * 1000)?;
 
     // 附上渠道名，面板不用再查一次
-    let names: std::collections::HashMap<i64, String> = channels::list(&conn)?
-        .into_iter()
-        .map(|l| (l.id.0, l.name))
-        .collect();
+    let names = channels::names(&conn)?;
     let mut v = serde_json::to_value(&s).map_err(|e| ApiError::internal(e.to_string()))?;
     if let Some(arr) = v.get_mut("by_channel").and_then(|x| x.as_array_mut()) {
         for item in arr.iter_mut() {
             let id = item.get("channel_id").and_then(|x| x.as_i64()).unwrap_or(0);
-            let name = names.get(&id).cloned().unwrap_or_else(|| format!("已删除的渠道 #{id}"));
+            let name = names.get(&id);
             if let Some(obj) = item.as_object_mut() {
                 obj.insert("channel_name".into(), serde_json::json!(name));
                 let attempts = obj.get("attempts").and_then(|x| x.as_i64()).unwrap_or(0);

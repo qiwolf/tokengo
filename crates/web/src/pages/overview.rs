@@ -140,15 +140,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
         } else { reload(); }
     };
 
-    let channel_name = move |id: Option<i64>| match id {
-        None => "—".to_string(),
-        Some(i) => channels
-            .get()
-            .iter()
-            .find(|l| l.id == i)
-            .map(|l| l.name.clone())
-            .unwrap_or_else(|| format!("已删 #{i}")),
-    };
+    let channel_name = move |id: Option<i64>| resolved_channel_name(id, None, &channels.get());
 
     view! {
         <div class="page">
@@ -286,7 +278,7 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
                         let st=stats.get().stats;
                         let items:Vec<(String,String,String,String)>=match category.get() {
                             1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.ok+k.failed+k.client_errors)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},format!("{} · 未完整报告 {} 次",fmt::num(k.input_tokens+k.output_tokens),k.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
-                            2=>st.by_channel.into_iter().map(|c| (channel_name(Some(c.channel_id)),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {} · 未完整报告 {} 次",fmt::dur(c.avg_ms),c.usage.unknown_requests),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
+                            2=>st.by_channel.into_iter().map(|c| (resolved_channel_name(Some(c.channel_id),c.channel_name.as_deref(),&channels.get()),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {} · 未完整报告 {} 次",fmt::dur(c.avg_ms),c.usage.unknown_requests),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
                             3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.ok+m.failed+m.client_errors)),format!("Token {}",format!("{} · 未完整报告 {} 次",fmt::num(m.input_tokens+m.output_tokens),m.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
                             4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.ok+c.failed+c.client_errors)),format!("Token {}",format!("{} · 未完整报告 {} 次",fmt::num(c.input_tokens+c.output_tokens),c.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
                             _=>Vec::new(),
@@ -407,6 +399,14 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     }
 }
 
+fn resolved_channel_name(id: Option<i64>, provided: Option<&str>, channels: &[crate::model::Channel]) -> String {
+    let Some(id) = id else { return "—".into(); };
+    provided.map(str::trim).filter(|name| !name.is_empty())
+        .or_else(|| channels.iter().find(|c| c.id == id).map(|c| c.name.trim()).filter(|name| !name.is_empty()))
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("渠道 #{id}（名称未记录）"))
+}
+
 fn actual_model(r:&LogRow)->String {
     if !r.served_model.trim().is_empty(){r.served_model.clone()}
     else if r.status=="running" {"等待调用上游".into()}
@@ -419,7 +419,7 @@ fn actual_channel(r: &LogRow) -> String {
     match r.channel_id {
         Some(id) => match r.channel_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(name) => format!("{name}（#{id}）"),
-            None => format!("渠道 #{id}（名称未记录或已删除）"),
+            None => format!("渠道 #{id}（名称未记录）"),
         },
         None if r.status == "running" => "等待调用上游".into(),
         None => "未调用上游".into(),
@@ -463,6 +463,18 @@ mod tests {
     use crate::model::KindStat;
 
     #[test]
+    fn channel_labels_use_statistics_names_for_passthrough_and_never_assume_deletion() {
+        use super::resolved_channel_name;
+        let llm_channels = [crate::model::Channel { id: 7, name: "旧名称".into(), ..Default::default() }];
+        assert_eq!(resolved_channel_name(Some(51), Some("GPU03 CLIP"), &llm_channels), "GPU03 CLIP");
+        assert_eq!(resolved_channel_name(Some(7), Some("新名称"), &llm_channels), "新名称");
+        assert_eq!(resolved_channel_name(Some(7), Some(" \t"), &llm_channels), "旧名称");
+        assert_eq!(resolved_channel_name(Some(51), None, &llm_channels), "渠道 #51（名称未记录）");
+        assert_eq!(resolved_channel_name(Some(51), Some(" \t"), &[]), "渠道 #51（名称未记录）");
+        assert_eq!(resolved_channel_name(None, None, &llm_channels), "—");
+    }
+
+    #[test]
     fn actual_channel_keeps_virtual_route_destination_and_unknown_channel_identity() {
         let mut r = crate::model::LogRow {
             model: "deepseek-fallback".into(), served_model: "DeepSeek-V4.1-Flash".into(),
@@ -471,9 +483,9 @@ mod tests {
         };
         assert_eq!(super::actual_channel(&r), "备用渠道（#17）");
         r.channel_name = None;
-        assert_eq!(super::actual_channel(&r), "渠道 #17（名称未记录或已删除）");
+        assert_eq!(super::actual_channel(&r), "渠道 #17（名称未记录）");
         r.channel_name = Some("  ".into());
-        assert_eq!(super::actual_channel(&r), "渠道 #17（名称未记录或已删除）");
+        assert_eq!(super::actual_channel(&r), "渠道 #17（名称未记录）");
         r.channel_id = None;
         assert_eq!(super::actual_channel(&r), "未调用上游");
         r.status = "running".into();

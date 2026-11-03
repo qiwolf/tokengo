@@ -138,7 +138,16 @@ fn load_children(conn: &Connection, channel: &mut ChannelRow) -> Result<()> {
     Ok(())
 }
 
-/// 全部渠道，**按全局顺序排**（`priority` 小的先，相同按 id）。
+/// Display labels include HTTP passthrough services without exposing their
+/// settings through the LLM-only management directory.
+pub fn names(conn: &Connection) -> Result<std::collections::HashMap<i64, String>> {
+    let mut stmt = conn.prepare("SELECT id, name FROM channels")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?.into_iter()
+        .filter(|(_, name)| !name.trim().is_empty()).collect())
+}
+
+/// 全部LLM渠道，**按全局顺序排**（`priority` 小的先，相同按 id）。
 ///
 /// 面板「渠道」页与路由都用这一份顺序：页面上从上到下就是「先试哪条」。
 pub fn list(conn: &Connection) -> Result<Vec<ChannelRow>> {

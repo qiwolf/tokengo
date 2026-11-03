@@ -707,14 +707,64 @@ async fn stats_and_logs_read_from_the_database() {
     assert_eq!(first["attempts"], 2, "分母是尝试次数，不是成功次数");
     assert_eq!(first["successes"], 0);
     assert_eq!(first["success_rate"], 0.0, "一次都没成的渠道成功率必须是 0");
-    // 没有名字的渠道要能兜住，不能报错
-    assert!(first["channel_name"].is_string());
+    // 缺少名称不代表已删除，展示层负责提供中性提示。
+    assert!(first["channel_name"].is_null());
 
     let (s, v) = send(test_app(&f), "GET", "/api/logs?limit=5", Some(&token), None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(v["logs"].as_array().unwrap().len(), 1);
     assert_eq!(v["logs"][0]["latency_ms"], 76);
     assert_eq!(v["logs"][0]["input_tokens"], 7);
+}
+
+#[tokio::test]
+async fn stats_channel_names_include_passthrough_without_expanding_llm_management() {
+    use tokengo_server::db::{passthrough, requests};
+
+    let f = fixture();
+    let token = panel_token(&f).await;
+    let (llm_id, clip_id, face_id) = {
+        let c = f.state.conn();
+        c.execute(
+            "INSERT INTO channels(name,base_url,enabled) VALUES('模型连接','http://127.0.0.1:1',1)",
+            [],
+        ).unwrap();
+        let llm_id = c.last_insert_rowid();
+        let route = |name: &str, prefix: &str, enabled: bool| {
+            passthrough::create(&c, &f.state.secrets, &serde_json::from_value(json!({
+                "name":name, "prefix":prefix, "upstream":"http://127.0.0.1:1", "enabled":enabled
+            })).unwrap()).unwrap().channel_id
+        };
+        let clip_id = route("GPU03 CLIP", "/clip/", true);
+        let face_id = route("GPU03 FACE", "/face/", false);
+        for channel_id in [llm_id, clip_id, face_id, 9999] {
+            let id = requests::start(&c, "/synthetic-stats", "synthetic-model", None, false).unwrap();
+            requests::add_attempt(&c, id, 0, channel_id, "success", Some(200), 12, None).unwrap();
+            requests::finish(&c, id, requests::Status::Ok, Some(200), Some(channel_id),
+                12, Some(0), 0, 0, false, None).unwrap();
+        }
+        (llm_id, clip_id, face_id)
+    };
+    let (status, response) = send(test_app(&f), "GET", "/api/stats", Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = response["stats"]["by_channel"].as_array().unwrap();
+    let row = |id| rows.iter().find(|r| r["channel_id"] == id).unwrap();
+    assert_eq!(row(llm_id)["channel_name"], "模型连接");
+    assert_eq!(row(clip_id)["channel_name"], "GPU03 CLIP");
+    assert_eq!(row(face_id)["channel_name"], "GPU03 FACE", "停用服务也保留真实名称");
+    assert!(row(9999)["channel_name"].is_null(), "缺少名称不能推断已删除");
+    assert_eq!(row(clip_id)["success_rate"], 100.0);
+    let (status, managed) = send(test_app(&f), "GET", "/api/channels", Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<_> = managed["channels"].as_array().unwrap().iter()
+        .map(|c| c["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, vec![llm_id], "统计标签不能扩大LLM配置清单");
+
+    f.state.conn().execute("UPDATE channels SET name='GPU03 CLIP/OCR' WHERE id=?1", [clip_id]).unwrap();
+    let (_, refreshed) = send(test_app(&f), "GET", "/api/stats", Some(&token), None).await;
+    let renamed = refreshed["stats"]["by_channel"].as_array().unwrap().iter()
+        .find(|r| r["channel_id"] == clip_id).unwrap();
+    assert_eq!(renamed["channel_name"], "GPU03 CLIP/OCR", "统计刷新同时刷新名称");
 }
 
 /// 面板「立刻试首选」：把回切检查点归零（不想等 10 分钟时用）。
