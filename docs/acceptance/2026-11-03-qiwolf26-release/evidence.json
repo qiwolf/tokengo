@@ -1,0 +1,154 @@
+{
+  "tag": "v0.34.0-qiwolf.26",
+  "release_source_commit": "c93975b5fe52655c442255fb72cb5eb12fb3bb26",
+  "cargo_version": "0.34.0",
+  "schema_version": 42,
+  "targeted_build_test": {
+    "server_routes_passed": 26,
+    "web_unit_passed": 177,
+    "optimized_wasm_build": "passed; reused matching code inputs and all 28 asset hashes"
+  },
+  "local_native": {
+    "host": "build-test",
+    "build_exit_code": 0,
+    "package_verify_exit_code": 0,
+    "archive_sha256": "c1cb4d05edf1a6640deda72e963be41ca80007c4a8b75e7008063bad3542d27d",
+    "archive_bytes": 21862710,
+    "source_manifest_sha256": "1d39a1fad11dfc65330ff23c9c60978f82375a935922926f5a6fb0b2319a2e3b",
+    "all_logs_and_artifacts_recovered_to_mac": true
+  },
+  "github_main_ci": {
+    "source_commit": "c93975b5fe52655c442255fb72cb5eb12fb3bb26",
+    "run_id": 41637257354,
+    "result": "success",
+    "rust": {
+      "passed": 1581,
+      "failed": 0,
+      "ignored": 9
+    },
+    "python_suite_test_counts": [
+      13
+    ],
+    "scope": "Exact-commit GitHub main CI Rust workspace + MinerU Python + WASM check; not an additional build-test workspace execution"
+  },
+  "production": {
+    "paired_server_and_web_upgraded": true,
+    "source_commit": "c93975b5fe52655c442255fb72cb5eb12fb3bb26",
+    "server_sha256": "824f73cb1cb4f5045e1bb45d5e1e4a8abf2fcb1ed9420d7670ebde6ef3253468",
+    "business_and_schema_unchanged": true,
+    "runtime_config_unchanged": true,
+    "served_assets_verified": true,
+    "no_forced_request_termination": true,
+    "real_logged_in_chrome_labels": [
+      "GPU03 CLIP",
+      "GPU03 FACE"
+    ],
+    "incorrect_deleted_labels_removed": true,
+    "browser_session_preserved": true,
+    "post_deploy_synthetic_calls_passed": 6,
+    "probe_http_and_attempt_statuses": 200,
+    "scope": [
+      "face 1 detection and 512-dimensional embedding",
+      "CLIP text/image each 512 dimensions",
+      "synthetic OCR marker",
+      "bge-m3-fallback 1024 dimensions",
+      "local qwen3.8-27b-gsq-iq3s Chat nonempty output finish_reason stop"
+    ],
+    "natural_bge_and_gpt_calls_observed_successful": true,
+    "passthrough_success_rate_accounting_changed": false,
+    "raw_screenshots_and_telemetry_published": false
+  },
+  "public_release": {
+    "url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26",
+    "published_at_utc": "2026-11-03T12:49:41Z",
+    "workflow": "https://github.com/qiwolf/tokengo/actions/runs/41637262505",
+    "assets": 9,
+    "asset_digest_checks": [
+      {
+        "name": "compose.yaml",
+        "size": 797,
+        "sha256": "c5504aa94b3e173268bb27ce9f5126af1dbea60331e609de15ce8e1f689edf1a",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container-deployment.md",
+        "size": 15358,
+        "sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container.env.example",
+        "size": 316,
+        "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-manifest.json",
+        "size": 199,
+        "sha256": "e0b026b099c6a7587c0ed9d84ea4842e7b7ca259c0cf0a862d0b225d008ad370",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-SHA256SUMS",
+        "size": 564,
+        "sha256": "c1a53ac1dc2d246742660a2b928923e9ac2d55998d4f597826405c5aa1e64183",
+        "github_digest_matches": true
+      },
+      {
+        "name": "registry-image.txt",
+        "size": 95,
+        "sha256": "ee826265183c0d569fe7365154ab4a67521e075748f27bf88f9cd99e5a666329",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-c93975b5fe52-linux-x86_64.tar.gz",
+        "size": 21845262,
+        "sha256": "354e086f53448bcabccffe3ac77fecda9bea3f01e1dfb8364f76c924d4c5aea8",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-c93975b5fe52-linux-x86_64.tar.gz.sha256",
+        "size": 107,
+        "sha256": "72a3af0cfe8d374a43cce84736e78c9f1d6b1706f87359706a26e7b567615188",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-c93975b5fe52655c442255fb72cb5eb12fb3bb26-linux-amd64.tar.gz",
+        "size": 40763615,
+        "sha256": "2e614db9c1369b3ab8db843d04079e3c8796bcba50c4fe8082d11e1bf2288676",
+        "github_digest_matches": true
+      }
+    ],
+    "public_native_sha256": "354e086f53448bcabccffe3ac77fecda9bea3f01e1dfb8364f76c924d4c5aea8",
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:a023141544f94c7f49a5fffe30d0c37985e3915f70396696562993c3e6965f6a",
+    "verification": {
+      "result": "passed",
+      "source_commit": "c93975b5fe52655c442255fb72cb5eb12fb3bb26",
+      "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26",
+      "assets": 9,
+      "host": "build-test Linux x86_64",
+      "anonymous_downloads": true,
+      "anonymous_registry": true,
+      "offline_archive_two_tags": true,
+      "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+      "smoke_restart_recreation": true,
+      "native_runtime": true,
+      "recoverable_key_runtime": true,
+      "container_key_runtime": true,
+      "production_access": false,
+      "created_release": false
+    },
+    "temporary_resources_cleaned": true,
+    "anonymous_asset_download_locations": {
+      "two_large_changed_assets": "Mac, official object URLs, eight HTTP206 ranges with Content-Range and whole-file GitHub digest checks; then synced to build-test",
+      "other_seven_assets": "build-test anonymous downloads",
+      "runtime_verification_host": "build-test"
+    }
+  },
+  "limits": [
+    "Targeted tests overlap full workspace results; counts are not added",
+    "No new original-provider compatibility matrix/tool/strict/multi-turn acceptance",
+    "Public WASM receives static identity checks; real browser evidence uses the deployed build-test package",
+    "Published tag package documentation keeps the build-time snapshot; final receipts are on main and the Release page"
+  ]
+}

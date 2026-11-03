@@ -1,14 +1,15 @@
 # 模型兼容核实清单
 
-## 2026-11-03 增量：v0.34.0-qiwolf.26（准备发行及237配套部署）
+## 2026-11-03 增量：v0.34.0-qiwolf.26（已正式发行、公开产物独立验收及237配套部署通过）
 
 |项|已确认依据|当前边界|
 |---|---|---|
-|透传名称与中性缺名|代码4292682修复统计标签来源，包含LLM/透传/停用服务；面板采用统计名称，缺失时不推断已删除|名称是当前元数据，不是历史名称快照；LLM配置目录与鉴权不扩大|
-|回归与Web构建|build-test26项服务端路由、177项Web全部通过，优化WASM构建退出0；输入哈希可核对|203项为定向覆盖，不与q25全量或先前结果重复累加；没有重新跑原厂兼容矩阵|
-|发行与237|本轮准备构建配套服务端/面板、GitHub正式发行及237部署；逐阶段收据见下方|未取得的线上及公开资产结果不得写为通过；现有模型普通调用即使通过也不外推工具/strict/全部协议|
+|透传名称与缺名|统计按全部transport读取真实名称，含停用服务；真实Chrome总览正确显示GPU03 CLIP/FACE，缺名不推断删除|当前元数据不是历史名称快照；LLM目录/权限不扩大，透传成功率口径未改|
+|回归与构建|build-test26路由/177 Web及优化WASM通过；精确c939的GitHub全量Rust1581/0/9、MinerU Python13及WASM通过；本地原生打包校验及日志产物回收通过|203定向与全量重叠不累加；WASM按一致输入/28资产hash复用，不重复无关测试|
+|237现有调用|升级前后6项合成调用均HTTP200/attempt200：Face1检测512维，CLIP文本/图片512维、OCR marker、BGE1024维、本地Qwen Chat非空stop|不是原厂付费模型或全部型号实测；不外推Responses、工具、strict、多轮或其他推理档位|
+|公开发行|[正式Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26)于2026-11-03T12:49:41Z公开9资产；[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/41637257354)和[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41637262505)成功；9资产匿名下载/digest/包内manifest、GHCR匿名实际拉取及原生/容器/Key/Compose生命周期独立验收通过|公开WASM仅静态身份；真实浏览器验收针对237部署本地包，公开CI包与本地包分别记SHA；旧原厂证据保留原日期版本|
 
-证据：[修复与定向验收](maintenance/passthrough-label-20261103/README.md)、[版本说明](releases/v0.34.0-qiwolf.26.md)、[发行及237收据](acceptance/2026-11-03-qiwolf26-release/README.md)。以下q25及更早模型证据保持原日期、版本和适用范围，不冒称本版新测。
+证据：[修复记录](maintenance/passthrough-label-20261103/README.md)、[版本说明](releases/v0.34.0-qiwolf.26.md)、[发行及237收据](acceptance/2026-11-03-qiwolf26-release/README.md)、[结构化摘要](acceptance/2026-11-03-qiwolf26-release/evidence.json)。以下q25及更早证据保持原日期、版本和适用范围。
 
 ## 2026-11-03 增量：v0.34.0-qiwolf.25（已正式发行，公开产物独立验收通过）
 

@@ -8,6 +8,8 @@
 - 缺失名称返回null并显示“渠道 #编号（名称未记录）”；停用服务仍保留其真实名称，LLM管理名册、鉴权、路由、计费及数据库schema42不变。
 - 代码`4292682`在build-test通过26项路由集成、177项Web单元及优化WASM构建；沿用逐文件输入哈希一致的既有检查，不与q25结果累加，不冒称完整workspace或新原厂实测。配套程序/面板发行和237部署收据见[版本说明](docs/releases/v0.34.0-qiwolf.26.md)及[本轮收据](docs/acceptance/2026-11-03-qiwolf26-release/README.md)。
 
+- 精确c939的GitHub完整Rust1581/0/9、Python13与WASM通过；正式发行公开9资产/GHCR/原生/容器独立验收通过，237程序/面板已配套升级，真实Chrome名称和6项现有调用通过。透传成功率口径不变，完整边界见本轮收据。
+
 ## v0.34.0-qiwolf.25 — 2026-11-03（北京时间）
 
 - 新建接入增加 OpenCode Go/按量、CommandGo 和 OpenDesign 服务商预设；OpenCode 官方协议入口读取对应共享目录，新建 Go API 凭据初始化独立客户端标识及稳定会话模板头，保留已有配置。
