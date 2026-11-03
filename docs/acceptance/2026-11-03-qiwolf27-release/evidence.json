@@ -1,0 +1,158 @@
+{
+  "tag": "v0.34.0-qiwolf.27",
+  "release_source_commit": "497ec366d1c7d83b81858c22c1f1c4b982c23d54",
+  "feature_commit": "ad434c7356a77c7af8b24661e6df46a091dba1d7",
+  "cargo_version": "0.34.0",
+  "schema_version": 42,
+  "targeted_build_test": {
+    "server_routes_passed": 28,
+    "web_unit_passed": 178,
+    "expected_red_api_assertion_failures": 2,
+    "optimized_wasm": "fresh q27 build; 28 file hashes verified in paired bundle"
+  },
+  "local_native": {
+    "host": "build-test",
+    "build_exit_code": 0,
+    "package_verify_exit_code": 0,
+    "archive_sha256": "fe99db9b89f8ed3a88975b78f3f09d7ee748912cbc37faa53ac8414f182b2082",
+    "archive_bytes": 21871273,
+    "source_manifest_sha256": "4ff881495659fe1207c9a4c0849a2a84b0eec88160fbeb7b65747a48aad76861",
+    "all_logs_and_artifacts_recovered_to_mac": true
+  },
+  "github_main_ci": {
+    "source_commit": "497ec366d1c7d83b81858c22c1f1c4b982c23d54",
+    "run_id": 41644499984,
+    "result": "success",
+    "rust": {
+      "passed": 1584,
+      "failed": 0,
+      "ignored": 9
+    },
+    "python_suite_test_counts": [
+      13
+    ],
+    "scope": "Exact-commit GitHub main CI Rust workspace + MinerU Python + WASM check; not another build-test full workspace execution"
+  },
+  "production": {
+    "paired_server_and_web_upgraded": true,
+    "source_commit": "497ec366d1c7d83b81858c22c1f1c4b982c23d54",
+    "server_sha256": "a4f31a9d26ac09e573caf6f10c59992ec07d1fd38cf670eec0ec1a97869d528a",
+    "business_and_schema_unchanged": true,
+    "runtime_config_unchanged": true,
+    "served_assets_verified": true,
+    "no_forced_request_termination": true,
+    "real_logged_in_browser_provider_key_labels_verified": true,
+    "passthrough_service_names_preserved": true,
+    "connection_identifiers_and_grouping_explanation_visible": true,
+    "model_dimension_remains_independent": true,
+    "before_synthetic_calls_passed": 6,
+    "after_synthetic_calls_passed": 6,
+    "all_synthetic_http_and_attempt_statuses": 200,
+    "scope": [
+      "positive face detection with 512-dimensional embedding",
+      "CLIP text and image, 512 dimensions each",
+      "synthetic OCR marker",
+      "BGE embedding, 1024 dimensions",
+      "existing local Qwen Chat, nonempty output and finish_reason stop"
+    ],
+    "stored_connection_names_and_key_remarks_modified": false,
+    "routing_auth_or_model_identity_modified": false,
+    "passthrough_success_rate_accounting_changed": false,
+    "real_key_remarks_ledger_ids_topology_or_screenshots_published": false
+  },
+  "public_release": {
+    "url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27",
+    "published_at_utc": "2026-11-03T13:39:55Z",
+    "workflow": "https://github.com/qiwolf/tokengo/actions/runs/41644506211",
+    "assets": 9,
+    "asset_digest_checks": [
+      {
+        "name": "compose.yaml",
+        "size": 797,
+        "sha256": "aece5b51a107a6f51c90210d9485a3729dbfbe547ef724f3f77c3caadd53913d",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container-deployment.md",
+        "size": 15358,
+        "sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container.env.example",
+        "size": 316,
+        "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-manifest.json",
+        "size": 199,
+        "sha256": "878c873084d823e600b86d8bf1941ce5dbf6e2499e56a4771beea369c18eb27c",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-SHA256SUMS",
+        "size": 564,
+        "sha256": "6f1ceff415e46502bf01a7196f44c3c961857d81d3245399a36ff0f3249dd54c",
+        "github_digest_matches": true
+      },
+      {
+        "name": "registry-image.txt",
+        "size": 95,
+        "sha256": "ca8b22375bd478cd60aa4238d44d395565dd8fe987c7dec0ecb303e65ced9026",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-497ec366d1c7-linux-x86_64.tar.gz",
+        "size": 21858090,
+        "sha256": "871a22c28e887da91cbac68dc79d0d684516a96804d4b9c28228a82192b0191e",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-497ec366d1c7-linux-x86_64.tar.gz.sha256",
+        "size": 107,
+        "sha256": "e2599ee1cab90d9b1578b2718a73f5279b701affb2f7d9a047c0aead1444b3b6",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-497ec366d1c7d83b81858c22c1f1c4b982c23d54-linux-amd64.tar.gz",
+        "size": 40770365,
+        "sha256": "68804e9ab1967d47c83a81a08f7bdf56d8c515493ca8bd5f5655a2529a3b37ba",
+        "github_digest_matches": true
+      }
+    ],
+    "public_native_sha256": "871a22c28e887da91cbac68dc79d0d684516a96804d4b9c28228a82192b0191e",
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:e95b48fd7e9d24bf8667766737216996e2584099e5038073e638a84b3afaaf0e",
+    "verification": {
+      "result": "passed",
+      "source_commit": "497ec366d1c7d83b81858c22c1f1c4b982c23d54",
+      "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27",
+      "assets": 9,
+      "host": "build-test Linux x86_64",
+      "anonymous_downloads": true,
+      "anonymous_registry": true,
+      "offline_archive_two_tags": true,
+      "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+      "smoke_restart_recreation": true,
+      "native_runtime": true,
+      "recoverable_key_runtime": true,
+      "container_key_runtime": true,
+      "production_access": false,
+      "created_release": false
+    },
+    "temporary_resources_cleaned": true,
+    "anonymous_asset_download_locations": {
+      "two_changed_large_assets": "Mac, official object URLs, eight HTTP206 ranges and Content-Range plus whole-file GitHub digest checks; then synced to build-test",
+      "other_seven_assets": "build-test anonymous downloads",
+      "runtime_verification_host": "build-test"
+    }
+  },
+  "limits": [
+    "Statistics remain grouped by connection ID; connections sharing one Key are not merged",
+    "User remarks may themselves contain model names; stored values are never rewritten",
+    "Targeted and full-workspace counts overlap and are not added",
+    "Public WASM has static identity checks; live browser acceptance uses the deployed build-test bundle",
+    "No new original-provider/tool/strict/multi-turn capability acceptance",
+    "Published tag documentation is the build-time snapshot; later receipts are maintained on main and the Release page"
+  ]
+}

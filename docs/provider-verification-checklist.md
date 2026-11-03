@@ -1,15 +1,15 @@
 # 模型兼容核实清单
 
-## 2026-11-03 增量：v0.34.0-qiwolf.27（本地候选，未推送或部署）
+## 2026-11-03 增量：v0.34.0-qiwolf.27（生产验收后正式发行，公开产物独立验收通过）
 
 |项|已确认依据|当前边界|
 |---|---|---|
-|总览按渠道|专用display_label来自归属一致的供应商名和用户Key备注，透传优先原服务名；连接编号区分同Key多连接|不合并统计，不改原始名称/备注；备注可能本身含模型名，不自动篡改；其它日志与模型归因不变|
-|缺失/旧连接|缺字段或错误归属用带编号的旧连接中性回退；未知历史ID名称未记录|不假定已删除，不借其它供应商的凭据归属补名|
-|定向验证|代码ad434c7在build-test28路由/178 Web及全新优化WASM通过；2项API先失败后通过，日志产物回Mac|206项不是完整workspace，不与q26测试累加；原生构建、线上UI/业务和公开发行尚待执行|
-|模型能力|保持已有原厂/真实来源证据的日期、版本、协议和账号边界|本轮展示修复不增加原厂推理、工具、strict、多轮或成功率口径能力|
+|按渠道展示|独立display_label、归属一致的供应商/Key备注、透传保名、连接编号与说明及按模型维度独立已在真实UI核实|仍按连接ID分组，不合并共享Key连接；备注可能含模型名，不改保存值或原始日志/模型归因|
+|定向与全量|build-test28路由/178 Web、新优化WASM和原生配套包通过；[精确CI](https://github.com/qiwolf/tokengo/actions/runs/41644499984)Rust1584/0/9、MinerU Python13及WASM通过|206定向与全量重复覆盖不相加，未重复build-test全量|
+|生产现有调用|升级前后6项人脸/CLIP文本和图片/OCR/BGE/原有本地聊天均业务合同与账本通过|不是新原厂/全部型号、工具、strict、多轮或全部协议验收，透传既有成功率及历史0%口径未改|
+|正式发行|[Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27)于北京时间2026-11-03 21:39:55（UTC 2026-11-03T13:39:55Z）公开9资产；[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41644506211)和9资产/digest/包内身份、匿名GHCR实际拉取及原生容器生命周期独立验收通过|公开WASM仅静态检查，真实UI针对部署的build-test配套包；公开CI包与本地包分别记SHA|
 
-证据：[实现与验证](maintenance/provider-key-label-20261103/README.md)、[版本说明](releases/v0.34.0-qiwolf.27.md)、[发行及237收据](acceptance/2026-11-03-qiwolf27-release/README.md)。
+证据：[实现记录](maintenance/provider-key-label-20261103/README.md)、[版本说明](releases/v0.34.0-qiwolf.27.md)、[发行与生产收据](acceptance/2026-11-03-qiwolf27-release/README.md)、[结构化摘要](acceptance/2026-11-03-qiwolf27-release/evidence.json)。不公开真实Key备注、生产账本ID、内部拓扑或原始遥测；以下历史原厂证据继续保留原日期/版本边界。
 
 ## 2026-11-03 增量：v0.34.0-qiwolf.26（已正式发行、公开产物独立验收及237配套部署通过）
 
