@@ -147,6 +147,44 @@ pub fn names(conn: &Connection) -> Result<std::collections::HashMap<i64, String>
         .filter(|(_, name)| !name.trim().is_empty()).collect())
 }
 
+/// Overview-only labels. Keep physical source names for routing and logs;
+/// credential ownership must agree with the connection's provider membership.
+pub fn statistics_display_labels(conn: &Connection) -> Result<std::collections::HashMap<i64, String>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id,c.name,c.transport_kind,p.name,k.label FROM channels c
+         LEFT JOIN provider_connections pc ON pc.channel_id=c.id
+         LEFT JOIN provider_channels p ON p.id=pc.provider_id
+         LEFT JOIN source_credentials sc ON sc.source_id=c.id
+         LEFT JOIN provider_credentials k ON k.id=sc.credential_id AND k.provider_id=p.id",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,
+        r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?)))?;
+    let mut labels = std::collections::HashMap::new();
+    for row in rows {
+        let (id,name,transport,provider,credential) = row?;
+        let name = name.trim();
+        if transport == "passthrough" {
+            if !name.is_empty() { labels.insert(id,name.to_owned()); }
+            continue;
+        }
+        let provider = provider.as_deref().map(str::trim).filter(|v| !v.is_empty());
+        let credential = credential.as_deref().map(str::trim).filter(|v| !v.is_empty());
+        let label = match (provider,credential) {
+            (Some(provider),Some(credential)) => {
+                // Migrated Key remarks may already contain the provider prefix.
+                let remark = credential.strip_prefix(provider)
+                    .and_then(|suffix| suffix.trim_start().strip_prefix('·'))
+                    .map(str::trim).filter(|v| !v.is_empty()).unwrap_or(credential);
+                format!("{provider} · {remark}")
+            }
+            _ if !name.is_empty() => format!("旧连接 #{id} · {name}"),
+            _ => format!("旧连接 #{id}（名称未记录）"),
+        };
+        labels.insert(id,label);
+    }
+    Ok(labels)
+}
+
 /// 全部LLM渠道，**按全局顺序排**（`priority` 小的先，相同按 id）。
 ///
 /// 面板「渠道」页与路由都用这一份顺序：页面上从上到下就是「先试哪条」。

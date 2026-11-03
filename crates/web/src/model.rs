@@ -247,6 +247,9 @@ pub struct ChannelStat {
     pub channel_id: i64,
     #[serde(default)]
     pub channel_name: Option<String>,
+    /// Overview label; the original channel name remains separate.
+    #[serde(default)]
+    pub display_label: Option<String>,
     pub attempts: i64,
     pub successes: i64,
     pub channel_faults: i64,

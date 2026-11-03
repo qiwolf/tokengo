@@ -1772,6 +1772,7 @@ async fn stats(
 
     // 附上渠道名，面板不用再查一次
     let names = channels::names(&conn)?;
+    let display_labels = channels::statistics_display_labels(&conn)?;
     let mut v = serde_json::to_value(&s).map_err(|e| ApiError::internal(e.to_string()))?;
     if let Some(arr) = v.get_mut("by_channel").and_then(|x| x.as_array_mut()) {
         for item in arr.iter_mut() {
@@ -1779,6 +1780,7 @@ async fn stats(
             let name = names.get(&id);
             if let Some(obj) = item.as_object_mut() {
                 obj.insert("channel_name".into(), serde_json::json!(name));
+                obj.insert("display_label".into(), serde_json::json!(display_labels.get(&id)));
                 let attempts = obj.get("attempts").and_then(|x| x.as_i64()).unwrap_or(0);
                 let succ = obj.get("successes").and_then(|x| x.as_i64()).unwrap_or(0);
                 obj.insert(

@@ -767,6 +767,120 @@ async fn stats_channel_names_include_passthrough_without_expanding_llm_managemen
     assert_eq!(renamed["channel_name"], "GPU03 CLIP/OCR", "统计刷新同时刷新名称");
 }
 
+#[tokio::test]
+async fn stats_display_labels_use_provider_and_key_without_changing_source_or_model_names() {
+    use tokengo_server::db::{passthrough, requests};
+    let f = fixture();
+    let token = panel_token(&f).await;
+    let (primary, backup, other, prefixed, shared, clip, provider, credential) = {
+        let c = f.state.conn();
+        let provider = |name: &str| {
+            c.execute("INSERT INTO provider_channels(name,enabled,created_ms) VALUES(?1,1,0)", [name]).unwrap();
+            c.last_insert_rowid()
+        };
+        let a = provider("供应商甲");
+        let b = provider("供应商乙");
+        let source = |name: &str, parent: i64, label: &str| {
+            c.execute("INSERT INTO channels(name,base_url,enabled) VALUES(?1,'http://127.0.0.1:1',1)", [name]).unwrap();
+            let id = c.last_insert_rowid();
+            c.execute("INSERT INTO provider_connections(channel_id,provider_id) VALUES(?1,?2)", rusqlite::params![id,parent]).unwrap();
+            c.execute("INSERT INTO provider_credentials(provider_id,kind,label,identity_hash,created_at_ms) VALUES(?1,'anonymous',?2,'synthetic-identity',0)", rusqlite::params![parent,label]).unwrap();
+            let key = c.last_insert_rowid();
+            c.execute("INSERT INTO source_credentials(source_id,credential_id) VALUES(?1,?2)", rusqlite::params![id,key]).unwrap();
+            (id, key)
+        };
+        let (primary, key) = source("模型连接甲", a, "生产");
+        let (backup, _) = source("模型连接乙", a, "备用");
+        let (other, _) = source("模型连接丙", b, "生产");
+        let (prefixed, _) = source("模型连接丁", a, "供应商甲 · 已有备注");
+        let (shared, old_key) = source("同Key的另一模型连接", a, "临时备注");
+        c.execute("UPDATE source_credentials SET credential_id=?2 WHERE source_id=?1", rusqlite::params![shared,key]).unwrap();
+        c.execute("DELETE FROM provider_credentials WHERE id=?1", [old_key]).unwrap();
+        let clip = passthrough::create(&c, &f.state.secrets, &serde_json::from_value(json!({
+            "name":"GPU03 CLIP", "prefix":"/clip/", "upstream":"http://127.0.0.1:1", "enabled":true
+        })).unwrap()).unwrap().channel_id;
+        // Even unexpected ownership metadata must never rename a passthrough service.
+        c.execute("INSERT INTO provider_connections(channel_id,provider_id) VALUES(?1,?2)", rusqlite::params![clip,a]).unwrap();
+        c.execute("INSERT INTO source_credentials(source_id,credential_id) VALUES(?1,?2)", rusqlite::params![clip,key]).unwrap();
+        for channel in [primary, backup, other, prefixed, shared, clip] {
+            let id = requests::start(&c, "/v1/chat/completions", "logical-photo-model", None, false).unwrap();
+            requests::add_attempt(&c, id, 0, channel, "success", Some(200), 12, None).unwrap();
+            requests::finish(&c, id, requests::Status::Ok, Some(200), Some(channel),12, Some(0),0,0,false,None).unwrap();
+        }
+        (primary, backup, other, prefixed, shared, clip, a, key)
+    };
+    let (status, response) = send(test_app(&f), "GET", "/api/stats", Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = response["stats"]["by_channel"].as_array().unwrap();
+    let row = |id| rows.iter().find(|r|r["channel_id"]==id).unwrap();
+    assert_eq!(row(primary)["display_label"], "供应商甲 · 生产");
+    assert_eq!(row(backup)["display_label"], "供应商甲 · 备用");
+    assert_eq!(row(other)["display_label"], "供应商乙 · 生产");
+    assert_eq!(row(prefixed)["display_label"], "供应商甲 · 已有备注");
+    assert_eq!(row(shared)["display_label"], "供应商甲 · 生产");
+    assert_eq!(rows.len(), 6, "同Key不同连接不合并统计");
+    assert_eq!(row(primary)["channel_name"], "模型连接甲", "原始名称合同不变");
+    assert_eq!(row(clip)["display_label"], "GPU03 CLIP");
+    assert_eq!(response["stats"]["by_model"][0]["model"], "logical-photo-model");
+
+    {
+        let c=f.state.conn();
+        c.execute("UPDATE provider_channels SET name='供应商甲新名' WHERE id=?1", [provider]).unwrap();
+        c.execute("UPDATE provider_credentials SET label='生产新备注' WHERE id=?1", [credential]).unwrap();
+    }
+    let (_, refreshed) = send(test_app(&f), "GET", "/api/stats", Some(&token), None).await;
+    let rows = refreshed["stats"]["by_channel"].as_array().unwrap();
+    assert_eq!(rows.iter().find(|r|r["channel_id"]==primary).unwrap()["display_label"], "供应商甲新名 · 生产新备注");
+    assert_eq!(rows.iter().find(|r|r["channel_id"]==shared).unwrap()["display_label"], "供应商甲新名 · 生产新备注");
+    let (status, logs) = send(test_app(&f), "GET", "/api/logs?limit=20", Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(logs["logs"].as_array().unwrap().iter().find(|r|r["channel_id"]==primary).unwrap()["channel_name"], "模型连接甲");
+}
+
+#[tokio::test]
+async fn stats_display_labels_keep_partial_legacy_and_unknown_sources_neutral() {
+    use tokengo_server::db::requests;
+    let f=fixture();
+    let token=panel_token(&f).await;
+    let ids={
+        let c=f.state.conn();
+        c.execute("INSERT INTO provider_channels(name,enabled,created_ms) VALUES('供应商',1,0)",[]).unwrap();
+        let parent=c.last_insert_rowid();
+        c.execute("INSERT INTO provider_channels(name,enabled,created_ms) VALUES('另一供应商',1,0)",[]).unwrap();
+        let other=c.last_insert_rowid();
+        let mut ids=Vec::new();
+        for (name, mode) in [("旧原始名称",0),("缺Key连接",1),("空备注连接",2),("错归属连接",3),(" ",0)] {
+            c.execute("INSERT INTO channels(name,base_url,enabled) VALUES(?1,'http://127.0.0.1:1',1)",[name]).unwrap();
+            let id=c.last_insert_rowid();ids.push(id);
+            if mode>0 {
+                c.execute("INSERT INTO provider_connections(channel_id,provider_id) VALUES(?1,?2)",rusqlite::params![id,parent]).unwrap();
+            }
+            if mode>1 {
+                c.execute("INSERT INTO provider_credentials(provider_id,kind,label,identity_hash,created_at_ms) VALUES(?1,'anonymous',?2,'synthetic',0)",rusqlite::params![if mode==3 {other}else{parent},if mode==2 {" \t"}else{"不可误用的备注"}]).unwrap();
+                let key=c.last_insert_rowid();
+                c.execute("INSERT INTO source_credentials(source_id,credential_id) VALUES(?1,?2)",rusqlite::params![id,key]).unwrap();
+            }
+        }
+        ids.push(9999);
+        for channel in &ids {
+            let id=requests::start(&c,"/v1/chat/completions","logical-model",None,false).unwrap();
+            requests::add_attempt(&c,id,0,*channel,"success",Some(200),1,None).unwrap();
+            requests::finish(&c,id,requests::Status::Ok,Some(200),Some(*channel),1,None,0,0,false,None).unwrap();
+        }
+        ids
+    };
+    let (status,response)=send(test_app(&f),"GET","/api/stats",Some(&token),None).await;
+    assert_eq!(status,StatusCode::OK);
+    let rows=response["stats"]["by_channel"].as_array().unwrap();
+    let row=|id|rows.iter().find(|r|r["channel_id"]==id).unwrap();
+    for (id,name) in ids.iter().take(4).zip(["旧原始名称","缺Key连接","空备注连接","错归属连接"]) {
+        assert_eq!(row(*id)["display_label"],format!("旧连接 #{id} · {name}"));
+    }
+    assert_eq!(row(ids[4])["display_label"],format!("旧连接 #{}（名称未记录）",ids[4]));
+    assert!(row(9999)["display_label"].is_null());
+    assert!(row(9999)["channel_name"].is_null());
+}
+
 /// 面板「立刻试首选」：把回切检查点归零（不想等 10 分钟时用）。
 #[tokio::test]
 async fn manual_reprobe_resets_the_checkpoint() {

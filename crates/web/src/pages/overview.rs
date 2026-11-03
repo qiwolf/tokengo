@@ -273,12 +273,13 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
             <Show when=move || {category.get()>0 && category.get()<5}>
                 <section class="card overview-breakdown">
                     <header class="card-head"><h2>{move || ["最近调用","按类型","按渠道","按模型","按客户端","调用异常"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"5 秒自动刷新"</span></header>
+                    <Show when=move ||category.get()==2><p class="muted small">"按接入连接汇总：供应商 · Key 备注。同一 Key 的不同连接分别统计，与按模型统计区分；透传显示服务名。"</p></Show>
                     <div class="metric-list">
                     {move || {
                         let st=stats.get().stats;
                         let items:Vec<(String,String,String,String)>=match category.get() {
                             1=>st.by_kind.into_iter().map(|k| (k.label,format!("{} 次调用 · 成功率 {}",fmt::num(k.requests),fmt::pct(k.ok,k.ok+k.failed+k.client_errors)),format!("平均耗时 {} · Token {}",if k.ok>0 {fmt::dur(k.avg_ms)} else {"—".into()},format!("{} · 未完整报告 {} 次",fmt::num(k.input_tokens+k.output_tokens),k.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 取消 {} · 输入 Token {} · 输出 Token {}",k.ok,k.failed,k.client_errors,k.canceled,k.input_tokens,k.output_tokens))).collect(),
-                            2=>st.by_channel.into_iter().map(|c| (resolved_channel_name(Some(c.channel_id),c.channel_name.as_deref(),&channels.get()),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("平均耗时 {} · 未完整报告 {} 次",fmt::dur(c.avg_ms),c.usage.unknown_requests),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
+                            2=>st.by_channel.into_iter().map(|c| (statistic_channel_name(&c,&channels.get()),format!("{} 次尝试 · 成功率 {}",fmt::num(c.attempts),fmt::pct(c.successes,c.attempts)),format!("连接 #{} · 平均耗时 {} · 未完整报告 {} 次",c.channel_id,fmt::dur(c.avg_ms),c.usage.unknown_requests),format!("成功 {} · 渠道失败 {} · 输入 Token {} · 输出 Token {}",c.successes,c.channel_faults,c.input_tokens,c.output_tokens))).collect(),
                             3=>st.by_model.into_iter().map(|m| (m.model,format!("{} 次调用 · 成功率 {}",fmt::num(m.requests),fmt::pct(m.ok,m.ok+m.failed+m.client_errors)),format!("Token {}",format!("{} · 未完整报告 {} 次",fmt::num(m.input_tokens+m.output_tokens),m.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",m.ok,m.failed,m.client_errors,m.input_tokens,m.output_tokens))).collect(),
                             4=>st.by_client.into_iter().map(|c| (c.client_ip.unwrap_or_else(||"未知来源".into()),format!("{} 次调用 · 成功率 {}",fmt::num(c.requests),fmt::pct(c.ok,c.ok+c.failed+c.client_errors)),format!("Token {}",format!("{} · 未完整报告 {} 次",fmt::num(c.input_tokens+c.output_tokens),c.usage.unknown_requests)),format!("成功 {} · 失败 {} · 客户端错 {} · 输入 Token {} · 输出 Token {}",c.ok,c.failed,c.client_errors,c.input_tokens,c.output_tokens))).collect(),
                             _=>Vec::new(),
@@ -399,6 +400,12 @@ pub fn Overview(ctx: Ctx) -> impl IntoView {
     }
 }
 
+fn statistic_channel_name(row: &crate::model::ChannelStat, channels: &[crate::model::Channel]) -> String {
+    let label = row.display_label.as_deref().map(str::trim).filter(|v| !v.is_empty())
+        .or(row.channel_name.as_deref());
+    resolved_channel_name(Some(row.channel_id),label,channels)
+}
+
 fn resolved_channel_name(id: Option<i64>, provided: Option<&str>, channels: &[crate::model::Channel]) -> String {
     let Some(id) = id else { return "—".into(); };
     provided.map(str::trim).filter(|name| !name.is_empty())
@@ -461,6 +468,29 @@ pub fn StatusTag(status: String) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use crate::model::KindStat;
+
+    #[test]
+    fn channel_statistics_prefer_connection_labels_without_replacing_original_names() {
+        let stats: crate::model::StatsResp = serde_json::from_value(serde_json::json!({
+            "window_hours":24,"stats":{"since_ms":0,"total":1,"ok":1,"failed":0,
+            "canceled":0,"client_errors":0,"input_tokens":0,"output_tokens":0,
+            "by_channel":[{"channel_id":7,"channel_name":"原始模型连接",
+            "display_label":"供应商 · 生产Key","attempts":1,"successes":1,"channel_faults":0,
+            "avg_ms":1,"input_tokens":0,"output_tokens":0}]}
+        })).unwrap();
+        let mut row=stats.stats.by_channel[0].clone();
+        let old_directory=[crate::model::Channel{id:7,name:"缓存旧名".into(),..Default::default()}];
+        assert_eq!(super::statistic_channel_name(&row,&old_directory),"供应商 · 生产Key");
+        assert_eq!(row.channel_name.as_deref(),Some("原始模型连接"));
+        row.display_label=None;
+        assert_eq!(super::statistic_channel_name(&row,&old_directory),"原始模型连接");
+        row.display_label=Some(" \t".into());
+        assert_eq!(super::statistic_channel_name(&row,&old_directory),"原始模型连接");
+        row.channel_name=None;
+        assert_eq!(super::statistic_channel_name(&row,&[]),"渠道 #7（名称未记录）");
+        let recent=crate::model::LogRow{channel_id:Some(7),channel_name:Some("原始模型连接".into()),..Default::default()};
+        assert_eq!(super::actual_channel(&recent),"原始模型连接（#7）");
+    }
 
     #[test]
     fn channel_labels_use_statistics_names_for_passthrough_and_never_assume_deletion() {
