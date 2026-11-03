@@ -10,15 +10,15 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.25](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25)** · [版本说明](docs/releases/v0.34.0-qiwolf.25.md) · [发行收据](docs/acceptance/2026-11-03-qiwolf25-release/README.md)。
+当前发行候选：**[v0.34.0-qiwolf.26](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26)** · [版本说明](docs/releases/v0.34.0-qiwolf.26.md) · [发行与237收据](docs/acceptance/2026-11-03-qiwolf26-release/README.md)。
 
-本版新增常用服务商预设、OpenCode目录与会话头适配，以及请求实际渠道和模型显示。精确源码`3368cd6a29d8`的[main CI](https://github.com/qiwolf/tokengo/actions/runs/41574671111)与[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41574711093)成功，9个资产已公开；build-test完整Rust1579/0/9与Python13/6/3通过，release WASM及1440/390合成API浏览器验证通过。公开9资产/GHCR/原生/容器独立验收通过；公开WASM核对静态身份，浏览器行为沿用源码一致的先前证据。本地原生/WASM发布构建、打包及校验均通过，全部日志和产物已取回Mac，生产未升级；无新原厂模型验收。
+本版修复运行总览的透传服务名称：统计包含全部transport的真实名称，面板随统计刷新；缺失名称使用中性提示，不推断已删除。代码提交`4292682`的build-test定向回归26项服务端与177项Web通过，优化WASM构建通过；非完整workspace或原厂新测。配套服务端与面板正准备发行和237部署，完成状态及收据见版本说明。
 
-Current stable release: **[v0.34.0-qiwolf.25](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25)** · [Release notes](docs/releases/v0.34.0-qiwolf.25.md) · [Publication receipt](docs/acceptance/2026-11-03-qiwolf25-release/README.md).
+Current release candidate: **[v0.34.0-qiwolf.26](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.26)** · [Release notes](docs/releases/v0.34.0-qiwolf.26.md) · [Publication and 237 receipt](docs/acceptance/2026-11-03-qiwolf26-release/README.md).
 
-This release adds provider presets, OpenCode model-directory/session-header handling, and actual channel/model visibility. Exact source `3368cd6a29d8` passed [main CI](https://github.com/qiwolf/tokengo/actions/runs/41574671111) and the [release workflow](https://github.com/qiwolf/tokengo/actions/runs/41574711093); nine assets are public. On build-test, the full Rust workspace passed 1,579 tests with 0 failures and 9 ignored; Python MinerU/deployment/container checks passed 13/6/3. The release WASM build and 1440/390 browser checks with synthetic API data passed. Independent acceptance of all nine public assets, GHCR and native/container execution passed. Public WASM received static identity checks; browser behavior evidence is carried forward from identical frontend/shared source. Local native/WASM release builds, packaging and verification passed; all logs and artifacts were recovered to the Mac. Production has not been upgraded, and no new original-provider model acceptance is claimed.
+This release fixes passthrough service names in the runtime overview: statistics include current names from every transport, and missing names use a neutral label. On build-test, code commit `4292682` passed 26 server route tests, 177 web tests and the optimized WASM build. These are targeted checks, not a full workspace run or new original-provider acceptance. Publication and the paired server/web deployment to 237 are in progress; see the release notes for receipts.
 
-上一公开版 / Previous release: [v0.34.0-qiwolf.24](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.24) · [历史发行收据 / Historical receipt](docs/acceptance/2026-11-02-qiwolf24-release/README.md)。
+上一公开版 / Previous release: [v0.34.0-qiwolf.25](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.25) · [历史发行收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf25-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 
