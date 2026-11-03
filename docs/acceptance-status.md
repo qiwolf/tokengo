@@ -1,6 +1,6 @@
 # 功能与验收状态
 
-**2026-11-04：v0.34.0-qiwolf.28 本地候选。** 透传详情真实双路径/旧未记录、Key列表额度批读及说明对齐已实现，schema43只追加两个nullable路径列。build-test定向与旧q27程序读写43合成库验证通过；整合构建、生产UI/调用、正式CI与公开发行尚待完成。详见[本版说明](releases/v0.34.0-qiwolf.28.md)及[阶段收据](acceptance/2026-11-04-qiwolf28-release/README.md)。
+**2026-11-04：v0.34.0-qiwolf.28 配套生产/真实UI与现有调用验收后正式发行，公开产物独立验收通过。** 透传详情显示当前服务名、真实双路径和历史未记录；Key列表额度一次返回、说明对齐。单次同会话热态网络关键链8请求/4.82秒→1请求/57毫秒，不外推冷缓存/端到端/p95。schema42→43仅增加两nullable列，旧请求投影/attempts/迁移/业务及配置保持；旧q27程序读写43另在合成库实测。build-test定向、最新整合WASM/原生包、生产6+6调用和额外2个UI见证通过；[精确CI](https://github.com/qiwolf/tokengo/actions/runs/41685780070)Rust1591/0/9、Python13/WASM及[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41685779973)、9公开资产/GHCR/原生容器生命周期独立验收通过，重叠不累加。公开WASM仅静态身份，真实Chrome针对部署本地包；调用/鉴权/账务分类、LLM模型归因及历史成功率口径未改，无新原厂实测。见[版本说明](releases/v0.34.0-qiwolf.28.md)与[安全收据](acceptance/2026-11-04-qiwolf28-release/README.md)。
 
 **2026-11-03：v0.34.0-qiwolf.27 配套生产升级、真实UI及现有调用验收后已正式发行，公开产物独立验收通过。** 精确497ec366的[main CI](https://github.com/qiwolf/tokengo/actions/runs/41644499984)与[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41644506211)成功，9资产已公开。build-test28路由/178 Web、本轮新WASM和原生打包/校验通过，GitHub完整Rust1584/0/9/Python13/WASM通过，重叠不累加。总览按渠道使用供应商·Key原备注、透传保名、连接编号说明及按模型独立均在真实浏览器核实；升级后6项现有调用与账本通过。Cargo0.34/schema42不变，原名/备注/路由/auth/模型归因和成功率计数不改；公开WASM仅静态身份，原厂能力沿用历史范围。详见[版本说明](releases/v0.34.0-qiwolf.27.md)与[安全收据](acceptance/2026-11-03-qiwolf27-release/README.md)。
 

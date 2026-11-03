@@ -10,13 +10,13 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current release candidate: **v0.34.0-qiwolf.28** · [Release notes](docs/releases/v0.34.0-qiwolf.28.md) · [Acceptance status](docs/acceptance/2026-11-04-qiwolf28-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28)** · [Release notes](docs/releases/v0.34.0-qiwolf.28.md) · [Publication and production receipt](docs/acceptance/2026-11-04-qiwolf28-release/README.md).
 
-This candidate fixes passthrough request details with the current service name and recorded client/upstream paths; missing historical paths are explicit. User Key lists now include budgets in one response, removing serial per-Key requests, with aligned management help text. Schema43 adds two nullable path columns without backfilling history or storing queries. Accounting categories, routing, authentication and model attribution retain their contracts. Targeted build-test checks and isolated q27-binary read/write compatibility with schema43 passed; paired packaging, production acceptance, official CI and publication receipts are pending.
+This release fixes passthrough request details with the current service name and recorded client/upstream paths, making missing history explicit. Key lists include budgets in one response and aligned help text. A single same-session warm-state network-chain comparison improved from about 4.82s/8 requests to 57ms/1 request; this is not cold-cache, end-to-end or p95 evidence. Schema43 adds two nullable path columns while preserving old records. Production server/web, live UI and 6+6 existing-call checks passed before publication, with two additional CLIP calls used only for UI evidence. Exact main CI passed Rust1591/0/9, Python13 and WASM; all nine public assets, GHCR and native/container acceptance passed. No broader original-provider or historical success-rate accounting claim is made.
 
-当前版本候选：**v0.34.0-qiwolf.28** · [版本说明](docs/releases/v0.34.0-qiwolf.28.md) · [验收状态](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28)** · [版本说明](docs/releases/v0.34.0-qiwolf.28.md) · [发行与生产收据](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
 
-本版候选修复透传请求详情：显示当前服务名称、实际记录的客户端入口与上游接口，历史未记录路径明确显示“未记录”。用户Key列表将额度随列表一次返回，移除逐Key串行查询，并对齐管理说明。schema43只追加两个可空路径列，不回填历史，不保存query；账务分类、路由、鉴权及模型归因保留。build-test定向检查和旧q27程序读写schema43隔离验证已通过；配套构建、生产验收、正式CI与公开发行仍按阶段补充收据。
+本版修复透传请求详情：显示当前服务名与实际记录的客户端/上游路径，历史缺值显示“未记录”。用户Key列表一次返回额度，移除串行查询并对齐说明；同会话热态单次网络关键链约4.82秒/8请求降至57毫秒/1请求，不代表冷缓存、端到端或p95。schema43仅追加两nullable路径列，旧记录保留。生产程序/面板、真实UI及6+6现有调用通过后才推送发行；另2次CLIP仅作UI见证。精确main CI Rust1591/0/9、Python13/WASM及9公开资产/GHCR/原生容器独立验收通过。不扩大原厂能力或历史成功率计数范围。
 
 上一正式版 / Previous stable release: [v0.34.0-qiwolf.27](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27) · [历史收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf27-release/README.md)。
 

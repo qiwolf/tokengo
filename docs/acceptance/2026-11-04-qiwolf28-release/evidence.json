@@ -1,16 +1,243 @@
 {
   "release": "v0.34.0-qiwolf.28",
-  "status": "local-candidate",
+  "status": "released-production-and-public-qa-passed",
   "behavior_commit": "23b26e9",
   "schema_version": 43,
   "migration_sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3",
-  "targeted_build_test": "passed",
+  "targeted_build_test": {
+    "server_lib": {
+      "passed": 562,
+      "ignored": 2
+    },
+    "routes": 28,
+    "passthrough": 8,
+    "passthrough_transport": 9,
+    "web_final": 182,
+    "managed_users": 24,
+    "key_labels": 1,
+    "final_disabled_owner_budget_case": "passed; overlapping managed_users case",
+    "expected_red_runtime_assertion_failures": 3,
+    "counts_overlap_not_summed": true,
+    "final_integrated_optimized_wasm": "passed; 28 assets exactly matched in local paired package"
+  },
   "old_q27_binary_schema43_synthetic_read_write": "passed",
-  "final_paired_package": "pending",
-  "production": "pending",
-  "official_ci": "pending",
-  "publication": "pending",
-  "public_artifact_qa": "pending",
+  "final_paired_package": "passed",
+  "production": {
+    "paired_server_and_web_upgraded": true,
+    "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+    "server_sha256": "48aeddca9818fa61b2a813121b0e8f06a3272d54f0622423af4e9fa09cf1e1ab",
+    "schema_before": 42,
+    "schema_after": 43,
+    "schema_only_two_nullable_path_columns_added": true,
+    "old_requests_projection_attempts_migrations_and_business_preserved": true,
+    "historical_paths_null": true,
+    "runtime_configuration_unchanged": true,
+    "served_web_http_byte_hashes_match": true,
+    "real_logged_in_browser_passthrough_detail_verified": true,
+    "real_key_single_request_and_alignment_verified": true,
+    "key_performance": {
+      "before_network_requests": 8,
+      "after_network_requests": 1,
+      "before_network_chain_ms": 4820,
+      "after_network_chain_ms": 57,
+      "scope": "single same-session unthrottled warm-state network-chain comparison; not cold-cache, click-end-to-end, p95 or all-users"
+    },
+    "stored_keys_and_budgets_modified": false,
+    "call_suite": {
+      "before": 6,
+      "after": 6,
+      "extra_ui_witness": 2,
+      "total": 14,
+      "api_retries": 0
+    },
+    "scope": [
+      "positive face with valid embedding",
+      "CLIP text and image",
+      "synthetic OCR marker",
+      "existing embedding model",
+      "existing local chat"
+    ],
+    "all_suite_business_and_attempt_checks_passed": true,
+    "new_passthrough_recorded_paths_verified": true,
+    "llm_and_historical_path_null_verified": true,
+    "internal_identifiers_hidden_in_live_detail": true,
+    "passthrough_success_rate_accounting_changed": false,
+    "real_key_remarks_ids_topology_paths_or_screenshots_published": false
+  },
+  "official_ci": "success",
+  "publication": "success",
+  "public_artifact_qa": "passed",
   "new_original_provider_test": false,
-  "historical_success_rate_semantics_changed": false
+  "historical_success_rate_semantics_changed": false,
+  "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+  "main_ci_url": "https://github.com/qiwolf/tokengo/actions/runs/41685780070",
+  "release_workflow_url": "https://github.com/qiwolf/tokengo/actions/runs/41685779973",
+  "production_schema43_additive_and_old_projections_preserved": true,
+  "production_web_http_hashes_match": true,
+  "live_passthrough_detail": true,
+  "live_key_single_network_request": true,
+  "live_key_help_alignment": true,
+  "existing_call_suite": {
+    "before": 6,
+    "after": 6,
+    "extra_ui_witness": 2,
+    "total": 14,
+    "api_retries": 0
+  },
+  "key_performance_scope": "single same-session unthrottled warm-state network-chain comparison; not cold-cache, click-end-to-end, p95 or all-users",
+  "github_main_ci": {
+    "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+    "run_id": 41685780070,
+    "result": "success",
+    "rust": {
+      "passed": 1591,
+      "failed": 0,
+      "ignored": 9
+    },
+    "python_suite_test_counts": [
+      13
+    ],
+    "wasm": "passed",
+    "first_run_no_rerun": true,
+    "scope": "Exact-commit GitHub main CI workspace; not repeated build-test full workspace; overlapping targeted counts not added"
+  },
+  "local_native": {
+    "host": "build-test",
+    "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+    "archive_sha256": "d5ebd2f99e9ef37101f4a9ae6f46ded8de52b8f12f59f82a8496c4740ce71b89",
+    "archive_bytes": 21882523,
+    "server_sha256": "48aeddca9818fa61b2a813121b0e8f06a3272d54f0622423af4e9fa09cf1e1ab",
+    "source_manifest_sha256": "04fc69edf90bc1b499663578548d4b1ea17cb7c7cc138afd2817690b8508cb16",
+    "all_checksums_match": true,
+    "all_28_final_integrated_web_assets_match": true,
+    "migration_sql_bytes_match_source": true,
+    "logs_and_artifacts_recovered": true
+  },
+  "tag": "v0.34.0-qiwolf.28",
+  "cargo_version": "0.34.0",
+  "public_release": {
+    "url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28",
+    "published_at_utc": "2026-11-03T17:51:18Z",
+    "workflow": "https://github.com/qiwolf/tokengo/actions/runs/41685779973",
+    "assets": 9,
+    "asset_digest_checks": [
+      {
+        "name": "compose.yaml",
+        "size": 797,
+        "sha256": "028958e5fea757cb0be1c7735eee20104addc2dbac18ea53acdf1d2b92c18603",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container-deployment.md",
+        "size": 15358,
+        "sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container.env.example",
+        "size": 316,
+        "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-manifest.json",
+        "size": 199,
+        "sha256": "405b4f7207be8f56fa4ea07be4940ce7c10248364b712cadf462faa91ea66669",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-SHA256SUMS",
+        "size": 564,
+        "sha256": "614b8a9db65c7c8537694eed8a25676834d2d8cf28c35fdba5c80219682e03b1",
+        "github_digest_matches": true
+      },
+      {
+        "name": "registry-image.txt",
+        "size": 95,
+        "sha256": "1ed5324f86e5523349067c2ec9d0179dc13cf096deead0dd68696cd739df0e19",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-b427946929d4-linux-x86_64.tar.gz",
+        "size": 21867519,
+        "sha256": "2ebff0f94e9739dbbba970ee893fff8cf4d89f49f19faab211d9bb67e77d409b",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-b427946929d4-linux-x86_64.tar.gz.sha256",
+        "size": 107,
+        "sha256": "c160a05108c56384ff69591d2ba44f4d7084fedd0065dbc99f22eb2aa859395d",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-b427946929d4157cc04576bd92046270d4248b11-linux-amd64.tar.gz",
+        "size": 40777151,
+        "sha256": "ac778ac82a10e25c8d5fcc37294fe2bd818aa2674e94ea1d5d1e0a4608955c21",
+        "github_digest_matches": true
+      }
+    ],
+    "public_native_sha256": "2ebff0f94e9739dbbba970ee893fff8cf4d89f49f19faab211d9bb67e77d409b",
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:9d58a72e71192f07e6e1388857d2ae5c0bb94bb90f50678c59e13a67df03c588",
+    "verification": {
+      "result": "passed",
+      "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+      "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28",
+      "assets": 9,
+      "host": "build-test Linux x86_64",
+      "anonymous_downloads": true,
+      "anonymous_registry": true,
+      "offline_archive_two_tags": true,
+      "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+      "smoke_restart_recreation": true,
+      "native_runtime": true,
+      "recoverable_key_runtime": true,
+      "container_key_runtime": true,
+      "production_access": false,
+      "created_release": false
+    },
+    "fresh_schema": {
+      "schema_version": 43,
+      "table_count": 60,
+      "integrity": "ok",
+      "foreign_key_violations": 0,
+      "preexisting_oauth_state": false,
+      "history_owner_recent_index": true,
+      "nullable_path_columns": [
+        "request_path",
+        "upstream_path"
+      ],
+      "migration_from_existing_database_executed": false
+    },
+    "packaged_migration": {
+      "result": "passed",
+      "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+      "source_path": "crates/server/src/db/request_paths.sql",
+      "archive_path": "deploy/migrations/43-request-paths.sql",
+      "git_sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3",
+      "archive_sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3",
+      "manifest_fields": [
+        {
+          "json_pointer": "/schema_version",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/43/source_path",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/43/archive_path",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/43/sha256",
+          "matches": true
+        }
+      ],
+      "existing_database_upgrade_executed": false
+    },
+    "browser_behavior_executed": false,
+    "new_original_provider_inference": false,
+    "temporary_processes_containers_volumes_and_directories_remaining": 0,
+    "all_logs_and_artifacts_recovered_to_mac": true
+  }
 }
