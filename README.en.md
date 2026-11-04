@@ -10,15 +10,15 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current stable release: **[v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28)** · [Release notes](docs/releases/v0.34.0-qiwolf.28.md) · [Publication and production receipt](docs/acceptance/2026-11-04-qiwolf28-release/README.md).
+Current release candidate: **v0.34.0-qiwolf.29** · [Release notes](docs/releases/v0.34.0-qiwolf.29.md) · [Acceptance status](docs/acceptance/2026-11-04-qiwolf29-release/README.md).
 
-This release fixes passthrough request details with the current service name and recorded client/upstream paths, making missing history explicit. Key lists include budgets in one response and aligned help text. A single same-session warm-state network-chain comparison improved from about 4.82s/8 requests to 57ms/1 request; this is not cold-cache, end-to-end or p95 evidence. Schema43 adds two nullable path columns while preserving old records. Production server/web, live UI and 6+6 existing-call checks passed before publication, with two additional CLIP calls used only for UI evidence. Exact main CI passed Rust1591/0/9, Python13 and WASM; all nine public assets, GHCR and native/container acceptance passed. No broader original-provider or historical success-rate accounting claim is made.
+This candidate unifies provider and Key labels in administrator recent calls and details, preserving passthrough service names. Ordinary users gain an owner-scoped overview through separate account APIs for their own keys, entry and logical model names, status, usage, latency and client paths. User responses exclude upstream channels, upstream Key remarks, upstream paths and raw errors. Schema44 only adds an owner-history index. Administrator route tests and 185 Web tests passed; browser role isolation, paired packaging, production and official release acceptance remain staged.
 
-当前正式版：**[v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28)** · [版本说明](docs/releases/v0.34.0-qiwolf.28.md) · [发行与生产收据](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
+当前版本候选：**v0.34.0-qiwolf.29** · [版本说明](docs/releases/v0.34.0-qiwolf.29.md) · [验收状态](docs/acceptance/2026-11-04-qiwolf29-release/README.md)。
 
-本版修复透传请求详情：显示当前服务名与实际记录的客户端/上游路径，历史缺值显示“未记录”。用户Key列表一次返回额度，移除串行查询并对齐说明；同会话热态单次网络关键链约4.82秒/8请求降至57毫秒/1请求，不代表冷缓存、端到端或p95。schema43仅追加两nullable路径列，旧记录保留。生产程序/面板、真实UI及6+6现有调用通过后才推送发行；另2次CLIP仅作UI见证。精确main CI Rust1591/0/9、Python13/WASM及9公开资产/GHCR/原生容器独立验收通过。不扩大原厂能力或历史成功率计数范围。
+本版候选统一管理员最近调用和详情的“供应商 · Key备注”显示，透传保留服务名；普通用户新增仅含自己调用的运行总览，通过独立账号接口查看自己的Key、模型入口、实际逻辑模型、状态、用量、耗时和请求路径。用户响应不含上游渠道、上游Key备注、上游路径或原始错误。schema44只追加用户历史查询索引，不回填数据。管理员28路由、最新Web185和owner API7项定向检查通过；角色隔离浏览器、配套构建、生产及正式发行验收按阶段补充。
 
-上一正式版 / Previous stable release: [v0.34.0-qiwolf.27](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.27) · [历史收据 / Historical receipt](docs/acceptance/2026-11-03-qiwolf27-release/README.md)。
+上一正式版 / Previous stable release: [v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28) · [历史收据 / Historical receipt](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 
