@@ -10,6 +10,12 @@ use crate::Ctx;
 
 #[component]
 pub fn Overview(ctx: Ctx) -> impl IntoView {
+    if ctx.is_root() {view!{<AdminOverview ctx=ctx/>}.into_any()}
+    else {view!{<super::user_overview::UserOverview ctx=ctx/>}.into_any()}
+}
+
+#[component]
+fn AdminOverview(ctx: Ctx) -> impl IntoView {
     let tasks = crate::page_tasks::PageTasks::new();
     let (hours, set_hours) = signal(24i64);
     let stats = RwSignal::new(StatsResp::default());
@@ -444,7 +450,8 @@ fn request_identity_fields(r:&LogRow)->[(&'static str,String);4] {
 
 fn actual_channel(r: &LogRow) -> String {
     match r.channel_id {
-        Some(id) => match r.channel_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => match r.channel_display_label.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            .or_else(|| r.channel_name.as_deref().map(str::trim).filter(|s| !s.is_empty())) {
             Some(name) => format!("{name}（#{id}）"),
             None => format!("渠道 #{id}（名称未记录）"),
         },
@@ -486,6 +493,17 @@ pub fn StatusTag(status: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recent_and_detail_channels_prefer_unified_provider_key_label() {
+        let row:crate::model::LogRow=serde_json::from_value(serde_json::json!({
+            "id":1,"ts_ms":0,"endpoint":"/v1/chat/completions","model":"client-model","status":"ok",
+            "channel_id":59,"channel_name":"2号","channel_display_label":"供应商 · 2号",
+            "latency_ms":1,"input_tokens":0,"output_tokens":0
+        })).unwrap();
+        assert_eq!(super::actual_channel(&row),"供应商 · 2号（#59）");
+        assert_eq!(super::request_identity_fields(&row)[1],("实际渠道","供应商 · 2号（#59）".into()));
+    }
+
     use crate::model::KindStat;
 
     #[test]

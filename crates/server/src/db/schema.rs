@@ -447,4 +447,5 @@ END;
     // Additive, backward-readable index for bounded native-history LRU cleanup.
     (42, "CREATE INDEX protocol_artifacts_owner_recent ON protocol_artifacts(owner,last_used_ms DESC,issued_ms DESC,key_digest DESC);"),
     (43, include_str!("request_paths.sql")),
+    (44, include_str!("account_overview.sql")),
 ];

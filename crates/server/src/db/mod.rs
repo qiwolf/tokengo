@@ -4,6 +4,7 @@
 //! 将来搬数据和对拍都方便。
 
 pub mod passthrough;
+pub mod account_overview;
 pub mod provider_channels;
 pub mod provider_pool;
 pub mod provider_model_lifecycle;

@@ -68,6 +68,7 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::passthrough_probe::router())
         .merge(custom_probes::router())
         .merge(routes::accounts::router())
+        .merge(routes::account_overview::router())
         .merge(routes::operations_tokens::router())
         .merge(routes::operations::router())
         .merge(routes::managed_users::router())

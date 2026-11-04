@@ -238,6 +238,8 @@ pub struct RequestRow {
     pub channel_id: Option<i64>,
     /// Current channel label; deleted channels retain their ID without a name.
     pub channel_name: Option<String>,
+    /// Current administrator-facing provider/Key label; never used for routing.
+    pub channel_display_label: Option<String>,
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -252,6 +254,7 @@ fn request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestRow> {
         key_id: r.get(23)?,
         key_display_name: r.get(24)?,
         channel_name: r.get(25)?,
+        channel_display_label: None,
         request_path: r.get(26)?,
         upstream_path: r.get(27)?,
         input_tokens_known:r.get(19)?,output_tokens_known:r.get(20)?,usage_source:r.get(21)?,
@@ -284,6 +287,8 @@ pub struct AttemptRow {
     pub ordinal: i64,
     pub channel_id: i64,
     pub channel_name: Option<String>,
+    /// Current administrator-facing provider/Key label; never used for routing.
+    pub channel_display_label: Option<String>,
     pub outcome: String,
     pub http_status: Option<i64>,
     pub duration_ms: i64,
@@ -304,7 +309,9 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
                 client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name, (SELECT c.name FROM channels c WHERE c.id=requests.channel_id) AS channel_name, request_path, upstream_path FROM requests WHERE id = ?1",
         [id], request_row,
     ).optional()?;
-    let Some(request) = request else { return Ok(None); };
+    let Some(mut request) = request else { return Ok(None); };
+    let labels = super::channels::statistics_display_labels(conn)?;
+    request.channel_display_label = request.channel_id.and_then(|id| labels.get(&id).cloned());
     // LEFT JOIN keeps history readable after a channel has been deleted.
     let mut stmt = conn.prepare(
         "SELECT a.ordinal, a.channel_id, c.name, a.outcome, a.http_status, a.duration_ms, a.error,a.model_name,a.upstream_model
@@ -314,6 +321,7 @@ pub fn detail(conn: &Connection, id: i64) -> Result<Option<RequestDetail>> {
     let attempts = stmt.query_map([id], |r| Ok(AttemptRow {
         model_name:r.get(7)?,upstream_model:r.get(8)?,
         ordinal: r.get(0)?, channel_id: r.get(1)?, channel_name: r.get(2)?,
+        channel_display_label: labels.get(&r.get::<_,i64>(1)?).cloned(),
         outcome: r.get(3)?, http_status: r.get(4)?, duration_ms: r.get(5)?, error: r.get(6)?,
     }))?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(Some(RequestDetail { request, attempts }))
@@ -325,11 +333,15 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RequestRow>> {
                 input_tokens, output_tokens, has_image, error, served_model, first_byte_ms, client_ip, user_agent, streamed, error_code, explored, input_tokens_known, output_tokens_known, usage_source, user_id, key_id, (SELECT k.name || ' - ' || u.name FROM gateway_keys k JOIN users u ON u.id=requests.user_id WHERE k.id=requests.key_id AND k.user_id=u.id) AS key_display_name, (SELECT c.name FROM channels c WHERE c.id=requests.channel_id) AS channel_name, request_path, upstream_path
            FROM requests ORDER BY ts_ms DESC, id DESC LIMIT ?1",
     )?;
-    let rows = stmt
+    let mut rows: Vec<RequestRow> = stmt
         .query_map([limit], |r| {
             request_row(r)
         })?
         .collect::<rusqlite::Result<_>>()?;
+    let labels = super::channels::statistics_display_labels(conn)?;
+    for row in &mut rows {
+        row.channel_display_label = row.channel_id.and_then(|id| labels.get(&id).cloned());
+    }
     Ok(rows)
 }
 

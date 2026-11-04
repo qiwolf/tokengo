@@ -381,6 +381,8 @@ pub struct LogRow {
     pub channel_id: Option<i64>,
     #[serde(default)]
     pub channel_name: Option<String>,
+    #[serde(default)]
+    pub channel_display_label: Option<String>,
     pub latency_ms: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -403,6 +405,8 @@ pub struct AttemptRow {
     pub ordinal: i64,
     pub channel_id: i64,
     pub channel_name: Option<String>,
+    #[serde(default)]
+    pub channel_display_label: Option<String>,
     pub outcome: String,
     pub http_status: Option<i64>,
     pub duration_ms: i64,

@@ -147,7 +147,7 @@ pub fn names(conn: &Connection) -> Result<std::collections::HashMap<i64, String>
         .filter(|(_, name)| !name.trim().is_empty()).collect())
 }
 
-/// Overview-only labels. Keep physical source names for routing and logs;
+/// Administrator display labels for statistics and request inspection. Keep physical source names for routing and logs;
 /// credential ownership must agree with the connection's provider membership.
 pub fn statistics_display_labels(conn: &Connection) -> Result<std::collections::HashMap<i64, String>> {
     let mut stmt = conn.prepare(

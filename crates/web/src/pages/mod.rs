@@ -31,6 +31,7 @@ pub mod models;
 pub mod route_policy;
 pub mod logs;
 pub mod overview;
+pub mod user_overview;
 pub mod settings;
 pub mod operations_tokens;
 
@@ -70,7 +71,7 @@ impl Page {
     /// UI mounting boundary mirrors the server's distinct account roles.
     pub fn for_account(self, root:bool)->Page {
         if root {if self==Page::Portal {Page::Overview}else{self}}
-        else if matches!(self,Page::Account|Page::Portal|Page::Strategies){self}else{Page::Portal}
+        else if matches!(self,Page::Account|Page::Portal|Page::Strategies|Page::Overview){self}else{Page::Portal}
     }
 
     /// URL hash 里用的名字。
@@ -281,7 +282,8 @@ mod tests {
     }
     #[test]
     fn ordinary_accounts_cannot_mount_administrator_pages() {
-        for page in Page::ALL {assert_eq!(page.for_account(false),Page::Portal);}
+        for page in Page::ALL {assert_eq!(page.for_account(false),if *page==Page::Overview {Page::Overview}else{Page::Portal});}
+        assert_eq!(Page::Overview.for_account(false),Page::Overview);
         assert_eq!(Page::Account.for_account(false),Page::Account);
         assert_eq!(Page::Portal.for_account(true),Page::Overview);
         assert_eq!(Page::Accounts.for_account(true),Page::Accounts);

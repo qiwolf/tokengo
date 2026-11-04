@@ -9,6 +9,7 @@ pub mod operations;
 pub mod operations_tokens;
 pub mod providers;
 pub mod accounts;
+pub mod account_overview;
 pub mod managed_users;
 pub mod oauth;
 pub mod network;

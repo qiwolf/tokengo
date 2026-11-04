@@ -835,6 +835,16 @@ async fn stats_display_labels_use_provider_and_key_without_changing_source_or_mo
     let (status, logs) = send(test_app(&f), "GET", "/api/logs?limit=20", Some(&token), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(logs["logs"].as_array().unwrap().iter().find(|r|r["channel_id"]==primary).unwrap()["channel_name"], "模型连接甲");
+    for (channel,label) in [(primary,"供应商甲新名 · 生产新备注"),(backup,"供应商甲新名 · 备用"),(other,"供应商乙 · 生产"),(shared,"供应商甲新名 · 生产新备注"),(clip,"GPU03 CLIP")] {
+        let request=logs["logs"].as_array().unwrap().iter().find(|r|r["channel_id"]==channel).unwrap();
+        assert_eq!(request["channel_display_label"],label);
+        let (status,detail)=send(test_app(&f),"GET",&format!("/api/requests/{}",request["id"]),Some(&token),None).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(detail["request"]["channel_display_label"],label);
+        assert_eq!(detail["attempts"][0]["channel_display_label"],label);
+        assert_eq!(detail["request"]["model"],"logical-photo-model");
+    }
+
 }
 
 #[tokio::test]
@@ -879,6 +889,12 @@ async fn stats_display_labels_keep_partial_legacy_and_unknown_sources_neutral() 
     assert_eq!(row(ids[4])["display_label"],format!("旧连接 #{}（名称未记录）",ids[4]));
     assert!(row(9999)["display_label"].is_null());
     assert!(row(9999)["channel_name"].is_null());
+    let (_,logs)=send(test_app(&f),"GET","/api/logs?limit=20",Some(&token),None).await;
+    for request in logs["logs"].as_array().unwrap() {
+        let channel=request["channel_id"].as_i64().unwrap();
+        assert_eq!(request["channel_display_label"],row(channel)["display_label"]);
+    }
+
 }
 
 /// 面板「立刻试首选」：把回切检查点归零（不想等 10 分钟时用）。
