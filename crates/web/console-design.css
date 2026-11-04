@@ -122,6 +122,7 @@ p {text-wrap:pretty;}
 /* Overview: one compact metric strip and stable, aligned request records. */
 .console-content .overview-dashboard {gap:16px;}
 .console-content .overview-summary {background:var(--surface);border-radius:8px;}
+.console-layout .console-content .overview-summary > .overview-usage-note {margin:0;padding:0 24px 16px;}
 .console-content .overview-metrics .stat {flex-direction:column;align-items:flex-start;gap:8px;padding:16px 24px;}
 .console-content .overview-metrics .stat-title {font-size:12px;color:var(--fg-2);}
 .console-content .overview-metrics .stat-value {font-size:24px;line-height:28px;letter-spacing:normal;text-align:left;}
@@ -220,6 +221,7 @@ p {text-wrap:pretty;}
   .console-content .module-dialog-body {padding:16px;}
   .console-content .overview-metrics {grid-template-columns:repeat(2,minmax(0,1fr));}
   .console-content .overview-metrics .stat {padding:16px;}
+  .console-layout .console-content .overview-summary > .overview-usage-note {padding-left:16px;padding-right:16px;}
   .console-content .overview-metrics .stat:nth-child(2) {border-right:0;}
   .console-content .overview-metrics .stat:nth-child(-n+2) {border-bottom:1px solid var(--line);}
   .console-content .overview-tabs {gap:16px;}

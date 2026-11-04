@@ -113,7 +113,7 @@ pub fn UserOverview(ctx:Ctx)->impl IntoView {
             <div class="stat"><div class="stat-title">"成功率"</div><div class="stat-value">{fmt::pct(s.ok,s.ok+s.failed+s.client_errors)}</div></div>
             <div class="stat"><div class="stat-title">"失败数"</div><div class="stat-value">{fmt::num(s.failed)}</div></div>
             <div class="stat"><div class="stat-title">"已记录 Token"</div><div class="stat-value">{fmt::compact_tokens(s.input_tokens+s.output_tokens)}</div></div>
-        </div><p class="muted small">{format!("取消 {} · 客户端错误 {} · 未完整报告用量 {} 次 · 历史来源不确定 {} 次；已记录数值不等于完整实际用量",s.canceled,s.client_errors,s.usage.unknown_requests,s.usage.legacy_requests)}</p></section>}})}
+        </div><p class="muted small overview-usage-note">{format!("取消 {} · 客户端错误 {} · 未完整报告用量 {} 次 · 历史来源不确定 {} 次；已记录数值不等于完整实际用量",s.canceled,s.client_errors,s.usage.unknown_requests,s.usage.legacy_requests)}</p></section>}})}
         </div>
         <nav class="overview-tabs" aria-label="我的总览分类">{["最近调用","按类型","按模型","按客户端"].into_iter().enumerate().map(|(i,label)|view!{<button type="button" class:active=move||category.get()==i aria-pressed=move||(category.get()==i).to_string() on:click=move|_|category.set(i)>{label}</button>}).collect_view()}</nav>
         <Show when=move||category.get()==0>
