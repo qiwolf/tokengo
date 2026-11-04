@@ -23,9 +23,9 @@
   "latest_optimized_wasm": {
     "result": "passed",
     "host": "build-test",
-    "seconds": 194.08,
+    "seconds": 186.71,
     "web_unit_passed": 185,
-    "input_manifest_sha256": "f9b045409fd7dbc40ac55840c7429432ff1a704fb2be782d663f9221b25cc6e8",
+    "input_manifest_sha256": "d5987e9edac24c2ddf6decff84ef3160d36aba313f16cd05bb4a791d234652a5",
     "assets_recovered_to_mac": 28
   },
   "behavior_commit": "f37f8f7212f9ca7abe05d4382d7a97f006ec35bf",
@@ -56,5 +56,26 @@
     "production_access": false,
     "upstream_calls": 0,
     "production_rollback_executed": false
+  },
+  "previous_wasm_before_layout": {
+    "result": "passed",
+    "host": "build-test",
+    "seconds": 194.08,
+    "web_unit_passed": 185,
+    "input_manifest_sha256": "f9b045409fd7dbc40ac55840c7429432ff1a704fb2be782d663f9221b25cc6e8",
+    "assets_recovered_to_mac": 28
+  },
+  "usage_note_layout_fix": {
+    "commit": "86f81fd36584eeabe100218be7cc9ce0c53388a4",
+    "changed_files": [
+      "crates/web/src/pages/user_overview.rs",
+      "crates/web/console-design.css"
+    ],
+    "data_logic_changed": false,
+    "dedicated_class": "overview-usage-note",
+    "desktop_horizontal_padding_px": 24,
+    "mobile_horizontal_padding_px": 16,
+    "margin": 0,
+    "real_final_geometry": "pending root desktop/mobile check"
   }
 }

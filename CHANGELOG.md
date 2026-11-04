@@ -9,6 +9,7 @@
 - schema44仅追加requests(user_id,ts_ms DESC,id DESC)索引；原schema43两个nullable路径列和迁移合同保留，发行包同时记录43/44 SQL源及SHA。
 - 维护旧路径迁移回归的当前MAX版本期望43→44，保留全部守恒断言；定向红测及完整server lib564/0/2通过，未改产品行为。旧q28程序读写schema44另在合成库实测通过。
 - 管理员28路由、最新Web185与owner API7项通过，两个旧行为红测失败符合预期；双用户浏览器、配套构建、生产及公开发行结果见[本版验收状态](docs/acceptance/2026-11-04-qiwolf29-release/README.md)，不冒称本轮原厂实测。
+- 个人统计用量说明增加专属内距，与统计标题在桌面24px/手机16px对齐；只改该组件class/CSS，新Web185和优化WASM通过，最终几何复核单独记录。
 
 ## v0.34.0-qiwolf.28 — 2026-11-04（北京时间）
 
