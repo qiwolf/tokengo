@@ -29,5 +29,32 @@
     "assets_recovered_to_mac": 28
   },
   "behavior_commit": "f37f8f7212f9ca7abe05d4382d7a97f006ec35bf",
-  "independent_source_security_review": "passed; static only, synthetic browser separate"
+  "independent_source_security_review": "passed; static only, synthetic browser separate",
+  "test_maintenance_commit": "60dd8889c58e0cb81dec7fae0b6102af07c90ee6",
+  "server_lib_current": {
+    "passed": 564,
+    "failed": 0,
+    "ignored": 2,
+    "scope": "whole server library after schema44 migration expectation maintenance",
+    "overlaps_prior_owner_lib": true
+  },
+  "migration_version_maintenance": {
+    "old_expected_max": 43,
+    "actual_current_max": 44,
+    "red_runtime_assertion_failure_observed": true,
+    "green_full_library_passed": true,
+    "production_behavior_changed": false,
+    "old_projection_null_and_history_assertions_preserved": true
+  },
+  "old_q28_schema44_synthetic_compatibility": {
+    "passed": true,
+    "source_commit": "b427946929d4157cc04576bd92046270d4248b11",
+    "old_server_sha256": "48aeddca9818fa61b2a813121b0e8f06a3272d54f0622423af4e9fa09cf1e1ab",
+    "migration_sha256": "c8281c7df7192eb7db4791bf7e80ddd71142553b51ac802448adf9133db6ab80",
+    "old_history_and_migrations_preserved": true,
+    "old_binary_read_and_write": true,
+    "production_access": false,
+    "upstream_calls": 0,
+    "production_rollback_executed": false
+  }
 }
