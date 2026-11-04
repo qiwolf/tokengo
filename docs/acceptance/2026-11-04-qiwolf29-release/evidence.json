@@ -1,6 +1,6 @@
 {
   "release": "v0.34.0-qiwolf.29",
-  "status": "local-candidate",
+  "status": "released-production-and-public-qa-passed",
   "base_commit": "809889eb7877d95b7c1e9f38d420e799904acb9a",
   "schema_version": 44,
   "migration43_retained": true,
@@ -14,11 +14,57 @@
     "initial_managed_users": 24,
     "overlapping_counts_not_added": true
   },
-  "synthetic_browser_role_isolation": "pending",
-  "paired_package": "pending",
-  "production": "pending",
-  "official_ci": "pending",
-  "public_release_qa": "pending",
+  "synthetic_browser_role_isolation": {
+    "result": "passed",
+    "environment": "build-test isolated fixture, normal real-cookie login",
+    "roles": [
+      "ordinary A",
+      "ordinary B",
+      "administrator"
+    ],
+    "functional_scenarios": 9,
+    "ordinary_endpoints_owner_only": true,
+    "cross_owner_rejected": true,
+    "pagination_and_model_usage_dimensions_verified": true,
+    "production_ordinary_user_login_executed": false,
+    "production_session_impersonation_or_password_changes": false,
+    "inference_calls": 0,
+    "temporary_fixtures_and_synthetic_credentials_cleaned": true,
+    "final_style_delta": "one class attribute and two scoped CSS rules; all permission/data logic unchanged; prior complete role matrix reused under that boundary"
+  },
+  "paired_package": "passed",
+  "production": {
+    "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+    "server_sha256": "80f7ce48085e251ed7b40e8b17dc40779da5b7d71b9fa2d3c5575fd13158d8b5",
+    "schema_before": 43,
+    "schema_after": 44,
+    "owner_index_only_migration": true,
+    "legacy_requests_users_keys_billing_migrations_and_config_preserved": true,
+    "served_web_http_hashes_match": true,
+    "no_forced_inflight_termination": true,
+    "existing_legal_admin_cookie_recent_and_detail_verified": true,
+    "by_channel_consistency_side_evidence": true,
+    "specific_paid_source_recent_browser_witness_claimed": false,
+    "anonymous_owner_three_endpoints_all401": true,
+    "probe_calls_before": 2,
+    "probe_calls_after": 2,
+    "probe_kinds": [
+      "local embedding1024",
+      "CLIP text512"
+    ],
+    "both_http200_finite_nonzero": true,
+    "response_hash_channel_and_logical_model_unchanged": true,
+    "model_http_retries": 0,
+    "paid_generation_probe_calls": 0,
+    "extra_ui_witness_probe_calls": 0,
+    "response_values_or_credentials_persisted": false,
+    "qualifications": [
+      "Baseline UA-only observer initially missed passthrough; original failure retained and resolved read-only without repeating requests.",
+      "Post management connection failed before phase start; absence was checked before one unique post phase."
+    ]
+  },
+  "official_ci": "success",
+  "public_release_qa": "passed",
   "new_original_provider_test": false,
   "latest_optimized_wasm": {
     "result": "passed",
@@ -76,6 +122,265 @@
     "desktop_horizontal_padding_px": 24,
     "mobile_horizontal_padding_px": 16,
     "margin": 0,
-    "real_final_geometry": "pending root desktop/mobile check"
+    "real_final_geometry": "passed real desktop1470/narrow600 text/title alignment"
+  },
+  "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+  "main_ci_url": "https://github.com/qiwolf/tokengo/actions/runs/41836872266",
+  "release_workflow_url": "https://github.com/qiwolf/tokengo/actions/runs/41836871840",
+  "final_layout_render": {
+    "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+    "desktop_width": 1470,
+    "narrow_width": 600,
+    "horizontal_padding_px": [
+      24,
+      16
+    ],
+    "text_and_title_start_aligned": true,
+    "desktop_text_title_x": [
+      257,
+      257
+    ],
+    "narrow_text_title_x": [
+      33,
+      33
+    ],
+    "private_leak": false,
+    "real_render_passed": true,
+    "new_web_unit_passed": 185,
+    "new_wasm_seconds": 186.71
+  },
+  "local_package": {
+    "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+    "archive_sha256": "5838f498b887f7376a7c901414b58765546c1a1a7926586af58069f8a63e1b8d",
+    "archive_bytes": 21948936,
+    "server_sha256": "80f7ce48085e251ed7b40e8b17dc40779da5b7d71b9fa2d3c5575fd13158d8b5",
+    "native_bin_sha256": {
+      "bin/tokengo-server": "80f7ce48085e251ed7b40e8b17dc40779da5b7d71b9fa2d3c5575fd13158d8b5",
+      "bin/tokengo": "efa5c7f74ab954a4c416af430edb041b48f8f615ac48797a6fc186231be6ba3d"
+    },
+    "source_manifest_sha256": "5e791433d55da4955a4483d60d2f6d490093589fba6d7511905be0fcf2ad91a0",
+    "manifest": {
+      "commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+      "target": "x86_64-unknown-linux-gnu",
+      "rust": "1.98.0",
+      "trunk": "0.21.14",
+      "cargo_lock_sha256": "ed95e82fb1d74caa825951c4c3435fffec05ae528fc589b860d5726a1b55d134",
+      "schema_version": 44,
+      "migrations": {
+        "43": {
+          "source_path": "crates/server/src/db/request_paths.sql",
+          "archive_path": "deploy/migrations/43-request-paths.sql",
+          "sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3"
+        },
+        "44": {
+          "source_path": "crates/server/src/db/account_overview.sql",
+          "archive_path": "deploy/migrations/44-account-overview.sql",
+          "sha256": "c8281c7df7192eb7db4791bf7e80ddd71142553b51ac802448adf9133db6ab80"
+        }
+      }
+    },
+    "all_archive_checksums_match": true,
+    "all_28_final_web_assets_match": true,
+    "both_migration_sql_bytes_equal_exact_source": true,
+    "native_reused_after_non_web_input_and_byte_identity_check": true,
+    "native_recompiled_for_class_css_only_change": false
+  },
+  "github_main_ci": {
+    "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+    "run_id": 41836872266,
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/41836872266",
+    "conclusion": "success",
+    "rust": {
+      "passed": 1603,
+      "failed": 0,
+      "ignored": 9
+    },
+    "rust_summary_lines": 88,
+    "python_suite_test_counts": [
+      13
+    ],
+    "jobs": [
+      {
+        "name": "Web WASM check (Rust 1.98.0)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Native workspace tests (Rust 1.98.0)",
+        "conclusion": "success"
+      }
+    ],
+    "first_run_no_rerun": true,
+    "overlapping_targeted_counts_not_added": true
+  },
+  "tag": "v0.34.0-qiwolf.29",
+  "cargo_version": "0.34.0",
+  "publication": "success",
+  "final_receipt_location": "post-tag main documentation and Release body; immutable tag source is 5d7676b4f6bccea08ed385697318094e1cf1cf23",
+  "public_release": {
+    "url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29",
+    "published_at_utc": "2026-11-04T13:35:20Z",
+    "workflow": "https://github.com/qiwolf/tokengo/actions/runs/41836871840",
+    "workflow_result": "success",
+    "assets": 9,
+    "asset_digest_checks": [
+      {
+        "name": "compose.yaml",
+        "size": 797,
+        "sha256": "5f9d7c2a4d37acdb147e8fac54dcf589efb9b4fabd13a0b92ee9a909049f11e7",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container-deployment.md",
+        "size": 15358,
+        "sha256": "9c63766fd18d30afafc6cfc0efeff58ed0515b8d3458422143f37a2ce89d04c6",
+        "github_digest_matches": true
+      },
+      {
+        "name": "container.env.example",
+        "size": 316,
+        "sha256": "5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-manifest.json",
+        "size": 199,
+        "sha256": "6a2d14d7b71a0939392a1224a7890b2e824e2418996a8928280be730faf06a05",
+        "github_digest_matches": true
+      },
+      {
+        "name": "image-SHA256SUMS",
+        "size": 564,
+        "sha256": "002f54da1a38a4cce56a126ba27727bd8bc1795e3e3fe2968b1ce90383c5d05b",
+        "github_digest_matches": true
+      },
+      {
+        "name": "registry-image.txt",
+        "size": 95,
+        "sha256": "6fa3fcd7ceee36a10751b647e50d8913bcad71eb365ce648c3559b35bc5ee150",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-5d7676b4f6bc-linux-x86_64.tar.gz",
+        "size": 21932173,
+        "sha256": "2ca7e7a16eb02cb53d36186c40f0861ad1c0ee15af2d23c7817237c46d9666df",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-5d7676b4f6bc-linux-x86_64.tar.gz.sha256",
+        "size": 107,
+        "sha256": "09bdab01c3c7b073523f3a60fdc4d44c9b3ba2ec5bb4a4932bf25202249a0bdf",
+        "github_digest_matches": true
+      },
+      {
+        "name": "tokengo-5d7676b4f6bccea08ed385697318094e1cf1cf23-linux-amd64.tar.gz",
+        "size": 40831878,
+        "sha256": "ccc3c22bc0e13310535bcf90f6b2995a615d531c33ff4114755a078dd6d61c47",
+        "github_digest_matches": true
+      }
+    ],
+    "public_native_sha256": "2ca7e7a16eb02cb53d36186c40f0861ad1c0ee15af2d23c7817237c46d9666df",
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:be720f3c3ad82760dc816920fc689a5f6b35872701201b1165a89e785e2d34b2",
+    "runtime_verification": {
+      "result": "passed",
+      "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+      "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29",
+      "assets": 9,
+      "host": "build-test Linux x86_64",
+      "anonymous_downloads": true,
+      "anonymous_registry": true,
+      "offline_archive_two_tags": true,
+      "compose_no_env_up_ready_wasm_nonroot_readonly": true,
+      "smoke_restart_recreation": true,
+      "native_runtime": true,
+      "recoverable_key_runtime": true,
+      "container_key_runtime": true,
+      "production_access": false,
+      "created_release": false
+    },
+    "fresh_schema": {
+      "schema_version": 44,
+      "table_count": 60,
+      "integrity": "ok",
+      "foreign_key_violations": 0,
+      "preexisting_oauth_state": false,
+      "history_owner_recent_index": true,
+      "nullable_path_columns": [
+        "request_path",
+        "upstream_path"
+      ],
+      "requests_owner_recent_index": {
+        "columns": [
+          "user_id",
+          "ts_ms",
+          "id"
+        ],
+        "descending": [
+          false,
+          true,
+          true
+        ]
+      },
+      "migration_from_existing_database_executed": false,
+      "owner_isolation_behavior_executed": false
+    },
+    "packaged_migrations": {
+      "result": "passed",
+      "source_commit": "5d7676b4f6bccea08ed385697318094e1cf1cf23",
+      "schema_version": 44,
+      "migrations": [
+        {
+          "version": 43,
+          "source_path": "crates/server/src/db/request_paths.sql",
+          "archive_path": "deploy/migrations/43-request-paths.sql",
+          "git_sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3",
+          "archive_sha256": "ce1ba5b193a20c67a89c2a7d14a7d3683bbd39b629d5b2018c6df1573c109bb3",
+          "matches": true
+        },
+        {
+          "version": 44,
+          "source_path": "crates/server/src/db/account_overview.sql",
+          "archive_path": "deploy/migrations/44-account-overview.sql",
+          "git_sha256": "c8281c7df7192eb7db4791bf7e80ddd71142553b51ac802448adf9133db6ab80",
+          "archive_sha256": "c8281c7df7192eb7db4791bf7e80ddd71142553b51ac802448adf9133db6ab80",
+          "matches": true
+        }
+      ],
+      "manifest_fields": [
+        {
+          "json_pointer": "/schema_version",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/43/source_path",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/43/archive_path",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/43/sha256",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/44/source_path",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/44/archive_path",
+          "matches": true
+        },
+        {
+          "json_pointer": "/migrations/44/sha256",
+          "matches": true
+        }
+      ],
+      "existing_database_upgrade_executed": false
+    },
+    "public_browser_or_owner_isolation_behavior_executed": false,
+    "new_original_provider_inference": false,
+    "existing_database_upgrade_executed": false,
+    "temporary_processes_containers_volumes_and_directories_remaining": 0,
+    "all_logs_and_artifacts_recovered_to_mac": true
   }
 }

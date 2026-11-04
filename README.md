@@ -10,13 +10,13 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前版本候选：**v0.34.0-qiwolf.29** · [版本说明](docs/releases/v0.34.0-qiwolf.29.md) · [验收状态](docs/acceptance/2026-11-04-qiwolf29-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.29](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29)** · [版本说明](docs/releases/v0.34.0-qiwolf.29.md) · [发行与生产收据](docs/acceptance/2026-11-04-qiwolf29-release/README.md)。
 
-本版候选统一管理员最近调用和详情的“供应商 · Key备注”显示，透传保留服务名；普通用户新增仅含自己调用的运行总览，通过独立账号接口查看自己的Key、模型入口、实际逻辑模型、状态、用量、耗时和请求路径。用户响应不含上游渠道、上游Key备注、上游路径或原始错误。schema44只追加用户历史查询索引，不回填数据。管理员28路由、最新Web185和owner API7项定向检查通过；角色隔离浏览器、配套构建、生产及正式发行验收按阶段补充。
+本版统一管理员最近调用/详情的供应商 · Key原备注显示，透传保留服务名；普通用户新增仅本人调用的运行总览与三维统计，说明文字在桌面/窄屏对齐。隔离环境普通A/B及管理员真实cookie/Chrome验证通过；生产已有管理员会话、数据守恒和本地BGE/CLIP共2+2次探针通过，未冒用生产用户登录。精确main CI Rust1603通过/0失败/9忽略、Python13/WASM及9公开资产/GHCR/原生容器独立验收通过。schema44只加owner索引；原名/备注、模型调用、账务及历史成功率口径保持，无原厂能力新测。
 
-Current release candidate: **v0.34.0-qiwolf.29** · [Release notes](docs/releases/v0.34.0-qiwolf.29.md) · [Acceptance status](docs/acceptance/2026-11-04-qiwolf29-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.29](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29)** · [Release notes](docs/releases/v0.34.0-qiwolf.29.md) · [Publication and production receipt](docs/acceptance/2026-11-04-qiwolf29-release/README.md).
 
-This candidate unifies provider and Key labels in administrator recent calls and details, preserving passthrough service names. Ordinary users gain an owner-scoped overview through separate account APIs for their own keys, entry and logical model names, status, usage, latency and client paths. User responses exclude upstream channels, upstream Key remarks, upstream paths and raw errors. Schema44 only adds an owner-history index. Administrator route tests and 185 Web tests passed; browser role isolation, paired packaging, production and official release acceptance remain staged.
+This release unifies provider and original Key-remark labels in administrator recent calls and details while preserving passthrough service names. Ordinary users gain an overview and breakdowns limited to their own calls, with aligned usage notes. Real-cookie Chrome checks passed for isolated A/B users and an administrator; production verification used the existing legal administrator session, data-preservation checks and 2+2 bounded local BGE/CLIP calls. No production user login was impersonated. Exact main CI passed Rust1603/0/9, Python13 and WASM; all nine public assets, GHCR and native/container acceptance passed. Schema44 only adds an owner index. Stored names, remarks, model calls, accounting and historical success-rate semantics remain unchanged; no new original-provider capability test is claimed.
 
 上一正式版 / Previous stable release: [v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28) · [历史收据 / Historical receipt](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
 

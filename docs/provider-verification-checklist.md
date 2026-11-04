@@ -1,11 +1,17 @@
 # 模型兼容核实清单
 
-## 2026-11-04 增量：v0.34.0-qiwolf.29（本地候选）
+## 2026-11-04 增量：v0.34.0-qiwolf.29（生产gate后正式发行，公开验收通过）
 
-schema44相关旧迁移测试已定向证实并维护版本期望，完整server lib564/0/2通过；185 Web/新优化WASM及owner API7项保持已验证输入。旧q28程序schema44合成库读写兼容通过，生产回退未演练。
+|项|已确认依据|当前边界|
+|---|---|---|
+|管理员渠道显示|recent/detail/attempt采用供应商·Key原备注，透传服务名保留；生产合法管理员cookie实测recent/detail新label，按渠道另核一致|不改原名/备注/模型/连接ID，当前名不是历史快照，不把按渠道旁证说成特定付费来源recent见证|
+|普通用户总览|独立owner账号API及安全DTO、本人三维/分页/详情，隔离A/B/admin真实Chrome九场景和API矩阵通过；生产匿名三端点401|未冒用生产普通用户登录；不把前端隐藏或管理员截图当owner过滤证据，不返回上游/其他用户字段|
+|最后布局|5d仅usage-note class与专属CSS；新Web185/WASM186.71秒及桌面1470/窄屏600的24/16px文字对齐实测通过|server字节与权限逻辑输入不变，完整角色矩阵按此边界复用；新Web字节另验，不冒称与旧Web一致|
+|迁移与本地|schema44仅owner索引，生产旧数据守恒；旧q28程序读写44合成库、server lib564/0/2、routes28、owner API7与新配套包通过|维护MAX43→44旧测试期待，保投影/NULL/历史守恒；原生按已核输入/字节缓存复用，不称生产回退已演练|
+|正式CI/发行|[精确CI](https://github.com/qiwolf/tokengo/actions/runs/41836872266)Rust1603/0/9、Python13/WASM，[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41836871840)与9资产/GHCR/原生容器生命周期/清理通过|重叠不累加；公开fresh44/60表、owner索引及43/44 SQL/7字段另核，不把公开静态WASM当浏览器/owner行为实测|
+|现有调用保护|最小本地BGE1024/CLIP512前后2+2实调HTTP200/业务/账本/响应hash与归因保持，0模型重试、0付费/额外UI推理|初始账本观察字段缺失与远端未启动错误均留证只读核查，不重发模型；无新原厂能力或历史0%成功率计数变更|
 
-管理员recent/detail统一渠道显示名、透传保名，普通用户总览采用独立owner账号接口和安全字段。管理员28路由/Web185检查通过，schema44追加owner历史索引；角色浏览器、配套包、生产与公开发行状态见[本版收据](acceptance/2026-11-04-qiwolf29-release/README.md)。本轮无新原厂推理/模型能力或成功率计数变更，以下历史兼容证据继续保留原日期、版本和协议范围。
-
+证据：[说明](releases/v0.34.0-qiwolf.29.md)、[安全收据](acceptance/2026-11-04-qiwolf29-release/README.md)、[结构化摘要](acceptance/2026-11-04-qiwolf29-release/evidence.json)。tag5d与最终后补docs分开；不公开真实Key备注、生产请求ID、内部拓扑/路径或原始截图。以下历史兼容证据继续保留原日期、版本与协议范围。
 
 ## 2026-11-04 增量：v0.34.0-qiwolf.28（生产验收后正式发行，公开产物独立验收通过）
 

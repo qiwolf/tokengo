@@ -1,8 +1,6 @@
 # 功能与验收状态
 
-**2026-11-04：v0.34.0-qiwolf.29 本地候选。** 管理员recent/detail统一供应商·Key备注、透传保名；普通用户新增仅自己调用的总览，使用独立账号API/安全DTO；schema44仅新增owner历史索引。管理员28路由、Web185通过，角色浏览器、配套构建、生产及正式发行待完成，见[说明](releases/v0.34.0-qiwolf.29.md)和[阶段收据](acceptance/2026-11-04-qiwolf29-release/README.md)。
-
-schema44相关旧迁移测试已定向证实并维护版本期望，完整server lib564/0/2通过；185 Web/新优化WASM及owner API7项保持已验证输入。旧q28程序schema44合成库读写兼容通过，生产回退未演练。
+**2026-11-04：v0.34.0-qiwolf.29 已配套生产部署并正式发行，公开产物独立验收通过。** 管理员recent/detail统一供应商·Key备注、透传保名；普通用户独立owner总览提供本人调用与三维统计，不返回上游配置/备注/路径/原始错误。隔离A/B/admin真实cookie/Chrome九场景通过，5d只有class/CSS最后delta，Web185/新WASM及1470桌面/600窄屏文字对齐另验；生产使用已有合法管理员cookie核recent/detail，不冒用普通用户登录。schema43→44仅owner索引，旧请求/用户/Key/账务/迁移/env守恒；旧q28程序读写44合成库通过，不称生产回退演练。build-test server lib564/0/2、routes28、owner API7、Web185及配套包通过；[精确CI](https://github.com/qiwolf/tokengo/actions/runs/41836872266)Rust1603/0/9、Python13/WASM，[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41836871840)与9资产/GHCR/原生容器独立验收通过，重叠不累加。最小BGE/CLIP 2+2探针和匿名owner401通过，0付费见证/额外UI推理/模型重试；传输未启动与基线只读补证收据保留。公开WASM仅静态身份，无原厂能力或历史成功率口径变更。tag源码5d与最终后补docs分开，见[说明](releases/v0.34.0-qiwolf.29.md)与[安全收据](acceptance/2026-11-04-qiwolf29-release/README.md)。
 
 **2026-11-04：v0.34.0-qiwolf.28 配套生产/真实UI与现有调用验收后正式发行，公开产物独立验收通过。** 透传详情显示当前服务名、真实双路径和历史未记录；Key列表额度一次返回、说明对齐。单次同会话热态网络关键链8请求/4.82秒→1请求/57毫秒，不外推冷缓存/端到端/p95。schema42→43仅增加两nullable列，旧请求投影/attempts/迁移/业务及配置保持；旧q27程序读写43另在合成库实测。build-test定向、最新整合WASM/原生包、生产6+6调用和额外2个UI见证通过；[精确CI](https://github.com/qiwolf/tokengo/actions/runs/41685780070)Rust1591/0/9、Python13/WASM及[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41685779973)、9公开资产/GHCR/原生容器生命周期独立验收通过，重叠不累加。公开WASM仅静态身份，真实Chrome针对部署本地包；调用/鉴权/账务分类、LLM模型归因及历史成功率口径未改，无新原厂实测。见[版本说明](releases/v0.34.0-qiwolf.28.md)与[安全收据](acceptance/2026-11-04-qiwolf28-release/README.md)。
 
