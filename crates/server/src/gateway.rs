@@ -1637,6 +1637,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         .map(|target| target.position);
     'pass: loop {
         let mut tried_any = false;
+        let mut tried_fallback_after_local_busy = false;
         let mut busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
         let mut credential_busy: Vec<(i64, Arc<crate::state::ChannelGate>)> = Vec::new();
         let mut local_busy = false;
@@ -2509,6 +2510,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     last_policy_error = None;
                 }
                 tried_any = true;
+                // Once a later fallback was attempted, do not return to skipped local queues.
+                // A cloud-primary failure before discovering busy locals still keeps its wait.
+                tried_fallback_after_local_busy |= local_busy && !*balanced_node;
                 if pooled {
                     if let Some(credential) = credential {
                         pool_control.seen.insert((
@@ -3621,7 +3625,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             }
         }
 
-        if (tried_any && !local_busy) || (busy.is_empty() && credential_busy.is_empty()) {
+        if (tried_any && (!local_busy || tried_fallback_after_local_busy))
+            || (busy.is_empty() && credential_busy.is_empty())
+        {
             break 'pass;
         }
         // 所有渠道都到并发上限了：在门口排队等一个名额，等到再重跑一遍。

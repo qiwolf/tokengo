@@ -163,3 +163,104 @@ async fn private_aliases_with_the_same_name_have_owner_scoped_rotations(){
  for node in &f.nodes{let seen=node.state.seen.lock().unwrap();for marker in ["first-owner","second-owner"]{assert_eq!(seen.iter().filter(|b|b["input"]==marker).count(),2,"same private name must not share turns across owners");}}
  f.no_affinity();
 }
+
+/// Three real model mappings, each selecting one source, reproduce the production
+/// ordered GPU03 -> GPU01 -> cloud chain without changing public caller identity.
+struct OrderedLocalFallback { local:Fixture, cloud:Node }
+impl OrderedLocalFallback {
+ async fn new(cloud_first:bool)->Self {
+  let local=Fixture::new(ModelKind::Rerank).await;
+  {let mut router=local.state.routing();router.cfg.request_budget_ms=3000;router.cfg.nonstream_timeout_ms=1000;}
+  let cloud=Node::new().await;
+  {
+   let c=local.state.conn();
+   let mut targets=Vec::new();
+   for (index,name) in ["rerank-gpu03","rerank-gpu01"].iter().enumerate() {
+    let id=local.ids[index];
+    db::channels::set_models(&c,id,&[db::channels::ModelMapping::new(*name,Some("exact-model".into()),false)]).unwrap();
+    db::kinds::set(&c,name,ModelKind::Rerank).unwrap();
+    c.execute("UPDATE channels SET max_concurrent=1 WHERE id=?1",[id.0]).unwrap();
+    let credential=db::provider_pool::source_credential(&c,id.0).unwrap().unwrap();
+    c.execute("UPDATE provider_credentials SET max_concurrent=1 WHERE id=?1",[credential.id]).unwrap();
+    db::route_policy::save(&c,name,&serde_json::from_value(json!({"local_strategy":"round_robin","channel_ids":[id.0],"retry_times":0})).unwrap()).unwrap();
+    targets.push(db::user_virtual_routes::Target{provider_id:local.provider,logical_model:(*name).into(),switch_on_429:false,switch_on_400:false});
+   }
+   c.execute("INSERT INTO provider_channels(name,enabled,created_ms,endpoint_mode,canonical_state,base_url) VALUES('ordered-cloud',1,0,'single','canonical',?1)",[&cloud.base]).unwrap();
+   let provider=c.last_insert_rowid();
+   let id=db::channels::create(&c,&db::channels::NewChannel{name:"ordered-cloud-source".into(),base_url:cloud.base.clone(),enabled:true,unwrap_envelope:false,max_concurrent:0}).unwrap();
+   db::channels::set_secret(&c,&local.state.secrets,id,"synthetic-ordered-cloud-key").unwrap();
+   db::channels::set_models(&c,id,&[db::channels::ModelMapping::new("rerank-cloud",Some("exact-model".into()),false)]).unwrap();
+   db::kinds::set(&c,"rerank-cloud",ModelKind::Rerank).unwrap();
+   db::provider_channels::set_membership(&c,id.0,Some(provider)).unwrap();
+   db::provider_pool::adopt_source(&c,&local.state.secrets,id.0,provider).unwrap();
+   let cloud_target=db::user_virtual_routes::Target{provider_id:provider,logical_model:"rerank-cloud".into(),switch_on_429:false,switch_on_400:false};
+   if cloud_first {targets.insert(0,cloud_target);} else {targets.push(cloud_target);}
+   db::sessions::set_panel_password(&c,"synthetic-ordered-local-root").unwrap();
+   let root=db::accounts::root(&c).unwrap().unwrap();
+   db::shared_virtual_routes::create(&c,&db::user_virtual_routes::Config{name:"ordered-rerank-fallback".into(),enabled:true,mode:"ordered".into(),timezone:"UTC".into(),targets,windows:vec![],default_positions:vec![]},root.account.id).unwrap();
+  }
+  Self{local,cloud}
+ }
+ fn hold(&self,index:usize,credential:bool)->tokengo_server::state::ChannelPermit {
+  if credential {
+   let key=db::provider_pool::source_credential(&self.local.state.conn(),self.local.ids[index].0).unwrap().unwrap();
+   self.local.state.credential_gate(key.id,1).unwrap().try_acquire_owned().unwrap()
+  } else {self.local.state.channel_gate(self.local.ids[index].0,1).unwrap().try_acquire_owned().unwrap()}
+ }
+ async fn call(&self)->(StatusCode,Value) {
+  let mut body=self.local.body();body["model"]=json!("ordered-rerank-fallback");
+  self.local.request("POST","/v1/rerank",&self.local.key,body).await
+ }
+}
+
+#[tokio::test]
+async fn ordered_single_node_aliases_prefer_gpu03_then_gpu01_then_cloud_without_waiting(){
+ for credential in [false,true] {
+  let f=OrderedLocalFallback::new(false).await;
+  for _ in 0..4 {let(s,b)=f.call().await;assert_eq!(s,StatusCode::OK,"{b}");}
+  assert_eq!((f.local.nodes[0].count(),f.local.nodes[1].count(),f.cloud.count()),(4,0,0));
+  let first=f.hold(0,credential);
+  let(s,b)=tokio::time::timeout(std::time::Duration::from_millis(700),f.call()).await.expect("busy GPU03 must immediately use GPU01");
+  assert_eq!(s,StatusCode::OK,"{b}");
+  assert_eq!((f.local.nodes[0].count(),f.local.nodes[1].count(),f.cloud.count()),(4,1,0));
+  let second=f.hold(1,credential);
+  let(s,b)=tokio::time::timeout(std::time::Duration::from_millis(700),f.call()).await.expect("both local gates remain held: cloud must serve without waiting");
+  assert_eq!(s,StatusCode::OK,"{b}");
+  assert_eq!((f.local.nodes[0].count(),f.local.nodes[1].count(),f.cloud.count()),(4,1,1));
+  drop((first,second));
+  assert_eq!(f.call().await.0,StatusCode::OK);
+  assert_eq!((f.local.nodes[0].count(),f.local.nodes[1].count(),f.cloud.count()),(5,1,1),"released GPU03 must regain priority, without affinity sticking to GPU01");
+  for node in [&f.local.nodes[0],&f.local.nodes[1],&f.cloud] {
+   for sent in node.state.seen.lock().unwrap().iter() {let mut expected=f.local.body();expected["model"]=json!("exact-model");assert_eq!(sent,&expected);}
+  }
+  f.local.no_affinity();
+ }
+}
+
+#[tokio::test]
+async fn ordered_local_busy_cloud_failure_returns_without_requeueing_local_nodes(){
+ for credential in [false,true] {
+  let f=OrderedLocalFallback::new(false).await;f.cloud.status(503);
+  let _first=f.hold(0,credential);let _second=f.hold(1,credential);
+  let(s,b)=tokio::time::timeout(std::time::Duration::from_millis(700),f.call()).await.expect("after skipping busy locals and trying cloud, cloud failure must return without waiting for local capacity");
+  assert_eq!(s,StatusCode::SERVICE_UNAVAILABLE,"{b}");
+  assert_eq!((f.local.nodes[0].count(),f.local.nodes[1].count(),f.cloud.count()),(0,0,1));
+  f.local.no_affinity();
+ }
+}
+
+#[tokio::test]
+async fn cloud_primary_failure_before_busy_locals_still_waits_for_local_capacity(){
+ for credential in [false,true] {
+  let f=Arc::new(OrderedLocalFallback::new(true).await);f.cloud.status(503);
+  let _first=f.hold(0,credential);let second=f.hold(1,credential);
+  let mut pending={let f=f.clone();tokio::spawn(async move{f.call().await})};
+  tokio::time::timeout(std::time::Duration::from_millis(700),async{while f.cloud.count()==0 {tokio::task::yield_now().await;}}).await.expect("cloud-primary request must reach cloud");
+  assert!(tokio::time::timeout(std::time::Duration::from_millis(50),&mut pending).await.is_err(),"cloud failure before discovering busy locals must preserve the existing local wait");
+  drop(second);
+  let(s,b)=tokio::time::timeout(std::time::Duration::from_millis(700),pending).await.expect("released GPU01 must serve the waiting request").unwrap();
+  assert_eq!(s,StatusCode::OK,"{b}");
+  assert_eq!((f.local.nodes[0].count(),f.local.nodes[1].count(),f.cloud.count()),(0,1,1));
+  f.local.no_affinity();
+ }
+}
