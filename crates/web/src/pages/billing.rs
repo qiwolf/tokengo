@@ -82,9 +82,41 @@ fn ledger_identity(row: &Value) -> (String, String, String) {
         (source,format!("{} · {}",named(row,"user_name","历史用户"),named(row,"key_name","历史 Key")),money(&row["debit_micro"]))
     }
 }
+fn active_object(row: &Value) -> bool {
+    row["state"] == "active"
+}
+
 #[component]
-fn ObjectSelect(id:&'static str, label:&'static str, group:&'static str, value:RwSignal<String>, objects:RwSignal<Value>, #[prop(default=false)] active_only:bool) -> impl IntoView {
-    view!{<div class="billing-field"><label for=id>{label}</label><select id=id prop:value=value on:change=move|e|value.set(event_target_value(&e))><option value="">{if active_only{"请选择"}else{"全部"}}</option>{move||api::rows(&objects.get(),group).into_iter().filter(|o|!active_only||o["state"]=="active").map(|o|{let label=if group=="keys"{format!("{} · {}",api::text(&o,"user_name"),api::text(&o,"name"))}else{api::text(&o,"name")};let label=if o["state"]=="active"{label}else{format!("{label}（{}）",state_label(&o))};view!{<option value=api::text(&o,"id")>{label}</option>}}).collect_view()}</select></div>}
+fn ObjectSelect(
+    id: &'static str,
+    label: &'static str,
+    group: &'static str,
+    value: RwSignal<String>,
+    objects: RwSignal<Value>,
+    active_only: Signal<bool>,
+    #[prop(default = "全部")] empty_label: &'static str,
+) -> impl IntoView {
+    view! {
+        <div class="billing-field">
+            <label for=id>{label}</label>
+            <select id=id prop:value=value on:change=move|e|value.set(event_target_value(&e))>
+                <option value="" prop:selected=move||value.get().is_empty()>{empty_label}</option>
+                {move|| {
+                    let current = active_only.get();
+                    api::rows(&objects.get(),group).into_iter()
+                        .filter(|o| !current || active_object(o))
+                        .map(|o| {
+                            let label=if group=="keys"{
+                                format!("{} · {}",api::text(&o,"user_name"),api::text(&o,"name"))
+                            }else{api::text(&o,"name")};
+                            let label=if active_object(&o){label}else{format!("{label}（{}）",state_label(&o))};
+                            let option_id=api::text(&o,"id");
+                            view!{<option value=option_id.clone() prop:selected=move||value.get()==option_id>{label}</option>}
+                        }).collect_view()
+                }}
+            </select>
+        </div>
+    }
 }
 #[component]
 pub fn Billing(ctx: Ctx) -> impl IntoView {
@@ -126,7 +158,7 @@ fn Budgets(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
     <button type="button" class="ghost" on:click=move |_|ctx.go(crate::Page::Users)>"管理用户与 Key 身份"</button>
     <BillingDialog id="budget-dialog" title="管理额度" busy=busy><form on:submit=save><fieldset disabled=move||busy.get()>
     <div class="billing-field"><label for="budget-scope">"预算对象类型"</label><select id="budget-scope" disabled=move||editing.get() prop:value=scope on:change=move|e|{scope.set(event_target_value(&e));id.set(String::new());}><option value="user">"用户"</option><option value="key">"API Key"</option></select></div>
-    {move||if editing.get(){let group=if scope.get()=="user"{"users"}else{"keys"};let label=api::rows(&objects.get(),group).iter().find(|o|api::text(o,"id")==id.get()).map(|o|api::text(o,"name")).unwrap_or_else(||"对象已失效，请关闭并刷新".into());view!{<p class="billing-selected-object">{label}</p>}.into_any()}else if scope.get()=="user"{view!{<ObjectSelect id="budget-object-user" label="用户" group="users" value=id objects=objects active_only=true/>}.into_any()}else{view!{<ObjectSelect id="budget-object-key" label="API Key（所属用户 · 名称）" group="keys" value=id objects=objects active_only=true/>}.into_any()}}
+    {move||if editing.get(){let group=if scope.get()=="user"{"users"}else{"keys"};let label=api::rows(&objects.get(),group).iter().find(|o|api::text(o,"id")==id.get()).map(|o|api::text(o,"name")).unwrap_or_else(||"对象已失效，请关闭并刷新".into());view!{<p class="billing-selected-object">{label}</p>}.into_any()}else if scope.get()=="user"{view!{<ObjectSelect id="budget-object-user" label="用户" group="users" value=id objects=objects active_only=Signal::derive(||true) empty_label="请选择"/>}.into_any()}else{view!{<ObjectSelect id="budget-object-key" label="API Key（所属用户 · 名称）" group="keys" value=id objects=objects active_only=Signal::derive(||true) empty_label="请选择"/>}.into_any()}}
     <div class="billing-field"><label for="budget-limit">"总限额（USD）"</label><input id="budget-limit" type="text" inputmode="decimal" prop:value=limit aria-describedby="budget-help budget-error" placeholder="留空表示无限额" on:input=move|e|limit.set(event_target_value(&e))/><small id="budget-help" class="muted">"总限额包含已使用金额，最多6位小数。"</small></div>
     <button type="button" class="ghost" on:click=move |_|limit.set(String::new())>"解除限额"</button>
     <label class="account-check"><input type="checkbox" prop:checked=frozen on:change=move|e|frozen.set(event_target_checked(&e))/><span>"冻结后续调用（取消勾选恢复额度使用）"</span></label>
@@ -319,23 +351,46 @@ fn current_hold(row:&Value)->String {
 }
 fn usage_basis(row:&Value)->String {match row["usage_certainty"].as_str().unwrap_or(""){"reported"=>"上游报告","estimated"=>"估算","unpriced"=>"未定价","not_sent"=>"未发送","pending"=>"待确认",_=>"未知"}.into()}
 fn updated_time()->String {let d=js_sys::Date::new_0();format!("{:02}:{:02}:{:02}",d.get_hours(),d.get_minutes(),d.get_seconds())}
+const DEFAULT_USAGE_STATE: &str = "active";
+const DEFAULT_USAGE_LIMIT: &str = "50";
+
+fn default_usage_query() -> String {
+    format!("limit={DEFAULT_USAGE_LIMIT}&state={DEFAULT_USAGE_STATE}")
+}
+
 #[component]
 fn Usage(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
-    let snapshot=RwSignal::new(String::new());let user=RwSignal::new(String::new());let key=RwSignal::new(String::new());let channel=RwSignal::new(String::new());let model=RwSignal::new(String::new());let state=RwSignal::new("all".to_string());let count=RwSignal::new("50".to_string());
-    let rows=RwSignal::new(Vec::<Value>::new());let cursor=RwSignal::new(None::<i64>);let busy=RwSignal::new(false);let error=RwSignal::new(String::new());let message=RwSignal::new(String::new());let page=RwSignal::new(0usize);let starts=RwSignal::new(vec![None::<i64>]);let active_query=RwSignal::new("limit=50&state=all".to_string());
+    let snapshot=RwSignal::new(String::new());let user=RwSignal::new(String::new());let key=RwSignal::new(String::new());let channel=RwSignal::new(String::new());let model=RwSignal::new(String::new());let state=RwSignal::new(DEFAULT_USAGE_STATE.to_string());let count=RwSignal::new(DEFAULT_USAGE_LIMIT.to_string());
+    let current_only=Signal::derive(move||state.get()==DEFAULT_USAGE_STATE);
+    let change_state=move|e| {
+        let next=event_target_value(&e);
+        if next==DEFAULT_USAGE_STATE {
+            objects.with_untracked(|catalog| {
+                for (group,selection) in [("users",user),("keys",key),("channels",channel)] {
+                    let selected=selection.get_untracked();
+                    if !selected.is_empty() && !api::rows(catalog,group).iter()
+                        .any(|o|active_object(o)&&api::text(o,"id")==selected) {
+                        selection.set(String::new());
+                    }
+                }
+            });
+        }
+        state.set(next);
+    };
+    let rows=RwSignal::new(Vec::<Value>::new());let cursor=RwSignal::new(None::<i64>);let busy=RwSignal::new(false);let error=RwSignal::new(String::new());let message=RwSignal::new(String::new());let page=RwSignal::new(0usize);let starts=RwSignal::new(vec![None::<i64>]);let active_query=RwSignal::new(default_usage_query());
     let fetch=move|base:String,before:Option<i64>,target:usize|{if busy.get_untracked(){return;}busy.set(true);error.set(String::new());message.set("正在查询…".into());let query=if let Some(id)=before{format!("{base}&before_id={id}")}else{base.clone()};
         leptos::task::spawn_local(async move{match api::request("GET",&format!("/api/usage?{query}"),None).await{Ok(v)=>{let found=api::rows(&v,"entries");let len=found.len();cursor.set(v["next_before_id"].as_i64());rows.set(found);page.set(target);if target==0{starts.set(vec![None]);active_query.set(base);}else{starts.update(|s|{s.truncate(target);s.push(before);});}message.set(format!("查询完成 · 第 {} 页 · {} 条记录 · 更新于 {}",target+1,len,updated_time()));},Err(e)=>{ctx.note_err(&e);error.set(e.message);message.set("查询失败，保留上次结果。".into());}}busy.set(false);});};
-    fetch("limit=50&state=all".into(),None,0);
+    fetch(default_usage_query(),None,0);
     let search=move|ev:leptos::ev::SubmitEvent|{ev.prevent_default();if busy.get_untracked(){return;}let n=match api::integer(&count.get_untracked(),"每页条数",true){Ok(v)if v<=200=>v,_=>{error.set("每页条数必须在1至200之间".into());return;}};let mut q=format!("limit={n}&state={}",state.get_untracked());for (value,name) in [(user,"user_id"),(key,"key_id"),(channel,"channel_id")] {if !value.get_untracked().is_empty(){q.push_str(&format!("&{name}={}",api::encode(&value.get_untracked())));}}if !model.get_untracked().trim().is_empty(){q.push_str(&format!("&model={}",api::encode(model.get_untracked().trim())));}fetch(q,None,0);};
-    view!{<section class="card billing-usage"><header class="card-head"><div><h2>"用量账本"</h2><p class="muted small">"按调用尝试记录费用；重试或回退可产生多笔账目。历史账目完整保留。"</p></div></header><div class="card-body">
+    view!{<section class="card billing-usage"><header class="card-head"><div><h2>"用量账本"</h2><p class="muted small">"默认查看关联对象当前有效的账目。查旧账时，将关联对象状态切换为“历史对象”或“全部（含历史）”。"</p></div></header><div class="card-body">
     <form class="billing-filter" on:submit=search><fieldset disabled=move||busy.get()><div class="billing-filters">
-    <ObjectSelect id="usage-user" label="用户" group="users" value=user objects=objects/>
-    <ObjectSelect id="usage-key" label="API Key（所属用户 · 名称）" group="keys" value=key objects=objects/>
-    <ObjectSelect id="usage-channel" label="上游接入" group="channels" value=channel objects=objects/>
+    <ObjectSelect id="usage-user" label="用户" group="users" value=user objects=objects active_only=current_only/>
+    <ObjectSelect id="usage-key" label="API Key（所属用户 · 名称）" group="keys" value=key objects=objects active_only=current_only/>
+    <ObjectSelect id="usage-channel" label="上游接入" group="channels" value=channel objects=objects active_only=current_only/>
     <div class="billing-field"><label for="usage-model">"模型（精确匹配）"</label><input id="usage-model" prop:value=model on:input=move|e|model.set(event_target_value(&e))/></div>
-    <div class="billing-field"><label for="usage-state">"关联对象状态"</label><select id="usage-state" prop:value=state on:change=move|e|state.set(event_target_value(&e))><option value="all">"全部（含历史）"</option><option value="active">"当前有效"</option><option value="historical">"历史 / 已停用"</option></select></div>
+    <div class="billing-field"><label for="usage-state">"关联对象状态"</label><select id="usage-state" prop:value=state on:change=change_state><option value="active">"当前有效"</option><option value="historical">"历史对象"</option><option value="all">"全部（含历史）"</option></select></div>
     <div class="billing-field"><label for="usage-limit">"每页条数"</label><select id="usage-limit" prop:value=count on:change=move|e|count.set(event_target_value(&e))><option value="10">"10"</option><option value="50">"50"</option><option value="100">"100"</option><option value="200">"200"</option></select></div>
-    </div><div class="billing-filter-actions"><button class="primary" type="submit">{move||if busy.get(){"查询中…"}else{"查询"}}</button><button type="button" class="ghost" on:click=move |_|{user.set(String::new());key.set(String::new());channel.set(String::new());model.set(String::new());state.set("all".into());count.set("50".into());fetch("limit=50&state=all".into(),None,0);}>"重置筛选"</button></div></fieldset></form>
+    </div><div class="billing-filter-actions"><button class="primary" type="submit">{move||if busy.get(){"查询中…"}else{"查询"}}</button><button type="button" class="ghost" on:click=move |_|{user.set(String::new());key.set(String::new());channel.set(String::new());model.set(String::new());state.set(DEFAULT_USAGE_STATE.into());count.set(DEFAULT_USAGE_LIMIT.into());fetch(default_usage_query(),None,0);}>"重置筛选"</button></div></fieldset></form>
     <p id="usage-error" role="alert">{move||error.get()}</p><p class="billing-query-status" role="status" aria-live="polite">{move||message.get()}</p>
     <details class="billing-help"><summary>"如何理解账目与费用"</summary><p>"扣款是用户额度的实际扣减；成本为上游报告或估算，不能直接当作供应商对账结果；当前占用仅指尚未结算的额度，结算后显示0；初始预占记录保留在详情中。金额单位 USD。未知不等于免费。"</p><p>"系统诊断单独标识，不扣用户费用。历史对象包括停用、删除、撤销或到期的用户、Key、上游接入。"</p>{move||api::billing_page_summary(&rows.get()).into_iter().map(|line|view!{<p class="muted small">{line}</p>}).collect_view()}</details>
     <div class="table-wrap"><table><thead><tr><th>"用户 / Key"</th><th>"上游接入 / 模型"</th><th>"结果"</th><th>"用量"</th><th>"用户扣款"</th><th>"上游成本"</th><th>"当前占用"</th><th>"详情"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{

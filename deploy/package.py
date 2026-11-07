@@ -13,6 +13,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_VERSION = 45
 
 def digest(path):
     h = hashlib.sha256()
@@ -25,6 +26,40 @@ def linux_elf(path):
     header = path.read_bytes()[:20]
     if len(header) != 20 or header[:6] != b'\x7fELF\x02\x01' or struct.unpack('<H', header[18:20])[0] != 62:
         raise ValueError('artifact must be little-endian Linux x86_64 ELF64')
+
+def stage_migrations(root, tree):
+    """Archive reviewable SQL with the same byte concatenation as schema.rs."""
+    sources = {
+        '43': ('crates/server/src/db/request_paths.sql', 'deploy/migrations/43-request-paths.sql'),
+        '44': ('crates/server/src/db/account_overview.sql', 'deploy/migrations/44-account-overview.sql'),
+    }
+    parts = [
+        ('crates/server/src/db/query_performance.sql', 'deploy/migrations/45-query-performance.part.sql'),
+        ('crates/server/src/db/model_invocation_totals.sql', 'deploy/migrations/45-model-invocation-totals.part.sql'),
+    ]
+    # Read every required part first; a missing migration must never produce a
+    # distributable archive that silently omits part of the executed migration.
+    payloads = {source: (root / source).read_bytes() for source, _ in [*sources.values(), *parts]}
+    metadata = {}
+    for version, (source, archive) in sources.items():
+        target = tree / archive
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payloads[source])
+        metadata[version] = {'source_path': source, 'archive_path': archive,
+                             'sha256': hashlib.sha256(payloads[source]).hexdigest()}
+    part_metadata = []
+    for source, archive in parts:
+        (tree / archive).write_bytes(payloads[source])
+        part_metadata.append({'source_path': source, 'archive_path': archive,
+                              'sha256': hashlib.sha256(payloads[source]).hexdigest()})
+    # schema.rs uses concat!(include_str!(part0), "\n", include_str!(part1)).
+    # In particular, do not strip a final newline or normalize source line ends.
+    combined = payloads[parts[0][0]] + b'\n' + payloads[parts[1][0]]
+    archive = 'deploy/migrations/45-query-performance.sql'
+    (tree / archive).write_bytes(combined)
+    metadata['45'] = {'archive_path': archive, 'sha256': hashlib.sha256(combined).hexdigest(),
+                      'parts': part_metadata, 'composition': 'parts[0] + "\\n" + parts[1]'}
+    return metadata
 
 def main():
     if platform.system() != 'Linux' or platform.machine() != 'x86_64':
@@ -47,13 +82,7 @@ def main():
             raise ValueError('Trunk release output missing index, WASM, or JS')
         shutil.copytree(web, tree / 'web')
         shutil.copytree(ROOT / 'deploy', tree / 'deploy', ignore=shutil.ignore_patterns('__pycache__'))
-        migration_source = ROOT / 'crates/server/src/db/request_paths.sql'
-        migration_archive = 'deploy/migrations/43-request-paths.sql'
-        (tree / migration_archive).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(migration_source, tree / migration_archive)
-        owner_index_source = ROOT / 'crates/server/src/db/account_overview.sql'
-        owner_index_archive = 'deploy/migrations/44-account-overview.sql'
-        shutil.copy2(owner_index_source, tree / owner_index_archive)
+        migrations = stage_migrations(ROOT, tree)
         for document in ['deployment.md', 'operations-tokens.md', 'account-login.md']:
             shutil.copy2(ROOT / 'docs' / document, tree / document)
         # Ship the complete matching development/user docs and an optional
@@ -65,13 +94,7 @@ def main():
         shutil.copy2(ROOT / 'NOTICE', tree / 'NOTICE')
         manifest = {'commit': commit, 'target': 'x86_64-unknown-linux-gnu', 'rust': '1.98.0',
                     'trunk': '0.21.14', 'cargo_lock_sha256': digest(ROOT / 'Cargo.lock'),
-                    'schema_version': 44,
-                    'migrations': {'43': {'source_path': 'crates/server/src/db/request_paths.sql',
-                                          'archive_path': migration_archive,
-                                          'sha256': digest(migration_source)},
-                                   '44': {'source_path': 'crates/server/src/db/account_overview.sql',
-                                          'archive_path': owner_index_archive,
-                                          'sha256': digest(owner_index_source)}}}
+                    'schema_version': SCHEMA_VERSION, 'migrations': migrations}
         (tree / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         checksums = {str(p.relative_to(tree)): digest(p) for p in tree.rglob('*') if p.is_file()}
         (tree / 'checksums.json').write_text(json.dumps(checksums, sort_keys=True, indent=2) + '\n')

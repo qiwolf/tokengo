@@ -122,9 +122,15 @@ fn schema44_adds_only_the_owner_index_and_preserves_schema43_requests() {
     c.execute("INSERT INTO requests(user_id,key_id,ts_ms,endpoint,model,status,request_path,upstream_path) VALUES(1,1,100,'passthrough:91','internal','ok','/photos/clip','/clip')",[]).unwrap();
     let snapshot=|c:&rusqlite::Connection|c.query_row("SELECT id,user_id,key_id,ts_ms,endpoint,model,status,request_path,upstream_path FROM requests",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,Option<String>>(7)?,r.get::<_,Option<String>>(8)?))).unwrap();
     let before=snapshot(&c);let old_history=c.prepare("SELECT version,applied_at FROM schema_migrations ORDER BY version").unwrap().query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
-    db::migrate(&c).unwrap();assert_eq!(snapshot(&c),before);
+    // Verify the original v44 step on its own, then the current additive upgrade.
+    let (_,sql)=db::schema::MIGRATIONS.iter().find(|(version,_)|*version==44).unwrap();
+    c.execute_batch(sql).unwrap();c.execute("INSERT INTO schema_migrations(version) VALUES(44)",[]).unwrap();
+    assert_eq!(snapshot(&c),before);
     let history=c.prepare("SELECT version,applied_at FROM schema_migrations ORDER BY version").unwrap().query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();assert_eq!(&history[..old_history.len()],&old_history);assert_eq!(history.last().unwrap().0,44);assert_eq!(history.len(),old_history.len()+1);
     let definition:String=c.query_row("SELECT sql FROM sqlite_master WHERE name='requests_owner_recent'",[],|r|r.get(0)).unwrap();assert_eq!(definition,"CREATE INDEX requests_owner_recent ON requests(user_id,ts_ms DESC,id DESC)");
+    db::migrate(&c).unwrap();assert_eq!(snapshot(&c),before);
+    assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),45);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=43",[],|r|r.get::<_,i64>(0)).unwrap(),old_history.len() as i64);
 }
 #[test]
 fn model_statistics_follow_actual_logical_models_with_neutral_auto_and_passthrough_labels() {

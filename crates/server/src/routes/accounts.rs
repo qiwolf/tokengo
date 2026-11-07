@@ -698,6 +698,35 @@ struct PortalQuery {
     before_id: Option<i64>,
     limit: Option<u32>,
 }
+// Keep one statement/snapshot. SQLite uses a temporary DISTINCT tree when
+// COUNT(DISTINCT) shares an aggregate with SUM; this ordered owner-index group
+// counts unique request IDs separately without reading wide ledger rows.
+const PORTAL_SUMMARY_SQL:&str="SELECT (SELECT count(*) FROM (SELECT request_id FROM billing_ledger WHERE user_id=?1 AND request_id IS NOT NULL GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL),0),coalesce(sum(debit_micro),0) FROM billing_ledger WHERE user_id=?1";
+#[cfg(test)]
+mod portal_query_plan_tests {
+    #[test]
+    fn lifetime_summary_matches_distinct_oracle_for_nulls_retries_and_owners() {
+        let c=rusqlite::Connection::open_in_memory().unwrap();
+        // Nullable request IDs also pin COUNT(DISTINCT)'s NULL exclusion on
+        // legacy projections, although the current ledger column is NOT NULL.
+        c.execute_batch("CREATE TABLE billing_ledger(user_id INTEGER,request_id INTEGER,input_tokens INTEGER,output_tokens INTEGER,price_id INTEGER,request_price_id INTEGER,debit_micro INTEGER);
+          CREATE INDEX billing_ledger_portal_summary ON billing_ledger(user_id,request_id,input_tokens,output_tokens,price_id,request_price_id,debit_micro);
+          INSERT INTO billing_ledger VALUES(1,1,10,2,1,NULL,3),(1,1,NULL,2,NULL,1,NULL),(1,2,10,NULL,NULL,NULL,0),(1,NULL,NULL,NULL,NULL,NULL,NULL),(1,0,0,0,NULL,NULL,2),(1,0,1,1,1,NULL,1),(2,1,999999,999999,NULL,NULL,999999);").unwrap();
+        let original="SELECT count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL),0),coalesce(sum(debit_micro),0) FROM billing_ledger WHERE user_id=?1";
+        for owner in [1,2,3] {
+            let collect=|sql:&str|c.query_row(sql,[owner],|r|(0..8).map(|i|r.get::<_,i64>(i)).collect::<rusqlite::Result<Vec<_>>>()).unwrap();
+            assert_eq!(collect(super::PORTAL_SUMMARY_SQL),collect(original),"owner={owner}");
+        }
+    }
+    #[test]
+    fn lifetime_summary_reads_only_owner_covering_index() {
+        let c=crate::db::open_in_memory().unwrap();
+        let mut q=c.prepare(&format!("EXPLAIN QUERY PLAN {}",super::PORTAL_SUMMARY_SQL)).unwrap();
+        let plan=q.query_map([1],|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n");
+        assert!(plan.contains("COVERING INDEX billing_ledger_portal_summary (user_id=?)"),"{plan}");
+        assert!(!plan.contains("TEMP B-TREE"),"{plan}");
+    }
+}
 async fn portal(
     browser: Browser,
     State(state): State<SharedState>,
@@ -726,7 +755,7 @@ async fn portal(
     )?;
     let next = rows.last().map(|r| r.id);
     let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
-    let summary=c.query_row("SELECT count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL),0),coalesce(sum(debit_micro),0) FROM billing_ledger WHERE user_id=?1",[user],|r|Ok(json!({"request_count":r.get::<_,i64>(0)?,"ledger_count":r.get::<_,i64>(1)?,"input_tokens":r.get::<_,i64>(2)?,"output_tokens":r.get::<_,i64>(3)?,"unknown_input_entries":r.get::<_,i64>(4)?,"unknown_output_entries":r.get::<_,i64>(5)?,"unpriced_entries":r.get::<_,i64>(6)?,"known_debit_micro":r.get::<_,i64>(7)?}))).map_err(db::DbError::from)?;
+    let summary=c.query_row(PORTAL_SUMMARY_SQL,[user],|r|Ok(json!({"request_count":r.get::<_,i64>(0)?,"ledger_count":r.get::<_,i64>(1)?,"input_tokens":r.get::<_,i64>(2)?,"output_tokens":r.get::<_,i64>(3)?,"unknown_input_entries":r.get::<_,i64>(4)?,"unknown_output_entries":r.get::<_,i64>(5)?,"unpriced_entries":r.get::<_,i64>(6)?,"known_debit_micro":r.get::<_,i64>(7)?}))).map_err(db::DbError::from)?;
     Ok(Json(
         json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"entries":entries,"next_before_id":next}}),
     ))

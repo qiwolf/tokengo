@@ -29,11 +29,15 @@ use crate::gateway::{self, EndpointKind, ForwardRequest};
 use crate::SharedState;
 use tokengo_shared::ModelKind;
 
+// Generation requests may include conversation history, tool results and inline media.
+const DIALOGUE_BODY_LIMIT: usize = 64 * 1024 * 1024;
+
 pub fn router() -> Router<SharedState> {
+    let dialogue_body_limit = DefaultBodyLimit::max(DIALOGUE_BODY_LIMIT);
     Router::new()
-        .route("/chat/completions", post(chat_completions))
-        .route("/responses", post(responses))
-        .route("/messages", post(messages))
+        .route("/chat/completions", post(chat_completions).layer(dialogue_body_limit))
+        .route("/responses", post(responses).layer(dialogue_body_limit))
+        .route("/messages", post(messages).layer(dialogue_body_limit))
         .route("/embeddings", post(embeddings).layer(DefaultBodyLimit::max(vector_body_limit())))
         .route("/rerank", post(rerank).layer(DefaultBodyLimit::max(vector_body_limit())))
         .route("/tools/search", post(search))

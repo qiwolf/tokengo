@@ -65,6 +65,8 @@ fn prepare(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     migrate(conn)?;
+    // Rebuild derived lifetime totals before accepting traffic, never on first page load.
+    scores::total_calls(conn)?;
     Ok(())
 }
 
@@ -163,7 +165,7 @@ mod tests {
         let before=rows(&c);
         migrate(&c).unwrap();migrate(&c).unwrap();
         // Current migration also adds the owner-history index after the path columns.
-        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),44);
+        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),45);
         assert_eq!(rows(&c),before,"all preexisting request columns remain byte/value-equivalent");
         assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=42 AND applied_at='preserved-v42'",[],|r|r.get::<_,i64>(0)).unwrap(),42);
         assert_eq!(c.query_row("SELECT request_path IS NULL AND upstream_path IS NULL FROM requests",[],|r|r.get::<_,bool>(0)).unwrap(),true);
@@ -195,6 +197,9 @@ mod tests {
             "model_vision_checks",
             "model_cooldowns",
             "model_invocations",
+            "model_invocation_dirty",
+            "model_invocation_canonical",
+            "model_invocation_totals",
             "panel_sessions",
             "panel_accounts",
             "provider_channels",
@@ -435,3 +440,28 @@ pub mod user_virtual_routes;
 
 pub mod shared_virtual_routes;
 pub mod model_access;
+
+#[cfg(test)]
+mod query_performance_migration_tests {
+    use super::*;
+    #[test]
+    fn upgrade_v44_keeps_history_and_prewarms_exact_rebuildable_totals() {
+        let c=Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL DEFAULT(datetime('now')))").unwrap();
+        for (v,sql) in schema::MIGRATIONS.iter().filter(|(v,_)|*v<=44) {
+            c.execute_batch(sql).unwrap();
+            c.execute("INSERT INTO schema_migrations(version) VALUES(?1)",[v]).unwrap();
+        }
+        c.execute_batch("INSERT INTO requests(id,ts_ms,endpoint,model,status,error) VALUES(1,100,'chat','Model-A','ok','synthetic history'); INSERT INTO model_invocations VALUES(1,'Model-A'),(1,'model_a'),(2,'Model-A');").unwrap();
+        prepare(&c).unwrap();
+        assert_eq!(scores::total_calls(&c).unwrap()["model a"],2);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM model_invocations",[],|r|r.get::<_,i64>(0)).unwrap(),3);
+        assert_eq!(c.query_row("SELECT error FROM requests WHERE id=1",[],|r|r.get::<_,String>(0)).unwrap(),"synthetic history");
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM model_invocation_dirty",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        // Reopen/prepare remains idempotent, and old binaries can continue writing
+        // the authoritative invocation table after an additive-schema rollback.
+        prepare(&c).unwrap();
+        c.execute("INSERT INTO model_invocations VALUES(3,'model a')",[]).unwrap();
+        assert_eq!(scores::total_calls(&c).unwrap()["model a"],3);
+    }
+}

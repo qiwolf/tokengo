@@ -161,9 +161,10 @@ async fn admin_usage(
     Query(q): Query<UsageQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let conn = state.conn();
-    let entries = billing::usage(&conn, &q).map_err(mutation_error)?;
-    let next = billing::usage_next_before(&conn, &q, &entries).map_err(mutation_error)?;
-    let entries=db::billing_management::enrich_entries(&conn,entries)?;
+    let state=db::billing_management::validated_state(q.state.as_deref(),"all").map_err(mutation_error)?;
+    let catalog=if state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
+    let (entries,next)=billing::usage_page_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
+    let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
     Ok(Json(json!({"entries":entries,"next_before_id":next})))
 }
 async fn self_usage(
@@ -174,8 +175,7 @@ async fn self_usage(
     q.user_id = Some(key.auth.user_id);
     q.key_id = Some(key.auth.key_id);
     let conn = state.conn();
-    let entries = billing::usage(&conn, &q).map_err(mutation_error)?;
-    let next = billing::usage_next_before(&conn, &q, &entries).map_err(mutation_error)?;
+    let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
     let mut budgets = billing::budgets(&conn, Some("user"), Some(key.auth.user_id))?;
     budgets.extend(billing::budgets(&conn, Some("key"), Some(key.auth.key_id))?);
     Ok(Json(

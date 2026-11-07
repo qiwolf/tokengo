@@ -1461,6 +1461,61 @@ async fn model_cooldown_reset(_auth:ManagementAuth,State(state):State<SharedStat
  }Ok(Json(serde_json::json!({"ok":true})))
 }
 
+// The first row in each name's descending schedule is the same status the
+// per-model ORDER BY next_at DESC LIMIT 1 used to return. One request-local read
+// avoids repeatedly walking model_type_checks for every displayed model.
+fn latest_model_type_statuses(c: &rusqlite::Connection) -> crate::db::Result<std::collections::HashMap<String,String>> {
+    let mut q=c.prepare("SELECT model_name,status FROM model_type_checks ORDER BY model_name,next_at DESC")?;
+    let mut out=std::collections::HashMap::new();
+    for row in q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))? {
+        let(name,status)=row?;
+        out.entry(name).or_insert(status);
+    }
+    Ok(out)
+}
+
+const EXPLORATION_COUNTS_SQL:&str="SELECT served_model,COUNT(*) FROM requests WHERE explored=1 AND served_model IS NOT NULL GROUP BY served_model";
+
+#[cfg(test)]
+mod model_list_query_tests {
+    #[test]
+    fn exploration_counts_cover_real_not_null_schema_with_fixed_vm_budget() {
+        let c=crate::db::open_in_memory().unwrap();
+        let not_null:i64=c.query_row("SELECT [notnull] FROM pragma_table_info('requests') WHERE name='served_model'",[],|r|r.get(0)).unwrap();
+        assert_eq!(not_null,1,"fixture must use the real NOT NULL schema");
+        c.execute_batch("WITH RECURSIVE n(i) AS(VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000)
+          INSERT INTO requests(ts_ms,endpoint,model,served_model,status,explored,error)
+          SELECT i,'/v1/chat/completions','ordinary','ordinary','ok',0,printf('%01024d',0) FROM n;
+          INSERT INTO requests(ts_ms,endpoint,model,served_model,status,explored) VALUES(20001,'/v1/chat/completions','chosen','chosen','ok',1);").unwrap();
+        let mut q=c.prepare(&format!("EXPLAIN QUERY PLAN {}",super::EXPLORATION_COUNTS_SQL)).unwrap();
+        let plan=q.query_map([],|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n");
+        assert!(plan.contains("COVERING INDEX requests_exploration_model"),"{plan}");
+        assert!(!plan.contains("TEMP B-TREE"),"{plan}");
+        assert!(!plan.lines().any(|line|line.trim()=="SCAN requests"||line.starts_with("SCAN TABLE requests")),"{plan}");
+        drop(q);
+        let mut q=c.prepare(super::EXPLORATION_COUNTS_SQL).unwrap();
+        c.progress_handler(1000,Some(||true)).unwrap();
+        let result=q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))
+          .and_then(|rows|rows.collect::<rusqlite::Result<Vec<_>>>());
+        c.progress_handler(0,None::<fn()->bool>).unwrap();
+        assert_eq!(result.expect("exploration aggregation must not scan 20k unexplored requests"),vec![("chosen".to_string(),1)]);
+    }
+    #[test]
+    fn batched_detection_statuses_match_latest_schedule_per_model() {
+        let c=crate::db::open_in_memory().unwrap();
+        c.execute_batch("INSERT INTO channels(id,name,base_url) VALUES(1,'first','http://fixture.invalid'),(2,'second','http://fixture.invalid');
+          INSERT INTO model_type_checks(channel_id,model_name,fingerprint,next_at,status) VALUES(1,'a','fixture',10,'old'),(2,'a','fixture',20,'new'),(1,'b','fixture',5,'pending');").unwrap();
+        let got=super::latest_model_type_statuses(&c).unwrap();
+        for name in ["a","b"] {
+            let expected:String=c.query_row("SELECT status FROM model_type_checks WHERE model_name=?1 ORDER BY next_at DESC LIMIT 1",[name],|r|r.get(0)).unwrap();
+            assert_eq!(got[name],expected);
+        }
+        assert_eq!(got.len(),2);
+        c.execute("UPDATE model_type_checks SET next_at=30,status='updated' WHERE channel_id=1 AND model_name='a'",[]).unwrap();
+        assert_eq!(super::latest_model_type_statuses(&c).unwrap()["a"],"updated");
+    }
+}
+
 async fn model_routes_list(
     _auth: ManagementAuth,
     State(state): State<SharedState>,
@@ -1493,24 +1548,24 @@ async fn model_routes_list(
     let route_states = state.routing().all_states().clone();
     let exploration_counts: std::collections::HashMap<String,i64> = {
         let c=state.conn();
-        let mut q=c.prepare("SELECT served_model,COUNT(*) FROM requests WHERE explored=1 AND served_model IS NOT NULL GROUP BY served_model").map_err(crate::db::DbError::from)?;
+        let mut q=c.prepare(EXPLORATION_COUNTS_SQL).map_err(crate::db::DbError::from)?;
         let rows = q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?))).map_err(crate::db::DbError::from)?
             .collect::<rusqlite::Result<_>>().map_err(crate::db::DbError::from)?;
         rows
     };
+    let detection_statuses = latest_model_type_statuses(&state.conn()).unwrap_or_default();
     let rows = routes
         .iter()
         .map(|r| {
             let st = route_states.get(&r.name).cloned().unwrap_or_default();
-            let detection_status = {
-                let conn=state.conn();
-                conn.query_row("SELECT status FROM model_type_checks WHERE model_name=?1 ORDER BY next_at DESC LIMIT 1", [&r.name], |x| x.get::<_,String>(0)).unwrap_or_else(|_| if r.kind.is_set() { String::new() } else { "等待自动识别".into() })
-            };
+            let detection_status = detection_statuses.get(&r.name).cloned()
+                .unwrap_or_else(|| if r.kind.is_set() { String::new() } else { "等待自动识别".into() });
+            let catalog_purpose = {let c=state.conn();crate::db::model_access::catalog_purpose(&c,&r.name).unwrap_or_default()};
             serde_json::json!({
                 "name": r.name,
                 "display_name": ({let c=state.conn();crate::db::model_access::display_name(&c,&r.name).unwrap_or_default()}),
-                "catalog_purpose": ({let c=state.conn();crate::db::model_access::catalog_purpose(&c,&r.name).unwrap_or_default()}),
-                "catalog_purpose_label": ({let c=state.conn();crate::db::model_access::catalog_purpose_label(&crate::db::model_access::catalog_purpose(&c,&r.name).unwrap_or_default())}),
+                "catalog_purpose": catalog_purpose,
+                "catalog_purpose_label": crate::db::model_access::catalog_purpose_label(&catalog_purpose),
                 "visible": ({let c=state.conn();model_routes::visible(&c,&r.name).unwrap_or(false)}),
                 "internal_only": ({let c=state.conn();crate::db::model_access::internal_only(&c,&r.name).unwrap_or(true)}),
                 "sources": ({let c=state.conn();crate::db::provider_channels::source_json_from_channels(&c,&r.name,&channels).unwrap_or_default()}),

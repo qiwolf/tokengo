@@ -18,7 +18,10 @@ pub fn move_model(c:&Connection,name:&str,up:bool)->Result<()>{let mut list=orde
 /// Names are already capability-filtered; time and random inputs are injected for testing.
 pub fn rank(c:&Connection,names:&mut Vec<String>,p:&Policy,seq:u64,draw:u64)->Result<Option<String>>{
  let order=ordered(c)?;names.sort_by_key(|n|order.iter().position(|x|norm(x)==norm(n)).unwrap_or(usize::MAX));
- let stats=scores::all(c,super::now_ms())?;
+ let scoring=matches!(p.strategy.as_str(),"fastest"|"stable");
+ // Sequence, balance and idle are metadata-only decisions. Do not couple every
+ // normal request to the size (or availability) of the attempt history.
+ let mut stats=if scoring {scores::all(c,super::now_ms())?}else{std::collections::HashMap::new()};
  match p.strategy.as_str(){
  "balanced"=>{if !names.is_empty(){let n=names.len();names.rotate_left(seq as usize%n);}},
  "fastest"=>names.sort_by_key(|n|{let s=stats.get(&norm(n));(s.map(|s|s.samples<5).unwrap_or(true),s.and_then(|s|s.avg_first_byte_ms.or(s.avg_ms)).unwrap_or(i64::MAX))}),
@@ -27,8 +30,8 @@ pub fn rank(c:&Connection,names:&mut Vec<String>,p:&Policy,seq:u64,draw:u64)->Re
  let mut explored=None;
  if p.explore && draw%100<5 && names.len()>1 {
   // Lifetime attribution determines unused; a window expiry is not 'never used'.
-  let unused:Vec<String>=names.iter().filter(|n|c.query_row("SELECT COUNT(*) FROM attempts WHERE model_name=?1",[n.as_str()],|r|r.get::<_,i64>(0)).unwrap_or(0)==0).cloned().collect();
-  let pool=if unused.is_empty(){let mut low=names.clone();low.sort_by(|a,b|stats.get(&norm(a)).map(|s|s.value()).unwrap_or(-1.0).total_cmp(&stats.get(&norm(b)).map(|s|s.value()).unwrap_or(-1.0)));low.truncate((low.len()+1)/2);low}else{unused};
+  let unused:Vec<String>=names.iter().filter(|n|!c.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE model_name=?1)",[n.as_str()],|r|r.get::<_,bool>(0)).unwrap_or(false)).cloned().collect();
+  let pool=if unused.is_empty(){if !scoring {stats=scores::all(c,super::now_ms())?;}let mut low=names.clone();low.sort_by(|a,b|stats.get(&norm(a)).map(|s|s.value()).unwrap_or(-1.0).total_cmp(&stats.get(&norm(b)).map(|s|s.value()).unwrap_or(-1.0)));low.truncate((low.len()+1)/2);low}else{unused};
   if !pool.is_empty(){let pick=pool[(draw/100) as usize%pool.len()].clone();if let Some(i)=names.iter().position(|n|n==&pick){let n=names.remove(i);names.insert(0,n);explored=Some(pick);}}
  }
  Ok(explored)
@@ -70,6 +73,34 @@ pub fn reset(c:&Connection,name:&str,id:Option<i64>)->Result<()>{c.execute("UPDA
  use super::*;
  fn fixture()->Connection{let c=crate::db::open_in_memory().unwrap();c.execute("INSERT INTO channels(name,base_url,enabled) VALUES('x','http://x',1)",[]).unwrap();for n in ["a","b","c"]{c.execute("INSERT INTO channel_models(channel_id,model_name) VALUES(1,?1)",[n]).unwrap();}c}
  #[test]fn sequence_is_persistent_and_balance_rotates(){let c=fixture();move_model(&c,"b",true).unwrap();let mut n=vec!["c".into(),"a".into(),"b".into()];rank(&c,&mut n,&Policy::default(),10,0).unwrap();assert_eq!(n,vec!["b","a","c"]);let p=Policy{strategy:"balanced".into(),explore:false};rank(&c,&mut n,&p,1,0).unwrap();assert_eq!(n,vec!["a","c","b"]);}
+ #[test]
+ fn non_scoring_strategies_do_not_read_attempt_history() {
+  let c=fixture();
+  // A missing history store exposes accidental work even with no samples. The
+  // ordering metadata remains intact, so these strategies must still operate.
+  c.execute_batch("DROP TABLE attempts;").unwrap();
+  for strategy in ["sequence","balanced","idle"] {
+   for (explore,draw) in [(false,0),(true,99)] {
+    let mut names=vec!["b".into(),"a".into()];
+    assert!(rank(&c,&mut names,&Policy{strategy:strategy.into(),explore},1,draw).unwrap().is_none());
+    assert_eq!(names.len(),2);
+   }
+  }
+  let mut names=vec!["a".into(),"b".into()];
+  assert!(rank(&c,&mut names,&Policy{strategy:"fastest".into(),explore:false},0,99).is_err(),"scoring policies must still consult the actual history");
+ }
+ #[test]
+ fn exploration_short_circuits_used_history_and_prefers_unused_model() {
+  let c=fixture();
+  c.execute_batch("INSERT INTO requests(id,ts_ms,endpoint,model,status) VALUES(1,0,'/v1/chat/completions','a','ok'); WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO attempts(request_id,ordinal,channel_id,outcome,model_name) SELECT 1,0,1,'success','a' FROM n;").unwrap();
+  unsafe extern "C" fn stop(_: *mut std::ffi::c_void) -> std::ffi::c_int { 1 }
+  unsafe { rusqlite::ffi::sqlite3_progress_handler(c.handle(),1000,Some(stop),std::ptr::null_mut()); }
+  let mut names=vec!["a".into(),"b".into()];
+  let result=rank(&c,&mut names,&Policy{strategy:"sequence".into(),explore:true},0,0);
+  unsafe { rusqlite::ffi::sqlite3_progress_handler(c.handle(),0,None,std::ptr::null_mut()); }
+  assert_eq!(result.unwrap(),Some("b".into()),"checking whether a model was ever used must stop at its first indexed match");
+  assert_eq!(names[0],"b");
+ }
  #[test]fn exploration_is_disabled_by_default_and_only_five_percent_of_draws(){let c=fixture();let mut count=0;for draw in 0..100{let mut n=vec!["a".into(),"b".into()];assert!(rank(&c,&mut n,&Policy::default(),0,draw).unwrap().is_none());let mut p=Policy::default();p.explore=true;if rank(&c,&mut n,&p,0,draw).unwrap().is_some(){count+=1;}}assert_eq!(count,5);}
  #[test]fn cooldown_survives_reopen_and_success_clears_failures(){let c=fixture();let g=claim(&c,1,"a","a",0).unwrap().unwrap();for _ in 0..3 {complete(&c,1,"a","a",g,false,"429",120000,0).unwrap();}assert_eq!(peek(&c,1,"a","a",1).unwrap(),Some(120000));let g=claim(&c,1,"a","a",120001).unwrap().unwrap();complete(&c,1,"a","a",g,true,"",0,120002).unwrap();assert_eq!(rows(&c,"a").unwrap()[0].failures,0);}
 }

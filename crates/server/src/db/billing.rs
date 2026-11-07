@@ -145,7 +145,7 @@ pub fn create_price(conn: &Connection, p: &Price, actor: &str) -> Result<Price> 
     c.commit()?;
     Ok(out)
 }
-fn budget_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Budget> {
+pub(super) fn budget_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Budget> {
     Ok(Budget {
         scope: r.get(0)?,
         scope_id: r.get(1)?,
@@ -161,9 +161,14 @@ pub fn budgets(conn: &Connection, scope: Option<&str>, id: Option<i64>) -> Resul
             return Err(bad("invalid budget scope"));
         }
     }
-    let mut s=conn.prepare("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE (?1 IS NULL OR scope=?1) AND (?2 IS NULL OR scope_id=?2) ORDER BY scope,scope_id LIMIT 1000")?;
+    let mut sql="SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE 1=1".to_string();
+    let mut args=Vec::<rusqlite::types::Value>::new();
+    if let Some(scope)=scope {sql.push_str(" AND scope=?");args.push(scope.to_string().into());}
+    if let Some(id)=id {sql.push_str(" AND scope_id=?");args.push(id.into());}
+    sql.push_str(" ORDER BY scope,scope_id LIMIT 1000");
+    let mut s=conn.prepare(&sql)?;
     let out = s
-        .query_map(params![scope, id], budget_row)?
+        .query_map(rusqlite::params_from_iter(args), budget_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(out)
 }
@@ -601,30 +606,64 @@ pub struct UsageQuery {
     pub limit: Option<u32>,
     pub state: Option<String>,
 }
-pub fn usage(conn: &Connection, q: &UsageQuery) -> Result<Vec<Ledger>> {
-    let state = super::billing_management::validated_state(q.state.as_deref(), "all")?;
-    let catalog = if state == "all" { None } else { Some(super::billing_management::objects(conn)?) };
-    let ids = |kind: &str| catalog.as_ref().map(|v| v[kind].as_array().unwrap().iter().filter(|v|v["state"]=="active").filter_map(|v|v["id"].as_i64()).collect::<Vec<_>>()).unwrap_or_default();
-    let users=serde_json::to_string(&ids("users")).map_err(|_|bad("invalid users"))?;
-    let keys=serde_json::to_string(&ids("keys")).map_err(|_|bad("invalid keys"))?;
-    let channels=serde_json::to_string(&ids("channels")).map_err(|_|bad("invalid channels"))?;
-    let sql=format!("{LEDGER_SELECT} WHERE (?1 IS NULL OR user_id=?1) AND (?2 IS NULL OR key_id=?2) AND (?3 IS NULL OR channel_id=?3) AND (?4 IS NULL OR model=?4) AND (?5 IS NULL OR id<?5) AND (?10='all' OR ((user_id IN (SELECT value FROM json_each(?7)) AND key_id IN (SELECT value FROM json_each(?8)) AND channel_id IN (SELECT value FROM json_each(?9))) = (?10='active'))) ORDER BY id DESC LIMIT ?6");
-    let mut s = conn.prepare(&sql)?;
-    let rows = s
-        .query_map(
-            params![
-                q.user_id,
-                q.key_id,
-                q.channel_id,
-                q.model.as_deref().map(tokengo_shared::normalize_model_name),
-                q.before_id,
-                q.limit.unwrap_or(50).clamp(1, 200),
-                users, keys, channels, state
-            ],
-            ledger_row,
-        )?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+/// Build bound predicates only for supplied filters, so owner/source/model indexes
+/// remain usable. Catalogs are request-local observations, never authorization caches.
+fn usage_sql(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,limit:u32)->Result<(String,Vec<rusqlite::types::Value>)> {
+    use rusqlite::types::Value;
+    // A sparse lifecycle/object/model filter can reject large snapshots. Select
+    // IDs from a covering index first; the IN subquery's LIMIT bounds wide reads.
+    let lifecycle_page=state!="all"||q.user_id.is_some()||q.key_id.is_some()||q.channel_id.is_some()||q.model.is_some();
+    let lifecycle_index=if q.key_id.is_some() {"billing_ledger_key_lifecycle"}
+        else if q.user_id.is_some() {"billing_ledger_user_lifecycle"}
+        else if q.channel_id.is_some() {"billing_ledger_channel"}
+        else if q.model.is_some() {"billing_ledger_model"}
+        else {"billing_ledger_lifecycle_recent"};
+    let mut sql=if lifecycle_page {
+        format!("SELECT id FROM billing_ledger INDEXED BY {lifecycle_index} WHERE 1=1")
+    }else{format!("{LEDGER_SELECT} WHERE 1=1")};
+    let mut args=Vec::<Value>::new();
+    for (column,value) in [("user_id",q.user_id),("key_id",q.key_id),("channel_id",q.channel_id)] {
+        if let Some(value)=value {sql.push_str(&format!(" AND {column}=?"));args.push(value.into());}
+    }
+    if let Some(model)=&q.model {sql.push_str(" AND model=?");args.push(tokengo_shared::normalize_model_name(model).into());}
+    if let Some(id)=q.before_id {sql.push_str(" AND id<?");args.push(id.into());}
+    if state!="all" {
+        let catalog=catalog.ok_or_else(||bad("missing billing object catalog"))?;
+        sql.push_str(" AND ((user_id IN (SELECT value FROM json_each(?)) AND key_id IN (SELECT value FROM json_each(?)) AND channel_id IN (SELECT value FROM json_each(?))) = ?)");
+        for kind in ["users","keys","channels"] {
+            let ids=catalog[kind].as_array().ok_or_else(||bad("invalid billing object catalog"))?.iter().filter(|v|v["state"]=="active").filter_map(|v|v["id"].as_i64()).collect::<Vec<_>>();
+            args.push(serde_json::to_string(&ids).map_err(|_|bad("invalid billing object ids"))?.into());
+        }
+        args.push(i64::from(state=="active").into());
+    }
+    sql.push_str(" ORDER BY id DESC LIMIT ?");args.push(i64::from(limit).into());
+    if lifecycle_page {sql=format!("{LEDGER_SELECT} WHERE id IN ({sql}) ORDER BY id DESC");}
+    Ok((sql,args))
+}
+fn usage_rows(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json::Value>,limit:u32)->Result<Vec<Ledger>> {
+    let state=super::billing_management::validated_state(q.state.as_deref(),"all")?;
+    let owned;
+    let catalog=if state!="all"&&catalog.is_none() {owned=super::billing_management::current_objects(conn)?;Some(&owned)}else{catalog};
+    if state=="active"&&catalog.is_some_and(|catalog|["users","keys","channels"].iter().any(|kind|catalog[*kind].as_array().is_some_and(|objects|!objects.iter().any(|object|object["state"]=="active")))) {
+        return Ok(Vec::new());
+    }
+    let (sql,args)=usage_sql(q,state,catalog,limit)?;
+    let mut s=conn.prepare(&sql)?;
+    let rows=s.query_map(rusqlite::params_from_iter(args),ledger_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+pub fn usage(conn:&Connection,q:&UsageQuery)->Result<Vec<Ledger>> {
+    usage_rows(conn,q,None,q.limit.unwrap_or(50).clamp(1,200))
+}
+/// One bounded read determines both entries and a real continuation cursor.
+pub fn usage_page_with_catalog(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json::Value>)->Result<(Vec<Ledger>,Option<i64>)> {
+    let limit=q.limit.unwrap_or(50).clamp(1,200) as usize;
+    let mut rows=usage_rows(conn,q,catalog,(limit+1) as u32)?;
+    let next=if rows.len()>limit {rows.truncate(limit);rows.last().map(|r|r.id)}else{None};
+    Ok((rows,next))
+}
+pub fn usage_page(conn:&Connection,q:&UsageQuery)->Result<(Vec<Ledger>,Option<i64>)> {
+    usage_page_with_catalog(conn,q,None)
 }
 
 /// Offer a cursor only when another row exists under the exact same filters.
@@ -844,6 +883,119 @@ pub fn reserve_request(
 /// Known completed response: units0/1; canceled/read failure: None, never fake0.
 pub fn settle_request(conn: &Connection, id: i64, units: Option<i64>, status: &str) -> Result<()> {
     finish(conn, id, None, None, status, false, units, true)
+}
+
+#[cfg(test)]
+mod query_performance_tests {
+    use super::*;
+    fn plan(c:&Connection,sql:&str,args:Vec<rusqlite::types::Value>)->String {
+        c.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap()
+            .query_map(rusqlite::params_from_iter(args),|r|r.get::<_,String>(3)).unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n")
+    }
+    #[test]
+    fn selective_usage_and_money_queries_use_existing_or_covering_indexes() {
+        let c=crate::db::open_in_memory().unwrap();
+        for (q,index) in [
+            (UsageQuery{user_id:Some(2),..Default::default()},"billing_ledger_user_lifecycle"),
+            (UsageQuery{key_id:Some(3),..Default::default()},"billing_ledger_key_lifecycle"),
+            (UsageQuery{channel_id:Some(4),..Default::default()},"billing_ledger_channel"),
+            (UsageQuery{model:Some("synthetic".into()),..Default::default()},"billing_ledger_model"),
+        ] {
+            let(sql,args)=usage_sql(&q,"all",None,51).unwrap();
+            let p=plan(&c,&sql,args);
+            assert!(p.contains(&format!("COVERING INDEX {index}")),"{p}");
+            assert!(p.contains("SEARCH billing_ledger USING INTEGER PRIMARY KEY"),"{p}");
+        }
+        let(sql,args)=usage_sql(&UsageQuery{before_id:Some(123),..Default::default()},"all",None,51).unwrap();
+        assert!(plan(&c,&sql,args).contains("SEARCH billing_ledger USING INTEGER PRIMARY KEY"));
+        for (sql,index) in [
+            ("SELECT id FROM billing_ledger WHERE attempt_id=?1","sqlite_autoindex_billing_ledger"),
+            ("SELECT scope FROM billing_allocations WHERE reservation_id=?1","sqlite_autoindex_billing_allocations"),
+            ("SELECT id FROM billing_ledger WHERE status=?1 ORDER BY id","billing_ledger_pending"),
+        ] {
+            let p=plan(&c,sql,vec![1.into()]);assert!(p.contains(index),"{p}");
+        }
+        let p=plan(&c,"SELECT id FROM billing_request_prices WHERE channel_id=?1 AND model=?2 ORDER BY id DESC LIMIT 1",vec![1.into(),"synthetic".to_string().into()]);
+        assert!(p.contains("billing_request_prices_latest"),"{p}");
+    }
+    #[test]
+    fn sparse_lifecycle_queries_read_covering_ids_before_bounded_wide_rows() {
+        let c=crate::db::open_in_memory().unwrap();
+        let catalog=serde_json::json!({"users":[{"id":1,"state":"active"}],"keys":[{"id":1,"state":"active"}],"channels":[{"id":1,"state":"active"}]});
+        for state in ["active","historical"] {
+            for before_id in [None,Some(5000)] {
+                let q=UsageQuery{state:Some(state.into()),before_id,..Default::default()};
+                let(sql,args)=usage_sql(&q,state,Some(&catalog),51).unwrap();
+                let p=plan(&c,&sql,args);
+                assert!(p.contains("COVERING INDEX billing_ledger_lifecycle_recent"),"{p}");
+                assert!(p.contains("SEARCH billing_ledger USING INTEGER PRIMARY KEY"),"{p}");
+                assert!(!p.lines().any(|line|line=="SCAN billing_ledger"),"{p}");
+            }
+        }
+    }
+    #[test]
+    fn all_lifecycle_filter_combinations_cover_sparse_and_empty_matches() {
+        let c=crate::db::open_in_memory().unwrap();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,source_snapshot) VALUES('old-active',1,1,1,1,'synthetic',0,0,0,0,'ok','{}')",[]).unwrap();
+        // Every newer row differs from the old valid triple in at least one
+        // lifecycle ID. Unspecified filters therefore expose sparse matches.
+        c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<7000) INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,source_snapshot) SELECT 'combo-'||i,1+((i%7+1)&1),1+(((i%7+1)>>1)&1),i,1+(((i%7+1)>>2)&1),'synthetic',0,0,0,i,'ok',json_object('padding',printf('%4096s','')) FROM n",[]).unwrap();
+        let metadata=c.prepare("SELECT id,user_id,key_id,channel_id FROM billing_ledger ORDER BY id DESC").unwrap().query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        let mut max_steps=0;
+        for mask in 0..16 {
+            for live_channel in [1,3] {
+                let catalog=serde_json::json!({"users":[{"id":1,"state":"active"}],"keys":[{"id":1,"state":"active"}],"channels":[{"id":live_channel,"state":"active"}]});
+                for state in ["active","historical","all"] {
+                    for before_id in [None,Some(3501)] {
+                        let q=UsageQuery{user_id:(mask&1!=0).then_some(1),key_id:(mask&2!=0).then_some(1),channel_id:(mask&4!=0).then_some(1),model:(mask&8!=0).then(||"SYNTHETIC".into()),state:Some(state.into()),before_id,limit:Some(2)};
+                        let index=if q.key_id.is_some(){"billing_ledger_key_lifecycle"}else if q.user_id.is_some(){"billing_ledger_user_lifecycle"}else if q.channel_id.is_some(){"billing_ledger_channel"}else if q.model.is_some(){"billing_ledger_model"}else{"billing_ledger_lifecycle_recent"};
+                        let(sql,args)=usage_sql(&q,state,Some(&catalog),3).unwrap();
+                        let p=plan(&c,&sql,args.clone());
+                        if state!="all"||mask!=0 {
+                            assert!(p.contains(&format!("COVERING INDEX {index}")),"mask={mask} state={state} {p}");
+                            assert!(p.contains("SEARCH billing_ledger USING INTEGER PRIMARY KEY"),"{p}");
+                            assert!(!p.lines().any(|line|line=="SCAN billing_ledger"),"{p}");
+                        } // all without filters remains a direct, LIMIT-bounded rowid scan.
+                        let mut statement=c.prepare(&sql).unwrap();
+                        let actual=statement.query_map(rusqlite::params_from_iter(args),|r|r.get::<_,i64>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+                        let steps=statement.get_status(rusqlite::StatementStatus::VmStep);
+                        max_steps=max_steps.max(steps);
+                        assert!(steps<7001*150+10000,"mask={mask} state={state} steps={steps}");
+                        let expected=metadata.iter().filter(|&&(id,user,key,channel)| {
+                            q.user_id.is_none_or(|v|v==user)&&q.key_id.is_none_or(|v|v==key)&&q.channel_id.is_none_or(|v|v==channel)&&q.before_id.is_none_or(|v|id<v)&&(state=="all"||((user==1&&key==1&&channel==live_channel)==(state=="active")))
+                        }).map(|row|row.0).take(3).collect::<Vec<_>>();
+                        assert_eq!(actual,expected,"mask={mask} state={state} live_channel={live_channel}");
+                        let(rows,next)=usage_page_with_catalog(&c,&q,Some(&catalog)).unwrap();
+                        assert_eq!(rows.iter().map(|row|row.id).collect::<Vec<_>>(),expected.iter().copied().take(2).collect::<Vec<_>>());
+                        assert_eq!(next,if expected.len()>2{Some(expected[1])}else{None});
+                    }
+                }
+            }
+        }
+        // Synthetic setup for a model appearing only in the oldest wide row.
+        c.execute("UPDATE billing_ledger SET model='needle model' WHERE id=1",[]).unwrap();
+        for (q,expected) in [
+            (UsageQuery{state:Some("all".into()),user_id:Some(1),model:Some("Needle-Model".into()),..Default::default()},vec![1]),
+            (UsageQuery{state:Some("all".into()),user_id:Some(2),model:Some("Needle-Model".into()),..Default::default()},vec![]),
+            (UsageQuery{state:Some("all".into()),user_id:Some(1),model:Some("missing model".into()),..Default::default()},vec![]),
+            (UsageQuery{state:Some("all".into()),model:Some("missing model".into()),..Default::default()},vec![]),
+        ] {
+            let(sql,args)=usage_sql(&q,"all",None,51).unwrap();
+            let p=plan(&c,&sql,args.clone());
+            let index=if q.user_id.is_some(){"billing_ledger_user_lifecycle"}else{"billing_ledger_model"};
+            assert!(p.contains(&format!("COVERING INDEX {index}")),"{p}");
+            assert!(p.contains("SEARCH billing_ledger USING INTEGER PRIMARY KEY"),"{p}");
+            let mut statement=c.prepare(&sql).unwrap();
+            let actual=statement.query_map(rusqlite::params_from_iter(args),|r|r.get::<_,i64>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+            let steps=statement.get_status(rusqlite::StatementStatus::VmStep);
+            assert!(steps<7001*150+10000,"all sparse user/model steps={steps}");
+            assert_eq!(actual,expected);
+            let(rows,next)=usage_page(&c,&q).unwrap();
+            assert_eq!(rows.iter().map(|row|row.id).collect::<Vec<_>>(),expected);assert_eq!(next,None);
+        }
+        eprintln!("7001 wide ledger rows, 192 lifecycle filter/state/cursor combinations plus 4 sparse all user/model cases: max VM steps={max_steps}");
+    }
 }
 
 #[cfg(test)]

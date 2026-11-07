@@ -16,6 +16,7 @@ env:
   RUST_TOOLCHAIN: '1.98.0'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
+  RUST_TEST_THREADS: '4'
 
 jobs:
   native-tests:
@@ -43,7 +44,9 @@ jobs:
             ~/.cargo/git/db
           key: cargo-${{ runner.os }}-native-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
       - name: Run workspace tests
-        run: cargo +"$RUST_TOOLCHAIN" test --locked --workspace
+        run: |
+          ulimit -n 65536
+          cargo +"$RUST_TOOLCHAIN" test --locked --workspace
       - name: Verify optional MinerU client contracts
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
@@ -69,3 +72,28 @@ jobs:
           key: cargo-${{ runner.os }}-wasm-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
       - name: Check web crate for WASM
         run: cargo +"$RUST_TOOLCHAIN" check --locked -p tokengo-web --target wasm32-unknown-unknown
+
+  query-performance:
+    name: Large-history query regression gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      CARGO_BUILD_JOBS: '4'
+      TOKENGO_PERF_ROWS: '1000000'
+      TOKENGO_ACCOUNT_PERF_ROWS: '500000'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install C build tools and Rust
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Run wide-history HTTP, concurrency, and owner isolation gates
+        run: |
+          cargo +"$RUST_TOOLCHAIN" test --locked --release -p tokengo-server --test query_performance --test account_query_performance --test catalog_query_performance -- --ignored --nocapture --skip profile_remaining_model_list_costs
+          cargo +"$RUST_TOOLCHAIN" test --locked --release -p tokengo-server --lib protocol_capacity_million -- --ignored --nocapture

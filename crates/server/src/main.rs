@@ -5,6 +5,19 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokengo_server::{app, AppState, Config};
 
 fn main() -> anyhow::Result<()> {
+    // Maintenance must not launch workers, recover requests, open a listener,
+    // create a master key, or alter business rows while a migration is audited.
+    let args=std::env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg|arg=="--migrate-only") {
+        anyhow::ensure!(args.len()==1,"--migrate-only does not accept other arguments");
+        let cfg=Config::from_env()?;
+        let conn=tokengo_server::db::open(&cfg.db_path)?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        let version:u32=conn.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get(0))?;
+        println!("{}",serde_json::json!({"mode":"migrate-only","schema_version":version,"status":"ok"}));
+        return Ok(());
+    }
+
     // A timed-out blocking outbox operation must not keep container shutdown alive forever.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

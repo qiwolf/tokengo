@@ -460,31 +460,31 @@ pub struct Stats {
 /// Shared accumulator for the request-side dimensions. It is local to one call:
 /// no stale results or cross-user cache are introduced by the single-pass scan.
 #[derive(Default)]
-struct RequestAggregate {
-    requests: i64,
-    ok: i64,
-    failed: i64,
-    canceled: i64,
-    client_errors: i64,
-    input_tokens: i64,
-    output_tokens: i64,
-    usage: UsageCoverage,
+pub(super) struct RequestAggregate {
+    pub(super) requests: i64,
+    pub(super) ok: i64,
+    pub(super) failed: i64,
+    pub(super) canceled: i64,
+    pub(super) client_errors: i64,
+    pub(super) input_tokens: i64,
+    pub(super) output_tokens: i64,
+    pub(super) usage: UsageCoverage,
     // AVG ignores NULL, accepts negative latency, and converts its sum to double
     // before division. A wide integer also handles sums beyond SQLite's i64 fast path.
     latency_sum: i128,
     latency_count: i64,
 }
 
-struct StatsSample<'a> {
-    status: &'a str,
-    input_tokens: i64,
-    output_tokens: i64,
-    latency: Option<i64>,
-    usage: UsageCoverage,
+pub(super) struct StatsSample<'a> {
+    pub(super) status: &'a str,
+    pub(super) input_tokens: i64,
+    pub(super) output_tokens: i64,
+    pub(super) latency: Option<i64>,
+    pub(super) usage: UsageCoverage,
 }
 
 impl RequestAggregate {
-    fn add(&mut self, sample: &StatsSample<'_>) -> Result<()> {
+    pub(super) fn add(&mut self, sample: &StatsSample<'_>) -> Result<()> {
         self.requests += 1;
         self.ok += i64::from(sample.status == "ok");
         self.failed += i64::from(sample.status == "failed");
@@ -508,14 +508,14 @@ impl RequestAggregate {
         Ok(())
     }
 
-    fn average_latency(&self) -> i64 {
+    pub(super) fn average_latency(&self) -> i64 {
         if self.latency_count == 0 { 0 } else {
             (self.latency_sum as f64 / self.latency_count as f64) as i64
         }
     }
 }
 
-fn add_stats_group(
+pub(super) fn add_stats_group(
     groups: &mut std::collections::HashMap<String, RequestAggregate>,
     key: &str,
     sample: &StatsSample<'_>,
@@ -530,7 +530,7 @@ fn add_stats_group(
     }
 }
 
-fn stats_text<'a>(row: &'a rusqlite::Row<'_>, index: usize) -> rusqlite::Result<&'a str> {
+pub(super) fn stats_text<'a>(row: &'a rusqlite::Row<'_>, index: usize) -> rusqlite::Result<&'a str> {
     match row.get_ref(index)? {
         rusqlite::types::ValueRef::Text(bytes) =>
             std::str::from_utf8(bytes).map_err(|error| rusqlite::Error::Utf8Error(index, error)),
@@ -538,24 +538,99 @@ fn stats_text<'a>(row: &'a rusqlite::Row<'_>, index: usize) -> rusqlite::Result<
     }
 }
 
+
+#[cfg(test)]
+const CHANNEL_STATS_LEGACY_SQL: &str = "SELECT a.channel_id, COUNT(*),
+                COALESCE(SUM(a.outcome = 'success'), 0),
+                COALESCE(SUM(a.outcome = 'channel_fault'), 0),
+                COALESCE(CAST(AVG(a.duration_ms) AS INTEGER), 0)
+           FROM requests rq INDEXED BY idx_requests_ts
+          CROSS JOIN attempts a INDEXED BY idx_attempts_request ON a.request_id = rq.id
+          WHERE rq.ts_ms >= ?1
+          GROUP BY a.channel_id ORDER BY COUNT(*) DESC";
+
+// Both sides are narrow covering reads. Keep the same request/attempt stream as
+// the old grouped query, but avoid sorting every attempt into a GROUP BY tree.
+const CHANNEL_STATS_SQL:&str="SELECT a.channel_id,a.outcome,
+ CASE WHEN typeof(a.duration_ms)='integer' THEN a.duration_ms ELSE CAST(a.duration_ms AS REAL) END
+ FROM requests rq INDEXED BY idx_requests_ts
+ CROSS JOIN attempts a INDEXED BY attempts_request_statistics ON a.request_id=rq.id
+ WHERE rq.ts_ms>=?1";
+
+fn channel_stats_since(conn:&Connection,since_ms:i64)->Result<Vec<ChannelStat>> {
+    #[derive(Default)]
+    struct Attempts {count:i64,successes:i64,faults:i64,duration:AttemptAverage}
+    let mut groups=std::collections::HashMap::<i64,Attempts>::new();
+    let mut q=conn.prepare(CHANNEL_STATS_SQL)?;let mut rows=q.query([since_ms])?;
+    while let Some(row)=rows.next()? {
+        let id:i64=row.get(0)?;let group=groups.entry(id).or_default();group.count+=1;
+        match row.get_ref(1)? {
+            rusqlite::types::ValueRef::Text(b"success")=>group.successes+=1,
+            rusqlite::types::ValueRef::Text(b"channel_fault")=>group.faults+=1,
+            _=>{}
+        }
+        match row.get_ref(2)? {
+            rusqlite::types::ValueRef::Integer(value)=>group.duration.integer(value),
+            rusqlite::types::ValueRef::Real(value)=>group.duration.real(value),
+            _=>{}
+        }
+    }
+    let mut result=groups.into_iter().map(|(channel_id,a)|ChannelStat{usage:UsageCoverage::default(),channel_id,attempts:a.count,successes:a.successes,channel_faults:a.faults,avg_ms:a.duration.finish(),input_tokens:0,output_tokens:0}).collect::<Vec<_>>();
+    // Bundled SQLite's old GROUP BY + COUNT DESC emits channel IDs descending
+    // on equal counts. The SQL oracle below pins that observed tie behavior.
+    result.sort_unstable_by(|a,b|b.attempts.cmp(&a.attempts).then_with(||b.channel_id.cmp(&a.channel_id)));
+    Ok(result)
+}
+
+/// Mirror bundled SQLite's AVG integer fast path and compensated floating sum.
+/// Numeric conversion of malformed TEXT/BLOB stays in SQLite's SQL projection.
+#[derive(Default)]
+struct AttemptAverage {integer_sum:i64,sum:f64,error:f64,approx:bool,count:i64}
+impl AttemptAverage {
+    fn initialize(&mut self) {
+        if self.integer_sum<=-4503599627370496 || self.integer_sum>=4503599627370496 {
+            let low=self.integer_sum%16384;self.sum=(self.integer_sum-low) as f64;self.error=low as f64;
+        } else {self.sum=self.integer_sum as f64;self.error=0.0;}
+        self.approx=true;
+    }
+    fn step(&mut self,value:f64) {
+        let sum=self.sum;let next=sum+value;
+        self.error+=if sum.abs()>value.abs(){(sum-next)+value}else{(value-next)+sum};
+        self.sum=next;
+    }
+    fn integer(&mut self,value:i64) {
+        self.count+=1;
+        if !self.approx {
+            if let Some(next)=self.integer_sum.checked_add(value) {self.integer_sum=next;return;}
+            self.initialize();
+        }
+        if value<=-4503599627370496 || value>=4503599627370496 {
+            let low=value%16384;self.step((value-low) as f64);self.step(low as f64);
+        } else {self.step(value as f64);}
+    }
+    fn real(&mut self,value:f64) {
+        self.count+=1;if !self.approx{self.initialize();}self.step(value);
+    }
+    fn finish(self)->i64 {
+        if self.count==0 {return 0;}
+        let sum=if self.approx {if self.error.is_finite(){self.sum+self.error}else{self.sum}}else{self.integer_sum as f64};
+        // Rust's saturating float->integer conversion matches SQLite CAST;
+        // NaN maps to 0, matching SQLite's NULL then COALESCE(...,0).
+        (sum/self.count as f64) as i64
+    }
+}
+
+const REQUEST_STATS_SQL:&str="SELECT endpoint, status, channel_id, latency_ms, input_tokens, output_tokens, client_ip,
+                CASE WHEN TRIM(served_model)<>'' AND LOWER(TRIM(served_model))<>'auto' THEN served_model WHEN channel_id IS NULL THEN '未调用上游' WHEN LOWER(TRIM(model))='auto' THEN '实际模型未记录' ELSE model END,
+                NOT(input_tokens_known AND output_tokens_known), NOT input_tokens_known,
+                NOT output_tokens_known, usage_source='legacy'
+           FROM requests INDEXED BY requests_stats_window WHERE ts_ms>=?1";
+
 /// 汇总自 `since_ms` 起的账。请求只读取一遍，同时构建各维度的统计。
 pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     // Retry counts belong to attempted channels; token/coverage attribution belongs
     // to the request's final channel. Channels without attempts remain absent.
-    let mut stmt = conn.prepare(
-        "SELECT a.channel_id, COUNT(*),
-                COALESCE(SUM(a.outcome = 'success'), 0),
-                COALESCE(SUM(a.outcome = 'channel_fault'), 0),
-                COALESCE(CAST(AVG(a.duration_ms) AS INTEGER), 0)
-           FROM attempts a JOIN requests rq ON rq.id = a.request_id
-          WHERE rq.ts_ms >= ?1
-          GROUP BY a.channel_id ORDER BY COUNT(*) DESC",
-    )?;
-    let mut by_channel = stmt.query_map([since_ms], |row| Ok(ChannelStat {
-        usage: UsageCoverage::default(), channel_id: row.get(0)?,
-        attempts: row.get(1)?, successes: row.get(2)?, channel_faults: row.get(3)?,
-        avg_ms: row.get(4)?, input_tokens: 0, output_tokens: 0,
-    }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut by_channel = channel_stats_since(conn,since_ms)?;
     // Match the legacy output domain: final-channel SUM was evaluated only for
     // channels represented by attempts, not every channel found on a request.
     let attempted_channels = by_channel.iter().map(|row| row.channel_id)
@@ -566,13 +641,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     let mut clients = std::collections::HashMap::new();
     let mut missing_client = RequestAggregate::default();
     let mut endpoints = std::collections::HashMap::new();
-    let mut stmt = conn.prepare(
-        "SELECT endpoint, status, channel_id, latency_ms, input_tokens, output_tokens, client_ip,
-                CASE WHEN TRIM(served_model)<>'' AND LOWER(TRIM(served_model))<>'auto' THEN served_model WHEN channel_id IS NULL THEN '未调用上游' WHEN LOWER(TRIM(model))='auto' THEN '实际模型未记录' ELSE model END,
-                NOT(input_tokens_known AND output_tokens_known), NOT input_tokens_known,
-                NOT output_tokens_known, usage_source='legacy'
-           FROM requests WHERE ts_ms>=?1",
-    )?;
+    let mut stmt = conn.prepare(REQUEST_STATS_SQL)?;
     let mut rows = stmt.query([since_ms])?;
     while let Some(row) = rows.next()? {
         // SQL retains its own TRIM/LOWER and three-valued boolean semantics;
@@ -975,7 +1044,11 @@ mod tests {
         // fixture also exercises SQL aggregate NULL semantics independently.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE requests(id INTEGER PRIMARY KEY,ts_ms INTEGER,endpoint TEXT,model TEXT,served_model TEXT,status TEXT,channel_id INTEGER,latency_ms INTEGER,input_tokens INTEGER,output_tokens INTEGER,input_tokens_known INTEGER,output_tokens_known INTEGER,usage_source TEXT,client_ip TEXT);
-            CREATE TABLE attempts(id INTEGER PRIMARY KEY,request_id INTEGER,channel_id INTEGER,outcome TEXT,duration_ms INTEGER);
+            CREATE TABLE attempts(id INTEGER PRIMARY KEY,request_id INTEGER,channel_id INTEGER,outcome TEXT,duration_ms INTEGER,ordinal INTEGER NOT NULL DEFAULT 0);
+            CREATE INDEX idx_requests_ts ON requests(ts_ms);
+            CREATE INDEX requests_stats_window ON requests(ts_ms DESC,id ASC,endpoint,status,channel_id,latency_ms,input_tokens,output_tokens,client_ip,served_model,model,input_tokens_known,output_tokens_known,usage_source);
+            CREATE INDEX idx_attempts_request ON attempts(request_id);
+            CREATE INDEX attempts_request_statistics ON attempts(request_id,ordinal,id,channel_id,outcome,duration_ms);
             INSERT INTO requests VALUES
              (1,1,' /v1/chat/completions','auto',NULL,'ok',1,1,0,NULL,NULL,1,NULL,NULL),
              (2,2,' /v1/chat/completions','auto','','ok',1,2,NULL,5,1,NULL,'legacy',NULL),
@@ -985,7 +1058,7 @@ mod tests {
              (6,6,'/v1/chat/completions ','model','','ok',2,0,3,4,1,1,'reported','ip'),
              (7,7,'other','model','served',NULL,NULL,8,8,9,0,1,'legacy',NULL),
              (8,8,'other','model','served','canceled',3,8,8,9,0,1,'legacy','ip');
-            INSERT INTO attempts VALUES(1,1,1,'channel_fault',10),(2,1,2,'success',NULL),(3,4,2,'success',-5),(4,8,3,'empty_reply',2);").unwrap();
+            INSERT INTO attempts(id,request_id,channel_id,outcome,duration_ms) VALUES(1,1,1,'channel_fault',10),(2,1,2,'success',NULL),(3,4,2,'success',-5),(4,8,3,'empty_reply',2);").unwrap();
         for since in [0, 3, 5, 9] {
             assert_eq!(stats_since(&conn, since).unwrap(), stats_since_legacy(&conn, since).unwrap(), "since={since}");
         }
@@ -1369,5 +1442,105 @@ mod tests {
         assert_eq!(prune_before(&conn, now - 86_400_000).unwrap(), 0);
         assert_eq!(prune_before(&conn, now + 1).unwrap(), 1);
         assert_eq!(recent(&conn, 10).unwrap().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod bounded_stats_query_tests {
+    use super::*;
+    fn legacy_channels(c:&Connection,since:i64)->Vec<ChannelStat> {
+        let mut q=c.prepare(CHANNEL_STATS_LEGACY_SQL).unwrap();
+        let rows=q.query_map([since],|r|Ok(ChannelStat{usage:UsageCoverage::default(),channel_id:r.get(0)?,attempts:r.get(1)?,successes:r.get(2)?,channel_faults:r.get(3)?,avg_ms:r.get(4)?,input_tokens:0,output_tokens:0})).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        rows
+    }
+    #[test]
+    fn streaming_channel_counts_match_sql_ties_and_numeric_average_oracle() {
+        use rusqlite::types::Value::{self,Integer,Real,Text,Blob,Null};
+        let c=Connection::open_in_memory().unwrap();
+        // Keep INTEGER affinity, while allowing historical NULL outcome/duration.
+        // Production-schema covering/VDBE assertions are tested separately.
+        c.execute_batch("CREATE TABLE requests(id INTEGER PRIMARY KEY,ts_ms INTEGER,endpoint TEXT,model TEXT,status TEXT);
+          CREATE TABLE attempts(id INTEGER PRIMARY KEY,request_id INTEGER,ordinal INTEGER,channel_id INTEGER,outcome TEXT,duration_ms INTEGER);
+          CREATE INDEX idx_requests_ts ON requests(ts_ms DESC);
+          CREATE INDEX idx_attempts_request ON attempts(request_id,ordinal);
+          CREATE INDEX attempts_request_statistics ON attempts(request_id,ordinal,id,channel_id,outcome,duration_ms);").unwrap();
+        let groups:Vec<Vec<Value>>=vec![
+            vec![Null,Integer(5)],
+            vec![Text("12.5".into()),Text("notnumeric".into()),Text("2junk".into()),Null],
+            vec![Integer(i64::MAX),Integer(i64::MIN),Integer(-2)],
+            vec![Integer(i64::MAX),Integer(i64::MAX),Integer(i64::MIN),Integer(i64::MIN),Integer(-5)],
+            vec![Real(1e20),Integer(9),Real(-1e20)],
+            vec![Real(f64::INFINITY)],vec![Real(f64::NEG_INFINITY)],
+            vec![Real(f64::INFINITY),Real(f64::NEG_INFINITY)],
+            vec![Text("12garbage".into()),Blob(b"6.5".to_vec()),Null],
+            vec![Null,Null],vec![Integer(-5),Integer(-2)],
+        ];
+        for (index,durations) in groups.into_iter().enumerate() {
+            let channel=index as i64+1;
+            c.execute("INSERT INTO requests(id,ts_ms,endpoint,model,status) VALUES(?1,?1,'/v1/chat/completions','model','ok')",[channel]).unwrap();
+            for (ordinal,duration) in durations.into_iter().enumerate() {
+                let outcome=match ordinal%4 {0=>None,1=>Some("success"),2=>Some("channel_fault"),_=>Some("other")};
+                c.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms) VALUES(?1,?2,?1,?3,?4)",params![channel,ordinal as i64,outcome,duration]).unwrap();
+            }
+        }
+        for since in [0,4,9,12] {assert_eq!(channel_stats_since(&c,since).unwrap(),legacy_channels(&c,since),"since={since}");}
+        let rows=channel_stats_since(&c,0).unwrap();
+        assert_eq!(rows.iter().find(|r|r.channel_id==3).unwrap().avg_ms,-1);
+        assert_eq!(rows.iter().find(|r|r.channel_id==5).unwrap().avg_ms,3,"Kahan compensation must preserve cancellation");
+        assert_eq!(rows.iter().find(|r|r.channel_id==6).unwrap().avg_ms,i64::MAX);
+        assert_eq!(rows.iter().find(|r|r.channel_id==7).unwrap().avg_ms,i64::MIN);
+        assert_eq!(rows.iter().find(|r|r.channel_id==8).unwrap().avg_ms,0);
+        let ties=rows.iter().filter(|r|r.attempts==2).map(|r|r.channel_id).collect::<Vec<_>>();
+        assert_eq!(ties,vec![11,10,8,1]);
+    }
+    #[test]
+    fn streaming_channels_preserve_nullable_integer_legacy_projection() {
+        let c=Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE requests(id INTEGER PRIMARY KEY,ts_ms INTEGER);
+          CREATE TABLE attempts(id INTEGER PRIMARY KEY,request_id INTEGER,ordinal INTEGER,channel_id INTEGER,outcome TEXT,duration_ms INTEGER);
+          CREATE INDEX idx_requests_ts ON requests(ts_ms DESC);
+          CREATE INDEX idx_attempts_request ON attempts(request_id,ordinal);
+          CREATE INDEX attempts_request_statistics ON attempts(request_id,ordinal,id,channel_id,outcome,duration_ms);
+          INSERT INTO requests VALUES(1,1),(2,2);
+          INSERT INTO attempts VALUES(1,1,0,1,NULL,NULL),(2,1,1,1,'success','2junk'),(3,1,2,1,'channel_fault',-8.5),(4,2,0,2,NULL,NULL);").unwrap();
+        assert_eq!(channel_stats_since(&c,0).unwrap(),legacy_channels(&c,0));
+        assert_eq!(channel_stats_since(&c,3).unwrap(),legacy_channels(&c,3));
+    }
+    #[test]
+    fn request_statistics_projection_never_opens_wide_request_table() {
+        let c=crate::db::open_in_memory().unwrap();
+        let mut q=c.prepare(&format!("EXPLAIN QUERY PLAN {REQUEST_STATS_SQL}")).unwrap();
+        let plan=q.query_map([0],|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n");
+        assert!(plan.contains("SEARCH requests USING COVERING INDEX requests_stats_window (ts_ms>?)"),"{plan}");
+        let table:i64=c.query_row("SELECT rootpage FROM sqlite_master WHERE type='table' AND name='requests'",[],|r|r.get(0)).unwrap();
+        let mut q=c.prepare(&format!("EXPLAIN {REQUEST_STATS_SQL}")).unwrap();
+        for row in q.query_map([0],|r|Ok((r.get::<_,String>(1)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?))).unwrap() {
+            let(op,page,database)=row.unwrap();
+            assert!(!(op=="OpenRead"&&page==table&&database==0),"statistics must not open wide requests table");
+        }
+    }
+    #[test]
+    fn recent_channel_statistics_do_not_visit_old_attempt_history() {
+        let c=crate::db::open_in_memory().unwrap();
+        c.execute_batch("WITH RECURSIVE n(i) AS(VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO requests(ts_ms,endpoint,model,status) SELECT 1,'/v1/chat/completions','old','ok' FROM n; INSERT INTO attempts(request_id,ordinal,channel_id,outcome) SELECT id,0,1,'success' FROM requests;").unwrap();
+        c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(100000,'/v1/chat/completions','recent','ok',1)",[]).unwrap();
+        let id=c.last_insert_rowid();
+        c.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms) VALUES(?1,0,1,'success',20)",[id]).unwrap();
+        let mut q=c.prepare(&format!("EXPLAIN QUERY PLAN {CHANNEL_STATS_SQL}")).unwrap();
+        let plan=q.query_map([99999],|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n");
+        assert!(plan.contains("SEARCH rq USING COVERING INDEX idx_requests_ts"),"{plan}");
+        assert!(plan.contains("SEARCH a USING COVERING INDEX attempts_request_statistics"),"{plan}");
+        assert!(!plan.contains("TEMP B-TREE"),"{plan}");
+        let roots:Vec<i64>=c.prepare("SELECT rootpage FROM sqlite_master WHERE type='table' AND name IN ('requests','attempts')").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        let mut q=c.prepare(&format!("EXPLAIN {CHANNEL_STATS_SQL}")).unwrap();
+        for row in q.query_map([99999],|r|Ok((r.get::<_,String>(1)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?))).unwrap() {
+            let(op,page,database)=row.unwrap();assert!(!(op=="OpenRead"&&database==0&&roots.contains(&page)),"attempt statistics must not open either wide table");
+        }
+        c.progress_handler(1000,Some(||true)).unwrap();
+        let result=stats_since(&c,99999);
+        c.progress_handler(0,None::<fn()->bool>).unwrap();
+        let result=result.expect("windowed stats must fit a fixed VM budget independent of old history");
+        assert_eq!(result.total,1);
+        assert_eq!(result.by_channel[0].attempts,1);
     }
 }

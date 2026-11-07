@@ -72,9 +72,13 @@ pub fn install(c: &Connection) -> db::Result<()> {
 pub struct Guard<'a> {
     c: MutexGuard<'a, Connection>,
     context: bool,
+    acquired: std::time::Instant,
+    waited: std::time::Duration,
+    caller: &'static std::panic::Location<'static>,
 }
 impl<'a> Guard<'a> {
-    pub fn new(c: MutexGuard<'a, Connection>) -> Self {
+    #[track_caller]
+    pub fn new(c: MutexGuard<'a, Connection>, waited: std::time::Duration) -> Self {
         let context = CONTEXT.try_with(Clone::clone).ok();
         if let Some(OperationsContext {
             token_id,
@@ -89,6 +93,9 @@ impl<'a> Guard<'a> {
         Self {
             c,
             context: context.is_some(),
+            acquired: std::time::Instant::now(),
+            waited,
+            caller: std::panic::Location::caller(),
         }
     }
 }
@@ -105,10 +112,39 @@ impl DerefMut for Guard<'_> {
 }
 impl Drop for Guard<'_> {
     fn drop(&mut self) {
+        let held = self.acquired.elapsed();
+        if held.as_millis() >= 100 || self.waited.as_millis() >= 100 {
+            // Source location only: never log SQL text, bound values, tokens or records.
+            tracing::warn!(target: "tokengo_server::db_latency", file=self.caller.file(), line=self.caller.line(), wait_ms=self.waited.as_millis() as u64, held_ms=held.as_millis() as u64, "slow database lock");
+        }
         if self.context {
             // Reset after any SQL transaction (including a rollback). Failure poisons authority closed:
             // leave the machine context attached; never silently turn a failed reset into root authority.
             if self.c.execute("UPDATE temp.operations_request_context SET token_id=NULL,request_id=NULL,method=NULL,path=NULL WHERE singleton=1",[]).is_err(){panic!("machine database context cleanup failed");}
         }
+    }
+}
+
+#[cfg(test)]
+mod latency_logging_tests {
+    use super::*;
+    #[test]
+    fn slow_lock_is_visible_with_default_filter_without_sql_or_values() {
+        let buffer=crate::logging::LogBuffer::new(10);
+        let writer=crate::logging::TeeWriter::new(buffer.clone(),None);
+        let subscriber=tracing_subscriber::fmt().with_env_filter(crate::logging::DEFAULT_FILTER)
+            .with_ansi(false).without_time().with_writer(move||writer.clone()).finish();
+        tracing::subscriber::with_default(subscriber,|| {
+            let connection=std::sync::Mutex::new(crate::db::open_in_memory().unwrap());
+            let guard=Guard::new(connection.lock().unwrap(),std::time::Duration::from_millis(101));
+            let _:String=guard.query_row("SELECT ?1",["synthetic-sensitive-bound-value"],|r|r.get(0)).unwrap();
+            drop(guard);
+        });
+        let lines=buffer.query(Some("warn"),Some("slow database lock"),10);
+        assert_eq!(lines.len(),1,"slow locks must be visible with the production default filter");
+        assert!(lines[0].contains("wait_ms=101"));
+        assert!(lines[0].contains("file="));
+        assert!(!lines[0].contains("SELECT"));
+        assert!(!lines[0].contains("synthetic-sensitive-bound-value"));
     }
 }

@@ -123,11 +123,11 @@ pub struct Info {
 }
 
 pub fn info(conn: &Connection) -> Result<Info> {
-    let (total, oldest): (i64, Option<i64>) = conn.query_row(
-        "SELECT COUNT(*), MIN(ts_ms) FROM requests",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+    // Combining COUNT and MIN disables SQLite's COUNT/min-max fast paths and
+    // visits every request. Both remain exact under the caller's connection
+    // guard, without bringing wide historical rows into the page cache.
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))?;
+    let oldest: Option<i64> = conn.query_row("SELECT MIN(ts_ms) FROM requests", [], |r| r.get(0))?;
     Ok(Info {
         retention_days: retention_days(conn)?,
         total_requests: total,
@@ -340,6 +340,21 @@ mod tests {
         assert_eq!(i.oldest_ts_ms, Some(100));
         assert!(i.db_bytes > 0);
         assert_eq!(i.retention_days, 30);
+    }
+
+    #[test]
+    fn maintenance_info_avoids_row_by_row_history_scan() {
+        let conn = open_in_memory().unwrap();
+        conn.execute_batch("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO requests(ts_ms,endpoint,model,status) SELECT i,'/v1/embeddings','synthetic','ok' FROM n;").unwrap();
+        // Abort a row-by-row scan after 1000 VM operations. This exercises info
+        // itself, rather than maintaining a second copy of its SQL in the test.
+        unsafe extern "C" fn stop(_: *mut std::ffi::c_void) -> std::ffi::c_int { 1 }
+        unsafe { rusqlite::ffi::sqlite3_progress_handler(conn.handle(),1000,Some(stop),std::ptr::null_mut()); }
+        let result = info(&conn);
+        unsafe { rusqlite::ffi::sqlite3_progress_handler(conn.handle(),0,None,std::ptr::null_mut()); }
+        let result=result.expect("maintenance metadata must use count/min fast paths, not scan historical rows");
+        assert_eq!(result.total_requests,20000);
+        assert_eq!(result.oldest_ts_ms,Some(1));
     }
 
     #[test]

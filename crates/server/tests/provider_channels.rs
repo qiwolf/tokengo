@@ -859,7 +859,7 @@ async fn deletion_busy_and_invalid_config_roll_back_every_change() {
             let c=f.state.conn();match reason {
                 "running"=>{c.execute("INSERT INTO requests(ts_ms,endpoint,model,status,channel_id) VALUES(1,'/v1/chat/completions','m','running',?1)",[a]).unwrap();},
                 "reserved"=>{c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,status,created_ms) VALUES('busy',1,1,991,?1,'m',0,0,5,'reserved',1)",[a]).unwrap();},
-                _=>{c.execute("INSERT INTO protocol_sessions VALUES('bad','invalid json',1)",[]).unwrap();}
+                _=>{c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms) VALUES('bad','invalid json',1)",[]).unwrap();}
             }
         }
         let before=protected_connection_snapshot(&f.state.conn());

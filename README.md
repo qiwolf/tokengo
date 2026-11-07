@@ -10,15 +10,15 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.29](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29)** · [版本说明](docs/releases/v0.34.0-qiwolf.29.md) · [发行与生产收据](docs/acceptance/2026-11-04-qiwolf29-release/README.md)。
+本次版本（发行状态见收据）：**[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [版本说明](docs/releases/v0.34.0-qiwolf.30.md) · [发行与生产收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
 
-本版统一管理员最近调用/详情的供应商 · Key原备注显示，透传保留服务名；普通用户新增仅本人调用的运行总览与三维统计，说明文字在桌面/窄屏对齐。隔离环境普通A/B及管理员真实cookie/Chrome验证通过；生产已有管理员会话、数据守恒和本地BGE/CLIP共2+2次探针通过，未冒用生产用户登录。精确main CI Rust1603通过/0失败/9忽略、Python13/WASM及9公开资产/GHCR/原生容器独立验收通过。schema44只加owner索引；原名/备注、模型调用、账务及历史成功率口径保持，无原厂能力新测。
+本版修复模型评分、统计、账务目录及账本的历史扫描和重复查询，追加schema45与百万宽历史/并发/权限回归。保留64MiB对话请求体与有效/历史账本筛选。生产配套已完成数据守恒和91个Chrome响应验收；长窗口仍有共享锁等待。公开CI及原生/容器资产状态见发行收据，不作新原厂能力声明。
 
-Current stable release: **[v0.34.0-qiwolf.29](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29)** · [Release notes](docs/releases/v0.34.0-qiwolf.29.md) · [Publication and production receipt](docs/acceptance/2026-11-04-qiwolf29-release/README.md).
+Release version (publication status in receipt): **[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [Release notes](docs/releases/v0.34.0-qiwolf.30.md) · [Publication and production receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
 
-This release unifies provider and original Key-remark labels in administrator recent calls and details while preserving passthrough service names. Ordinary users gain an overview and breakdowns limited to their own calls, with aligned usage notes. Real-cookie Chrome checks passed for isolated A/B users and an administrator; production verification used the existing legal administrator session, data-preservation checks and 2+2 bounded local BGE/CLIP calls. No production user login was impersonated. Exact main CI passed Rust1603/0/9, Python13 and WASM; all nine public assets, GHCR and native/container acceptance passed. Schema44 only adds an owner index. Stored names, remarks, model calls, accounting and historical success-rate semantics remain unchanged; no new original-provider capability test is claimed.
+This release fixes historical scans and repeated reads in model scoring, statistics and billing. Schema45 adds indexed access paths, rebuildable invocation totals and protocol-session epochs. Million-row, concurrency and permission regressions are included. Production companion checks preserved business data and observed 91 successful browser responses; long-window lock contention remains visible. Public CI and native/container asset acceptance are tracked separately; no new original-provider capability test is claimed.
 
-上一正式版 / Previous stable release: [v0.34.0-qiwolf.28](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.28) · [历史收据 / Historical receipt](docs/acceptance/2026-11-04-qiwolf28-release/README.md)。
+上一正式版 / Previous stable release: [v0.34.0-qiwolf.29](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29) · [历史收据 / Historical receipt](docs/acceptance/2026-11-04-qiwolf29-release/README.md)。
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 

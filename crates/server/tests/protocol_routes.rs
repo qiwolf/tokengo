@@ -1,7 +1,7 @@
-//! Native Responses/Messages routes over real loopback HTTP, never real provider keys.
+//! Native dialogue routes over real loopback HTTP, never real provider keys.
 use axum::{
     body::Body,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::post,
@@ -12,7 +12,7 @@ use std::sync::{
     atomic::{AtomicU16, Ordering},
     Arc, Mutex,
 };
-use tokengo_server::{app, db, AppState, Config, SharedState};
+use tokengo_server::{app, db, protocol::Protocol, AppState, Config, SharedState};
 use tokengo_shared::ChannelId;
 const MODEL: &str = "logical-native";
 const UPSTREAM: &str = "Source/Native:Model";
@@ -87,7 +87,9 @@ async fn native_source(
         )
             .into_response();
     }
-    if path.ends_with("/responses") {
+    if path.ends_with("/chat/completions") {
+        Json(json!({"id":"chatcmpl_native_test","object":"chat.completion","model":UPSTREAM,"choices":[{"index":0,"message":{"role":"assistant","content":"native chat"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}})).into_response()
+    } else if path.ends_with("/responses") {
         Json(json!({"id":"resp_native_test","object":"response","status":"completed","model":UPSTREAM,"output":[{"id":"msg_output","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"native response","annotations":[]}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}})).into_response()
     } else {
         Json(json!({"id":"msg_native_test","type":"message","role":"assistant","model":UPSTREAM,"content":[{"type":"text","text":"native message"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":2}})).into_response()
@@ -103,11 +105,17 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_protocols(vec![Protocol::Responses, Protocol::Messages]).await
+    }
+
+    async fn with_protocols(native: Vec<Protocol>) -> Self {
         let seen = Arc::new(Source::default());
         let source = serve(
             Router::new()
+                .route("/v1/chat/completions", post(native_source))
                 .route("/v1/responses", post(native_source))
                 .route("/v1/messages", post(native_source))
+                .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
                 .with_state(seen.clone()),
         )
         .await;
@@ -161,10 +169,7 @@ impl Fixture {
                 &tokengo_server::protocol_config::Capabilities {
                     parameter_profile: None,
                     runtime_identity: None,
-                    native: vec![
-                        tokengo_server::protocol::Protocol::Responses,
-                        tokengo_server::protocol::Protocol::Messages,
-                    ],
+                    native,
                     allow_conversion: false,
                     native_input_audio: false,
                     chat_reasoning_replay: false,
@@ -202,6 +207,51 @@ impl Fixture {
         }
     }
 }
+#[tokio::test]
+async fn large_dialogue_bodies_reach_each_native_upstream() {
+    let f = Fixture::with_protocols(vec![Protocol::Chat, Protocol::Responses, Protocol::Messages]).await;
+    let bearer = format!("Bearer {}", f.key);
+    let content = "x".repeat(2 * 1024 * 1024 + 4096);
+
+    for path in ["/v1/chat/completions", "/v1/responses", "/v1/messages"] {
+        let body = match path {
+            "/v1/responses" => json!({"model":MODEL,"input":content}),
+            _ => json!({"model":MODEL,"max_tokens":32,"messages":[{"role":"user","content":content}]}),
+        };
+        let response = f.call(path, &[("authorization", &bearer)], body).await;
+        let status = response.status();
+        let response_body = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{path}: {response_body}");
+
+        let seen = f.seen.seen.lock().unwrap();
+        let request = seen.last().unwrap();
+        assert_eq!(request.path, path);
+        assert_eq!(request.body["model"], UPSTREAM);
+        let forwarded = if path == "/v1/responses" {
+            &request.body["input"]
+        } else {
+            &request.body["messages"][0]["content"]
+        };
+        assert_eq!(forwarded.as_str().unwrap().len(), content.len());
+        assert!(forwarded == &content);
+    }
+}
+
+#[tokio::test]
+async fn chat_rejects_a_body_over_the_dialogue_transport_limit() {
+    let f = Fixture::new().await;
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/chat/completions", f.gateway.url))
+        .bearer_auth(&f.key)
+        .header("content-type", "application/json")
+        .body(vec![b' '; 64 * 1024 * 1024 + 1])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(f.seen.seen.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn responses_and_messages_reach_their_native_paths_with_virtual_key_auth() {
     let f = Fixture::new().await;

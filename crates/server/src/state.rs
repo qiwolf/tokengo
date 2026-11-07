@@ -410,8 +410,11 @@ impl AppState {
 
     /// 拿数据库锁。锁中毒（有 handler panic 过）时直接恢复继续用 ——
     /// 死锁比 panic 更糟，宁可带着可能不一致的内存状态继续跑。
+    #[track_caller]
     pub fn conn(&self) -> crate::operations_guard::Guard<'_> {
-        crate::operations_guard::Guard::new(self.db.lock().unwrap_or_else(|e| e.into_inner()))
+        let start = std::time::Instant::now();
+        let guard = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        crate::operations_guard::Guard::new(guard, start.elapsed())
     }
 
     /// 拿路由锁。**圈住的代码里不许有 await / 网络调用。**

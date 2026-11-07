@@ -76,6 +76,7 @@ pub const INACTIVE_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 pub const RECENT_ARTIFACTS_PER_OWNER: usize = 500;
 pub const COLD_IDLE_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_COLD_PRUNE_BATCH: usize = 1024;
+const MAX_EXPIRED_PRUNE_BATCH: i64 = 1024;
 pub const MAX_TOTAL_ARTIFACTS: usize = 1_000_000;
 pub const MAX_TOTAL_SESSIONS: usize = 100_000;
 #[derive(Clone, Copy)]
@@ -111,38 +112,49 @@ pub fn persistence_note(error: &db::DbError) -> String {
 }
 fn cleanup(c: &rusqlite::Connection, now: i64) -> db::Result<()> {
     let cutoff = now.saturating_sub(INACTIVE_TTL_MS);
+    // Delete child records first and bound the candidate set. Deleting even one
+    // session with ON DELETE CASCADE could otherwise remove a million artifacts
+    // while the shared connection is held. TTL enforcement below is independent
+    // of whether these physical cleanup batches have caught up.
     c.execute(
-        "DELETE FROM protocol_sessions WHERE last_used_ms<=?1",
-        [cutoff],
+        "DELETE FROM protocol_artifacts WHERE rowid IN (
+            SELECT rowid FROM protocol_artifacts WHERE last_used_ms<=?1
+            ORDER BY last_used_ms LIMIT ?2)",
+        rusqlite::params![cutoff,MAX_EXPIRED_PRUNE_BATCH],
     )?;
     c.execute(
-        "DELETE FROM protocol_artifacts WHERE last_used_ms<=?1",
-        [cutoff],
+        "DELETE FROM protocol_sessions WHERE key IN (
+            SELECT key FROM protocol_sessions WHERE last_used_ms<=?1
+            ORDER BY last_used_ms LIMIT ?2)
+            AND NOT EXISTS(SELECT 1 FROM protocol_artifacts WHERE owner=protocol_sessions.key)",
+        rusqlite::params![cutoff,MAX_EXPIRED_PRUNE_BATCH],
     )?;
     Ok(())
 }
 /// Retire only idle records outside the most recently used floor in this exact
 /// authenticated scope. The current request's verified inputs are refreshed before
 /// issuance reaches here. Bounded deletion avoids a large cold pool blocking the DB.
+/// Expired records belong exclusively to cleanup's batch; do not spend a second
+/// expiration batch here while making room among still-valid cold histories.
 fn prune_cold_owner(c: &rusqlite::Connection, owner: &str, now: i64, recent: usize) -> db::Result<()> {
     c.execute(
         "DELETE FROM protocol_artifacts WHERE owner=?1 AND key_digest IN (
-            SELECT key_digest FROM protocol_artifacts WHERE owner=?1 AND last_used_ms<=?2
+            SELECT key_digest FROM protocol_artifacts WHERE owner=?1 AND last_used_ms<=?2 AND last_used_ms>?5
             AND key_digest NOT IN (
                 SELECT key_digest FROM protocol_artifacts WHERE owner=?1
                 ORDER BY last_used_ms DESC,issued_ms DESC,key_digest DESC LIMIT ?3
             ) ORDER BY last_used_ms,issued_ms,key_digest LIMIT ?4
         )",
-        rusqlite::params![owner, now.saturating_sub(COLD_IDLE_MS), recent as i64, MAX_COLD_PRUNE_BATCH as i64],
+        rusqlite::params![owner, now.saturating_sub(COLD_IDLE_MS), recent as i64, MAX_COLD_PRUNE_BATCH as i64,now.saturating_sub(INACTIVE_TTL_MS)],
     )?;
     Ok(())
 }
-fn read_pin(c: &rusqlite::Connection, key: &str) -> db::Result<Option<Pin>> {
+fn read_pin_at(c: &rusqlite::Connection, key: &str, now: i64) -> db::Result<Option<Pin>> {
     use rusqlite::OptionalExtension;
     let value: Option<String> = c
         .query_row(
-            "SELECT pin_json FROM protocol_sessions WHERE key=?1",
-            [key],
+            "SELECT pin_json FROM protocol_sessions WHERE key=?1 AND last_used_ms>?2",
+            rusqlite::params![key,now.saturating_sub(INACTIVE_TTL_MS)],
             |r| r.get(0),
         )
         .optional()?;
@@ -150,9 +162,13 @@ fn read_pin(c: &rusqlite::Connection, key: &str) -> db::Result<Option<Pin>> {
         .map(|v| serde_json::from_str(&v).map_err(|_| error("Invalid native session ownership")))
         .transpose()
 }
+#[cfg(test)]
+fn read_pin(c: &rusqlite::Connection, key: &str) -> db::Result<Option<Pin>> {
+    read_pin_at(c,key,db::now_ms())
+}
 fn load_at(c: &rusqlite::Connection, key: &str, now: i64) -> db::Result<Option<Pin>> {
     cleanup(c, now)?;
-    let pin = read_pin(c, key)?;
+    let pin = read_pin_at(c, key, now)?;
     if pin.is_some() {
         c.execute(
             "UPDATE protocol_sessions SET last_used_ms=?2 WHERE key=?1",
@@ -171,7 +187,7 @@ fn claim_inner(
     now: i64,
     limits: Limits,
 ) -> db::Result<bool> {
-    if let Some(existing) = read_pin(c, key)? {
+    if let Some(existing) = read_pin_at(c, key, now)? {
         if existing != *pin {
             return Ok(false);
         }
@@ -181,7 +197,13 @@ fn claim_inner(
         )?;
         return Ok(true);
     }
-    let count: i64 = c.query_row("SELECT COUNT(*) FROM protocol_sessions", [], |r| r.get(0))?;
+    let cutoff=now.saturating_sub(INACTIVE_TTL_MS);
+    let physical_count: i64 = c.query_row("SELECT COUNT(*) FROM protocol_sessions", [], |r| r.get(0))?;
+    // Usually SQLite's COUNT fast path suffices. Only a full store needs to
+    // distinguish logically expired records from the deferred cleanup backlog.
+    let count=if physical_count>=limits.sessions as i64 {
+        c.query_row("SELECT COUNT(*) FROM protocol_sessions WHERE last_used_ms>?1", [cutoff], |r| r.get(0))?
+    }else{physical_count};
     if count >= limits.sessions as i64 {
         return Err(error(
             "Native session capacity reached; no active history was evicted",
@@ -189,11 +211,13 @@ fn claim_inner(
     }
     let encoded =
         serde_json::to_string(pin).map_err(|_| error("Invalid native session ownership"))?;
-    c.execute(
-        "INSERT INTO protocol_sessions(key,pin_json,last_used_ms) VALUES(?1,?2,?3)",
-        rusqlite::params![key, encoded, now],
+    let changed=c.execute(
+        "INSERT INTO protocol_sessions(key,pin_json,last_used_ms,issued_ms) VALUES(?1,?2,?3,?3)
+         ON CONFLICT(key) DO UPDATE SET pin_json=excluded.pin_json,last_used_ms=excluded.last_used_ms,issued_ms=excluded.issued_ms
+         WHERE protocol_sessions.last_used_ms<=?4",
+        rusqlite::params![key, encoded, now,cutoff],
     )?;
-    Ok(true)
+    Ok(changed==1)
 }
 /// Atomic first-writer wins; expired state alone is eligible for replacement.
 pub fn claim(c: &rusqlite::Connection, key: &str, pin: &Pin) -> db::Result<bool> {
@@ -540,7 +564,7 @@ pub fn verify_artifacts(
     db::in_tx(c, |c| {
         let now = db::now_ms();
         cleanup(c, now)?;
-        if read_pin(c, owner)?.as_ref() != Some(pin) {
+        if read_pin_at(c, owner,now)?.as_ref() != Some(pin) {
             return Ok(false);
         }
         let digests: std::collections::BTreeSet<_> =
@@ -548,8 +572,9 @@ pub fn verify_artifacts(
                 .chain(summaries.iter().map(|v| summary_key(owner, pin, v))).collect();
         for digest in &digests {
             let exists: bool = c.query_row(
-                "SELECT EXISTS(SELECT 1 FROM protocol_artifacts WHERE owner=?1 AND key_digest=?2)",
-                rusqlite::params![owner, digest],
+                "SELECT EXISTS(SELECT 1 FROM protocol_artifacts a JOIN protocol_sessions s ON s.key=a.owner
+                 WHERE a.owner=?1 AND a.key_digest=?2 AND a.last_used_ms>?3 AND a.issued_ms>=s.issued_ms)",
+                rusqlite::params![owner, digest,now.saturating_sub(INACTIVE_TTL_MS)],
                 |r| r.get(0),
             )?;
             if !exists {
@@ -786,11 +811,14 @@ impl ArtifactCollector {
             }
             let mut additions = 0usize;
             for digest in &digests {
-                let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM protocol_artifacts WHERE owner=?1 AND key_digest=?2)",rusqlite::params![owner,digest],|r|r.get(0))?;
+                let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM protocol_artifacts a JOIN protocol_sessions s ON s.key=a.owner WHERE a.owner=?1 AND a.key_digest=?2 AND a.last_used_ms>?3 AND a.issued_ms>=s.issued_ms)",rusqlite::params![owner,digest,now.saturating_sub(INACTIVE_TTL_MS)],|r|r.get(0))?;
                 additions += usize::from(!exists);
             }
             for digest in &digests {
-                c.execute("INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) VALUES(?1,?2,?3,?3) ON CONFLICT(owner,key_digest) DO UPDATE SET last_used_ms=excluded.last_used_ms",rusqlite::params![owner,digest,now])?;
+                // A freshly issued digest may collide with a physically retained
+                // record from an expired owner epoch. It becomes valid only by
+                // recording this actual issuance, never by a proof-only refresh.
+                c.execute("INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) VALUES(?1,?2,?3,?3) ON CONFLICT(owner,key_digest) DO UPDATE SET issued_ms=CASE WHEN protocol_artifacts.last_used_ms<=?4 OR protocol_artifacts.issued_ms<(SELECT issued_ms FROM protocol_sessions WHERE key=?1) THEN excluded.issued_ms ELSE protocol_artifacts.issued_ms END,last_used_ms=excluded.last_used_ms",rusqlite::params![owner,digest,now,now.saturating_sub(INACTIVE_TTL_MS)])?;
             }
             if !digests.is_empty() {
                 prune_cold_owner(c, owner, now, limits.recent)?;
@@ -798,7 +826,10 @@ impl ArtifactCollector {
             // Preserve the global safety bound, but don't repeatedly count the whole
             // ledger for plain SSE chunks or reissued values that add no storage.
             if additions > 0 {
-                let total: i64 = c.query_row("SELECT COUNT(*) FROM protocol_artifacts", [], |r| r.get(0))?;
+                let physical_total: i64 = c.query_row("SELECT COUNT(*) FROM protocol_artifacts", [], |r| r.get(0))?;
+                let total=if physical_total>limits.artifacts as i64 {
+                    c.query_row("SELECT COUNT(*) FROM protocol_artifacts a INDEXED BY protocol_artifacts_last_used JOIN protocol_sessions s ON s.key=a.owner WHERE a.last_used_ms>?1 AND s.last_used_ms>?1 AND a.issued_ms>=s.issued_ms",[now.saturating_sub(INACTIVE_TTL_MS)],|r|r.get(0))?
+                }else{physical_total};
                 if total as usize > limits.artifacts {
                     return Err(error("Opaque artifact capacity reached; no active history was evicted"));
                 }
@@ -1133,6 +1164,14 @@ mod migration_tests {
         )
         .unwrap();
         c.execute_batch(SQL).unwrap();
+        // First verify the historical migration on its original schema. Runtime
+        // proof checks below then run with the additive v45 epoch column, just
+        // as they do after a real database has completed all migrations.
+        let migrated_pin:String=c.query_row("SELECT pin_json FROM protocol_sessions WHERE key=?1",[&owner],|r|r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Pin>(&migrated_pin).unwrap(),p);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        c.execute_batch("ALTER TABLE protocol_sessions ADD COLUMN issued_ms INTEGER NOT NULL DEFAULT 0;").unwrap();
+        assert_eq!(c.query_row("SELECT issued_ms FROM protocol_sessions WHERE key=?1",[&owner],|r|r.get::<_,i64>(0)).unwrap(),0,"legacy pins retain the compatible zero epoch");
         assert_eq!(load(&c, &owner).unwrap(), Some(p.clone()));
         assert!(!verify_artifacts(
             &c,
@@ -1235,6 +1274,9 @@ mod cold_retention_tests {
     use super::*;
     fn seed(c: &rusqlite::Connection, owner: &str, pin: &Pin, count: i64, last_used: i64) {
         assert!(claim(c, owner, pin).unwrap());
+        // Reconstruct a historical owner which existed before these historical
+        // issuances. A newly-created epoch may not borrow earlier artifacts.
+        c.execute("UPDATE protocol_sessions SET issued_ms=?2 WHERE key=?1",rusqlite::params![owner,last_used-count]).unwrap();
         for i in 0..count {
             c.execute("INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) VALUES(?1,?2,?3,?3)",rusqlite::params![owner,artifact_key(owner,pin,&format!("cold-{i}")),last_used-i]).unwrap();
         }
@@ -1307,6 +1349,7 @@ mod cold_retention_tests {
         let c=db::open_in_memory().unwrap();let pin=p();let now=db::now_ms();
         for (owner,time) in [("large-hot",now),("large-cold",now-25*60*60*1000)] {
             assert!(claim(&c,owner,&pin).unwrap());
+            c.execute("UPDATE protocol_sessions SET issued_ms=?2 WHERE key=?1",rusqlite::params![owner,time-20000]).unwrap();
             c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT ?1,printf('%064x',i),?2,?2 FROM n",rusqlite::params![owner,time]).unwrap();
             let started=std::time::Instant::now();issue(&c,owner,&pin,now);
             let count=c.query_row("SELECT COUNT(*) FROM protocol_artifacts WHERE owner=?1",[owner],|r|r.get::<_,i64>(0)).unwrap();
@@ -1324,4 +1367,139 @@ mod cold_retention_tests {
         assert!(!rows.iter().any(|s|s.contains("TEMP B-TREE")),"{rows:?}");
     }
 
+}
+
+#[cfg(test)]
+mod expired_backlog_tests {
+    use super::*;
+
+    fn pin() -> Pin {
+        Pin { channel:1,generation:1,upstream_model:"M".into(),protocol:Protocol::Messages }
+    }
+    fn seed_backlog(c:&rusqlite::Connection,now:i64) {
+        let cutoff=now-INACTIVE_TTL_MS;
+        c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms,issued_ms) VALUES('backlog',?1,?2,0)",rusqlite::params![serde_json::to_string(&pin()).unwrap(),cutoff-100]).unwrap();
+        c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<10000) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT 'backlog',printf('%064x',i),0,?1 FROM n",[cutoff-100]).unwrap();
+    }
+    fn collector(value:&str)->ArtifactCollector {
+        let mut a=ArtifactCollector::default();
+        a.value(&serde_json::json!({"type":"thinking","signature":value}));
+        a
+    }
+    fn body(value:&str)->Value {serde_json::json!({"type":"thinking","signature":value})}
+
+    #[test]
+    fn expired_cleanup_is_bounded_even_for_one_owner_with_many_children() {
+        let c=db::open_in_memory().unwrap();let now=db::now_ms();seed_backlog(&c,now);
+        unsafe extern "C" fn stop(_: *mut std::ffi::c_void)->std::ffi::c_int {1}
+        unsafe {rusqlite::ffi::sqlite3_progress_handler(c.handle(),300000,Some(stop),std::ptr::null_mut());}
+        let result=cleanup(&c,now);
+        unsafe {rusqlite::ffi::sqlite3_progress_handler(c.handle(),0,None,std::ptr::null_mut());}
+        result.expect("cleanup must bound child deletion and must not cascade an entire expired owner");
+        let remaining:i64=c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get(0)).unwrap();
+        assert_eq!(remaining,10000-MAX_EXPIRED_PRUNE_BATCH);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        assert_eq!(load_at(&c,"backlog",now).unwrap(),None,"a physically retained expired owner cannot be refreshed");
+        assert_eq!(c.query_row("SELECT last_used_ms FROM protocol_sessions WHERE key='backlog'",[],|r|r.get::<_,i64>(0)).unwrap(),now-INACTIVE_TTL_MS-100);
+    }
+
+    #[test]
+    fn actual_issuance_does_not_repeat_expiration_in_the_cold_retention_pass() {
+        let c=db::open_in_memory().unwrap();let now=db::now_ms();let p=pin();seed_backlog(&c,now);
+        collector("fresh").persist_at(&c,"backlog",&p,now,LIMITS).unwrap();
+        let remaining:i64=c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get(0)).unwrap();
+        assert_eq!(remaining,10000-MAX_EXPIRED_PRUNE_BATCH+1,"global expiration and owner cold-LRU pruning must not each delete a batch from the same expired backlog");
+        assert!(verify_artifacts(&c,"backlog",&p,&body("fresh")).unwrap());
+    }
+
+    #[test]
+    fn expired_artifact_left_behind_cleanup_cannot_be_refreshed_by_a_proof() {
+        let c=db::open_in_memory().unwrap();let now=db::now_ms();let p=pin();seed_backlog(&c,now);
+        collector("stale-proof").persist_at(&c,"active-owner",&p,now,LIMITS).unwrap();
+        c.execute("UPDATE protocol_artifacts SET last_used_ms=?1 WHERE owner='active-owner'",[now-INACTIVE_TTL_MS]).unwrap();
+        assert!(!verify_artifacts(&c,"active-owner",&p,&body("stale-proof")).unwrap());
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts WHERE owner='active-owner'",[],|r|r.get::<_,i64>(0)).unwrap(),1,"test must exercise a leftover row, not a physically deleted proof");
+        assert_eq!(c.query_row("SELECT last_used_ms FROM protocol_artifacts WHERE owner='active-owner'",[],|r|r.get::<_,i64>(0)).unwrap(),now-INACTIVE_TTL_MS);
+    }
+
+    #[test]
+    fn expired_owner_collision_starts_a_new_epoch_and_requires_actual_reissuance() {
+        let c=db::open_in_memory().unwrap();let now=db::now_ms();let p=pin();seed_backlog(&c,now);
+        // Keep a recent child under an expired session to exercise the epoch
+        // boundary independently of the child's own inactivity timestamp.
+        c.execute("INSERT INTO protocol_sessions(key,pin_json,last_used_ms,issued_ms) VALUES('reused',?1,?2,0)",rusqlite::params![serde_json::to_string(&p).unwrap(),now-INACTIVE_TTL_MS]).unwrap();
+        c.execute("INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) VALUES('reused',?1,0,?2)",rusqlite::params![artifact_key("reused",&p,"old"),now]).unwrap();
+        assert_eq!(load_at(&c,"reused",now).unwrap(),None);
+        assert!(claim_inner(&c,"reused",&p,now,Limits{recent:500,artifacts:1,sessions:1}).unwrap(),"expired backlog must not consume the active session capacity");
+        assert!(!verify_artifacts(&c,"reused",&p,&body("old")).unwrap(),"reusing the same owner and pin cannot revive an earlier epoch's proof");
+        collector("old").persist_at(&c,"reused",&p,now+1,Limits{recent:500,artifacts:1,sessions:1}).unwrap();
+        assert!(verify_artifacts(&c,"reused",&p,&body("old")).unwrap());
+        let issued:i64=c.query_row("SELECT issued_ms FROM protocol_artifacts WHERE owner='reused'",[],|r|r.get(0)).unwrap();
+        assert_eq!(issued,now+1);
+        collector("old").persist_at(&c,"reused",&p,now+2,LIMITS).unwrap();
+        assert_eq!(c.query_row("SELECT issued_ms FROM protocol_artifacts WHERE owner='reused'",[],|r|r.get::<_,i64>(0)).unwrap(),issued,"ordinary reissuance retains the established issue timestamp and LRU tie-break");
+    }
+
+    fn seed_artifacts(c:&rusqlite::Connection,owner:&str,count:i64,issued:i64,last_used:i64) {
+        c.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<?2) INSERT INTO protocol_artifacts(owner,key_digest,issued_ms,last_used_ms) SELECT ?1,printf('%064x',i),?3,?4 FROM n",rusqlite::params![owner,count,issued,last_used]).unwrap();
+    }
+
+    fn measured_persist(c:&rusqlite::Connection,owner:&str,p:&Pin,value:&str,now:i64,label:&str)->db::Result<()> {
+        use std::sync::atomic::{AtomicU64,Ordering};
+        let operations=AtomicU64::new(0);
+        unsafe extern "C" fn record(context:*mut std::ffi::c_void)->std::ffi::c_int {
+            let operations=unsafe {&*(context as *const AtomicU64)};
+            operations.fetch_add(1000,Ordering::Relaxed);
+            0
+        }
+        unsafe {rusqlite::ffi::sqlite3_progress_handler(c.handle(),1000,Some(record),(&operations as *const AtomicU64).cast_mut().cast());}
+        let started=std::time::Instant::now();
+        let result=collector(value).persist_at(c,owner,p,now,LIMITS);
+        let elapsed=started.elapsed();
+        unsafe {rusqlite::ffi::sqlite3_progress_handler(c.handle(),0,None,std::ptr::null_mut());}
+        let operations=operations.load(Ordering::Relaxed);
+        eprintln!("protocol-capacity {label} elapsed_ms={:.2} vm_steps_approx={operations} outcome={}",elapsed.as_secs_f64()*1000.0,if result.is_ok(){"accepted"}else{"rejected"});
+        assert!(elapsed<std::time::Duration::from_secs(1),"{label}: persist exceeded the 1-second capacity-query budget: {elapsed:?}");
+        // Exact capacity accounting may visit the bounded million active rows.
+        // More than 40 VM steps per allowed artifact indicates repeated scans
+        // or accidental per-row work beyond this one capacity pass.
+        assert!(operations<40*MAX_TOTAL_ARTIFACTS as u64,"{label}: capacity accounting used {operations} VM steps");
+        result
+    }
+
+    #[test]
+    #[ignore = "million-artifact capacity and epoch query budget; run in release mode"]
+    fn protocol_capacity_million_active_rejects_without_evicting_then_allows_new_epoch() {
+        let c=db::open_in_memory().unwrap();let now=db::now_ms();let p=pin();
+        collector("anchor").persist_at(&c,"million",&p,now,LIMITS).unwrap();
+        seed_artifacts(&c,"million",MAX_TOTAL_ARTIFACTS as i64-1,now,now);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),MAX_TOTAL_ARTIFACTS as i64);
+        let rejected=measured_persist(&c,"million",&p,"over-capacity",now+1,"million-active");
+        assert!(matches!(rejected,Err(db::DbError::Other(ref message)) if message=="Opaque artifact capacity reached; no active history was evicted"));
+        assert!(verify_artifacts(&c,"million",&p,&body("anchor")).unwrap(),"a rejected issuance must retain the prior proof");
+        assert!(!verify_artifacts(&c,"million",&p,&body("over-capacity")).unwrap());
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),MAX_TOTAL_ARTIFACTS as i64,"the rejected digest must roll back");
+
+        // Retain a full physical store from a prior owner epoch, including
+        // recent child timestamps. A fresh issuance must count only valid rows.
+        c.execute("UPDATE protocol_sessions SET last_used_ms=?1 WHERE key='million'",[now-INACTIVE_TTL_MS]).unwrap();
+        measured_persist(&c,"million",&p,"new-epoch",now+10,"million-old-epoch").unwrap();
+        assert!(!verify_artifacts(&c,"million",&p,&body("anchor")).unwrap(),"reclaiming an owner does not revive the previous epoch's proof");
+        assert!(verify_artifacts(&c,"million",&p,&body("new-epoch")).unwrap());
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),MAX_TOTAL_ARTIFACTS as i64+1,"the test must leave a full physical old-epoch backlog");
+    }
+
+    #[test]
+    #[ignore = "million-artifact expired-backlog capacity query budget; run in release mode"]
+    fn protocol_capacity_million_expired_backlog_does_not_block_actual_issuance() {
+        let c=db::open_in_memory().unwrap();let now=db::now_ms();let p=pin();
+        assert!(claim_inner(&c,"expired-million",&p,now,LIMITS).unwrap());
+        let backlog=MAX_TOTAL_ARTIFACTS as i64+2*MAX_EXPIRED_PRUNE_BATCH;
+        seed_artifacts(&c,"expired-million",backlog,0,now-INACTIVE_TTL_MS);
+        measured_persist(&c,"expired-million",&p,"fresh",now+1,"million-expired-backlog").unwrap();
+        let remaining:i64=c.query_row("SELECT COUNT(*) FROM protocol_artifacts",[],|r|r.get(0)).unwrap();
+        assert_eq!(remaining,backlog-MAX_EXPIRED_PRUNE_BATCH+1,"one issuance must perform only one bounded expiration batch");
+        assert!(remaining>MAX_TOTAL_ARTIFACTS as i64,"the test must exercise the physical-over-capacity branch");
+        assert!(verify_artifacts(&c,"expired-million",&p,&body("fresh")).unwrap());
+    }
 }

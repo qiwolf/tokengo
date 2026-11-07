@@ -1,6 +1,6 @@
 # Linux x86_64 私有站部署与回滚
 
-本文随 **v0.34.0-qiwolf.25** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。本版新增供应方预设及请求渠道可见性，无数据库迁移。公开发行与独立验收状态见[本轮发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)，具体功能见[版本说明](releases/v0.34.0-qiwolf.25.md)。发行不自动升级现有实例，也不会修改反代。升级前一致备份数据库、主密钥、程序、Web 与配置；恢复写入后不能用旧整库覆盖新增账务。既有[可信反代来源 IP 指南](reverse-proxy-client-ip.md)继续适用。
+本文随 **v0.34.0-qiwolf.30** 源码与配套包构建，Cargo **0.34.0**、数据库 schema **45**。由44升级会追加查询索引、可重建累计调用汇总及协议会话epoch；大库建索引和首次预热需要停服维护窗口。本轮查询修复与生产配套已验收，公开发行状态见[发行收据](acceptance/2026-11-07-qiwolf30-release/README.md)，具体见[版本说明](releases/v0.34.0-qiwolf.30.md)。发行不自动升级现有实例，也不会修改反代。升级前排空调用并一致备份数据库、主密钥、程序、Web与配置；恢复写入后不能用旧整库覆盖新增账务。既有[可信反代来源IP指南](reverse-proxy-client-ip.md)继续适用。
 
 历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
 
@@ -8,7 +8,7 @@
 
 这套交付先在新 Linux LXC 上独立验收，默认仅监听 `127.0.0.1:3160`。它不修改 LiteLLM、反向代理、DNS 或现有客户端入口。真实模型逐项验收和最终切流另行执行；通过 `/readyz` 不等于工具调用或模型迁移已通过。
 
-GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。直接包包含服务端、CLI、完整 WASM 控制台、安装/升级/回滚工具、匹配源码的完整 `docs/` 和可选的 `tools/mineru-gateway-client.py`；Rust 服务运行不依赖该 Python 客户端。容器部署见[容器指南](container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
+GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中一种安装方式。解压后优先阅读 `docs/deployment.md`；包根同名副本中的相对文档链接以 `docs/` 为基准。直接包包含服务端、CLI、完整 WASM 控制台、安装/升级/回滚工具、匹配源码的完整 `docs/` 和可选的 `tools/mineru-gateway-client.py`；Rust 服务运行不依赖该 Python 客户端。容器部署见[容器指南](container-deployment.md)。各版本以实际发布附件、精确提交 CI 和目标机验收记录为准。不得把 macOS 二进制放入 Linux 交付包。
 
 部署后的智能体管理入口见[运维令牌](operations-tokens.md)（自 v0.34.0-qiwolf.5 提供，须核对部署版本）；较早版本可参考[root 运维会话兼容说明](account-login.md#脚本化运维)。
 
@@ -17,6 +17,14 @@ GitHub Releases 提供 Linux x86_64 直接部署包及容器版，选择其中�
 Key恢复材料复用现有AES-256-GCM密文字段；升级备份必须同时保存数据库与原主密钥。只有摘要的历史Key不能补算出原值，不会自动替换、撤销或扩大现有Key授权。旧版本不能提供新版的列表删除保护与再次显示合同；即使schema仍为40，回滚也应恢复匹配的程序、Web、数据库与主密钥快照，并先处理升级后的业务写入，不能只凭schema号相同判断可安全降级。
 
 历史公开分发 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**，功能schema40，新增共享向量/重排回退、逐来源续验、回收站与服务授权；发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。见[本版说明](releases/v0.34.0-qiwolf.8.md)和[验收状态](acceptance-status.md)。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复容器交付配置。安装包不会自动创建私有路由或切换调用方；[通用透传与MinerU](passthrough-development.md)仍限已实现的同步链路。由schema39升级前须一致备份数据库、主密钥和旧程序，不能用旧程序直接打开schema40数据库。
+
+## schema45迁移与回退
+
+在外部入口保持维护、在途请求与账务预占排空并停服后，可使用服务相同的数据库路径、运行身份与环境执行新程序 `tokengo-server --migrate-only`。该模式只迁移及预热累计统计，不启动监听、后台任务、业务恢复或主密钥/日志初始化。包中保留43/44源SQL，45由两个源part以单个额外换行精确拼接，manifest记录片段与组合摘要。
+
+现有 `deploy/manage.py upgrade` 在启动健康失败时会自动恢复停服快照；因此它执行期间及验收完成前必须保持外部维护入口关闭，避免新程序接受业务写入后再恢复旧库。恢复入口前核对就绪、页面与业务结果；不将健康200等同端到端验收。
+
+schema45为加性迁移，已在合成库验证旧程序仍可读写。恢复流量后的普通程序回退应保留当前实时数据库与45结构；`manage.py restore`会替换数据库、主密钥及配置，只用于经评估的数据恢复，不能作为已产生新业务写入后的无损程序回退。
 
 ## 使用已发布的直接部署包
 

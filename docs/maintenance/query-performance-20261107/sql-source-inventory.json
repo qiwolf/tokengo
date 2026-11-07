@@ -1,0 +1,4011 @@
+{
+  "scope": "crates/server/src/**/*.rs before first cfg(test); static lexical inventory, not runtime coverage; SQL migration files reviewed separately; later production sections in files with interspersed test modules may be absent",
+  "files": [
+    {
+      "file": "crates/server/src/admission.rs",
+      "sql_line_matches": 3,
+      "locations": [
+        {
+          "line": 207,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 212,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 228,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/billing_writer.rs",
+      "sql_line_matches": 5,
+      "locations": [
+        {
+          "line": 97,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 108,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 112,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 175,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 290,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/capability_detector.rs",
+      "sql_line_matches": 5,
+      "locations": [
+        {
+          "line": 22,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 66,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 79,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 80,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 141,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/custom_probes.rs",
+      "sql_line_matches": 4,
+      "locations": [
+        {
+          "line": 79,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 113,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 131,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 151,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/account_overview.rs",
+      "sql_line_matches": 6,
+      "locations": [
+        {
+          "line": 23,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 34,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 36,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 43,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 45,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 61,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/accounts.rs",
+      "sql_line_matches": 17,
+      "locations": [
+        {
+          "line": 79,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 81,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 86,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 93,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 109,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 118,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 122,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 124,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 138,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 146,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 159,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 167,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 168,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 175,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 186,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 206,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 212,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/billing.rs",
+      "sql_line_matches": 51,
+      "locations": [
+        {
+          "line": 87,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 104,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 107,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 132,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 164,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 179,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 199,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 244,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 276,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 284,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 291,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 294,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 311,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 315,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 321,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 325,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 330,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 400,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 401,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 407,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 409,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 411,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 492,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 499,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 509,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 527,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 541,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 550,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 560,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 568,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 576,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 585,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 589,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 622,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 686,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 698,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 714,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 718,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 724,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 728,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 747,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 750,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 768,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 805,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 817,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 829,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 832,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 848,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 853,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 857,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 864,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/billing_management.rs",
+      "sql_line_matches": 8,
+      "locations": [
+        {
+          "line": 17,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 23,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 34,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 47,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 71,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 129,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 132,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 133,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/catalog.rs",
+      "sql_line_matches": 6,
+      "locations": [
+        {
+          "line": 79,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 84,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 101,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 129,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 158,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 177,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/channels.rs",
+      "sql_line_matches": 32,
+      "locations": [
+        {
+          "line": 93,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 94,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 117,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 124,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 144,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 154,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 204,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 240,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 245,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 269,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 289,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 299,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 317,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 342,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 352,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 365,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 366,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 376,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 392,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 414,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 418,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 426,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 437,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 441,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 458,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 466,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 469,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 481,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 482,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 485,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 486,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 505,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/faults.rs",
+      "sql_line_matches": 14,
+      "locations": [
+        {
+          "line": 67,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 73,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 100,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 119,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 137,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 159,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 164,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 167,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 173,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 175,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 182,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 188,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 191,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 192,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/gateway_keys.rs",
+      "sql_line_matches": 16,
+      "locations": [
+        {
+          "line": 46,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 63,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 71,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 92,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 97,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 100,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 120,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 123,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 127,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 132,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 148,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 184,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 199,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 206,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 216,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 219,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/identity.rs",
+      "sql_line_matches": 11,
+      "locations": [
+        {
+          "line": 248,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 275,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 289,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 301,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 313,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 344,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 521,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 544,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 554,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 579,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 591,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/kinds.rs",
+      "sql_line_matches": 6,
+      "locations": [
+        {
+          "line": 34,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 44,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 60,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 62,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 77,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 79,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/lifecycle.rs",
+      "sql_line_matches": 46,
+      "locations": [
+        {
+          "line": 22,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 33,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 49,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 56,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 64,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 79,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 83,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 110,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 114,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 121,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 124,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 129,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 133,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 140,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 141,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 148,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 153,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 156,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 176,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 182,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 185,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 190,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 191,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 193,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 204,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 205,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 212,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 220,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 227,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 230,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 232,
+          "verbs": [
+            "INSERT OR IGNORE",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 233,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 235,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 241,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 250,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 273,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 279,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 289,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 294,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 297,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 298,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 299,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 300,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 301,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 302,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 304,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/maintenance.rs",
+      "sql_line_matches": 3,
+      "locations": [
+        {
+          "line": 76,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 77,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 127,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/mod.rs",
+      "sql_line_matches": 2,
+      "locations": [
+        {
+          "line": 82,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 93,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/operations_tokens.rs",
+      "sql_line_matches": 17,
+      "locations": [
+        {
+          "line": 26,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 90,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 97,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 103,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 114,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 116,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 131,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 135,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 159,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 171,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 177,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 183,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 193,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 213,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 230,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 239,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 243,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/passthrough.rs",
+      "sql_line_matches": 23,
+      "locations": [
+        {
+          "line": 228,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 260,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 269,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 276,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 285,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 302,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 314,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 324,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 328,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 331,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 338,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 340,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 352,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 355,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 362,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 397,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 402,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 403,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 422,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 424,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 439,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 443,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 459,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/policy.rs",
+      "sql_line_matches": 13,
+      "locations": [
+        {
+          "line": 30,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 39,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 45,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 50,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 54,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 55,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 57,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 61,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 62,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 63,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 64,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 67,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 68,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/provider_channels.rs",
+      "sql_line_matches": 9,
+      "locations": [
+        {
+          "line": 15,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 21,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 26,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 29,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 44,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 72,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 81,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 82,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 130,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/provider_model_lifecycle.rs",
+      "sql_line_matches": 2,
+      "locations": [
+        {
+          "line": 44,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 68,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/provider_pool.rs",
+      "sql_line_matches": 40,
+      "locations": [
+        {
+          "line": 90,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 121,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 139,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 157,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 169,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 201,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 206,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 209,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 234,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 240,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 246,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 257,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 271,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 275,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 281,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 293,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 301,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 306,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 315,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 333,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 334,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 341,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 347,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 356,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 360,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 433,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 437,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 439,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 446,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 460,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 505,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 527,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 533,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 553,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 559,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 562,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 567,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 582,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 583,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 584,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/requests.rs",
+      "sql_line_matches": 15,
+      "locations": [
+        {
+          "line": 46,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 63,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 70,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 129,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 130,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 132,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 136,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 145,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 165,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 197,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 307,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 309,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 317,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 332,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 333,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/route_policy.rs",
+      "sql_line_matches": 1,
+      "locations": [
+        {
+          "line": 84,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/routing.rs",
+      "sql_line_matches": 5,
+      "locations": [
+        {
+          "line": 17,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 34,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 37,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 58,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 80,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/schema.rs",
+      "sql_line_matches": 40,
+      "locations": [
+        {
+          "line": 277,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 278,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 303,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 304,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 306,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 339,
+          "verbs": [
+            "INSERT OR IGNORE",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 340,
+          "verbs": [
+            "INSERT OR IGNORE",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 342,
+          "verbs": [
+            "INSERT OR IGNORE"
+          ]
+        },
+        {
+          "line": 351,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 361,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 362,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 363,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 364,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 367,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 368,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 369,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 370,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 371,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 381,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 382,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 383,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 385,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 391,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 401,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 402,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 403,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 406,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 407,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 409,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 410,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 411,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 414,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 415,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 418,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 419,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 421,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 422,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 423,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 426,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 427,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/scores.rs",
+      "sql_line_matches": 11,
+      "locations": [
+        {
+          "line": 17,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 18,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 42,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 53,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 60,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 65,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 69,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 84,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 87,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 89,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 90,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/sessions.rs",
+      "sql_line_matches": 6,
+      "locations": [
+        {
+          "line": 75,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 89,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 98,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 103,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 110,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 118,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/settings.rs",
+      "sql_line_matches": 5,
+      "locations": [
+        {
+          "line": 21,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 29,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 30,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 37,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 42,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/shared_virtual_routes.rs",
+      "sql_line_matches": 12,
+      "locations": [
+        {
+          "line": 27,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 40,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 81,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 93,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 95,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 114,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 142,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 151,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 174,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 196,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 209,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 219,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/db/user_virtual_routes.rs",
+      "sql_line_matches": 18,
+      "locations": [
+        {
+          "line": 308,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 357,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 368,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 406,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 411,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 423,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 435,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 450,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 462,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 466,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 471,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 484,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 504,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 517,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 543,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 561,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 580,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 592,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/egress.rs",
+      "sql_line_matches": 4,
+      "locations": [
+        {
+          "line": 45,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 55,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 104,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 159,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/gateway/oauth_tests.rs",
+      "sql_line_matches": 8,
+      "locations": [
+        {
+          "line": 128,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 213,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 227,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 317,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 319,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 346,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 348,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 405,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/model_registry.rs",
+      "sql_line_matches": 10,
+      "locations": [
+        {
+          "line": 83,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 88,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 96,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 120,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 194,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 202,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 221,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 222,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 226,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 240,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/oauth_external.rs",
+      "sql_line_matches": 31,
+      "locations": [
+        {
+          "line": 65,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 77,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 82,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 123,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 124,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 133,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 155,
+          "verbs": [
+            "INSERT INTO",
+            "SELECT"
+          ]
+        },
+        {
+          "line": 160,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 171,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 174,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 176,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 183,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 194,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 205,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 209,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 210,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 211,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 219,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 250,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 273,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 275,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 283,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 287,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 290,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 308,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 313,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 324,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 335,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 434,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 443,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 444,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/operations_guard.rs",
+      "sql_line_matches": 17,
+      "locations": [
+        {
+          "line": 14,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 16,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 26,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 40,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 43,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 47,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 53,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 54,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 56,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 57,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 58,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 64,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 65,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 67,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 68,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 87,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 111,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/passthrough.rs",
+      "sql_line_matches": 2,
+      "locations": [
+        {
+          "line": 267,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 315,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/protocol_config.rs",
+      "sql_line_matches": 2,
+      "locations": [
+        {
+          "line": 113,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 120,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/protocol_sessions.rs",
+      "sql_line_matches": 10,
+      "locations": [
+        {
+          "line": 115,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 119,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 129,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 130,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 132,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 144,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 158,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 179,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 184,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 193,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/provider_diagnostics.rs",
+      "sql_line_matches": 3,
+      "locations": [
+        {
+          "line": 58,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 71,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 168,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/reasoning_capabilities.rs",
+      "sql_line_matches": 11,
+      "locations": [
+        {
+          "line": 249,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 250,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 251,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 252,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 290,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 297,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 315,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 388,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 504,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 587,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 589,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/routes/accounts.rs",
+      "sql_line_matches": 9,
+      "locations": [
+        {
+          "line": 457,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 514,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 570,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 574,
+          "verbs": [
+            "DELETE FROM"
+          ]
+        },
+        {
+          "line": 670,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 676,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 685,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 729,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 751,
+          "verbs": [
+            "DELETE FROM",
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/routes/managed_users.rs",
+      "sql_line_matches": 9,
+      "locations": [
+        {
+          "line": 117,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 118,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 122,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 260,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 261,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 262,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 265,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 641,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 654,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/routes/operations.rs",
+      "sql_line_matches": 1,
+      "locations": [
+        {
+          "line": 493,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/routes/providers.rs",
+      "sql_line_matches": 28,
+      "locations": [
+        {
+          "line": 159,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 169,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 173,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 176,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 202,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 213,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 220,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 222,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 228,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 230,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 232,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 238,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 239,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 241,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 473,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 503,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 562,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 574,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 603,
+          "verbs": [
+            "SELECT",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 616,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 621,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 626,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 630,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 784,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 811,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 885,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 941,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 1101,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/routes/shared_virtual_models.rs",
+      "sql_line_matches": 5,
+      "locations": [
+        {
+          "line": 220,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 250,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        },
+        {
+          "line": 268,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 271,
+          "verbs": [
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 273,
+          "verbs": [
+            "INSERT INTO"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/routes/status.rs",
+      "sql_line_matches": 1,
+      "locations": [
+        {
+          "line": 25,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/type_detector.rs",
+      "sql_line_matches": 3,
+      "locations": [
+        {
+          "line": 53,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 58,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 113,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/vector_renewal.rs",
+      "sql_line_matches": 1,
+      "locations": [
+        {
+          "line": 470,
+          "verbs": [
+            "SELECT"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/server/src/vision_detector.rs",
+      "sql_line_matches": 3,
+      "locations": [
+        {
+          "line": 70,
+          "verbs": [
+            "SELECT"
+          ]
+        },
+        {
+          "line": 75,
+          "verbs": [
+            "INSERT INTO",
+            "UPDATE"
+          ]
+        },
+        {
+          "line": 113,
+          "verbs": [
+            "UPDATE"
+          ]
+        }
+      ]
+    }
+  ]
+}
