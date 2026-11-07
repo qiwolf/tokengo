@@ -1,10 +1,12 @@
 # 功能与验收状态
 
-**2026-11-07：v0.34.0-qiwolf.30 处于发行准备，公开产物待独立验收；本轮查询修复已生产上线。** Cargo0.34.0保留，schema44→45。已上线代码生产配套构建（非公开标签源码）修复最近窗口扫描、累计统计重算、对象目录重复查询和协议过期清理，保留历史账本、归一化重试去重、实时权限与额度口径。公开版本的精确源码、CI及资产身份待发行收据确认，不把生产本地构建当作公开下载包验收。
+**2026-11-07：v0.34.0-qiwolf.30 已正式发行，公开产物独立验收通过；生产配套构建已上线。** Cargo0.34.0保留，schema44→45。源码`97c77379df0d973c3c1a15b6c0a06b6e35f10b32`的[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/42363611185)成功：native Rust **1638通过、0失败、15忽略**，Python13、WASM及3项scale/2项百万容量专项通过，重叠不累加。[发行流程](https://github.com/qiwolf/tokengo/actions/runs/42364375957)成功，[正式Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)于北京时间18:48:03（UTC 10:48:03）公开9资产。配套构建修复最近窗口扫描、累计统计重算、对象目录重复查询和协议过期清理，保留历史账本、归一化重试去重、实时权限与额度口径。公开CI产物与生产配套构建分别标识。
 
 build-test基础workspace **1636通过、0失败、15忽略**，Python13通过；百万/10万宽历史、50万单owner、当前与十倍配置、百万协议容量，以及真实loopback HTTP并发均有分层记录。最终仅账务历史目录查询delta另通过10项账务回归、目录及百万/10万门禁，标准ELF与实际新旧ELF升级/回退读写/晚写刷新通过；重叠结果不累加。生产备份、逐原业务列投影守恒及配置/Web/CLI一致性核验通过，Chrome暖SPA切页91响应全部200。模型接口12样本81.9—826.5ms，峰值与7天统计并发；有效账本60.2—70.5ms、历史账本384.3ms、24h统计204.6—298.8ms。维护期间有503与数分钟离线检查，不是零停机；这些前后自然负载观察不是受控提速倍数。50万owner长窗最大998.743ms接近1秒，十倍managed-users最大304.377ms为record-only扩展边界，不能说所有数据量均达标。
 
-本次是性能与查询语义发行，**没有新增原厂真实模型能力验收**；qiwolf.29及更早的真实来源、模拟上游/SDK、未核实项继续保留原日期、型号、协议与账号范围，见[持续核实清单](provider-verification-checklist.md)。GitHub精确CI、正式Release、公开资产/GHCR与原生/容器独立验收均待本轮实际收据，当前不列为通过。
+公开9资产匿名下载及官方digest/所有native校验和、包内文档、schema45parts/combined、原生与容器binary/Web逐hash、匿名owner401、Key加密与重启/同卷重建，以及GHCR匿名按digest真实pull和offline双alias一致性均通过；任务容器/卷和本轮新alias已清理，旧对象保留。离线migrate-only62表与运行态63表分别核对，唯一动态表按发行源码DDL/列/FK验证。**Compose仅执行config校验，未Compose up；公开QA未访问生产、未调用模型、未新做浏览器验收**，生产91响应仍为先行配套证据。见[版本说明](releases/v0.34.0-qiwolf.30.md)、[公开验收收据](acceptance/2026-11-07-qiwolf30-release/README.md)及[结构化摘要](acceptance/2026-11-07-qiwolf30-release/evidence.json)。
+
+本次是性能与查询语义发行，**没有新增原厂真实模型能力验收**；qiwolf.29及更早的真实来源、模拟上游/SDK、未核实项继续保留原日期、型号、协议与账号范围，见[持续核实清单](provider-verification-checklist.md)。标签及包内文档保留构建快照，后补收据维护main与Release，不移动公开标签。
 
 **2026-11-04：v0.34.0-qiwolf.29 已配套生产部署并正式发行，公开产物独立验收通过。** 管理员recent/detail统一供应商·Key备注、透传保名；普通用户独立owner总览提供本人调用与三维统计，不返回上游配置/备注/路径/原始错误。隔离A/B/admin真实cookie/Chrome九场景通过，5d只有class/CSS最后delta，Web185/新WASM及1470桌面/600窄屏文字对齐另验；生产使用已有合法管理员cookie核recent/detail，不冒用普通用户登录。schema43→44仅owner索引，旧请求/用户/Key/账务/迁移/env守恒；旧q28程序读写44合成库通过，不称生产回退演练。build-test server lib564/0/2、routes28、owner API7、Web185及配套包通过；[精确CI](https://github.com/qiwolf/tokengo/actions/runs/41836872266)Rust1603/0/9、Python13/WASM，[发行流程](https://github.com/qiwolf/tokengo/actions/runs/41836871840)与9资产/GHCR/原生容器独立验收通过，重叠不累加。最小BGE/CLIP 2+2探针和匿名owner401通过，0付费见证/额外UI推理/模型重试；传输未启动与基线只读补证收据保留。公开WASM仅静态身份，无原厂能力或历史成功率口径变更。tag源码5d与最终后补docs分开，见[说明](releases/v0.34.0-qiwolf.29.md)与[安全收据](acceptance/2026-11-04-qiwolf29-release/README.md)。
 

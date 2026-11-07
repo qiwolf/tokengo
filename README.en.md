@@ -10,11 +10,11 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Release version (publication status in receipt): **[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [Release notes](docs/releases/v0.34.0-qiwolf.30.md) · [Publication and production receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
+Current stable release: **[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [Release notes](docs/releases/v0.34.0-qiwolf.30.md) · [Publication and production receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
 
 This release fixes historical scans and repeated reads in model scoring, statistics and billing. Schema45 adds indexed access paths, rebuildable invocation totals and protocol-session epochs. Million-row, concurrency and permission regressions are included. Production companion checks preserved business data and observed 91 successful browser responses; long-window lock contention remains visible. Public CI and native/container asset acceptance are tracked separately; no new original-provider capability test is claimed.
 
-本次版本（发行状态见收据）：**[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [版本说明](docs/releases/v0.34.0-qiwolf.30.md) · [发行与生产收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
+当前正式版：**[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [版本说明](docs/releases/v0.34.0-qiwolf.30.md) · [发行与生产收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
 
 本版修复模型评分、统计、账务目录及账本的历史扫描和重复查询，追加schema45与百万宽历史/并发/权限回归。保留64MiB对话请求体与有效/历史账本筛选。生产配套已完成数据守恒和91个Chrome响应验收；长窗口仍有共享锁等待。公开CI及原生/容器资产状态见发行收据，不作新原厂能力声明。
 
