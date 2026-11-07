@@ -1,14 +1,16 @@
 # 功能与验收状态
 
-## 2026-11-07：v0.34.0-qiwolf.31 发行准备
+## 2026-11-07发行、11-08后补：v0.34.0-qiwolf.31 已正式发行，公开产物独立验收通过
 
-配套补丁与指定部署的路由配置已上线；正式CI、GitHub Release和公开原生/容器资产独立验收尚待核验。Cargo0.34.0/schema45保持，不新增数据库迁移；安装发行包不会自动改变路由、节点参数或调用方超时。
+配套补丁与指定部署的路由配置已上线；正式CI、GitHub Release和公开原生/容器资产独立验收已通过。正式包已完成生产切换和实际来源读回，不以先行配套补丁验收代替。Cargo0.34.0/schema45保持，不新增数据库迁移；安装发行包不会自动改变路由、节点参数或调用方超时。
 
 程序修复限定为：跳过繁忙本地节点后已实际尝试后备来源，不再因后备失败而回头排本地；云端先失败、随后才遇繁忙本地的旧等待仍保留。配套源码`21953eee5bb0e02e8865f2d92e2ea0da14794e1f`在build-test定向685通过/4忽略、Linux release构建通过，三项配置事务测试通过；不与此前全量测试相加，不冒称新正式包CI通过。
 
 已部署共享入口使用两个单节点本地alias和原硅基流动普通BGE模型组成ordered链。本地每source/credential并发1；六次真实合成300候选调用全部200，各有一个真实上游attempt，完整索引和有限分数通过。四请求同时到达时，本地各一笔、云端两笔，整组4.153秒；云端attempt在本地完成前已开始。忙跳过不记伪失败attempt，既有用户权限及价格不扩大。此为配套补丁及指定配置验收，不是发行包自动配置或真实业务质量验收。
 
 统一caller另作63次真实服务并发对照，全部200、无429、零自动重试，未经过TokenGo数据面。硅基流动普通版21次响应均超过3秒；本地优先策略和并发吞吐不解决调用方3秒读超时。GPU节点共享负载、短合成输入与每档三轮限制见[维护记录](maintenance/rerank-priority-20261107/README.md)。历史质量、其他型号/协议/工具证据按原日期和版本沿用，见[持续核实清单](provider-verification-checklist.md)。
+
+正式源码`5f6d669f01ad23c76ebc053d3773fa014ac52247`的[main CI](https://github.com/qiwolf/tokengo/actions/runs/42386623068)通过：native Rust1641/0/15、Python13、WASM及5项规模门禁；build-test完整Rust1641/0/15、Python13、部署合同9、容器合同3、clean source release打包及verify均通过。与配套定向或GitHub重叠检查不累加。[发行流程](https://github.com/qiwolf/tokengo/actions/runs/42388000597)成功，[Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)于北京时间2026-11-07 23:59:27公开9资产，独立QA于11-08完成。匿名下载长度/digest、包内校验与源码文档、schema45、原生Key加密/重启、匿名GHCR按digest拉取及offline别名、容器Key重启/同卷重建与清理通过。Compose仅config，未Compose部署；公开QA未访问生产、未推理、未执行浏览器行为。tag及包内文档保留发行准备快照，后补维护main与Release，不移动tag。
 
 本版状态入口：[版本说明](releases/v0.34.0-qiwolf.31.md)、[发行收据](acceptance/2026-11-07-qiwolf31-release/README.md)。以下qiwolf.30及更早记录保留原范围。
 

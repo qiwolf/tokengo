@@ -10,13 +10,13 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-本次发行准备：**v0.34.0-qiwolf.31** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（正式CI、发布及公开资产验收待核验）。
+当前正式版：**[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（已正式发行，公开资产独立验收通过）。
 
-本版修复繁忙本地节点转后备来源后，后备失败又回头排本地的分支。已部署配套补丁验证本地优先、忙时转云端；schema45与权限、账务口径保持。发行包不会自动改现有路由、节点参数或调用方超时。最近已核实正式版为 [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)，见[历史收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
+本版修复繁忙本地节点转后备来源后，后备失败又回头排本地的分支。已部署配套补丁验证本地优先、忙时转云端；schema45与权限、账务口径保持。精确CI及9公开资产独立验收通过，正式包已完成生产切换和实际来源读回。发行包不会自动改现有路由、节点参数或调用方超时。上一已核实正式版为 [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)，见[历史收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
 
-Preparing release: **v0.34.0-qiwolf.31** · [Release notes](docs/releases/v0.34.0-qiwolf.31.md) · [Release receipt](docs/acceptance/2026-11-07-qiwolf31-release/README.md) (exact CI, publication and public-asset acceptance pending verification).
+Current stable release: **[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [Release notes](docs/releases/v0.34.0-qiwolf.31.md) · [Release receipt](docs/acceptance/2026-11-07-qiwolf31-release/README.md) (published; independent public-asset acceptance passed).
 
-This version stops a request from rejoining busy local queues after a later fallback has already been attempted and failed. A deployed companion patch verified local priority and busy-source spillover. Schema45, permissions and accounting rules are unchanged. Installing a release does not automatically change existing routes, node parameters or caller timeouts. The latest verified stable release is [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30); see its [historical receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
+This version stops a request from rejoining busy local queues after a later fallback has already been attempted and failed. A deployed companion patch verified local priority and busy-source spillover. Schema45, permissions and accounting rules are unchanged. Exact CI and independent acceptance of nine public assets passed; the verified official package is deployed and its live routing has been checked. Installing a release does not automatically change existing routes, node parameters or caller timeouts. The previous verified stable release is [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30); see its [historical receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 

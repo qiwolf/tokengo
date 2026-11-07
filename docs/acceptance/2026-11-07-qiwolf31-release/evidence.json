@@ -1,14 +1,134 @@
 {
   "tag": "v0.34.0-qiwolf.31",
-  "status": "prepared_not_published",
+  "status": "published_public_assets_verified_official_production_aligned",
   "schema_version": 45,
   "cargo_version": "0.34.0",
-  "source_commit": null,
+  "source_commit": "5f6d669f01ad23c76ebc053d3773fa014ac52247",
   "companion_source_commit": "21953eee5bb0e02e8865f2d92e2ea0da14794e1f",
-  "companion_build_test": {"passed": 685, "failed": 0, "ignored": 4, "config_transaction_tests_passed": 3},
-  "companion_live_synthetic": {"requests": 6, "documents_per_request": 300, "success": 6, "concurrent_requests": 4, "concurrent_group_seconds": 4.153},
-  "official_ci": null,
-  "official_release": null,
-  "public_asset_acceptance": null,
-  "limits": ["Companion checks do not certify official artifacts", "No automatic routing or caller-timeout change on package upgrade", "No new full original-provider capability acceptance"]
+  "companion_build_test": {
+    "passed": 685,
+    "failed": 0,
+    "ignored": 4,
+    "config_transaction_tests_passed": 3
+  },
+  "companion_live_synthetic": {
+    "requests": 6,
+    "documents_per_request": 300,
+    "success": 6,
+    "concurrent_requests": 4,
+    "concurrent_group_seconds": 4.153
+  },
+  "official_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/42386623068",
+    "status": "success",
+    "source_commit": "5f6d669f01ad23c76ebc053d3773fa014ac52247",
+    "native": {
+      "passed": 1641,
+      "failed": 0,
+      "ignored": 15
+    },
+    "python_contracts_passed": 13,
+    "wasm_check": "passed",
+    "scale_gates_passed": 5
+  },
+  "official_release": {
+    "url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31",
+    "workflow_url": "https://github.com/qiwolf/tokengo/actions/runs/42388000597",
+    "status": "success",
+    "release_id": 437676494,
+    "assets": 9
+  },
+  "public_asset_acceptance": {
+    "result": "passed",
+    "runtime_host": "build-test",
+    "runtime_exit_code": 0,
+    "native_asset_sha256": "sha256:f1ab3a95c8614d7419cc3c7cc0bd5079c8733538279f49fdba4bef447d9f0a1c",
+    "offline_image_asset_sha256": "sha256:173dd2bcbca1a2c058249334372fac09838ba7e243b890893219d579d4765f64",
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:9895c048039423b08cba063bf0a64e1216f5e46145a9a83b6c605705e7b81f91",
+    "image_id": "sha256:dc128907c5e53de2fbc4fde95251f8b5495639253823038b9212434c15985439",
+    "assets_verified": 9,
+    "migration_only_tables": 62,
+    "post_runtime_tables": 63,
+    "temporary_resources_cleaned": true,
+    "production_access": false,
+    "model_inference_calls": 0,
+    "browser_behavior_executed": false,
+    "compose_deployment_executed": false,
+    "checks": [
+      "official anonymous lengths and digests",
+      "archive checksums and exact source docs",
+      "schema45 migration source bytes and runtime table DDL",
+      "native CLI/Web/anonymous401/Key encryption/restart",
+      "anonymous GHCR and offline dual alias identity",
+      "container key restart and same-volume recreation",
+      "Compose config only",
+      "container lifecycle smoke",
+      "owned cleanup; unrelated objects preserved"
+    ],
+    "compose_config_verified": true
+  },
+  "limits": [
+    "Companion production checks and official public-asset checks have separate scope",
+    "No automatic routing, GPU node-parameter or caller-timeout changes on package upgrade",
+    "Public QA did not access production, call models, execute browser behavior or deploy through Compose",
+    "Historical quality/provider evidence retains its original date, version and exact source scope",
+    "Shared-GPU synthetic timing is not a long-term p95/p99 or 3-second guarantee",
+    "Official production checks used synthetic inputs; not a full business-quality or browser acceptance"
+  ],
+  "release_published_at_utc": "2026-11-07T15:59:27Z",
+  "release_published_at_shanghai": "2026-11-07T23:59:27+08:00",
+  "public_qa_completion_date_shanghai": "2026-11-08",
+  "official_production": {
+    "status": "passed",
+    "verification_date_shanghai": "2026-11-08",
+    "source_commit": "5f6d669f01ad23c76ebc053d3773fa014ac52247",
+    "server_sha256": "6bcd5bd66c8c6e48fe1c8d33d64a6d85237920750ea3893c87878bfa9f421aa7",
+    "cli_sha256": "04cdd789ea03b8f59ce682100ae8fe2fc89e9e34d7926f7feee4aeeddf052246",
+    "schema_version": 45,
+    "package_checksums_verified": true,
+    "web_assets_http_hashes_verified": 28,
+    "routing_unchanged": true,
+    "runtime_configuration_unchanged": true,
+    "live_database_preserved": true,
+    "real_synthetic_requests": 6,
+    "success": 6,
+    "documents_per_request": 300,
+    "idle_priority_verified": true,
+    "concurrent_requests": 4,
+    "concurrent_sources": {
+      "first_local": 1,
+      "second_local": 1,
+      "cloud": 2
+    },
+    "concurrent_group_seconds": 4.657,
+    "cloud_nonattempt_ms": [
+      34,
+      30
+    ],
+    "all_requests_single_attempt": true,
+    "caller_timeout_unchanged": true,
+    "browser_behavior_executed": false,
+    "backup_and_binary_only_rollback_retained": true
+  },
+  "build_test_exact_source": {
+    "host": "build-test",
+    "source_commit": "5f6d669f01ad23c76ebc053d3773fa014ac52247",
+    "native": {
+      "passed": 1641,
+      "failed": 0,
+      "ignored": 15
+    },
+    "python_contracts_passed": 13,
+    "deployment_contracts_passed": 9,
+    "container_contracts_passed": 3,
+    "clean_source_release_build": "passed",
+    "native_bundle_verify": "passed",
+    "overlapping_counts_are_not_additive": true
+  },
+  "publication_snapshot_policy": {
+    "tag_immutable": true,
+    "assets_immutable": true,
+    "package_documents": "prepared snapshot at tagged source",
+    "later_receipts": "main and Release body"
+  }
 }
