@@ -10,15 +10,13 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-当前正式版：**[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [版本说明](docs/releases/v0.34.0-qiwolf.30.md) · [发行与生产收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
+本次发行准备：**v0.34.0-qiwolf.31** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（正式CI、发布及公开资产验收待核验）。
 
-本版修复模型评分、统计、账务目录及账本的历史扫描和重复查询，追加schema45与百万宽历史/并发/权限回归。保留64MiB对话请求体与有效/历史账本筛选。生产配套已完成数据守恒和91个Chrome响应验收；长窗口仍有共享锁等待。公开CI及原生/容器资产状态见发行收据，不作新原厂能力声明。
+本版修复繁忙本地节点转后备来源后，后备失败又回头排本地的分支。已部署配套补丁验证本地优先、忙时转云端；schema45与权限、账务口径保持。发行包不会自动改现有路由、节点参数或调用方超时。最近已核实正式版为 [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)，见[历史收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
 
-Current stable release: **[v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)** · [Release notes](docs/releases/v0.34.0-qiwolf.30.md) · [Publication and production receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
+Preparing release: **v0.34.0-qiwolf.31** · [Release notes](docs/releases/v0.34.0-qiwolf.31.md) · [Release receipt](docs/acceptance/2026-11-07-qiwolf31-release/README.md) (exact CI, publication and public-asset acceptance pending verification).
 
-This release fixes historical scans and repeated reads in model scoring, statistics and billing. Schema45 adds indexed access paths, rebuildable invocation totals and protocol-session epochs. Million-row, concurrency and permission regressions are included. Production companion checks preserved business data and observed 91 successful browser responses; long-window lock contention remains visible. Public CI and native/container asset acceptance are tracked separately; no new original-provider capability test is claimed.
-
-上一正式版 / Previous stable release: [v0.34.0-qiwolf.29](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.29) · [历史收据 / Historical receipt](docs/acceptance/2026-11-04-qiwolf29-release/README.md)。
+This version stops a request from rejoining busy local queues after a later fallback has already been attempted and failed. A deployed companion patch verified local priority and busy-source spillover. Schema45, permissions and accounting rules are unchanged. Installing a release does not automatically change existing routes, node parameters or caller timeouts. The latest verified stable release is [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30); see its [historical receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
 
 [Model compatibility verification checklist · 模型兼容核实清单](docs/provider-verification-checklist.md)
 

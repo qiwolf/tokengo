@@ -1,0 +1,14 @@
+{
+  "tag": "v0.34.0-qiwolf.31",
+  "status": "prepared_not_published",
+  "schema_version": 45,
+  "cargo_version": "0.34.0",
+  "source_commit": null,
+  "companion_source_commit": "21953eee5bb0e02e8865f2d92e2ea0da14794e1f",
+  "companion_build_test": {"passed": 685, "failed": 0, "ignored": 4, "config_transaction_tests_passed": 3},
+  "companion_live_synthetic": {"requests": 6, "documents_per_request": 300, "success": 6, "concurrent_requests": 4, "concurrent_group_seconds": 4.153},
+  "official_ci": null,
+  "official_release": null,
+  "public_asset_acceptance": null,
+  "limits": ["Companion checks do not certify official artifacts", "No automatic routing or caller-timeout change on package upgrade", "No new full original-provider capability acceptance"]
+}
