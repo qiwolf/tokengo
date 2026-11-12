@@ -165,7 +165,7 @@ mod tests {
         let before=rows(&c);
         migrate(&c).unwrap();migrate(&c).unwrap();
         // Current migration also adds the owner-history index after the path columns.
-        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),45);
+        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),46);
         assert_eq!(rows(&c),before,"all preexisting request columns remain byte/value-equivalent");
         assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=42 AND applied_at='preserved-v42'",[],|r|r.get::<_,i64>(0)).unwrap(),42);
         assert_eq!(c.query_row("SELECT request_path IS NULL AND upstream_path IS NULL FROM requests",[],|r|r.get::<_,bool>(0)).unwrap(),true);
@@ -463,5 +463,24 @@ mod query_performance_migration_tests {
         prepare(&c).unwrap();
         c.execute("INSERT INTO model_invocations VALUES(3,'model a')",[]).unwrap();
         assert_eq!(scores::total_calls(&c).unwrap()["model a"],3);
+    }
+}
+
+#[cfg(test)]
+mod usage_time_migration_tests {
+    use super::*;
+    #[test]
+    fn upgrade_v45_preserves_ledger_and_adds_idempotent_time_indexes() {
+        let c=Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL DEFAULT(datetime('now')))").unwrap();
+        for (v,sql) in schema::MIGRATIONS.iter().filter(|(v,_)|*v<=45) {
+            c.execute_batch(sql).unwrap();c.execute("INSERT INTO schema_migrations(version) VALUES(?1)",[v]).unwrap();
+        }
+        c.execute_batch("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,input_tokens,source_snapshot) VALUES('preserved',1,1,7,1,'synthetic',0,0,0,12345,'ok',17,'{\"channel_name\":\"history\"}');").unwrap();
+        migrate(&c).unwrap();migrate(&c).unwrap();
+        assert_eq!(c.query_row("SELECT created_ms,input_tokens,source_snapshot FROM billing_ledger WHERE attempt_id='preserved'",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?))).unwrap(),(12345,17,"{\"channel_name\":\"history\"}".into()));
+        for index in ["billing_ledger_time_summary","billing_ledger_owner_time_summary"] {
+            assert_eq!(c.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?1",[index],|r|r.get::<_,i64>(0)).unwrap(),1);
+        }
     }
 }

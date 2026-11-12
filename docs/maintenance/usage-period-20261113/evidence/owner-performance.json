@@ -1,0 +1,20 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server",
+    "--test",
+    "account_query_performance",
+    "--",
+    "--ignored",
+    "--nocapture"
+  ],
+  "cwd": "/srv/build/tokengo-usage-period-20261113/source",
+  "exit_code": 101,
+  "seconds": 33.58079814910889
+}

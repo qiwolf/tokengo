@@ -2260,3 +2260,7 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 .reasoning-sources dt { color:var(--muted); }
 .reasoning-sources dd { margin:0; overflow-wrap:anywhere; }
 @media (max-width:480px) { .reasoning-sources { grid-template-columns:minmax(0, 1fr); gap:4px; } .reasoning-sources dd { margin-bottom:8px; } }
+
+/* Shared time filters use the same borderless form grouping in both roles. */
+.portal-page .billing-filter fieldset { border:0; padding:0; margin:0; min-inline-size:0; }
+.billing-filters > #usage-time-help { grid-column:1 / -1; order:1; margin:0; }

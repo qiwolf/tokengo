@@ -164,8 +164,9 @@ async fn admin_usage(
     let state=db::billing_management::validated_state(q.state.as_deref(),"all").map_err(mutation_error)?;
     let catalog=if state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
     let (entries,next)=billing::usage_page_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
+    let summary=billing::usage_summary_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
     let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
-    Ok(Json(json!({"entries":entries,"next_before_id":next})))
+    Ok(Json(json!({"entries":entries,"next_before_id":next,"summary":summary})))
 }
 async fn self_usage(
     key: GatewayKey,
@@ -176,10 +177,11 @@ async fn self_usage(
     q.key_id = Some(key.auth.key_id);
     let conn = state.conn();
     let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
+    let summary=billing::usage_summary(&conn,&q).map_err(mutation_error)?;
     let mut budgets = billing::budgets(&conn, Some("user"), Some(key.auth.user_id))?;
     budgets.extend(billing::budgets(&conn, Some("key"), Some(key.auth.key_id))?);
     Ok(Json(
-        json!({"entries":entries,"next_before_id":next,"budgets":budgets}),
+        json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary}),
     ))
 }
 
@@ -303,6 +305,20 @@ mod request_pricing_tests {
         assert!(entries
             .iter()
             .any(|r| r["request_units"].is_null() && r["observed_cost_micro"].is_null()));
+        // Both API entry points validate the range and aggregate all matching
+        // attempts, independently of the requested page size.
+        state.conn().execute("UPDATE billing_ledger SET created_ms=15000",[]).unwrap();
+        let (status,window)=call(&state,"GET","/api/usage?start_at=10&end_at=20&limit=1",&admin,Value::Null).await;
+        assert_eq!(status,StatusCode::OK);assert_eq!(window["entries"].as_array().unwrap().len(),1);
+        assert_eq!(window["summary"]["ledger_count"],3);assert_eq!(window["summary"]["unknown_input_entries"],3);
+        let (status,own)=call(&state,"GET","/v1/usage?start_at=10&end_at=20&user_id=999&key_id=999&limit=1",&secret,Value::Null).await;
+        assert_eq!(status,StatusCode::OK);assert_eq!(own["summary"]["ledger_count"],3);
+        let (_,empty)=call(&state,"GET","/api/usage?start_at=20&end_at=30",&admin,Value::Null).await;
+        assert_eq!(empty["summary"]["ledger_count"],0);assert!(empty["entries"].as_array().unwrap().is_empty());
+        for path in ["/api/usage?start_at=20&end_at=10","/v1/usage?start_at=10&end_at=10"] {
+            let token=if path.starts_with("/api/"){&admin}else{&secret};
+            assert_eq!(call(&state,"GET",path,token,Value::Null).await.0,StatusCode::BAD_REQUEST);
+        }
         let mut invalid = body.clone();
         invalid["micro_per_call"] = json!(-1);
         assert_eq!(

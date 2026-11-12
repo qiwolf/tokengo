@@ -129,7 +129,7 @@ fn schema44_adds_only_the_owner_index_and_preserves_schema43_requests() {
     let history=c.prepare("SELECT version,applied_at FROM schema_migrations ORDER BY version").unwrap().query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();assert_eq!(&history[..old_history.len()],&old_history);assert_eq!(history.last().unwrap().0,44);assert_eq!(history.len(),old_history.len()+1);
     let definition:String=c.query_row("SELECT sql FROM sqlite_master WHERE name='requests_owner_recent'",[],|r|r.get(0)).unwrap();assert_eq!(definition,"CREATE INDEX requests_owner_recent ON requests(user_id,ts_ms DESC,id DESC)");
     db::migrate(&c).unwrap();assert_eq!(snapshot(&c),before);
-    assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),45);
+    assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),46);
     assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=43",[],|r|r.get::<_,i64>(0)).unwrap(),old_history.len() as i64);
 }
 #[test]

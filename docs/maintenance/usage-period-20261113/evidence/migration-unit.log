@@ -1,0 +1,27 @@
+    Blocking waiting for file lock on build directory
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib test) generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 1m 31s
+     Running unittests src/lib.rs (/srv/build/tokengo-usage-period-20261113/target/release/deps/tokengo_server-8cb6b2989b35794b)
+
+running 4 tests
+test db::billing::usage_time_tests::time_range_summary_matches_all_rows_not_cursor_and_respects_every_filter ... ok
+test db::billing::usage_time_tests::invalid_time_ranges_fail_even_for_empty_active_catalog ... ok
+test db::billing::usage_time_tests::dated_lookups_select_covering_time_index_before_reading_snapshots ... ok
+test db::usage_time_migration_tests::upgrade_v45_preserves_ledger_and_adds_idempotent_time_indexes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 600 filtered out; finished in 0.44s
+

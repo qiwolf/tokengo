@@ -449,4 +449,5 @@ END;
     (43, include_str!("request_paths.sql")),
     (44, include_str!("account_overview.sql")),
     (45, concat!(include_str!("query_performance.sql"), "\n", include_str!("model_invocation_totals.sql"))),
+    (46, include_str!("usage_time.sql")),
 ];

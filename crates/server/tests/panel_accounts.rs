@@ -714,6 +714,26 @@ async fn portal_ledger_scope_and_unknown_meter_are_not_replaced_by_foreign_value
     assert!(!v.to_string().contains("foreign-model"));
 }
 #[tokio::test]
+async fn portal_time_range_summary_is_owner_scoped_and_independent_of_paging() {
+    let f=Fixture::new();let a=f.user("time-owner");let b=f.user("time-foreign");
+    f.account("time-alice",a).await;
+    for (attempt,user,created,input) in [("before",a,9999,900),("start",a,10000,10),("inside",a,19999,20),("end",a,20000,800),("foreign",b,15000,999)] {
+        f.state.conn().execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,input_tokens,output_tokens) VALUES(?1,?2,1,?3,77,'time-model',0,0,0,?4,'ok',?5,1)",rusqlite::params![attempt,user,created,created,input]).unwrap();
+    }
+    let (_,cookie)=f.login("time-alice",PASSWORD).await;
+    let path="/api/account/portal?start_at=10&end_at=20&limit=1";
+    let (status,body,_)=f.req("GET",path,Some(&cookie),None,false,None,json!({})).await;
+    assert_eq!(status,StatusCode::OK);assert_eq!(body["usage"]["entries"].as_array().unwrap().len(),1);
+    assert_eq!(body["usage"]["summary"]["ledger_count"],2);assert_eq!(body["usage"]["summary"]["total_tokens"],32);
+    let cursor=body["usage"]["next_before_id"].as_i64().unwrap();
+    let (_,next,_)=f.req("GET",&format!("{path}&before_id={cursor}"),Some(&cookie),None,false,None,json!({})).await;
+    assert_eq!(next["usage"]["summary"],body["usage"]["summary"]);assert!(next["usage"]["next_before_id"].is_null());
+    assert_eq!(next["usage"]["entries"][0]["input_tokens"],10);
+    for query in ["start_at=20&end_at=10","start_at=-1","end_at=9223372036854775807","start_at=10&end_at=10","start_at=10&user_id=1"] {
+        assert_eq!(f.req("GET",&format!("/api/account/portal?{query}"),Some(&cookie),None,false,None,json!({})).await.0,StatusCode::BAD_REQUEST);
+    }
+}
+#[tokio::test]
 async fn fresh_cookie_setup_is_atomic_and_echoes_gateway_key_only_once() {
     let mut f = Fixture::new();
     {

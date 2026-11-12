@@ -1,0 +1,309 @@
+{
+  "host": "build-test",
+  "cases": [
+    {
+      "role": "root",
+      "width": 1440,
+      "timezone": "Asia/Shanghai",
+      "now": "2026-11-13T15:00:00+08:00",
+      "requests": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793505601",
+          "end_at": "1793505659",
+          "before_id": "100"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "50",
+          "state": "active"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "timezone": "Asia/Shanghai",
+      "now": "2026-11-13T15:00:00+08:00",
+      "requests": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793505601",
+          "end_at": "1793505659",
+          "before_id": "100"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "50",
+          "state": "active"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "timezone": "Asia/Shanghai",
+      "now": "2026-11-13T15:00:00+08:00",
+      "requests": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793505601",
+          "end_at": "1793505659",
+          "before_id": "100"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "25"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "timezone": "Asia/Shanghai",
+      "now": "2026-11-13T15:00:00+08:00",
+      "requests": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793505601",
+          "end_at": "1793505659",
+          "before_id": "100"
+        },
+        {
+          "limit": "25",
+          "start_at": "1793462400",
+          "end_at": "1796054400"
+        },
+        {
+          "limit": "25"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 1440,
+      "timezone": "America/New_York",
+      "now": "2026-03-08T12:00:00-04:00",
+      "requests": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1772946000",
+          "end_at": "1773028800"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1772427600",
+          "end_at": "1773028800"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1772341200",
+          "end_at": "1775016000"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 1440,
+      "timezone": "America/New_York",
+      "now": "2026-11-01T12:00:00-05:00",
+      "requests": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793505600",
+          "end_at": "1793595600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1792987200",
+          "end_at": "1793595600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1793505600",
+          "end_at": "1796101200"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 1440,
+      "timezone": "America/New_York",
+      "now": "2026-12-31T12:00:00-05:00",
+      "requests": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1798693200",
+          "end_at": "1798779600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1798434000",
+          "end_at": "1799038800"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1796101200",
+          "end_at": "1798779600"
+        }
+      ],
+      "page_errors": [],
+      "status": "passed",
+      "authority": "built WASM with synthetic API responses"
+    }
+  ],
+  "limitations": "Synthetic API fixtures validate actual WASM UI/date conversion; do not establish backend aggregation or authorization."
+}

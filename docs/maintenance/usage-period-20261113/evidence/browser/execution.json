@@ -1,0 +1,8 @@
+{
+  "host": "build-test",
+  "cwd": "/srv/build/tokengo-usage-period-20261113",
+  "command": "/srv/build/nanomuse-evaluation-20261024-tests/browser-venv/bin/python /srv/build/tokengo-usage-period-20261113/evidence/browser-qa.py /srv/build/tokengo-usage-period-20261113/source/crates/web/dist /srv/build/tokengo-usage-period-20261113/evidence/browser",
+  "exit_code": 0,
+  "stdout": "PASS 7 browser cases\n",
+  "limitations": "Built WASM with synthetic API fixtures; backend aggregation and permissions verified separately."
+}

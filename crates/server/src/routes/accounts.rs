@@ -697,10 +697,13 @@ async fn update(
 struct PortalQuery {
     before_id: Option<i64>,
     limit: Option<u32>,
+    start_at: Option<i64>,
+    end_at: Option<i64>,
 }
 // Keep one statement/snapshot. SQLite uses a temporary DISTINCT tree when
 // COUNT(DISTINCT) shares an aggregate with SUM; this ordered owner-index group
 // counts unique request IDs separately without reading wide ledger rows.
+#[cfg(test)]
 const PORTAL_SUMMARY_SQL:&str="SELECT (SELECT count(*) FROM (SELECT request_id FROM billing_ledger WHERE user_id=?1 AND request_id IS NOT NULL GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL),0),coalesce(sum(debit_micro),0) FROM billing_ledger WHERE user_id=?1";
 #[cfg(test)]
 mod portal_query_plan_tests {
@@ -744,18 +747,13 @@ async fn portal(
         return Err(denied());
     }
     let keys:Vec<_>=db::identity::keys(&c,user)?.into_iter().map(|k|json!({"id":k.id,"name":k.name,"hint":k.hint,"enabled":k.enabled,"revoked_at":k.revoked_at,"expires_at":k.expires_at,"parent_key_id":k.parent_key_id,"created_at_ms":k.created_at_ms})).collect();
-    let rows = db::billing::usage(
-        &c,
-        &db::billing::UsageQuery {
-            user_id: Some(user),
-            before_id: q.before_id,
-            limit: Some(q.limit.unwrap_or(50)),
-            ..Default::default()
-        },
-    )?;
-    let next = rows.last().map(|r| r.id);
+    let query=db::billing::UsageQuery {
+        user_id:Some(user),before_id:q.before_id,limit:Some(q.limit.unwrap_or(50)),
+        start_at:q.start_at,end_at:q.end_at,..Default::default()
+    };
+    let (rows,next)=db::billing::usage_page(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
-    let summary=c.query_row(PORTAL_SUMMARY_SQL,[user],|r|Ok(json!({"request_count":r.get::<_,i64>(0)?,"ledger_count":r.get::<_,i64>(1)?,"input_tokens":r.get::<_,i64>(2)?,"output_tokens":r.get::<_,i64>(3)?,"unknown_input_entries":r.get::<_,i64>(4)?,"unknown_output_entries":r.get::<_,i64>(5)?,"unpriced_entries":r.get::<_,i64>(6)?,"known_debit_micro":r.get::<_,i64>(7)?}))).map_err(db::DbError::from)?;
+    let summary=db::billing::usage_summary(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     Ok(Json(
         json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"entries":entries,"next_before_id":next}}),
     ))

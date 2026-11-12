@@ -142,6 +142,7 @@ pub struct UsageSummary {
     pub ledger_count: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub total_tokens: i64,
     pub unknown_input_entries: i64,
     pub unknown_output_entries: i64,
     pub unpriced_entries: i64,
@@ -175,10 +176,9 @@ pub struct Portal {
     pub keys: Vec<PortalKey>,
     pub usage: PortalUsage,
 }
-pub async fn portal(before: Option<i64>) -> Result<Portal, ApiErr> {
-    let path = before
-        .map(|id| format!("/api/account/portal?limit=25&before_id={id}"))
-        .unwrap_or_else(|| "/api/account/portal?limit=25".into());
+pub async fn portal(before: Option<i64>, query: &str) -> Result<Portal, ApiErr> {
+    let mut path = format!("/api/account/portal?limit=25{query}");
+    if let Some(id) = before { path.push_str(&format!("&before_id={id}")); }
     typed("GET", &path, None).await
 }
 pub fn entry_tokens(e: &Entry) -> String {

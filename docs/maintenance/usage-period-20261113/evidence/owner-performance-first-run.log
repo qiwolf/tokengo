@@ -1,0 +1,64 @@
+warning: function `billing_bound_with_context` is never used
+   --> crates/server/src/gateway.rs:713:4
+    |
+713 | fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i6...
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:785:4
+    |
+785 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:835:15
+    |
+835 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 5 warnings
+warning: `tokengo-server` (lib) generated 5 warnings (5 duplicates)
+    Finished `release` profile [optimized] target(s) in 0.23s
+     Running tests/account_query_performance.rs (/srv/build/tokengo-usage-period-20261113/target/release/deps/account_query_performance-640d87f0c3b00521)
+
+running 1 test
+ACCOUNT_FIXTURE owner_rows=500000 foreign_rows=1000 attempts=501000 bytes=1218461696
+ACCOUNT_PERF endpoint=/api/account/portal?limit=50 rows=500000 n=3 p50_us=240279 max_us=249415 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=1 rows=500000 n=3 p50_us=5626 max_us=6276 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=24 rows=500000 n=3 p50_us=93968 max_us=94171 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=168 rows=500000 n=3 p50_us=644730 max_us=710671 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=2160 rows=500000 n=3 p50_us=642469 max_us=643466 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/logs?limit=50 rows=500000 n=3 p50_us=2426 max_us=2899 limit_us=300000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=1 owner_rows=500000 attempts=501000 n=3 p50_us=9147 max_us=9627 limit_us=1000000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=24 owner_rows=500000 attempts=501000 n=3 p50_us=143442 max_us=160744 limit_us=1000000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=168 owner_rows=500000 attempts=501000 n=3 p50_us=1000110 max_us=1017994 limit_us=1000000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=2160 owner_rows=500000 attempts=501000 n=3 p50_us=1000507 max_us=1021507 limit_us=1000000
+ACCOUNT_PERF_GATE observe_only=false violations=["admin /api/stats?hours=168: 1017994us > 1000000us", "admin /api/stats?hours=2160: 1021507us > 1000000us"]
+
+thread 'owner_heavy_portal_and_overview_preserve_accounting_and_latency' (2956850) panicked at crates/server/tests/account_query_performance.rs:130:2:
+owner history gate failed: ["admin /api/stats?hours=168: 1017994us > 1000000us", "admin /api/stats?hours=2160: 1021507us > 1000000us"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test owner_heavy_portal_and_overview_preserve_accounting_and_latency ... FAILED
+
+failures:
+
+failures:
+    owner_heavy_portal_and_overview_preserve_accounting_and_latency
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.35s
+
+error: test failed, to rerun pass `-p tokengo-server --test account_query_performance`

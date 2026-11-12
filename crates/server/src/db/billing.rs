@@ -605,28 +605,32 @@ pub struct UsageQuery {
     pub before_id: Option<i64>,
     pub limit: Option<u32>,
     pub state: Option<String>,
+    /// Unix seconds; creation time is filtered as [start_at, end_at).
+    pub start_at: Option<i64>,
+    pub end_at: Option<i64>,
 }
-/// Build bound predicates only for supplied filters, so owner/source/model indexes
-/// remain usable. Catalogs are request-local observations, never authorization caches.
-fn usage_sql(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,limit:u32)->Result<(String,Vec<rusqlite::types::Value>)> {
+/// Validate before fast empty-result paths as well as before SQL execution.
+pub fn validate_usage_time(q:&UsageQuery)->Result<()> {
+    if [q.start_at,q.end_at].into_iter().flatten().any(|v|v<0||v.checked_mul(1000).is_none()) {
+        return Err(bad("时间必须为有效的 Unix 秒时间戳"));
+    }
+    if matches!((q.start_at,q.end_at),(Some(start),Some(end)) if start>=end) {
+        return Err(bad("开始时间必须早于结束时间"));
+    }
+    Ok(())
+}
+fn usage_predicates(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,include_cursor:bool)->Result<(String,Vec<rusqlite::types::Value>)> {
     use rusqlite::types::Value;
-    // A sparse lifecycle/object/model filter can reject large snapshots. Select
-    // IDs from a covering index first; the IN subquery's LIMIT bounds wide reads.
-    let lifecycle_page=state!="all"||q.user_id.is_some()||q.key_id.is_some()||q.channel_id.is_some()||q.model.is_some();
-    let lifecycle_index=if q.key_id.is_some() {"billing_ledger_key_lifecycle"}
-        else if q.user_id.is_some() {"billing_ledger_user_lifecycle"}
-        else if q.channel_id.is_some() {"billing_ledger_channel"}
-        else if q.model.is_some() {"billing_ledger_model"}
-        else {"billing_ledger_lifecycle_recent"};
-    let mut sql=if lifecycle_page {
-        format!("SELECT id FROM billing_ledger INDEXED BY {lifecycle_index} WHERE 1=1")
-    }else{format!("{LEDGER_SELECT} WHERE 1=1")};
+    validate_usage_time(q)?;
+    let mut sql=String::new();
     let mut args=Vec::<Value>::new();
     for (column,value) in [("user_id",q.user_id),("key_id",q.key_id),("channel_id",q.channel_id)] {
         if let Some(value)=value {sql.push_str(&format!(" AND {column}=?"));args.push(value.into());}
     }
     if let Some(model)=&q.model {sql.push_str(" AND model=?");args.push(tokengo_shared::normalize_model_name(model).into());}
-    if let Some(id)=q.before_id {sql.push_str(" AND id<?");args.push(id.into());}
+    if let Some(start)=q.start_at {sql.push_str(" AND created_ms>=?");args.push((start*1000).into());}
+    if let Some(end)=q.end_at {sql.push_str(" AND created_ms<?");args.push((end*1000).into());}
+    if include_cursor {if let Some(id)=q.before_id {sql.push_str(" AND id<?");args.push(id.into());}}
     if state!="all" {
         let catalog=catalog.ok_or_else(||bad("missing billing object catalog"))?;
         sql.push_str(" AND ((user_id IN (SELECT value FROM json_each(?)) AND key_id IN (SELECT value FROM json_each(?)) AND channel_id IN (SELECT value FROM json_each(?))) = ?)");
@@ -636,11 +640,72 @@ fn usage_sql(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,limit:u
         }
         args.push(i64::from(state=="active").into());
     }
+    Ok((sql,args))
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageSummary {
+    pub request_count:i64,
+    pub ledger_count:i64,
+    pub input_tokens:i64,
+    pub output_tokens:i64,
+    pub total_tokens:i64,
+    pub unknown_input_entries:i64,
+    pub unknown_output_entries:i64,
+    pub unpriced_entries:i64,
+    pub known_debit_micro:i64,
+    pub unknown_debit_entries:i64,
+}
+/// Full matching aggregate: paging cursors and limits never narrow the summary.
+pub fn usage_summary_with_catalog(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json::Value>)->Result<UsageSummary> {
+    validate_usage_time(q)?;
+    let state=super::billing_management::validated_state(q.state.as_deref(),"all")?;
+    let owned;
+    let catalog=if state!="all"&&catalog.is_none() {owned=super::billing_management::current_objects(conn)?;Some(&owned)}else{catalog};
+    let (predicate,args)=usage_predicates(q,state,catalog,false)?;
+    // Separate grouped request count preserves the covering owner index plan
+    // for lifetime queries rather than creating a COUNT(DISTINCT) temp tree.
+    let table=usage_summary_table(q);
+    let sql=format!("SELECT (SELECT count(*) FROM (SELECT request_id FROM {table} WHERE request_id IS NOT NULL{predicate} GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL),0),coalesce(sum(debit_micro),0),coalesce(sum(debit_micro IS NULL),0) FROM {table} WHERE 1=1{predicate}");
+    let bindings=args.iter().chain(args.iter());
+    Ok(conn.query_row(&sql,rusqlite::params_from_iter(bindings),|r| {
+        let input_tokens:i64=r.get(2)?;
+        let output_tokens:i64=r.get(3)?;
+        Ok(UsageSummary {request_count:r.get(0)?,ledger_count:r.get(1)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),unknown_input_entries:r.get(4)?,unknown_output_entries:r.get(5)?,unpriced_entries:r.get(6)?,known_debit_micro:r.get(7)?,unknown_debit_entries:r.get(8)?})
+    })?)
+}
+pub fn usage_summary(conn:&Connection,q:&UsageQuery)->Result<UsageSummary> {
+    usage_summary_with_catalog(conn,q,None)
+}
+fn usage_summary_table(q:&UsageQuery)->&'static str {
+    if q.start_at.is_some()||q.end_at.is_some() {
+        if q.user_id.is_some() {"billing_ledger INDEXED BY billing_ledger_owner_time_summary"}
+        else {"billing_ledger INDEXED BY billing_ledger_time_summary"}
+    } else {"billing_ledger"}
+}
+/// Build bound predicates only for supplied filters, so owner/source/model indexes
+/// remain usable. Catalogs are request-local observations, never authorization caches.
+fn usage_sql(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,limit:u32)->Result<(String,Vec<rusqlite::types::Value>)> {
+    // A sparse lifecycle/object/model filter can reject large snapshots. Select
+    // IDs from a covering index first; the IN subquery's LIMIT bounds wide reads.
+    let dated=q.start_at.is_some()||q.end_at.is_some();
+    let lifecycle_page=dated||state!="all"||q.user_id.is_some()||q.key_id.is_some()||q.channel_id.is_some()||q.model.is_some();
+    let lifecycle_index=if dated {if q.user_id.is_some(){"billing_ledger_owner_time_summary"}else{"billing_ledger_time_summary"}}
+        else if q.key_id.is_some() {"billing_ledger_key_lifecycle"}
+        else if q.user_id.is_some() {"billing_ledger_user_lifecycle"}
+        else if q.channel_id.is_some() {"billing_ledger_channel"}
+        else if q.model.is_some() {"billing_ledger_model"}
+        else {"billing_ledger_lifecycle_recent"};
+    let mut sql=if lifecycle_page {
+        format!("SELECT id FROM billing_ledger INDEXED BY {lifecycle_index} WHERE 1=1")
+    }else{format!("{LEDGER_SELECT} WHERE 1=1")};
+    let (predicate,mut args)=usage_predicates(q,state,catalog,true)?;
+    sql.push_str(&predicate);
     sql.push_str(" ORDER BY id DESC LIMIT ?");args.push(i64::from(limit).into());
     if lifecycle_page {sql=format!("{LEDGER_SELECT} WHERE id IN ({sql}) ORDER BY id DESC");}
     Ok((sql,args))
 }
 fn usage_rows(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json::Value>,limit:u32)->Result<Vec<Ledger>> {
+    validate_usage_time(q)?;
     let state=super::billing_management::validated_state(q.state.as_deref(),"all")?;
     let owned;
     let catalog=if state!="all"&&catalog.is_none() {owned=super::billing_management::current_objects(conn)?;Some(&owned)}else{catalog};
@@ -948,7 +1013,7 @@ mod query_performance_tests {
                 let catalog=serde_json::json!({"users":[{"id":1,"state":"active"}],"keys":[{"id":1,"state":"active"}],"channels":[{"id":live_channel,"state":"active"}]});
                 for state in ["active","historical","all"] {
                     for before_id in [None,Some(3501)] {
-                        let q=UsageQuery{user_id:(mask&1!=0).then_some(1),key_id:(mask&2!=0).then_some(1),channel_id:(mask&4!=0).then_some(1),model:(mask&8!=0).then(||"SYNTHETIC".into()),state:Some(state.into()),before_id,limit:Some(2)};
+                        let q=UsageQuery{user_id:(mask&1!=0).then_some(1),key_id:(mask&2!=0).then_some(1),channel_id:(mask&4!=0).then_some(1),model:(mask&8!=0).then(||"SYNTHETIC".into()),state:Some(state.into()),before_id,limit:Some(2),..Default::default()};
                         let index=if q.key_id.is_some(){"billing_ledger_key_lifecycle"}else if q.user_id.is_some(){"billing_ledger_user_lifecycle"}else if q.channel_id.is_some(){"billing_ledger_channel"}else if q.model.is_some(){"billing_ledger_model"}else{"billing_ledger_lifecycle_recent"};
                         let(sql,args)=usage_sql(&q,state,Some(&catalog),3).unwrap();
                         let p=plan(&c,&sql,args.clone());
@@ -1016,4 +1081,66 @@ mod user_diagnostic_tests {
         let(row_user,row_key,certainty,kind):(i64,i64,String,String)=c.query_row("SELECT user_id,key_id,usage_certainty,json_extract(auth_snapshot,'$.kind') FROM billing_ledger WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();assert_eq!((row_user,row_key),(user,0));assert_eq!(certainty,"estimated");assert_eq!(kind,"user_compatibility");
     }
     #[test] fn user_diagnostic_unpriced_cannot_bypass_capped_budget(){let(c,user)=fixture();set_budget(&c,"user",user,Some(100),"test").unwrap();assert!(reserve_user_diagnostic(&c,user,"unpriced",1,"unpriced-vector",10,&serde_json::json!({"source_id":1})).is_err());assert_eq!(budget(&c,user).spent_micro,0);assert_eq!(budget(&c,user).reserved_micro,0);}
+}
+
+#[cfg(test)]
+mod usage_time_tests {
+    use super::*;
+    fn fixture()->Connection {
+        let c=crate::db::open_in_memory().unwrap();
+        // Millisecond edges, retries, foreign owner/key, historical object, and
+        // unknown usage all matter independently of page size and row ID order.
+        for (attempt,user,key,request,channel,created,input,output) in [
+            ("before",1,1,1,1,9999,Some(900),Some(900)),
+            ("start",1,1,2,1,10000,Some(10),Some(2)),
+            ("retry",1,1,2,1,19999,None,Some(3)),
+            ("end",1,1,3,1,20000,Some(800),Some(800)),
+            ("foreign",2,2,4,1,15000,Some(700),Some(700)),
+            ("other-key",1,3,5,1,15000,Some(20),Some(4)),
+            ("historical",1,1,6,99,15000,Some(30),Some(5)),
+        ] {
+            c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,input_tokens,output_tokens,debit_micro) VALUES(?1,?2,?3,?4,?5,'synthetic',0,0,0,?6,'ok',?7,?8,?9)",params![attempt,user,key,request,channel,created,input,output,input.map(|_|7)]).unwrap();
+        }
+        c
+    }
+    #[test]
+    fn time_range_summary_matches_all_rows_not_cursor_and_respects_every_filter() {
+        let c=fixture();
+        let catalog=serde_json::json!({"users":[{"id":1,"state":"active"}],"keys":[{"id":1,"state":"active"},{"id":3,"state":"active"}],"channels":[{"id":1,"state":"active"}]});
+        let mut q=UsageQuery{user_id:Some(1),start_at:Some(10),end_at:Some(20),limit:Some(1),..Default::default()};
+        let (rows,next)=usage_page(&c,&q).unwrap();assert_eq!(rows.len(),1);assert!(next.is_some());
+        let summary=usage_summary(&c,&q).unwrap();
+        assert_eq!((summary.request_count,summary.ledger_count,summary.input_tokens,summary.output_tokens,summary.total_tokens),(3,4,60,14,74));
+        assert_eq!((summary.unknown_input_entries,summary.unknown_output_entries,summary.known_debit_micro,summary.unknown_debit_entries),(1,0,21,1));
+        q.before_id=next;let second=usage_summary(&c,&q).unwrap();assert_eq!(second.total_tokens,summary.total_tokens);assert_eq!(second.ledger_count,4);
+        q.key_id=Some(1);q.channel_id=Some(1);q.model=Some("SYNTHETIC".into());
+        let summary=usage_summary(&c,&q).unwrap();assert_eq!((summary.request_count,summary.ledger_count,summary.total_tokens),(1,2,15));
+        q.key_id=None;q.channel_id=None;q.state=Some("active".into());
+        let summary=usage_summary_with_catalog(&c,&q,Some(&catalog)).unwrap();assert_eq!((summary.ledger_count,summary.total_tokens),(3,39));
+        q.state=Some("historical".into());
+        let summary=usage_summary_with_catalog(&c,&q,Some(&catalog)).unwrap();assert_eq!((summary.ledger_count,summary.total_tokens),(1,35));
+        q.start_at=Some(30);q.end_at=Some(40);
+        let summary=usage_summary_with_catalog(&c,&q,Some(&catalog)).unwrap();assert_eq!((summary.ledger_count,summary.total_tokens,summary.unknown_input_entries),(0,0,0));
+    }
+    #[test]
+    fn dated_lookups_select_covering_time_index_before_reading_snapshots() {
+        let c=fixture();
+        for owner in [None,Some(1)] {
+            let q=UsageQuery{user_id:owner,start_at:Some(10),end_at:Some(20),..Default::default()};
+            let (sql,args)=usage_sql(&q,"all",None,2).unwrap();
+            let plan=c.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap().query_map(rusqlite::params_from_iter(args),|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n");
+            let index=if owner.is_some(){"billing_ledger_owner_time_summary"}else{"billing_ledger_time_summary"};
+            assert!(plan.contains(&format!("COVERING INDEX {index}")),"{plan}");
+            assert!(plan.contains("created_ms>? AND created_ms<?"),"{plan}");
+        }
+    }
+    #[test]
+    fn invalid_time_ranges_fail_even_for_empty_active_catalog() {
+        let c=fixture();let catalog=serde_json::json!({"users":[],"keys":[],"channels":[]});
+        for (start,end) in [(Some(20),Some(10)),(Some(10),Some(10)),(Some(-1),None),(None,Some(i64::MAX))] {
+            let q=UsageQuery{start_at:start,end_at:end,state:Some("active".into()),..Default::default()};
+            assert!(usage_page_with_catalog(&c,&q,Some(&catalog)).is_err());
+            assert!(usage_summary_with_catalog(&c,&q,Some(&catalog)).is_err());
+        }
+    }
 }
