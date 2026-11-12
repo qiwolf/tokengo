@@ -811,3 +811,131 @@ async fn responses_ordinary_tool_replay_keeps_usage_without_client_extensions() 
         |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
     ).unwrap(), (5, 2));
 }
+
+// A native continuation owns its source, but does not choose the source for
+// unrelated conversations which use the same logical model.
+async fn pinned_continuation_preserves_model_routing(stream: bool, fail: bool) {
+    for explicit_session in [false, true] {
+        let f = prompt_cache_fixture().await;
+        let secondary_seen = Arc::new(Source::default());
+        let secondary = serve(
+            Router::new()
+                .route("/v1/responses", post(source))
+                .with_state(secondary_seen.clone()),
+        ).await;
+        let secondary_id = {
+            let c = f.state.conn();
+            let id = db::channels::create(&c, &db::channels::NewChannel {
+                name: "pinned backup source".into(),
+                base_url: format!("{}/v1", secondary.url),
+                enabled: true,
+                unwrap_envelope: false,
+                max_concurrent: 0,
+            }).unwrap();
+            db::channels::set_models(&c, id, &[db::channels::ModelMapping::new(
+                "matrix", Some("upstream".into()), false,
+            )]).unwrap();
+            tokengo_server::protocol_config::save(&c, id.0, &Capabilities {
+                native: vec![Protocol::Responses],
+                max_input_tokens: Some(4096),
+                max_output_tokens: Some(64),
+                ..Default::default()
+            }).unwrap();
+            db::route_policy::save(&c, "matrix", &db::route_policy::RoutePolicy {
+                channel_ids: Some(vec![id.0, f.channel_id]),
+                retry_times: Some(0),
+                probe_enabled: Some(false),
+                ..Default::default()
+            }).unwrap();
+            id.0
+        };
+        let mut first_request = prompt_cache_first(stream);
+        if !explicit_session {
+            first_request.as_object_mut().unwrap().remove("client_metadata");
+        }
+        let (code, text) = f.call(Protocol::Responses, first_request).await;
+        assert_eq!(code, 200, "establish backup ownership: {text}");
+        let first = completed_response(&text, stream);
+        assert_eq!(first["output"][0]["encrypted_content"], "test-opaque-state");
+        assert_eq!(secondary_seen.seen.lock().unwrap().len(), 1);
+        assert!(f.seen.seen.lock().unwrap().is_empty());
+
+        // Equivalent to saving model optimization with the recovered source first:
+        // save the policy and reset both the persisted and in-memory route state.
+        {
+            let c = f.state.conn();
+            db::route_policy::save(&c, "matrix", &db::route_policy::RoutePolicy {
+                channel_ids: Some(vec![f.channel_id, secondary_id]),
+                retry_times: Some(0),
+                probe_enabled: Some(false),
+                ..Default::default()
+            }).unwrap();
+            db::routing::save_state(&c, "matrix", &Default::default()).unwrap();
+        }
+        f.state.routing().restore("matrix", Default::default());
+        let fresh_request = body(Protocol::Responses, stream);
+        let (code, text) = f.call(Protocol::Responses, fresh_request.clone()).await;
+        assert_eq!(code, 200, "fresh conversation chooses recovered primary: {text}");
+        assert_eq!(completed_response(&text, stream)["status"], "completed");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+        assert_eq!(secondary_seen.seen.lock().unwrap().len(), 1);
+        let snapshot = serde_json::to_value(
+            f.state.routing().state("matrix").unwrap().clone(),
+        ).unwrap();
+        assert_eq!(snapshot["active"], f.channel_id);
+        assert!(snapshot["next_probe_at_ms"].is_null());
+
+        let mut replay = prompt_cache_replay(&first, stream);
+        if !explicit_session {
+            replay.as_object_mut().unwrap().remove("client_metadata");
+        }
+        replay["provider_fail"] = json!(fail);
+        let replay_input = replay["input"].clone();
+        let (code, text) = f.call(Protocol::Responses, replay).await;
+        if fail {
+            assert!(code >= 500, "pinned backup failure must be surfaced: {code} {text}");
+        } else {
+            assert_eq!(code, 200, "pinned backup continuation: {text}");
+            assert_eq!(completed_response(&text, stream)["status"], "completed");
+        }
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 1,
+            "a continuation, including a failed one, must not cross sources");
+        {
+            let seen = secondary_seen.seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[1].1["input"], replay_input,
+                "opaque reasoning and tool history must reach the pinned backup unchanged");
+        }
+        assert_eq!(serde_json::to_value(
+            f.state.routing().state("matrix").unwrap().clone(),
+        ).unwrap(), snapshot,
+            "pinned continuation must preserve global active source, switch count and probe deadline");
+        assert_eq!(serde_json::to_value(
+            db::routing::load_state(&f.state.conn(), "matrix").unwrap().unwrap(),
+        ).unwrap(), snapshot, "persisted global routing must remain unchanged");
+        let (code, text) = f.call(Protocol::Responses, fresh_request).await;
+        assert_eq!(code, 200, "next unrelated conversation still uses primary: {text}");
+        assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
+        assert_eq!(secondary_seen.seen.lock().unwrap().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn pinned_continuation_success_preserves_model_routing_nonstream() {
+    pinned_continuation_preserves_model_routing(false, false).await;
+}
+
+#[tokio::test]
+async fn pinned_continuation_success_preserves_model_routing_stream() {
+    pinned_continuation_preserves_model_routing(true, false).await;
+}
+
+#[tokio::test]
+async fn pinned_continuation_failure_preserves_model_routing_nonstream() {
+    pinned_continuation_preserves_model_routing(false, true).await;
+}
+
+#[tokio::test]
+async fn pinned_continuation_failure_preserves_model_routing_stream() {
+    pinned_continuation_preserves_model_routing(true, true).await;
+}

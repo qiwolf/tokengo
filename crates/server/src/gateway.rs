@@ -1315,8 +1315,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     // · `auto` 每一发都是现场挑的，没有「首选/回切」可言；让它去写状态，
     //   那个名字下的账就没人解释得清了。
     // 渠道自身的健康照旧由每分钟探活和普通请求看着。
-    let touch_state = !wants_vision && !plan.auto && plan.virtual_route.is_none() && !local_balanced;
-
     let request_id = {
         let conn = state.conn();
         requests::start(
@@ -1589,6 +1587,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             existing_pin = Some(pin);
         }
     }
+    // A continuation must retain its original source, but its result says
+    // nothing about the preferred source for unrelated conversations. Resolve
+    // anonymous opaque ownership before deciding whether to update global state.
+    let touch_state = !wants_vision
+        && !plan.auto
+        && plan.virtual_route.is_none()
+        && !local_balanced
+        && existing_pin.is_none();
     let order: Vec<usize> = order
         .into_iter()
         .filter(|index| {
@@ -3620,7 +3626,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 tracing::warn!(
                     request_id, model=%req.model, channel_id=channel.id.0, channel_name=%channel.name,
                     served_model=%name, upstream_model=%channel.upstream_model(name), attempts=max_attempts,
-                    "（带图请求，不动路由状态）渠道连续失败"
+                    "（隔离路由请求，不动全局状态）渠道连续失败"
                 );
             }
         }
