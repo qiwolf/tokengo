@@ -1,0 +1,13 @@
+{
+  "host": "build-test",
+  "cwd": "/srv/build/tokengo-usage-dashboard-20261113",
+  "command": [
+    "/srv/build/nanomuse-evaluation-20261024-tests/browser-venv/bin/python",
+    "/srv/build/tokengo-usage-dashboard-20261113/evidence/browser-qa.py",
+    "/srv/build/tokengo-usage-dashboard-20261113/source/crates/web/dist",
+    "/srv/build/tokengo-usage-dashboard-20261113/evidence/browser"
+  ],
+  "exit_code": 0,
+  "seconds": 22.877418041229248,
+  "limitations": "Actual compiled WASM with synthetic HTTP fixtures; does not establish backend ownership/aggregation or production deployment."
+}

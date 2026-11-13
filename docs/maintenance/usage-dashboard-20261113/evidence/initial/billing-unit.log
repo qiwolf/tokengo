@@ -1,0 +1,49 @@
+    Blocking waiting for file lock on build directory
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-usage-dashboard-20261113/source/crates/server)
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib test) generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 2m 22s
+     Running unittests src/lib.rs (/srv/build/tokengo-usage-dashboard-20261113/target/release/deps/tokengo_server-8cb6b2989b35794b)
+
+running 25 tests
+test db::billing::query_performance_tests::selective_usage_and_money_queries_use_existing_or_covering_indexes ... ok
+test db::billing::query_performance_tests::sparse_lifecycle_queries_read_covering_ids_before_bounded_wide_rows ... ok
+test db::billing::usage_time_tests::analytics_bounds_empty_future_and_long_ranges_are_finite_and_bounded ... ok
+test db::billing::usage_time_tests::analytics_model_tail_is_combined_without_losing_usage ... ok
+test db::billing::usage_time_tests::analytics_zero_fills_time_buckets_and_ignores_cursor_with_identical_scope ... ok
+test db::billing::usage_time_tests::dated_lookups_select_covering_time_index_before_reading_snapshots ... ok
+test db::billing::usage_time_tests::invalid_time_ranges_fail_even_for_empty_active_catalog ... ok
+test db::billing::usage_time_tests::time_range_summary_matches_all_rows_not_cursor_and_respects_every_filter ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_budget_is_atomic_user_only_and_freeze_blocks_send ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_unknown_usage_retains_hold_and_restart_recovers ... ok
+test db::billing::query_performance_tests::all_lifecycle_filter_combinations_cover_sparse_and_empty_matches ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_unpriced_cannot_bypass_capped_budget ... ok
+test db::billing_management::tests::budget_filtering_happens_before_cap_without_historical_ledger_reads ... ok
+test db::billing_management::tests::expired_or_disabled_ancestor_keys_are_historical ... ok
+test db::billing_management::tests::historical_channel_seeks_match_legacy_empty_extreme_ids_and_latest_null_fallback ... ok
+test db::billing_management::tests::historical_channel_vm_steps_follow_distinct_channels_not_ledger_length ... ok
+test db::billing_management::tests::budget_management_rejects_unknown_objects_and_preserves_money_and_audit ... ok
+test db::billing_management::tests::ledger_names_and_state_survive_archival_and_filter_before_pagination ... ok
+test db::billing_management::tests::source_names_disambiguate_credentials_and_disabled_credentials_are_historical ... ok
+test db::billing_management::tests::lifecycle_pagination_handles_ancient_active_and_no_matching_active_rows ... ok
+test db::billing_management::tests::indexed_history_preserves_latest_snapshot_and_large_ledger_pagination ... ok
+test db::billing_management::tests::usage_cursor_requires_a_real_next_row_and_preserves_state_filters ... ok
+test routes::billing::request_pricing_tests::request_pricing_is_admin_only_versioned_and_ledger_preserves_units ... ok
+test vector_compat::tests::compatibility_source_capacity_busy_rejects_before_billing_and_releases_on_drop ... ok
+test gateway::oauth_tests::oauth_nonstream_conversion_native_stream_billing_and_explicit_limit_rejection ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 584 filtered out; finished in 2.96s
+

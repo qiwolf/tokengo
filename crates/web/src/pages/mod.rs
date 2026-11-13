@@ -28,6 +28,7 @@ pub mod portal;
 pub mod users;
 pub mod billing;
 pub mod usage_period;
+pub mod usage_dashboard;
 pub mod models;
 pub mod route_policy;
 pub mod logs;

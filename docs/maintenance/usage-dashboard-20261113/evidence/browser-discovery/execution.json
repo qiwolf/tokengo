@@ -1,0 +1,13 @@
+{
+  "host": "build-test",
+  "cwd": "/srv/build/tokengo-usage-dashboard-20261113",
+  "command": [
+    "/srv/build/nanomuse-evaluation-20261024-tests/browser-venv/bin/python",
+    "/srv/build/tokengo-usage-dashboard-20261113/evidence/browser-qa-discovery.py",
+    "/srv/build/tokengo-usage-dashboard-20261113/source/crates/web/dist",
+    "/srv/build/tokengo-usage-dashboard-20261113/evidence/browser-discovery"
+  ],
+  "exit_code": 0,
+  "seconds": 23.64682364463806,
+  "limitations": "Discovery run against pre-fix WASM; known aria-pressed assertion skipped ONLY here. Not final acceptance."
+}

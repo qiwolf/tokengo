@@ -1,0 +1,63 @@
+   Compiling tokengo-web v0.34.0 (/srv/build/tokengo-usage-dashboard-20261113/source/crates/web)
+warning: unnecessary parentheses around closure body
+   --> crates/web/src/pages/user_overview.rs:135:26
+    |
+135 | ...   <Show when=move||(category.get()>0)><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用...
+    |                        ^                ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+135 -         <Show when=move||(category.get()>0)><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用","按类型","按模型","按客户端"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"仅你自己的调用 · 5秒自动刷新"</span></header>
+135 +         <Show when=move||category.get()>0><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用","按类型","按模型","按客户端"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"仅你自己的调用 · 5秒自动刷新"</span></header>
+    |
+
+error[E0382]: borrow of moved value: `info`
+   --> crates/web/src/pages/usage_dashboard.rs:101:111
+    |
+100 |                                       let output_h=(h-input_h).max(0.0);let info=interval_detail(b,&data);
+    |                                                                             ---- move occurs because `info` has type `std::string::String`, which does not implement the `Copy` trait
+101 |                                       view!{<g class="usage-chart-bucket" role="button" tabindex="0" aria-label=info.clone() on:mou...
+    |                                       -                                                                         ^^^^ value borrowed here after move
+    |  _____________________________________|
+    | |
+102 | |                                         <title>{info}</title><rect x=(i as f64*slot).to_string() y="0" width=slot.to_string() hei...
+103 | |                                         <rect x=x.to_string() y=(239.0-input_h).to_string() width=bar_width.to_string() height=in...
+104 | |                                         <rect x=x.to_string() y=(239.0-input_h-output_h).to_string() width=bar_width.to_string() ...
+105 | |                                     </g>}
+    | |_________________________________________- `info` moved due to this method call
+    |
+note: `into_render` takes ownership of the receiver `self`, which moves `info`
+   --> /srv/cache/tokengo-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tachys-0.2.19/src/view/mod.rs:537:20
+    |
+537 |     fn into_render(self) -> Self::Output;
+    |                    ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+    |
+102 |                                         <title>{info.clone()}</title><rect x=(i as f64*slot).to_string() y="0" width=slot.to_string() height="240" class="usage-bar-hit"/>
+    |                                                     ++++++++
+
+error[E0382]: borrow of moved value: `name`
+   --> crates/web/src/pages/usage_dashboard.rs:122:79
+    |
+121 | ...   let name=row["model"].as_str().unwrap_or("未记录模型").to_string();let tokens=count(&row,"total_tokens");let requests=count(&row,"request_count");let cost=money(&row,"known_debit_micro");let width=(value(&row,"total_tokens") as f64/max*100.0).clamp(0.0,100.0);
+    |           ---- move occurs because `name` has type `std::string::String`, which does not implement the `Copy` trait
+122 | ...   view!{<div class="usage-model-row"><div><str...>{requests}" 次请求 · "{cost}</small></div>}
+    |       --------------------------------------------...--------------------------------------------
+    |       |                                                     |
+    |       |                                                     value borrowed here after move
+    |       `name` moved due to this method call
+    |
+note: `into_render` takes ownership of the receiver `self`, which moves `name`
+   --> /srv/cache/tokengo-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tachys-0.2.19/src/view/mod.rs:537:20
+    |
+537 |     fn into_render(self) -> Self::Output;
+    |                    ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+    |
+122 |                         view!{<div class="usage-model-row"><div><strong title=name.clone()>{name.clone()}</strong><span>{tokens}" tokens"</span></div><div class="usage-model-track" aria-hidden="true"><span style=format!("width:{width:.3}%")></span></div><small>{requests}" 次请求 · "{cost}</small></div>}
+    |                                                                                                 ++++++++
+
+For more information about this error, try `rustc --explain E0382`.
+warning: `tokengo-web` (lib test) generated 1 warning
+error: could not compile `tokengo-web` (lib test) due to 2 previous errors; 1 warning emitted

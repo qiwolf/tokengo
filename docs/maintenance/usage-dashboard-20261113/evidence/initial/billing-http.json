@@ -1,0 +1,25 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server",
+    "--test",
+    "billing",
+    "--test",
+    "panel_accounts",
+    "--test",
+    "account_query_performance",
+    "--test",
+    "migrate_only",
+    "--test",
+    "account_overview"
+  ],
+  "cwd": "/srv/build/tokengo-usage-dashboard-20261113/source",
+  "exit_code": 0,
+  "seconds": 129.2901782989502
+}

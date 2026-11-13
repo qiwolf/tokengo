@@ -165,8 +165,9 @@ async fn admin_usage(
     let catalog=if state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
     let (entries,next)=billing::usage_page_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
     let summary=billing::usage_summary_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
+    let analytics=billing::usage_analytics_with_catalog(&conn,&q,Some(&catalog),&summary).map_err(mutation_error)?;
     let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
-    Ok(Json(json!({"entries":entries,"next_before_id":next,"summary":summary})))
+    Ok(Json(json!({"entries":entries,"next_before_id":next,"summary":summary,"analytics":analytics})))
 }
 async fn self_usage(
     key: GatewayKey,
@@ -178,10 +179,11 @@ async fn self_usage(
     let conn = state.conn();
     let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
     let summary=billing::usage_summary(&conn,&q).map_err(mutation_error)?;
+    let analytics=billing::usage_analytics(&conn,&q,&summary).map_err(mutation_error)?;
     let mut budgets = billing::budgets(&conn, Some("user"), Some(key.auth.user_id))?;
     budgets.extend(billing::budgets(&conn, Some("key"), Some(key.auth.key_id))?);
     Ok(Json(
-        json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary}),
+        json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics}),
     ))
 }
 
@@ -311,8 +313,12 @@ mod request_pricing_tests {
         let (status,window)=call(&state,"GET","/api/usage?start_at=10&end_at=20&limit=1",&admin,Value::Null).await;
         assert_eq!(status,StatusCode::OK);assert_eq!(window["entries"].as_array().unwrap().len(),1);
         assert_eq!(window["summary"]["ledger_count"],3);assert_eq!(window["summary"]["unknown_input_entries"],3);
+        assert_eq!(window["analytics"]["buckets"][0]["total_tokens"],window["summary"]["total_tokens"]);
+        assert_eq!(window["analytics"]["start_at"],10);assert_eq!(window["analytics"]["end_at"],20);
         let (status,own)=call(&state,"GET","/v1/usage?start_at=10&end_at=20&user_id=999&key_id=999&limit=1",&secret,Value::Null).await;
         assert_eq!(status,StatusCode::OK);assert_eq!(own["summary"]["ledger_count"],3);
+        assert_eq!(own["analytics"]["buckets"][0]["total_tokens"],own["summary"]["total_tokens"]);
+        assert_eq!(own["analytics"]["models"].as_array().unwrap().len(),1);
         let (_,empty)=call(&state,"GET","/api/usage?start_at=20&end_at=30",&admin,Value::Null).await;
         assert_eq!(empty["summary"]["ledger_count"],0);assert!(empty["entries"].as_array().unwrap().is_empty());
         for path in ["/api/usage?start_at=20&end_at=10","/v1/usage?start_at=10&end_at=10"] {

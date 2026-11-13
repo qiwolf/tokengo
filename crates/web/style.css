@@ -2264,3 +2264,54 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 /* Shared time filters use the same borderless form grouping in both roles. */
 .portal-page .billing-filter fieldset { border:0; padding:0; margin:0; min-inline-size:0; }
 .billing-filters > #usage-time-help { grid-column:1 / -1; order:1; margin:0; }
+
+/* Usage dashboard: short inline filters; page-size stays with the ledger. */
+.usage-filter-bar { margin:0 0 12px; }
+.usage-filter-bar fieldset { border:0; padding:0; margin:0; min-inline-size:0; }
+.usage-filter-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+.usage-filter-bar .billing-field { display:flex; flex-direction:row; align-items:center; gap:8px; flex:0 1 auto; }
+.usage-filter-bar .billing-field label { white-space:nowrap; margin:0; color:var(--muted); font-size:12px; }
+.usage-filter-bar .billing-field input,.usage-filter-bar .billing-field select { min-height:36px; height:36px; margin:0; font-size:12px; }
+.usage-filter-bar #usage-period { width:96px; }
+.usage-filter-bar #usage-user { width:112px; }
+.usage-filter-bar #usage-key { width:160px; }
+.usage-filter-bar #usage-model { width:128px; }
+.usage-filter-bar #usage-channel { width:192px; }
+.usage-filter-bar #usage-state { width:144px; }
+.usage-filter-bar .usage-period-start,.usage-filter-bar .usage-period-end { order:2; }
+.usage-filter-bar input[type="datetime-local"] { width:256px; padding-inline:8px; }
+.usage-inline-actions { display:flex; align-items:center; gap:8px; }
+.usage-filter-bar .usage-inline-actions button { min-height:36px; height:36px; padding:0 12px; white-space:nowrap; font-size:12px; }
+.usage-advanced { display:flex; align-items:center; gap:12px 24px; flex-wrap:wrap; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+.usage-advanced[hidden] { display:none; }
+.usage-time-sr { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+.usage-applied-range { margin:0 0 12px; }
+.billing-usage .billing-query-status,.portal-usage-panel .billing-query-status { margin:8px 0; min-height:0; font-size:12px; }
+.billing-usage #usage-error:empty { display:none; }
+.usage-ledger-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:24px 0 12px; }
+.usage-ledger-heading > div:first-child { display:flex; align-items:baseline; gap:12px; }
+.usage-ledger-heading h3,.usage-ledger-heading h2 { margin:0; font-size:16px; }
+.usage-page-size { display:flex; align-items:center; gap:8px; flex:0 0 auto !important; font-size:12px; }
+.usage-page-size label { white-space:nowrap; color:var(--muted); }
+.usage-page-size select { width:96px; height:36px; min-height:36px; margin:0; font-size:12px; }
+.portal-page .card-head.usage-ledger-heading { margin:0; }
+.billing-usage .billing-help { margin:12px 0 0; }
+@media(max-width:767px) {
+ .usage-filter-row { gap:8px; }
+ .usage-filter-bar .billing-field { flex:1 1 calc(50% - 8px); min-width:0; gap:8px; }
+ .usage-filter-bar .billing-field label { flex:0 0 auto; }
+ .usage-filter-bar .billing-field select,.usage-filter-bar .billing-field input { width:100% !important; min-width:0; min-height:44px; height:44px; flex:1 1 auto; }
+ .usage-filter-bar .usage-period-start,.usage-filter-bar .usage-period-end { flex:1 1 100%; }
+ .usage-filter-bar .usage-period-start label,.usage-filter-bar .usage-period-end label { width:96px; }
+ .usage-inline-actions { flex:1 1 100%; }
+ .usage-filter-bar .usage-inline-actions button { min-height:44px; height:44px; }
+ .usage-advanced { gap:12px; }
+ .usage-advanced .billing-field { flex:1 1 100%; }
+ .usage-ledger-heading > div:first-child { display:block; }
+ .usage-page-size select { min-height:44px; height:44px; }
+}
+
+@media(max-width:767px) {
+ .usage-filter-bar .usage-period-start,.usage-filter-bar .usage-period-end { flex-direction:column; align-items:stretch; gap:4px; }
+ .usage-filter-bar .usage-period-start label,.usage-filter-bar .usage-period-end label { width:auto; }
+}

@@ -754,8 +754,9 @@ async fn portal(
     let (rows,next)=db::billing::usage_page(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
     let summary=db::billing::usage_summary(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
+    let analytics=db::billing::usage_analytics(&c,&query,&summary).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     Ok(Json(
-        json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"entries":entries,"next_before_id":next}}),
+        json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"analytics":analytics,"entries":entries,"next_before_id":next}}),
     ))
 }
 

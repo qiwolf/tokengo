@@ -1,0 +1,16 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-web",
+    "--lib"
+  ],
+  "cwd": "/srv/build/tokengo-usage-dashboard-20261113/source",
+  "exit_code": 0,
+  "seconds": 45.105553150177
+}

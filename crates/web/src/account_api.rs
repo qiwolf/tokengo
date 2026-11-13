@@ -136,7 +136,7 @@ pub struct PortalKey {
     pub parent_key_id: Option<i64>,
     pub created_at_ms: i64,
 }
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct UsageSummary {
     pub request_count: i64,
     pub ledger_count: i64,
@@ -166,6 +166,7 @@ pub struct Entry {
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct PortalUsage {
+    #[serde(default)] pub analytics: serde_json::Value,
     pub summary: UsageSummary,
     pub entries: Vec<Entry>,
     pub next_before_id: Option<i64>,
@@ -176,8 +177,8 @@ pub struct Portal {
     pub keys: Vec<PortalKey>,
     pub usage: PortalUsage,
 }
-pub async fn portal(before: Option<i64>, query: &str) -> Result<Portal, ApiErr> {
-    let mut path = format!("/api/account/portal?limit=25{query}");
+pub async fn portal(before: Option<i64>, query: &str, limit: u32) -> Result<Portal, ApiErr> {
+    let mut path = format!("/api/account/portal?limit={limit}{query}");
     if let Some(id) = before { path.push_str(&format!("&before_id={id}")); }
     typed("GET", &path, None).await
 }

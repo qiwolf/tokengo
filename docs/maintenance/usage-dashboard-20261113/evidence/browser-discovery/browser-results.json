@@ -1,0 +1,820 @@
+{
+  "host": "build-test",
+  "cases": [
+    {
+      "role": "root",
+      "width": 1440,
+      "theme": "light",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-user",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-key",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-model",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "查询",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "更多筛选",
+          "y": 290,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 1440,
+      "theme": "dark",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-user",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-key",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-model",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "查询",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "更多筛选",
+          "y": 290,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 1280,
+      "theme": "light",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-user",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-key",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-model",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "查询",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "更多筛选",
+          "y": 290,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 1280,
+      "theme": "dark",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-user",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-key",
+          "y": 288,
+          "h": 36
+        },
+        {
+          "id": "usage-model",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "查询",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 290,
+          "h": 32
+        },
+        {
+          "id": "更多筛选",
+          "y": 290,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "theme": "light",
+      "status": "passed",
+      "primary_control_geometry": {},
+      "api_calls": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "theme": "dark",
+      "status": "passed",
+      "primary_control_geometry": {},
+      "api_calls": [
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "state": "active",
+          "user_id": "2",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "50",
+          "state": "active",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "theme": "light",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 207,
+          "h": 36
+        },
+        {
+          "id": "查询",
+          "y": 209,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 209,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "theme": "dark",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 207,
+          "h": 36
+        },
+        {
+          "id": "查询",
+          "y": 209,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 209,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 1280,
+      "theme": "light",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 207,
+          "h": 36
+        },
+        {
+          "id": "查询",
+          "y": 209,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 209,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 1280,
+      "theme": "dark",
+      "status": "passed",
+      "primary_control_geometry": [
+        {
+          "id": "usage-period",
+          "y": 207,
+          "h": 36
+        },
+        {
+          "id": "查询",
+          "y": 209,
+          "h": 32
+        },
+        {
+          "id": "重置",
+          "y": 209,
+          "h": 32
+        }
+      ],
+      "api_calls": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "theme": "light",
+      "status": "passed",
+      "primary_control_geometry": {},
+      "api_calls": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "theme": "dark",
+      "status": "passed",
+      "primary_control_geometry": {},
+      "api_calls": [
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794499200",
+          "end_at": "1794585600",
+          "before_id": "100"
+        },
+        {
+          "limit": "100",
+          "start_at": "1793505601",
+          "end_at": "1793505659"
+        },
+        {
+          "limit": "100",
+          "start_at": "1794153600",
+          "end_at": "1794758400"
+        },
+        {
+          "limit": "25",
+          "start_at": "1794499200",
+          "end_at": "1794585600"
+        }
+      ],
+      "page_errors": [],
+      "authority": "built WASM + synthetic API responses"
+    }
+  ],
+  "limitations": "Synthetic HTTP fixtures verify actual built WASM UI, not backend aggregation/authorization or production deployment."
+}

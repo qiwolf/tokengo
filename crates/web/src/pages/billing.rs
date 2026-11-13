@@ -1,4 +1,5 @@
 use super::{PageHead, policy_editor};
+use super::usage_dashboard::UsageDashboard;
 use super::usage_period::{UsagePeriod, period_query, default_period_query, applied_period};
 use crate::{admin_api as api, Ctx};
 use leptos::prelude::*;
@@ -95,6 +96,7 @@ fn ObjectSelect(
     value: RwSignal<String>,
     objects: RwSignal<Value>,
     active_only: Signal<bool>,
+    #[prop(optional)] owner: Option<RwSignal<String>>,
     #[prop(default = "全部")] empty_label: &'static str,
 ) -> impl IntoView {
     view! {
@@ -106,6 +108,7 @@ fn ObjectSelect(
                     let current = active_only.get();
                     api::rows(&objects.get(),group).into_iter()
                         .filter(|o| !current || active_object(o))
+                        .filter(|o| owner.is_none_or(|owner| owner.get().is_empty() || api::text(o,"user_id")==owner.get()))
                         .map(|o| {
                             let label=if group=="keys"{
                                 format!("{} · {}",api::text(&o,"user_name"),api::text(&o,"name"))
@@ -359,11 +362,24 @@ fn default_usage_query() -> String {
     format!("limit={DEFAULT_USAGE_LIMIT}&state={DEFAULT_USAGE_STATE}{}", default_period_query())
 }
 
+fn usage_query_limit(query:&str)->String {
+    query.split('&').find_map(|part|part.strip_prefix("limit=")).unwrap_or(DEFAULT_USAGE_LIMIT).to_string()
+}
+fn usage_query_with_limit(query:&str, limit:u32)->String {
+    let filters=query.split('&').filter(|p|!p.starts_with("limit=")&&!p.starts_with("before_id=")&&!p.is_empty()).collect::<Vec<_>>().join("&");
+    format!("limit={limit}&{filters}")
+}
+
 #[component]
 fn Usage(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
-    let period=RwSignal::new("today".to_string());let start=RwSignal::new(String::new());let end=RwSignal::new(String::new());let summary=RwSignal::new(Value::Null);let applied_time=RwSignal::new(String::new());
+    let period=RwSignal::new("today".to_string());let start=RwSignal::new(String::new());let end=RwSignal::new(String::new());let summary=RwSignal::new(Value::Null);let analytics=RwSignal::new(Value::Null);let advanced=RwSignal::new(false);let applied_time=RwSignal::new(String::new());
     let snapshot=RwSignal::new(String::new());let user=RwSignal::new(String::new());let key=RwSignal::new(String::new());let channel=RwSignal::new(String::new());let model=RwSignal::new(String::new());let state=RwSignal::new(DEFAULT_USAGE_STATE.to_string());let count=RwSignal::new(DEFAULT_USAGE_LIMIT.to_string());
     let current_only=Signal::derive(move||state.get()==DEFAULT_USAGE_STATE);
+    Effect::new(move |_| {
+        let selected_user=user.get();let catalog=objects.get();let current=current_only.get();
+        let selected_key=key.get_untracked();
+        if !selected_key.is_empty() && !api::rows(&catalog,"keys").iter().any(|k|api::text(k,"id")==selected_key && (selected_user.is_empty()||api::text(k,"user_id")==selected_user) && (!current||active_object(k))) {key.set(String::new());}
+    });
     let change_state=move|e| {
         let next=event_target_value(&e);
         if next==DEFAULT_USAGE_STATE {
@@ -381,22 +397,26 @@ fn Usage(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
     };
     let rows=RwSignal::new(Vec::<Value>::new());let cursor=RwSignal::new(None::<i64>);let busy=RwSignal::new(false);let error=RwSignal::new(String::new());let message=RwSignal::new(String::new());let page=RwSignal::new(0usize);let starts=RwSignal::new(vec![None::<i64>]);let active_query=RwSignal::new(default_usage_query());
     let fetch=move|base:String,before:Option<i64>,target:usize|{if busy.get_untracked(){return;}busy.set(true);error.set(String::new());message.set("正在查询…".into());let query=if let Some(id)=before{format!("{base}&before_id={id}")}else{base.clone()};
-        leptos::task::spawn_local(async move{match api::request("GET",&format!("/api/usage?{query}"),None).await{Ok(v)=>{let found=api::rows(&v,"entries");let len=found.len();cursor.set(v["next_before_id"].as_i64());rows.set(found);summary.set(v["summary"].clone());page.set(target);if target==0{starts.set(vec![None]);applied_time.set(applied_period(&base));active_query.set(base);}else{starts.update(|s|{s.truncate(target);s.push(before);});}message.set(format!("查询完成 · 第 {} 页 · {} 条记录 · 更新于 {}",target+1,len,updated_time()));},Err(e)=>{ctx.note_err(&e);error.set(e.message);message.set("查询失败，保留上次结果。".into());}}busy.set(false);});};
+        leptos::task::spawn_local(async move{match api::request("GET",&format!("/api/usage?{query}"),None).await{Ok(v)=>{let found=api::rows(&v,"entries");let len=found.len();cursor.set(v["next_before_id"].as_i64());rows.set(found);summary.set(v["summary"].clone());analytics.set(v["analytics"].clone());page.set(target);if target==0{starts.set(vec![None]);count.set(usage_query_limit(&base));applied_time.set(applied_period(&base));active_query.set(base);}else{starts.update(|s|{s.truncate(target);s.push(before);});}message.set(format!("查询完成 · 第 {} 页 · {} 条记录 · 更新于 {}",target+1,len,updated_time()));},Err(e)=>{ctx.note_err(&e);count.set(usage_query_limit(&active_query.get_untracked()));error.set(e.message);message.set("查询失败，保留上次结果。".into());}}busy.set(false);});};
     fetch(default_usage_query(),None,0);
-    let search=move|ev:leptos::ev::SubmitEvent|{ev.prevent_default();if busy.get_untracked(){return;}let n=match api::integer(&count.get_untracked(),"每页条数",true){Ok(v)if v<=200=>v,_=>{error.set("每页条数必须在1至200之间".into());return;}};let mut q=format!("limit={n}&state={}",state.get_untracked());for (value,name) in [(user,"user_id"),(key,"key_id"),(channel,"channel_id")] {if !value.get_untracked().is_empty(){q.push_str(&format!("&{name}={}",api::encode(&value.get_untracked())));}}if !model.get_untracked().trim().is_empty(){q.push_str(&format!("&model={}",api::encode(model.get_untracked().trim())));}match period_query(&period.get_untracked(),&start.get_untracked(),&end.get_untracked()){Ok(time)=>q.push_str(&time),Err(e)=>{error.set(e);return;}}fetch(q,None,0);};
-    view!{<section class="card billing-usage"><header class="card-head"><div><h2>"用量账本"</h2><p class="muted small">"默认查看关联对象当前有效的账目。查旧账时，将关联对象状态切换为“历史对象”或“全部（含历史）”。"</p></div></header><div class="card-body">
-    <form class="billing-filter" on:submit=search><fieldset disabled=move||busy.get()><div class="billing-filters">
-    <UsagePeriod period=period start=start end=end/>
+    let run_search=move||{if busy.get_untracked(){return;}let n=match api::integer(&count.get_untracked(),"每页条数",true){Ok(v)if v<=200=>v,_=>{error.set("每页条数必须在1至200之间".into());return;}};let mut q=format!("limit={n}&state={}",state.get_untracked());for (value,name) in [(user,"user_id"),(key,"key_id"),(channel,"channel_id")] {if !value.get_untracked().is_empty(){q.push_str(&format!("&{name}={}",api::encode(&value.get_untracked())));}}if !model.get_untracked().trim().is_empty(){q.push_str(&format!("&model={}",api::encode(model.get_untracked().trim())));}match period_query(&period.get_untracked(),&start.get_untracked(),&end.get_untracked()){Ok(time)=>q.push_str(&time),Err(e)=>{error.set(e);return;}}fetch(q,None,0);};
+    let search=move|ev:leptos::ev::SubmitEvent|{ev.prevent_default();run_search();};
+    view!{<section class="card billing-usage"><header class="card-head"><div><h2>"用量看板"</h2><p class="muted small">"查看区间消耗、用量趋势与调用明细。"</p></div></header><div class="card-body">
+    <form class="usage-filter-bar" on:submit=search><fieldset disabled=move||busy.get()><div class="usage-filter-row">
+    <UsagePeriod period=period start=start end=end compact=true/>
     <ObjectSelect id="usage-user" label="用户" group="users" value=user objects=objects active_only=current_only/>
-    <ObjectSelect id="usage-key" label="API Key（所属用户 · 名称）" group="keys" value=key objects=objects active_only=current_only/>
+    <ObjectSelect id="usage-key" label="API Key" group="keys" value=key objects=objects active_only=current_only owner=user/>
+    <div class="billing-field"><label for="usage-model">"模型"</label><input id="usage-model" placeholder="全部模型" prop:value=model on:input=move|e|model.set(event_target_value(&e))/></div>
+    <div class="usage-inline-actions"><button type="submit" class="primary">{move||if busy.get(){"查询中…"}else{"查询"}}</button><button type="button" class="ghost" on:click=move |_|{period.set("today".into());start.set(String::new());end.set(String::new());user.set(String::new());key.set(String::new());channel.set(String::new());model.set(String::new());state.set(DEFAULT_USAGE_STATE.into());count.set(DEFAULT_USAGE_LIMIT.into());fetch(default_usage_query(),None,0);}>"重置"</button><button type="button" class="ghost" aria-controls="usage-advanced" aria-expanded=move||advanced.get().to_string() on:click=move |_|advanced.update(|open|*open=!*open)>"更多筛选"</button></div>
+    </div><div id="usage-advanced" class="usage-advanced" hidden=move||!advanced.get()>
     <ObjectSelect id="usage-channel" label="上游接入" group="channels" value=channel objects=objects active_only=current_only/>
-    <div class="billing-field"><label for="usage-model">"模型（精确匹配）"</label><input id="usage-model" prop:value=model on:input=move|e|model.set(event_target_value(&e))/></div>
-    <div class="billing-field"><label for="usage-state">"关联对象状态"</label><select id="usage-state" prop:value=state on:change=change_state><option value="active">"当前有效"</option><option value="historical">"历史对象"</option><option value="all">"全部（含历史）"</option></select></div>
-    <div class="billing-field"><label for="usage-limit">"每页条数"</label><select id="usage-limit" prop:value=count on:change=move|e|count.set(event_target_value(&e))><option value="10">"10"</option><option value="50">"50"</option><option value="100">"100"</option><option value="200">"200"</option></select></div>
-    </div><div class="billing-filter-actions"><button class="primary" type="submit">{move||if busy.get(){"查询中…"}else{"查询"}}</button><button type="button" class="ghost" on:click=move |_|{period.set("today".into());start.set(String::new());end.set(String::new());user.set(String::new());key.set(String::new());channel.set(String::new());model.set(String::new());state.set(DEFAULT_USAGE_STATE.into());count.set(DEFAULT_USAGE_LIMIT.into());fetch(default_usage_query(),None,0);}>"重置筛选"</button></div></fieldset></form>
+    <div class="billing-field"><label for="usage-state">"对象状态"</label><select id="usage-state" prop:value=state on:change=change_state><option value="active">"当前有效"</option><option value="historical">"历史对象"</option><option value="all">"全部（含历史）"</option></select></div>
+    <span class="muted small">"模型精确匹配；停用或删除的用户、Key 和上游可切换历史对象查询。"</span>
+    </div></fieldset></form>
     <p id="usage-error" role="alert">{move||error.get()}</p><p class="billing-query-status" role="status" aria-live="polite">{move||message.get()}</p>
-    {move||summary.get().is_object().then(||view!{<section aria-label="筛选范围用量合计"><p class="muted small">{move||format!("已查询：{} · 合计覆盖全部匹配记录",applied_time.get())}</p><div class="portal-summary"><section><span>"已知总 tokens"</span><strong>{move||api::text(&summary.get(),"total_tokens")}</strong><small>{move||format!("输入 {} / 输出 {}",api::text(&summary.get(),"input_tokens"),api::text(&summary.get(),"output_tokens"))}</small></section><section><span>"已入账请求 / 尝试账本"</span><strong>{move||format!("{} / {}",api::text(&summary.get(),"request_count"),api::text(&summary.get(),"ledger_count"))}</strong><small>{move||format!("输入未知 {} 笔 / 输出未知 {} 笔",api::text(&summary.get(),"unknown_input_entries"),api::text(&summary.get(),"unknown_output_entries"))}</small></section><section><span>"已知用户扣款"</span><strong>{move||money(&summary.get()["known_debit_micro"])}</strong><small>{move||format!("未定价 {} 笔；未知金额未计入",api::text(&summary.get(),"unpriced_entries"))}</small></section></div></section>})}
-    <details class="billing-help"><summary>"如何理解账目与费用"</summary><p>"扣款是用户额度的实际扣减；成本为上游报告或估算，不能直接当作供应商对账结果；当前占用仅指尚未结算的额度，结算后显示0；初始预占记录保留在详情中。金额单位 USD。未知不等于免费。"</p><p>"系统诊断单独标识，不扣用户费用。历史对象包括停用、删除、撤销或到期的用户、Key、上游接入。"</p>{move||api::billing_page_summary(&rows.get()).into_iter().map(|line|view!{<p class="muted small">{line}</p>}).collect_view()}</details>
+    <p class="usage-applied-range muted small">{move||format!("统计区间：{} · 本地时区",applied_time.get())}</p>
+    <UsageDashboard summary=summary analytics=analytics/>
+    <header class="usage-ledger-heading"><div><h3>"调用明细"</h3><span class="muted small">"所选区间内的逐次账目"</span></div><div class="usage-page-size"><label for="usage-limit">"每页"</label><select id="usage-limit" disabled=move||busy.get() prop:value=count on:change=move |e|{let n=event_target_value(&e).parse::<u32>().unwrap_or(50);fetch(usage_query_with_limit(&active_query.get_untracked(),n),None,0);} ><option value="10">"10 条"</option><option value="50">"50 条"</option><option value="100">"100 条"</option><option value="200">"200 条"</option></select></div></header>
     <div class="table-wrap"><table><thead><tr><th>"用户 / Key"</th><th>"上游接入 / 模型"</th><th>"结果"</th><th>"用量"</th><th>"用户扣款"</th><th>"上游成本"</th><th>"当前占用"</th><th>"详情"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|r|{
         let (source,who,debit)=ledger_identity(&r);let model_name=api::text(&r,"model");let state_text=usage_status(&r);let basis=usage_basis(&r);let units=if r["billing_unit"]=="request"{format!("{} 次",api::billed_requests(&r))}else{format!("输入 {} / 输出 {} token",api::text(&r,"input_tokens"),api::text(&r,"output_tokens"))};let cost=money(&r["observed_cost_micro"]);let reserved=current_hold(&r);let historical=r["record_state"]=="historical";let detail=api::pretty(&r);
         view!{<tr><td data-label="用户 / Key"><strong>{who}</strong>{if historical{Some(view!{<small class="billing-history">"关联历史对象"</small>})}else{None}}</td><td data-label="上游接入 / 模型">{source}<small>{model_name}</small></td><td data-label="结果">{state_text}<small>{basis}</small></td><td data-label="用量">{units}</td><td data-label="用户扣款">{debit}</td><td data-label="上游成本">{cost}</td><td data-label="当前占用">{reserved}</td><td data-label="详情"><button type="button" class="ghost" on:click=move |_|{snapshot.set(detail.clone());billing_dialog("ledger-snapshot-dialog",true);}>"查看详情"</button></td></tr>}
@@ -404,6 +424,7 @@ fn Usage(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
     {move||if !busy.get()&&rows.get().is_empty(){Some(view!{<p class="muted">"当前筛选没有账目，可调整条件或重置筛选。"</p>})}else{None}}
     <nav class="billing-pagination" aria-label="账本分页"><span>{move||format!("第 {} 页 · 本页 {} 条",page.get()+1,rows.get().len())}</span><div class="billing-pagination-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|fetch(active_query.get_untracked(),None,0)>"最新一页"</button><button type="button" class="ghost" disabled=move||busy.get()||page.get()==0 on:click=move |_|{let target=page.get_untracked()-1;fetch(active_query.get_untracked(),starts.get_untracked()[target],target);}>"上一页"</button><button type="button" class="ghost" disabled=move||busy.get()||cursor.get().is_none()||rows.get().is_empty() on:click=move |_|fetch(active_query.get_untracked(),cursor.get_untracked(),page.get_untracked()+1)>"较早一页"</button></div></nav>
     <p class="muted small">"分页沿用已查询条件；修改筛选后点击“查询”，从最新一页重新开始。"</p>
+    <details class="billing-help"><summary>"如何理解账目与费用"</summary><p>"扣款是用户额度的实际扣减；成本为上游报告或估算，不能直接当作供应商对账结果；当前占用仅指尚未结算的额度，结算后显示0；初始预占记录保留在详情中。金额单位 USD。未知不等于免费。"</p><p>"系统诊断单独标识，不扣用户费用。历史对象包括停用、删除、撤销或到期的用户、Key、上游接入。"</p>{move||api::billing_page_summary(&rows.get()).into_iter().map(|line|view!{<p class="muted small">{line}</p>}).collect_view()}</details>
     <BillingDialog id="ledger-snapshot-dialog" title="账目详情"><p class="muted small">"完整原始快照，包括账本编号、请求编号及上游接入编号，用于追溯。"</p><pre class="admin-json">{move||snapshot.get()}</pre></BillingDialog>
     </div></section>}
 }
@@ -427,4 +448,16 @@ fn Usage(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
  #[test] fn ordinary_usage_keeps_its_real_user(){let (_,who,_)=ledger_identity(&json!({"user_id":7,"key_id":8,"user_name":"Andy","key_name":"Hermes","model":"chat"}));assert_eq!(who,"Andy · Hermes");}
  #[test] fn provider_id_cannot_be_used_as_source_id(){let rows=vec![(12,"供应方 · 主 Key".into())];assert!(!selected_price_source("3",&rows));assert!(selected_price_source("12",&rows));assert!(!selected_price_source("",&rows));}
  #[test] fn source_label_preserves_provider_key_and_endpoint(){assert_eq!(price_source_label(&json!({"provider_name":"本地 GPU","base_url":"http://127.0.0.1:8001/v1"}),"向量 Key"),"本地 GPU · 向量 Key · http://127.0.0.1:8001/v1");}
+}
+
+#[cfg(test)]
+mod usage_paging_tests {
+    use super::*;
+    #[test]
+    fn changing_page_size_keeps_applied_filters_and_resets_cursor() {
+        let old="limit=50&state=historical&user_id=7&key_id=8&model=two%20words&start_at=100&end_at=200&before_id=9";
+        let next=usage_query_with_limit(old,100);
+        assert_eq!(next,"limit=100&state=historical&user_id=7&key_id=8&model=two%20words&start_at=100&end_at=200");
+        assert_eq!(usage_query_limit(&next),"100");
+    }
 }

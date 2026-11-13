@@ -25,18 +25,18 @@ pub fn period_query(period: &str, start: &str, end: &str) -> Result<String, Stri
 pub fn default_period_query() -> String { period_query("today", "", "").unwrap_or_default() }
 
 #[component]
-pub fn UsagePeriod(period: RwSignal<String>, start: RwSignal<String>, end: RwSignal<String>) -> impl IntoView {
+pub fn UsagePeriod(period: RwSignal<String>, start: RwSignal<String>, end: RwSignal<String>, #[prop(default = false)] compact: bool) -> impl IntoView {
     view! {
-        <div class="billing-field"><label for="usage-period">"时间范围"</label>
+        <div class="billing-field usage-period-choice"><label for="usage-period">"时间范围"</label>
             <select id="usage-period" prop:value=period on:change=move |e|period.set(event_target_value(&e))>
                 <option value="today">"今天"</option><option value="week">"本周"</option><option value="month">"本月"</option><option value="custom">"自定义"</option><option value="all">"全部时间"</option>
             </select>
         </div>
         {move || (period.get() == "custom").then(|| view! {
-            <div class="billing-field"><label for="usage-start">"开始时间（含）"</label><input id="usage-start" type="datetime-local" required step="1" prop:value=start aria-describedby="usage-time-help" on:input=move |e| start.set(event_target_value(&e))/></div>
-            <div class="billing-field"><label for="usage-end">"结束时间（不含）"</label><input id="usage-end" type="datetime-local" required step="1" prop:value=end aria-describedby="usage-time-help" on:input=move |e| end.set(event_target_value(&e))/></div>
+            <div class="billing-field usage-period-start"><label for="usage-start">"开始时间（含）"</label><input id="usage-start" type="datetime-local" required step="1" prop:value=start aria-describedby="usage-time-help" on:input=move |e| start.set(event_target_value(&e))/></div>
+            <div class="billing-field usage-period-end"><label for="usage-end">"结束时间（不含）"</label><input id="usage-end" type="datetime-local" required step="1" prop:value=end aria-describedby="usage-time-help" on:input=move |e| end.set(event_target_value(&e))/></div>
         })}
-        <p id="usage-time-help" class="muted small">"按请求发起时间查询，使用浏览器本地时区；本周从周一开始。自定义范围包含开始、不含结束。"</p>
+        <p id="usage-time-help" class=if compact {"usage-time-sr"} else {"muted small"}>"按请求发起时间查询，使用浏览器本地时区；本周从周一开始。自定义范围包含开始、不含结束。"</p>
     }
 }
 

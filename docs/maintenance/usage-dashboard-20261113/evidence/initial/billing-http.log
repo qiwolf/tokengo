@@ -1,0 +1,112 @@
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-usage-dashboard-20261113/source/crates/server)
+warning: function `billing_bound_with_context` is never used
+   --> crates/server/src/gateway.rs:713:4
+    |
+713 | fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i6...
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:785:4
+    |
+785 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:835:15
+    |
+835 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 5 warnings
+warning: `tokengo-server` (lib) generated 5 warnings (5 duplicates)
+    Finished `release` profile [optimized] target(s) in 2m 01s
+     Running tests/account_overview.rs (/srv/build/tokengo-usage-dashboard-20261113/target/release/deps/account_overview-f4e20b32a709fb98)
+
+running 7 tests
+test model_statistics_follow_actual_logical_models_with_neutral_auto_and_passthrough_labels ... ok
+test owner_logs_details_and_stats_never_reveal_other_owners_or_admin_fields ... ok
+test mixed_usage_certainty_and_terminal_statuses_remain_explicit ... ok
+test owner_statistics_window_top50_and_nullable_usage_are_filtered_before_aggregation ... ok
+test schema44_adds_only_the_owner_index_and_preserves_schema43_requests ... ok
+test pagination_filters_before_limit_and_revoked_keys_keep_history_but_disabled_users_cannot_read ... ok
+test time_order_cursors_are_owner_scoped_and_foreign_equals_missing ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+     Running tests/account_query_performance.rs (/srv/build/tokengo-usage-dashboard-20261113/target/release/deps/account_query_performance-640d87f0c3b00521)
+
+running 1 test
+test owner_heavy_portal_and_overview_preserve_accounting_and_latency ... ignored, 500k to 1m owner rows with wide requests and ledger; release on build-test
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/billing.rs (/srv/build/tokengo-usage-dashboard-20261113/target/release/deps/billing-998b0f0be1422bb7)
+
+running 18 tests
+test ancestor_budget_is_shared_and_snapshot_survives_parent_deletion ... ok
+test exact_cost_ceil_and_immutable_price_versions ... ok
+test both_budget_layers_roll_back_atomically_and_lowering_blocks_new_holds ... ok
+test isolated_frozen_ancestor_blocks_child_priced_and_free_reservations ... ok
+test negatives_overflows_and_price_snapshot_tampering_are_rejected ... ok
+test idempotent_reservation_settlement_release_and_retention_are_independent ... ok
+test billing_http_pricing_exists_and_requires_panel_auth ... ok
+test overrun_keeps_provider_cost_visible_caps_debit_and_freezes_future_budgeted_attempts ... ok
+test partial_usage_can_prove_overrun_without_claiming_a_complete_provider_cost ... ok
+test removing_a_finite_limit_never_implicitly_unfreezes_after_overrun ... ok
+test real_http_pricing_budgets_audit_and_bounded_usage ... ok
+test partial_missing_usage_is_estimated_but_reported_zero_is_zero ... ok
+test real_http_self_usage_cannot_read_another_key_and_paginates_without_secrets ... ok
+test unlimited_overrun_freezes_new_priced_and_zero_cost_attempts ... ok
+test restart_conservatively_charges_outstanding_once_without_diagnostic_rows ... ok
+test two_connections_cannot_overreserve_the_same_budget ... ok
+test unpriced_ledger_stays_unknown_and_any_finite_ancestor_budget_requires_configuration ... ok
+test unpriced_does_not_bypass_any_frozen_user_key_or_ancestor_allocation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
+
+     Running tests/migrate_only.rs (/srv/build/tokengo-usage-dashboard-20261113/target/release/deps/migrate_only-e022e40477374318)
+
+running 1 test
+test migrate_only_preserves_business_rows_and_never_initializes_runtime_services ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/panel_accounts.rs (/srv/build/tokengo-usage-dashboard-20261113/target/release/deps/panel_accounts-1035e7554e945915)
+
+running 19 tests
+test configured_setup_rejects_before_consuming_any_hash_slot ... ok
+test fresh_cookie_setup_is_atomic_and_echoes_gateway_key_only_once ... ok
+test account_disable_reset_and_restart_preserve_revocation_and_hash_only_sessions ... ok
+test legacy_cookie_csrf_malformed_credentials_and_api_admin_never_grant_panel_root ... ok
+test in_flight_login_cannot_issue_session_after_root_rename_or_password_reset ... ok
+test legacy_session_digest_is_not_a_bearer_and_old_raw_sessions_migrate ... ok
+test linked_user_disable_and_reenable_never_revives_old_cookie ... ok
+test migrated_root_cookie_restores_and_csrf_covers_management ... ok
+test login_throttle_and_expiry_are_bounded_without_account_enumeration ... ok
+test ordinary_cookie_cannot_manage_and_portal_is_explicit_owner_projection ... ok
+test portal_ledger_scope_and_unknown_meter_are_not_replaced_by_foreign_values ... ok
+test migration32_copies_the_original_short_password_hash_and_legacy_session_without_reset ... ok
+test portal_time_range_summary_is_owner_scoped_and_independent_of_paging ... ok
+test root_management_cannot_reset_root_without_current_password_or_disable_it ... ok
+test root_password_changes_sync_legacy_and_revoke_both_session_kinds ... ok
+test root_actor_revocation_during_hash_cannot_create_or_reset_accounts ... ok
+test root_username_change_requires_password_and_closes_legacy_password_only_backdoor ... ok
+test wrong_disabled_and_unknown_accounts_are_indistinguishable ... ok
+test session_logout_during_stepup_hash_cannot_change_password_or_profile ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
+

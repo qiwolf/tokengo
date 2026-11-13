@@ -682,6 +682,153 @@ fn usage_summary_table(q:&UsageQuery)->&'static str {
         else {"billing_ledger INDEXED BY billing_ledger_time_summary"}
     } else {"billing_ledger"}
 }
+/// Compact time buckets and model totals use the same authorization/filter
+/// predicates as the full-range summary. Unknown usage is kept alongside sums.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageBucket {
+    pub start_at:i64,
+    pub request_count:i64,
+    pub ledger_count:i64,
+    pub input_tokens:i64,
+    pub output_tokens:i64,
+    pub total_tokens:i64,
+    pub known_debit_micro:i64,
+    pub unknown_input_entries:i64,
+    pub unknown_output_entries:i64,
+}
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageModel {
+    pub model:String,
+    pub is_other:bool,
+    pub request_count:i64,
+    pub ledger_count:i64,
+    pub input_tokens:i64,
+    pub output_tokens:i64,
+    pub total_tokens:i64,
+    pub known_debit_micro:i64,
+}
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageModelBucket {
+    pub start_at:i64,
+    pub ledger_count:i64,
+    pub request_count:i64,
+    pub total_tokens:i64,
+    pub known_debit_micro:i64,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageModelSeries {
+    pub model:String,
+    pub is_other:bool,
+    pub ledger_count:i64,
+    /// Per-model request attribution; retries can span buckets/models.
+    pub request_count:i64,
+    pub buckets:Vec<UsageModelBucket>,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageAnalytics {
+    pub start_at:i64,
+    pub end_at:i64,
+    pub effective_end_at:i64,
+    pub bucket_seconds:i64,
+    pub buckets:Vec<UsageBucket>,
+    pub models:Vec<UsageModel>,
+    pub model_series:Vec<UsageModelSeries>,
+    pub average_rpm:f64,
+    pub average_tpm:f64,
+}
+fn usage_bucket_seconds(span:i64)->i64 {
+    // At most 120 buckets even for an unbounded retained history. Calendar
+    // presets arrive with browser-local start boundaries; bins are elapsed time.
+    for seconds in [3600,21600,86400,604800,2592000] {
+        if span.div_euclid(seconds)+(i64::from(span.rem_euclid(seconds)>0))<=120 {
+            if seconds==3600&&span>48*3600 {continue;}
+            if seconds==21600&&span>14*86400 {continue;}
+            return seconds;
+        }
+    }
+    (span/120+i64::from(span%120>0)).max(2592000)
+}
+pub fn usage_analytics_with_catalog(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json::Value>,summary:&UsageSummary)->Result<UsageAnalytics> {
+    usage_analytics_at(conn,q,catalog,summary,now_ms()/1000)
+}
+pub fn usage_analytics(conn:&Connection,q:&UsageQuery,summary:&UsageSummary)->Result<UsageAnalytics> {
+    usage_analytics_with_catalog(conn,q,None,summary)
+}
+fn usage_analytics_at(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json::Value>,summary:&UsageSummary,now:i64)->Result<UsageAnalytics> {
+    validate_usage_time(q)?;
+    let state=super::billing_management::validated_state(q.state.as_deref(),"all")?;
+    let owned;
+    let catalog=if state!="all"&&catalog.is_none() {owned=super::billing_management::current_objects(conn)?;Some(&owned)}else{catalog};
+    let (predicate,args)=usage_predicates(q,state,catalog,false)?;
+    let table=usage_summary_table(q);
+    let (first,last)=if q.start_at.is_none()||q.end_at.is_none() {
+        conn.query_row(&format!("SELECT min(created_ms),max(created_ms) FROM {table} WHERE 1=1{predicate}"),rusqlite::params_from_iter(args.iter()),|r|Ok((r.get::<_,Option<i64>>(0)?,r.get::<_,Option<i64>>(1)?)))?
+    } else {(None,None)};
+    let start=q.start_at.or_else(||first.map(|ms|ms.div_euclid(1000))).unwrap_or_else(||q.end_at.unwrap_or(now).min(now));
+    let end=q.end_at.unwrap_or_else(||last.map(|ms|ms.div_euclid(1000).saturating_add(1)).unwrap_or(now).max(now).max(start));
+    let span=end.saturating_sub(start).max(0);
+    let bucket_seconds=usage_bucket_seconds(span);
+    let effective_end_at=end.min(now);
+    let elapsed=effective_end_at.saturating_sub(start);
+    let mut analytics=UsageAnalytics {start_at:start,end_at:end,effective_end_at,bucket_seconds,buckets:Vec::new(),models:Vec::new(),model_series:Vec::new(),average_rpm:if elapsed>0 {summary.request_count as f64*60.0/elapsed as f64}else{0.0},average_tpm:if elapsed>0 {summary.total_tokens as f64*60.0/elapsed as f64}else{0.0}};
+    if span==0 {return Ok(analytics);}
+    let count=span/bucket_seconds+i64::from(span%bucket_seconds>0);
+    analytics.buckets=(0..count).map(|i|UsageBucket{start_at:start+i*bucket_seconds,..Default::default()}).collect();
+    let mut bindings=vec![rusqlite::types::Value::Integer(start*1000),rusqlite::types::Value::Integer(bucket_seconds*1000)];
+    bindings.extend(args.iter().cloned());
+    let sql=format!("SELECT (created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0) FROM {table} WHERE 1=1{predicate} GROUP BY bucket ORDER BY bucket");
+    let mut statement=conn.prepare(&sql)?;
+    let buckets=statement.query_map(rusqlite::params_from_iter(bindings),|r|{
+        let input_tokens:i64=r.get(3)?;let output_tokens:i64=r.get(4)?;
+        Ok((r.get::<_,i64>(0)?,UsageBucket{start_at:0,request_count:r.get(1)?,ledger_count:r.get(2)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),known_debit_micro:r.get(5)?,unknown_input_entries:r.get(6)?,unknown_output_entries:r.get(7)?}))
+    })?;
+    for row in buckets {let(index,mut bucket)=row?;if let Some(slot)=analytics.buckets.get_mut(index as usize) {bucket.start_at=slot.start_at;*slot=bucket;}}
+    let sql=format!("SELECT model,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0) FROM {table} WHERE 1=1{predicate} GROUP BY model ORDER BY coalesce(sum(input_tokens),0)+coalesce(sum(output_tokens),0) DESC,count(*) DESC,model");
+    let mut statement=conn.prepare(&sql)?;
+    let models=statement.query_map(rusqlite::params_from_iter(args.iter()),|r|{
+        let input_tokens:i64=r.get(3)?;let output_tokens:i64=r.get(4)?;
+        Ok(UsageModel{model:r.get(0)?,is_other:false,request_count:r.get(1)?,ledger_count:r.get(2)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),known_debit_micro:r.get(5)?})
+    })?;
+    let mut other=UsageModel{model:"其他模型".into(),is_other:true,..Default::default()};
+    let mut call_leaders=Vec::<UsageModel>::new();let mut all_model_requests=0i64;
+    for model in models {
+        let model=model?;all_model_requests=all_model_requests.saturating_add(model.request_count);
+        // Bounded top calls selection independent of token rankings.
+        call_leaders.push(model.clone());
+        call_leaders.sort_by(|a,b|b.ledger_count.cmp(&a.ledger_count).then_with(||a.model.cmp(&b.model)));
+        call_leaders.truncate(8);
+        if analytics.models.len()<8 {analytics.models.push(model);}else{
+            other.request_count=other.request_count.saturating_add(model.request_count);other.ledger_count=other.ledger_count.saturating_add(model.ledger_count);other.input_tokens=other.input_tokens.saturating_add(model.input_tokens);other.output_tokens=other.output_tokens.saturating_add(model.output_tokens);other.total_tokens=other.total_tokens.saturating_add(model.total_tokens);other.known_debit_micro=other.known_debit_micro.saturating_add(model.known_debit_micro);
+        }
+    }
+    if other.ledger_count>0 {analytics.models.push(other);}
+    let leading_calls=call_leaders.iter().map(|m|m.ledger_count).sum::<i64>();
+    let leading_requests=call_leaders.iter().map(|m|m.request_count).sum::<i64>();
+    let blank_buckets=analytics.buckets.iter().map(|b|UsageModelBucket{start_at:b.start_at,..Default::default()}).collect::<Vec<_>>();
+    analytics.model_series=call_leaders.iter().map(|m|UsageModelSeries{model:m.model.clone(),is_other:false,ledger_count:m.ledger_count,request_count:m.request_count,buckets:blank_buckets.clone()}).collect();
+    if summary.ledger_count>leading_calls {
+        analytics.model_series.push(UsageModelSeries{model:"其他模型".into(),is_other:true,ledger_count:summary.ledger_count-leading_calls,request_count:all_model_requests-leading_requests,buckets:blank_buckets.clone()});
+    }
+    if !analytics.model_series.is_empty() {
+        // Numeric series indices avoid collisions with a real model named
+        // "其他模型"; only the globally selected eight keep individual lines.
+        let mut case="CASE model".to_string();let mut bindings=Vec::<rusqlite::types::Value>::new();
+        for (index,model) in call_leaders.iter().enumerate() {
+            case.push_str(&format!(" WHEN ? THEN {index}"));bindings.push(model.model.clone().into());
+        }
+        case.push_str(&format!(" ELSE {} END",call_leaders.len()));
+        bindings.push((start*1000).into());bindings.push((bucket_seconds*1000).into());bindings.extend(args.iter().cloned());
+        let sql=format!("SELECT {case} AS series,(created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0)+coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0) FROM {table} WHERE 1=1{predicate} GROUP BY series,bucket ORDER BY series,bucket");
+        let mut statement=conn.prepare(&sql)?;
+        let grouped=statement.query_map(rusqlite::params_from_iter(bindings),|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,UsageModelBucket{start_at:0,request_count:r.get(2)?,ledger_count:r.get(3)?,total_tokens:r.get(4)?,known_debit_micro:r.get(5)?})))?;
+        for row in grouped {
+            let(series,index,mut bucket)=row?;
+            let (Ok(series),Ok(index))=(usize::try_from(series),usize::try_from(index)) else {continue;};
+            if let Some(slot)=analytics.model_series.get_mut(series).and_then(|s|s.buckets.get_mut(index)) {bucket.start_at=slot.start_at;*slot=bucket;}
+        }
+    }
+    Ok(analytics)
+}
 /// Build bound predicates only for supplied filters, so owner/source/model indexes
 /// remain usable. Catalogs are request-local observations, never authorization caches.
 fn usage_sql(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,limit:u32)->Result<(String,Vec<rusqlite::types::Value>)> {
@@ -1133,6 +1280,86 @@ mod usage_time_tests {
             assert!(plan.contains(&format!("COVERING INDEX {index}")),"{plan}");
             assert!(plan.contains("created_ms>? AND created_ms<?"),"{plan}");
         }
+    }
+    #[test]
+    fn analytics_zero_fills_time_buckets_and_ignores_cursor_with_identical_scope() {
+        let c=fixture();
+        // Same owner, a second hour and another model; the end boundary must
+        // exclude its row even though its ID is newer than all included rows.
+        c.execute("UPDATE billing_ledger SET created_ms=CASE attempt_id WHEN 'start' THEN 3600000 WHEN 'retry' THEN 7199999 WHEN 'other-key' THEN 10800000 WHEN 'historical' THEN 10800000 WHEN 'foreign' THEN 10800000 ELSE created_ms END",[]).unwrap();
+        c.execute("UPDATE billing_ledger SET model='second-model' WHERE attempt_id='other-key'",[]).unwrap();
+        let q=UsageQuery{user_id:Some(1),start_at:Some(3600),end_at:Some(14400),before_id:Some(2),limit:Some(1),..Default::default()};
+        let summary=usage_summary(&c,&q).unwrap();
+        let analytics=usage_analytics_at(&c,&q,None,&summary,14400).unwrap();
+        assert_eq!(analytics.bucket_seconds,3600);assert_eq!(analytics.buckets.len(),3);
+        assert_eq!(analytics.buckets.iter().map(|b|b.start_at).collect::<Vec<_>>(),vec![3600,7200,10800]);
+        assert_eq!(analytics.buckets.iter().map(|b|b.total_tokens).collect::<Vec<_>>(),vec![15,0,59]);
+        assert_eq!(analytics.buckets.iter().map(|b|b.ledger_count).collect::<Vec<_>>(),vec![2,0,2]);
+        assert_eq!(analytics.buckets.iter().map(|b|b.total_tokens).sum::<i64>(),summary.total_tokens);
+        assert_eq!(analytics.buckets.iter().map(|b|b.known_debit_micro).sum::<i64>(),summary.known_debit_micro);
+        assert_eq!(analytics.models.iter().map(|m|m.total_tokens).sum::<i64>(),summary.total_tokens);
+        assert_eq!(analytics.buckets[0].unknown_input_entries,1);
+        assert!((analytics.average_rpm-3.0/180.0).abs()<1e-12);
+        assert!((analytics.average_tpm-74.0/180.0).abs()<1e-12);
+        assert!(analytics.models.iter().any(|m|m.model=="second-model"&&m.total_tokens==24));
+        assert_eq!(analytics.model_series.len(),2);
+        for (i,bucket) in analytics.buckets.iter().enumerate() {
+            assert_eq!(analytics.model_series.iter().map(|s|s.buckets[i].ledger_count).sum::<i64>(),bucket.ledger_count);
+            assert_eq!(analytics.model_series.iter().map(|s|s.buckets[i].total_tokens).sum::<i64>(),bucket.total_tokens);
+            assert_eq!(analytics.model_series.iter().map(|s|s.buckets[i].known_debit_micro).sum::<i64>(),bucket.known_debit_micro);
+            assert!(analytics.model_series.iter().all(|s|s.buckets[i].start_at==bucket.start_at));
+        }
+        assert_eq!(analytics.model_series.iter().map(|s|s.ledger_count).sum::<i64>(),summary.ledger_count);
+        let mut first=q.clone();first.before_id=None;first.limit=Some(200);
+        let same=usage_analytics_at(&c,&first,None,&summary,14400).unwrap();
+        assert_eq!(serde_json::to_value(analytics).unwrap(),serde_json::to_value(same).unwrap());
+        let catalog=serde_json::json!({"users":[{"id":1,"state":"active"}],"keys":[{"id":1,"state":"active"},{"id":3,"state":"active"}],"channels":[{"id":1,"state":"active"}]});
+        first.state=Some("active".into());first.key_id=Some(1);first.model=Some("SYNTHETIC".into());
+        let summary=usage_summary_with_catalog(&c,&first,Some(&catalog)).unwrap();
+        let analytics=usage_analytics_at(&c,&first,Some(&catalog),&summary,14400).unwrap();
+        assert_eq!(analytics.buckets.iter().map(|b|b.total_tokens).sum::<i64>(),15);
+        assert_eq!(analytics.models.len(),1);assert_eq!(analytics.models[0].ledger_count,2);
+        assert_eq!(analytics.model_series.len(),1);assert_eq!(analytics.model_series[0].ledger_count,2);
+    }
+    #[test]
+    fn analytics_bounds_empty_future_and_long_ranges_are_finite_and_bounded() {
+        let c=fixture();
+        let mut q=UsageQuery{user_id:Some(999),start_at:Some(3600),end_at:Some(14400),..Default::default()};
+        let summary=usage_summary(&c,&q).unwrap();
+        let empty=usage_analytics_at(&c,&q,None,&summary,7200).unwrap();
+        assert_eq!(empty.buckets.len(),3);assert!(empty.models.is_empty());assert!(empty.model_series.is_empty());assert_eq!(empty.effective_end_at,7200);
+        assert_eq!(empty.average_rpm,0.0);assert_eq!(empty.average_tpm,0.0);
+        q.user_id=Some(1);q.start_at=Some(10);q.end_at=Some(20);
+        let summary=usage_summary(&c,&q).unwrap();let partial=usage_analytics_at(&c,&q,None,&summary,15).unwrap();
+        assert_eq!(partial.effective_end_at,15);assert_eq!(partial.average_tpm,summary.total_tokens as f64*12.0);
+        q.start_at=Some(100);q.end_at=Some(200);
+        let summary=usage_summary(&c,&q).unwrap();let future=usage_analytics_at(&c,&q,None,&summary,50).unwrap();
+        assert_eq!(future.average_rpm,0.0);assert_eq!(future.average_tpm,0.0);assert_eq!(future.effective_end_at,50);
+        q.start_at=Some(0);q.end_at=Some(100*365*86400);
+        let summary=usage_summary(&c,&q).unwrap();let long=usage_analytics_at(&c,&q,None,&summary,100).unwrap();assert!(long.buckets.len()<=120);
+        q.start_at=None;q.end_at=None;
+        let inferred=usage_analytics_at(&c,&q,None,&summary,100).unwrap();assert_eq!((inferred.start_at,inferred.end_at),(9,100));
+    }
+    #[test]
+    fn analytics_model_tail_is_combined_without_losing_usage() {
+        let c=fixture();
+        for i in 0..12 {c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,input_tokens,output_tokens,debit_micro) VALUES(?1,3,3,?2,1,?3,0,0,0,10000,'ok',10,2,1)",params![format!("tail-{i}"),i,format!("model-{i:02}")]).unwrap();}
+        let q=UsageQuery{user_id:Some(3),start_at:Some(10),end_at:Some(20),..Default::default()};
+        let summary=usage_summary(&c,&q).unwrap();let analytics=usage_analytics_at(&c,&q,None,&summary,20).unwrap();
+        assert_eq!(analytics.models.len(),9);let tail=analytics.models.last().unwrap();assert!(tail.is_other);assert_eq!(tail.total_tokens,48);assert_eq!(tail.ledger_count,4);
+        assert_eq!(analytics.models.iter().map(|m|m.total_tokens).sum::<i64>(),144);
+        assert_eq!(analytics.model_series.len(),9);assert_eq!(analytics.model_series.last().unwrap().ledger_count,4);
+        assert_eq!(analytics.model_series.iter().map(|s|s.buckets[0].ledger_count).sum::<i64>(),12);
+        // A low-token model with more attempts leads calls but not tokens.
+        c.execute("UPDATE billing_ledger SET input_tokens=1,output_tokens=0 WHERE user_id=3 AND model='model-11'",[]).unwrap();
+        for i in 0..2 {c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,input_tokens,output_tokens,debit_micro) VALUES(?1,3,3,11,1,'model-11',0,0,0,10000,'ok',0,0,1)",[format!("more-calls-{i}")]).unwrap();}
+        let summary=usage_summary(&c,&q).unwrap();let analytics=usage_analytics_at(&c,&q,None,&summary,20).unwrap();
+        assert_eq!(analytics.models[0].model,"model-00");
+        assert_eq!(analytics.model_series[0].model,"model-11");assert_eq!(analytics.model_series[0].ledger_count,3);
+        assert_eq!(analytics.model_series[0].request_count,1);assert_eq!(analytics.model_series[0].buckets[0].ledger_count,3);
+        assert_eq!(analytics.model_series.iter().map(|s|s.ledger_count).sum::<i64>(),14);
+        assert_eq!(analytics.model_series.iter().map(|s|s.buckets[0].total_tokens).sum::<i64>(),133);
+        assert_eq!(analytics.model_series.iter().map(|s|s.buckets[0].known_debit_micro).sum::<i64>(),summary.known_debit_micro);
     }
     #[test]
     fn invalid_time_ranges_fail_even_for_empty_active_catalog() {
