@@ -1,0 +1,1093 @@
+{
+  "cases": [
+    {
+      "role": "root",
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "all_currencies_totals_cny_fx_no_currency_or_hourly_picker",
+          "passed": true
+        },
+        {
+          "name": "ledger_rows_cny_only",
+          "passed": true
+        },
+        {
+          "name": "source_group_deduplicates_three_channels",
+          "passed": true,
+          "options": [
+            {
+              "value": "",
+              "text": "全部"
+            },
+            {
+              "value": "credential:301",
+              "text": "OpenAI OAuth · 验收账号"
+            },
+            {
+              "value": "channel:104",
+              "text": "本地 BGE 接入"
+            }
+          ]
+        },
+        {
+          "name": "source_group_id_submit",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "source_group_id": "credential:301",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "user_key_filter_and_clear",
+          "passed": true
+        },
+        {
+          "name": "reset_filter_and_today",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "native_optional_date_time_inputs",
+          "passed": true
+        },
+        {
+          "name": "custom_blank_means_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "custom_dates_inclusive_end_whole_day",
+          "passed": true,
+          "bounds": [
+            1793462400,
+            1793721600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793462400",
+            "end_at": "1793721600"
+          }
+        },
+        {
+          "name": "custom_date_and_minute_precision",
+          "passed": true,
+          "bounds": [
+            1793496600,
+            1793702700
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793496600",
+            "end_at": "1793702700"
+          }
+        },
+        {
+          "name": "custom_only_times_default_today",
+          "passed": true,
+          "bounds": [
+            1794528900,
+            1794558600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794528900",
+            "end_at": "1794558600"
+          }
+        },
+        {
+          "name": "reset_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "hover_empty_bucket_transparent_grid_preserved",
+          "passed": true,
+          "sample": [
+            421,
+            120
+          ]
+        },
+        {
+          "name": "hover_and_keyboard_focus_clear_on_exit",
+          "passed": true
+        },
+        {
+          "name": "fx_unavailable_query",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "missing_fx_does_not_zero_amount_or_drop_usage",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/billing/objects",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "source_group_id": "credential:301",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793462400",
+            "end_at": "1793721600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793496600",
+            "end_at": "1793702700"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794528900",
+            "end_at": "1794558600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM + synthetic APIs; no production, settlement or upstream calls"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "all_currencies_totals_cny_fx_no_currency_or_hourly_picker",
+          "passed": true
+        },
+        {
+          "name": "ledger_rows_cny_only",
+          "passed": true
+        },
+        {
+          "name": "source_group_deduplicates_three_channels",
+          "passed": true,
+          "options": [
+            {
+              "value": "",
+              "text": "全部"
+            },
+            {
+              "value": "credential:301",
+              "text": "OpenAI OAuth · 验收账号"
+            },
+            {
+              "value": "channel:104",
+              "text": "本地 BGE 接入"
+            }
+          ]
+        },
+        {
+          "name": "source_group_id_submit",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "source_group_id": "credential:301",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "user_key_filter_and_clear",
+          "passed": true
+        },
+        {
+          "name": "reset_filter_and_today",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "native_optional_date_time_inputs",
+          "passed": true
+        },
+        {
+          "name": "custom_blank_means_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "custom_dates_inclusive_end_whole_day",
+          "passed": true,
+          "bounds": [
+            1793462400,
+            1793721600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793462400",
+            "end_at": "1793721600"
+          }
+        },
+        {
+          "name": "custom_date_and_minute_precision",
+          "passed": true,
+          "bounds": [
+            1793496600,
+            1793702700
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793496600",
+            "end_at": "1793702700"
+          }
+        },
+        {
+          "name": "custom_only_times_default_today",
+          "passed": true,
+          "bounds": [
+            1794528900,
+            1794558600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794528900",
+            "end_at": "1794558600"
+          }
+        },
+        {
+          "name": "reset_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "hover_empty_bucket_transparent_grid_preserved",
+          "passed": true,
+          "sample": [
+            140,
+            96
+          ]
+        },
+        {
+          "name": "hover_and_keyboard_focus_clear_on_exit",
+          "passed": true
+        },
+        {
+          "name": "fx_unavailable_query",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          }
+        },
+        {
+          "name": "missing_fx_does_not_zero_amount_or_drop_usage",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/billing/objects",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "source_group_id": "credential:301",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793462400",
+            "end_at": "1793721600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1793496600",
+            "end_at": "1793702700"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794528900",
+            "end_at": "1794558600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "all",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET"
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM + synthetic APIs; no production, settlement or upstream calls"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "all_currencies_totals_cny_fx_no_currency_or_hourly_picker",
+          "passed": true
+        },
+        {
+          "name": "ledger_rows_cny_only",
+          "passed": true
+        },
+        {
+          "name": "native_optional_date_time_inputs",
+          "passed": true
+        },
+        {
+          "name": "custom_blank_means_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "custom_dates_inclusive_end_whole_day",
+          "passed": true,
+          "bounds": [
+            1793462400,
+            1793721600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1793462400",
+            "end_at": "1793721600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "custom_date_and_minute_precision",
+          "passed": true,
+          "bounds": [
+            1793496600,
+            1793702700
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1793496600",
+            "end_at": "1793702700",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "custom_only_times_default_today",
+          "passed": true,
+          "bounds": [
+            1794528900,
+            1794558600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794528900",
+            "end_at": "1794558600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "reset_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "hover_empty_bucket_transparent_grid_preserved",
+          "passed": true,
+          "sample": [
+            421,
+            120
+          ]
+        },
+        {
+          "name": "hover_and_keyboard_focus_clear_on_exit",
+          "passed": true
+        },
+        {
+          "name": "fx_unavailable_query",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "missing_fx_does_not_zero_amount_or_drop_usage",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1793462400",
+            "end_at": "1793721600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1793496600",
+            "end_at": "1793702700",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794528900",
+            "end_at": "1794558600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM + synthetic APIs; no production, settlement or upstream calls"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "all_currencies_totals_cny_fx_no_currency_or_hourly_picker",
+          "passed": true
+        },
+        {
+          "name": "ledger_rows_cny_only",
+          "passed": true
+        },
+        {
+          "name": "native_optional_date_time_inputs",
+          "passed": true
+        },
+        {
+          "name": "custom_blank_means_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "custom_dates_inclusive_end_whole_day",
+          "passed": true,
+          "bounds": [
+            1793462400,
+            1793721600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1793462400",
+            "end_at": "1793721600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "custom_date_and_minute_precision",
+          "passed": true,
+          "bounds": [
+            1793496600,
+            1793702700
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1793496600",
+            "end_at": "1793702700",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "custom_only_times_default_today",
+          "passed": true,
+          "bounds": [
+            1794528900,
+            1794558600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794528900",
+            "end_at": "1794558600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "reset_today_all_day",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "hover_empty_bucket_transparent_grid_preserved",
+          "passed": true,
+          "sample": [
+            140,
+            96
+          ]
+        },
+        {
+          "name": "hover_and_keyboard_focus_clear_on_exit",
+          "passed": true
+        },
+        {
+          "name": "fx_unavailable_query",
+          "passed": true,
+          "bounds": [
+            1794499200,
+            1794585600
+          ],
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          }
+        },
+        {
+          "name": "missing_fx_does_not_zero_amount_or_drop_usage",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1793462400",
+            "end_at": "1793721600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1793496600",
+            "end_at": "1793702700",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794528900",
+            "end_at": "1794558600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "all"
+          },
+          "method": "GET"
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET"
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM + synthetic APIs; no production, settlement or upstream calls"
+    }
+  ],
+  "passed": 4,
+  "expected_cases": 4,
+  "limitations": "Synthetic APIs validate actual WASM UI/query payloads; backend data correctness and live deployment separate."
+}

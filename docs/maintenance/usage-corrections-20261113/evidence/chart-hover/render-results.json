@@ -1,0 +1,47 @@
+{
+  "host": "build-test",
+  "authority": "real Chromium, repository CSS and SVG hit targets matching component structure",
+  "limitation": "isolated CSS/SVG render; final WASM integration is performed by root",
+  "cases": [
+    {
+      "theme": "light",
+      "version": "baseline",
+      "css_sha256": "4af7b6e682fd5327505182b5a1fa1fb3f31c112b4070a778e5378835c99cd2a7",
+      "hover_fill": "rgb(238, 240, 255)",
+      "focus_fill": "rgb(238, 240, 255)",
+      "changed_interior_pixels": 3276,
+      "grid_unchanged_on_hover": false,
+      "passed": true
+    },
+    {
+      "theme": "light",
+      "version": "fixed",
+      "css_sha256": "bf65ffbad2587c448fecd08db365f55ba73c1138ca0a812e7c039b7c7a234ab6",
+      "hover_fill": "rgba(0, 0, 0, 0)",
+      "focus_fill": "rgba(0, 0, 0, 0)",
+      "changed_interior_pixels": 0,
+      "grid_unchanged_on_hover": true,
+      "passed": true
+    },
+    {
+      "theme": "dark",
+      "version": "baseline",
+      "css_sha256": "4af7b6e682fd5327505182b5a1fa1fb3f31c112b4070a778e5378835c99cd2a7",
+      "hover_fill": "rgb(36, 46, 76)",
+      "focus_fill": "rgb(36, 46, 76)",
+      "changed_interior_pixels": 3276,
+      "grid_unchanged_on_hover": false,
+      "passed": true
+    },
+    {
+      "theme": "dark",
+      "version": "fixed",
+      "css_sha256": "bf65ffbad2587c448fecd08db365f55ba73c1138ca0a812e7c039b7c7a234ab6",
+      "hover_fill": "rgba(0, 0, 0, 0)",
+      "focus_fill": "rgba(0, 0, 0, 0)",
+      "changed_interior_pixels": 0,
+      "grid_unchanged_on_hover": true,
+      "passed": true
+    }
+  ]
+}

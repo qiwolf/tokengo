@@ -1,0 +1,31 @@
+{
+  "authority": "Production HTTPS administrator session, observed through existing Chrome using CUA; no synthetic business requests created",
+  "observed_local_date": "2026-11-13",
+  "screenshots": "Displayed in CUA transcript; not exported as local evidence",
+  "cyber_today": {
+    "requests": 1608,
+    "attempts": 1617,
+    "tokens": 140733351,
+    "unknown_input_output_attempts": 33,
+    "unpriced_attempts": 1617
+  },
+  "andy_today_at_211320": {
+    "requests": 8392,
+    "attempts": 8439,
+    "tokens_display": "7105万"
+  },
+  "custom_blank": "2026-11-13 全天",
+  "custom_exact": "2026-11-13 09:30 to 2026-11-13 18:45",
+  "source_options": 19,
+  "oauth_group_options": 1,
+  "week_known_charge_cny": "0.020712",
+  "fx": {
+    "USD_CNY": 6.668260987,
+    "reference_date": "2026-11-12",
+    "source": "ECB"
+  },
+  "hover_hit_fill": "rgba(0, 0, 0, 0)",
+  "hourly_selectors": 0,
+  "currency_selectors": 0,
+  "horizontal_overflow": false
+}

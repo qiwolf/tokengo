@@ -1,0 +1,26 @@
+
+running 1 test
+ACCOUNT_FIXTURE owner_rows=500000 foreign_rows=1000 attempts=501000 bytes=1303318528
+ACCOUNT_PERF endpoint=/api/account/portal?limit=50 rows=500000 n=3 p50_us=1960072 max_us=1970818 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=1 rows=500000 n=3 p50_us=5514 max_us=5955 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=24 rows=500000 n=3 p50_us=92827 max_us=93448 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=168 rows=500000 n=3 p50_us=635594 max_us=658621 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/stats?hours=2160 rows=500000 n=3 p50_us=639155 max_us=640665 limit_us=1000000
+ACCOUNT_PERF endpoint=/api/account/overview/logs?limit=50 rows=500000 n=3 p50_us=2358 max_us=2809 limit_us=300000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=1 owner_rows=500000 attempts=501000 n=3 p50_us=9077 max_us=9433 limit_us=1000000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=24 owner_rows=500000 attempts=501000 n=3 p50_us=140621 max_us=141200 limit_us=1000000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=168 owner_rows=500000 attempts=501000 n=3 p50_us=963206 max_us=966178 limit_us=1000000
+ADMIN_ACCOUNT_PERF endpoint=/api/stats?hours=2160 owner_rows=500000 attempts=501000 n=3 p50_us=961140 max_us=969852 limit_us=1000000
+ACCOUNT_PERF_GATE observe_only=false violations=["/api/account/portal?limit=50: 1970818us > 1000000us"]
+
+thread 'owner_heavy_portal_and_overview_preserve_accounting_and_latency' (3023085) panicked at crates/server/tests/account_query_performance.rs:130:2:
+owner history gate failed: ["/api/account/portal?limit=50: 1970818us > 1000000us"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test owner_heavy_portal_and_overview_preserve_accounting_and_latency ... FAILED
+
+failures:
+
+failures:
+    owner_heavy_portal_and_overview_preserve_accounting_and_latency
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 36.92s

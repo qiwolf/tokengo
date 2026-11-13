@@ -1,0 +1,16 @@
+{
+  "host": "build-test",
+  "cwd": "/srv/build/tokengo-usage-corrections-20261113",
+  "command": [
+    "/srv/build/nanomuse-evaluation-20261024-tests/browser-venv/bin/python",
+    "/srv/build/tokengo-usage-corrections-20261113/acceptance/browser-qa.py",
+    "/srv/build/tokengo-usage-corrections-20261113/source/crates/web/dist",
+    "/srv/build/tokengo-usage-corrections-20261113/acceptance/results"
+  ],
+  "exit_code": 0,
+  "seconds": 7.317715406417847,
+  "script_sha256": "7a61d28e826edc7ffffb50de8dd9b78c6856d9831feb36b3ca9e505541f8cb0b",
+  "wasm_sha256": {
+    "tokengo-web-41e8602da30cce2_bg.wasm": "29440e658c724513b47db45c09547a6d7c0435332085f078965c5c3dd3da9ade"
+  }
+}

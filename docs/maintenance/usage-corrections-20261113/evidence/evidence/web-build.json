@@ -1,0 +1,11 @@
+{
+  "host": "build-test",
+  "command": [
+    "trunk",
+    "build",
+    "--release"
+  ],
+  "cwd": "/srv/build/tokengo-usage-corrections-20261113/source/crates/web",
+  "exit_code": 0,
+  "seconds": 136.05554723739624
+}

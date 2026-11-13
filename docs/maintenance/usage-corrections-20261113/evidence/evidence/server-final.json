@@ -1,0 +1,18 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server",
+    "--lib",
+    "--test",
+    "pricing_currency_catalog"
+  ],
+  "cwd": "/srv/build/tokengo-usage-corrections-20261113/source",
+  "exit_code": 0,
+  "seconds": 232.78693771362305
+}

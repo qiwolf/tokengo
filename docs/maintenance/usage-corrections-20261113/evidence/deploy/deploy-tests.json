@@ -1,0 +1,17 @@
+{
+  "host": "build-test",
+  "cwd": "/srv/build/tokengo-usage-corrections-20261113-deploy-tests",
+  "command": [
+    "python3",
+    "-B",
+    "test_usage_deploy.py"
+  ],
+  "exit_code": 0,
+  "seconds": 0.406141996383667,
+  "passed": 4,
+  "source_sha256": {
+    "deploy.py": "de4dc412f9b153e28fc0f9146033dd29572665301acdcfa55abe948b3b368373",
+    "common.py": "cd35bfb14f46b7d13f38e14668b1dfe8389e0782aedffb98d91213fb32b008e6",
+    "test_usage_deploy.py": "9fbc37d30a1ddb1332405585b2fc8a092de707f23214f52e41c3527cbaa6e9db"
+  }
+}
