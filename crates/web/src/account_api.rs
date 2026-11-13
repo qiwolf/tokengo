@@ -147,11 +147,16 @@ pub struct UsageSummary {
     pub unknown_input_entries: i64,
     pub unknown_output_entries: i64,
     pub unpriced_entries: i64,
-    pub known_debit_micro: i64,
+    pub known_debit_micro: Option<i64>,
+    #[serde(default)] pub known_debit_cny_micro: Option<i64>,
+    #[serde(default)] pub display_currency: Option<String>,
+    #[serde(default)] pub reporting_fx: serde_json::Value,
+    #[serde(default)] pub amounts_by_currency: Vec<serde_json::Value>,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct Entry {
     #[serde(default="crate::fmt::legacy_currency")] pub currency:String,
+    #[serde(default)] pub display_debit_micro:Option<i64>,
     #[serde(default)] pub quantity_milli:Option<i64>,
     pub id: i64,
     pub request_id: i64,
@@ -261,4 +266,12 @@ pub async fn rename(username: &str, old_password: &str) -> Result<(), ApiErr> {
     )
     .await
     .map(|_| ())
+}
+
+/// Reporting display is always CNY; raw currency remains in the original entry.
+pub fn reporting_debit(entry:&Entry)->String {
+    if let Some(value)=entry.display_debit_micro {return format!("{} 元",crate::fmt::usd_input(value));}
+    if entry.debit_micro.is_none(){return "未知 / 未定价".into();}
+    if entry.currency=="CNY" {return format!("{} 元",crate::fmt::usd_input(entry.debit_micro.unwrap()));}
+    "汇率暂不可用".into()
 }

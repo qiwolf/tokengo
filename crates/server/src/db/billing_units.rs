@@ -125,7 +125,7 @@ mod currency_unit_tests {
         settle_units(&c,id,Some(2000),"ok").unwrap();settle_units(&c,id,Some(2500),"ok").unwrap();
         let row=usage(&c,&UsageQuery::default()).unwrap().remove(0);
         assert_eq!((row.currency.as_str(),row.billing_unit.as_str(),row.quantity_milli,row.debit_micro,row.observed_cost_micro,row.usage_certainty.as_str()),("CNY","minute",Some(2000),Some(4000),Some(4000),"measured"));
-        let summary=usage_summary(&c,&UsageQuery::default()).unwrap();assert_eq!((summary.unknown_input_entries,summary.unknown_output_entries,summary.total_tokens,summary.known_debit_micro),(0,0,0,4000));
+        let summary=usage_summary(&c,&UsageQuery::default()).unwrap();assert_eq!((summary.unknown_input_entries,summary.unknown_output_entries,summary.total_tokens,summary.known_debit_micro),(0,0,0,None));assert_eq!(summary.amounts_by_currency[0].known_debit_micro,4000);
         assert_eq!(budgets(&c,Some("user"),Some(1)).unwrap()[0].spent_micro,4000);
         assert!(reserve_units(&c,1,key,2,"too-large",&p,60001).is_err());
     }
@@ -159,9 +159,9 @@ mod currency_unit_tests {
         assert!(unit_cost(&p,-1).is_err());p.unit="invalid".into();assert!(unit_cost(&p,1).is_err());
         c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,currency,debit_micro,status) VALUES('old-dollar',1,?1,1,1,'old',0,0,0,1000,'USD',999999,'ok')",[key]).unwrap();
         let q=UsageQuery{currency:Some("USD".into()),..Default::default()};
-        assert_eq!(usage_summary(&c,&q).unwrap().known_debit_micro,999999);
-        assert_eq!(usage_summary(&c,&UsageQuery::default()).unwrap().known_debit_micro,0);
-        assert!(usage(&c,&UsageQuery{currency:Some("all".into()),..Default::default()}).is_err());
+        assert_eq!(usage_summary(&c,&q).unwrap().known_debit_micro,Some(999999));
+        assert_eq!(usage_summary(&c,&UsageQuery::default()).unwrap().known_debit_micro,None);assert_eq!(usage_summary(&c,&UsageQuery::default()).unwrap().amounts_by_currency[0].known_debit_micro,999999);
+        assert_eq!(usage(&c,&UsageQuery{currency:Some("all".into()),..Default::default()}).unwrap().len(),1);
         c.execute("INSERT INTO billing_budgets(scope,scope_id,currency,limit_micro,frozen) VALUES('user',1,'USD',NULL,1)",[]).unwrap();
         assert!(reserve_units_unpriced(&c,1,key,2,"frozen-dollar",1,"x",1).is_err());
         crate::db::billing_management::update_budget_currency(&c,"user",1,None,Some(false),"test","USD").unwrap();

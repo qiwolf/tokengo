@@ -9,6 +9,7 @@ pub mod audio_meter;
 pub mod reasoning_capabilities;
 pub mod search_tools;
 pub mod source_rates;
+pub mod reporting_currency;
 pub mod openai_transport;
 pub mod config;
 pub mod capability_detector;

@@ -10,14 +10,39 @@ fn count(row: &Value, name: &str) -> String {
 fn compact(row: &Value, name: &str) -> String {
     row[name].as_i64().map(fmt::compact_tokens).unwrap_or_else(|| "—".into())
 }
-fn money_for(row:&Value,name:&str,currency:&str)->String {row[name].as_i64().map(|n|format!("{}{}",fmt::currency_symbol(currency),fmt::usd_input(n))).unwrap_or_else(||"—".into())}
+fn cny_amount(row:&Value,name:&str,currency:&str)->Option<i64> {
+    // Reporting conversion is authoritative, including explicit null when FX is unavailable.
+    if let Some(amount)=row.get("known_debit_cny_micro") {return amount.as_i64();}
+    if currency=="CNY" {row[name].as_i64()}else{None}
+}
+fn money_for(row:&Value,name:&str,currency:&str)->String {
+    if !row.is_object() || row.get(name).is_none() && row.get("known_debit_cny_micro").is_none() {return "—".into();}
+    cny_amount(row,name,currency).map(|n|format!("¥{}",fmt::usd_input(n))).unwrap_or_else(||"汇率暂不可用".into())
+}
 fn money(row:&Value,name:&str)->String {money_for(row,name,fmt::currency_of(row))}
 fn headline_money(row: &Value, name: &str) -> String {
-    let Some(micro)=row[name].as_i64() else {return "—".into();};
-    let dollars=micro as f64/1_000_000.0;
-    if dollars.abs()>=1_000_000.0 {format!("{}{:.2}M",fmt::currency_symbol(fmt::currency_of(row)),dollars/1_000_000.0)}
-    else if dollars.abs()>=1000.0 {format!("{}{:.2}K",fmt::currency_symbol(fmt::currency_of(row)),dollars/1000.0)}
+    let Some(micro)=cny_amount(row,name,fmt::currency_of(row)) else {return money(row,name);};
+    let yuan=micro as f64/1_000_000.0;
+    if yuan.abs()>=1_000_000.0 {format!("¥{:.2}M",yuan/1_000_000.0)}
+    else if yuan.abs()>=1000.0 {format!("¥{:.2}K",yuan/1000.0)}
     else {money(row,name)}
+}
+fn reporting_fx_note(summary:&Value,analytics:&Value)->String {
+    if !summary.is_object(){return "金额以人民币显示".into();}
+    if summary.get("known_debit_cny_micro").is_some_and(Value::is_null){return "汇率暂不可用，人民币金额暂无法计算；调用次数和 tokens 仍完整统计。".into();}
+    let fx=summary.get("reporting_fx").filter(|v|v.is_object()).or_else(||analytics.get("reporting_fx").filter(|v|v.is_object()));
+    if let Some(fx)=fx {
+        if fx["status"]=="not_required" {return "金额统一以人民币显示。".into();}
+        if let Some(rate)=fx["rate_nano"].as_i64().filter(|n|*n>0) {
+            let mut display=format!("{:.9}",rate as f64/1_000_000_000.0);
+            while display.ends_with('0'){display.pop();}if display.ends_with('.'){display.pop();}
+            let date=fx["date"].as_str().unwrap_or("日期未知");
+            let stale=if fx["stale"].as_bool().unwrap_or(false){"（缓存汇率）"}else{""};
+            return format!("历史美元已自动折合人民币 · 1 USD = {display} CNY · {date} · 来源 ECB{stale}");
+        }
+    }
+    if cny_amount(summary,"known_debit_micro",fmt::currency_of(summary)).is_some() {"金额以人民币显示；汇率暂不可用时，美元金额不作为 0 计入。".into()}
+    else {"汇率暂不可用，人民币金额暂无法计算；调用次数和 tokens 仍完整统计。".into()}
 }
 fn rate(row: &Value, name: &str) -> String {
     row[name].as_f64().filter(|v|v.is_finite()).map(|v| {
@@ -40,10 +65,10 @@ fn bucket_label(bucket: &Value, analytics: &Value) -> String {
     format!("{} 至 {}（不含）",full_time(start),full_time(end))
 }
 fn selected_value(row: &Value, metric: &str) -> f64 {
-    match metric {"requests"=>value(row,"ledger_count") as f64,"debit"=>value(row,"known_debit_micro") as f64/1_000_000.0,_=>value(row,"total_tokens") as f64}
+    match metric {"requests"=>value(row,"ledger_count") as f64,"debit"=>cny_amount(row,"known_debit_micro",fmt::currency_of(row)).unwrap_or(0) as f64/1_000_000.0,_=>value(row,"total_tokens") as f64}
 }
-fn axis_label_for(n: f64, metric: &str, currency:&str) -> String {
-    if metric=="debit" {format!("{}{}",fmt::currency_symbol(currency),fmt::usd_input((n*1_000_000.0).round() as i64))}
+fn axis_label_for(n: f64, metric: &str, _currency:&str) -> String {
+    if metric=="debit" {format!("¥{}",fmt::usd_input((n*1_000_000.0).round() as i64))}
     else {fmt::compact_tokens(n.round() as i64)}
 }
 fn interval_detail(bucket: &Value, analytics: &Value) -> String {
@@ -64,30 +89,32 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
     <section class="usage-dashboard" aria-label="所选区间用量看板">
         <div class="usage-kpis">
             <section class="usage-kpi"><span>"去重请求"</span><strong>{move||count(&summary.get(),"request_count")}</strong><small>{move||format!("{} 笔调用尝试",count(&summary.get(),"ledger_count"))}</small></section>
-            <section class="usage-kpi"><span>"已知扣款"</span><strong title=move||money(&summary.get(),"known_debit_micro")>{move||headline_money(&summary.get(),"known_debit_micro")}</strong><small>{move||format!("{} · 用户额度扣减",fmt::currency_of(&summary.get()))}</small></section>
+            <section class="usage-kpi"><span>"已知扣款"</span><strong class:usage-money-unavailable=move||summary.get().is_object()&&cny_amount(&summary.get(),"known_debit_micro",fmt::currency_of(&summary.get())).is_none() title=move||money(&summary.get(),"known_debit_micro")>{move||headline_money(&summary.get(),"known_debit_micro")}</strong><small>"人民币 · 用户额度扣减"</small></section>
             <section class="usage-kpi"><span>"总 tokens"</span><strong title=move||count(&summary.get(),"total_tokens")>{move||compact(&summary.get(),"total_tokens")}</strong><small>"已知输入 + 输出"</small></section>
             <section class="usage-kpi"><span>"输入 tokens"</span><strong title=move||count(&summary.get(),"input_tokens")>{move||compact(&summary.get(),"input_tokens")}</strong><small>{move||format!("{} 笔输入未知",count(&summary.get(),"unknown_input_entries"))}</small></section>
             <section class="usage-kpi"><span>"输出 tokens"</span><strong title=move||count(&summary.get(),"output_tokens")>{move||compact(&summary.get(),"output_tokens")}</strong><small>{move||format!("{} 笔输出未知",count(&summary.get(),"unknown_output_entries"))}</small></section>
             <section class="usage-kpi"><span>"平均 RPM"</span><strong>{move||rate(&analytics.get(),"average_rpm")}</strong><small title="按所选开始时间至结束时间计算；结束时间最晚取当前时间，不含未来时长。">"每分钟去重请求数"</small></section>
             <section class="usage-kpi"><span>"平均 TPM"</span><strong>{move||rate(&analytics.get(),"average_tpm")}</strong><small title="按所选开始时间至结束时间计算；结束时间最晚取当前时间，不含未来时长。">"每分钟已知 tokens"</small></section>
         </div>
+        <p class="usage-fx-note">{move||reporting_fx_note(&summary.get(),&analytics.get())}</p>
         <div class="usage-dashboard-note"><span>"汇总覆盖全部匹配记录，翻页不改变统计区间。"</span><span>{move||format!("未定价 {} 笔；未知用量和未知金额未作为 0 计入。",count(&summary.get(),"unpriced_entries"))}</span></div>
         <div class="usage-analysis-grid">
             <section class="usage-trend" aria-label="区间用量趋势">
-                <header class="usage-analysis-head"><div><h3>"用量趋势"</h3><span class="muted small">{move||if analytics.get().is_object(){format!("{} · 按调用开始时间",granularity(value(&analytics.get(),"bucket_seconds")))}else{"正在读取时间分布…".into()}}</span></div>
+                <header class="usage-analysis-head"><div><h3>"用量趋势"</h3><span class="muted small">{move||if analytics.get().is_object(){"按调用开始时间 · 自动汇总所选范围".to_string()}else{"正在读取时间分布…".into()}}</span></div>
                     <div class="usage-metric-switch" aria-label="趋势统计指标">{[("tokens","Tokens"),("requests","调用次数"),("debit","扣款")].into_iter().map(|(key,label)|view!{<button type="button" class:active=move||metric.get()==key aria-pressed=move||(metric.get()==key).to_string() on:click=move |_|{metric.set(key);selected.set(None);}>{label}</button>}).collect_view()}</div>
                 </header>
                 {move||{
                     let data=analytics.get();let buckets=rows(&data,"buckets");let m=metric.get();
                     if !data.is_object() {return view!{<p class="usage-chart-empty" role="status">"暂无时间分布，请重新查询。"</p>}.into_any();}
                     if buckets.is_empty()||value(&summary.get(),"ledger_count")==0 {return view!{<p class="usage-chart-empty" role="status">"所选区间没有调用记录，可调整时间后查询。"</p>}.into_any();}
+                    if m=="debit"&&cny_amount(&summary.get(),"known_debit_micro",fmt::currency_of(&summary.get())).is_none(){return view!{<p class="usage-chart-empty" role="status">"汇率暂不可用，暂不能绘制人民币扣款趋势。调用次数与 tokens 仍完整显示。"</p>}.into_any();}
                     let observed_max=buckets.iter().map(|b|selected_value(b,m)).fold(0.0f64,f64::max);
                     let max=if observed_max>0.0{observed_max}else{1.0};
                     let n=buckets.len();let slot=960.0/n as f64;let bar_width=(slot*0.72).max(1.0);
                     let first=local_time(value(&buckets[0],"start_at"),value(&data,"bucket_seconds")<86400);
                     let middle=local_time(value(&buckets[n/2],"start_at"),value(&data,"bucket_seconds")<86400);
                     let last=local_time(value(&buckets[n-1],"start_at"),value(&data,"bucket_seconds")<86400);
-                    let chart_label=format!("{}：{}个时间段。可聚焦柱形或使用下方时间段选择查看明细。",if m=="tokens"{"输入与输出 tokens"}else if m=="debit"{"已知扣款"}else{"调用次数"},n);
+                    let chart_label=format!("{}：{}个时间段。可聚焦柱形查看区间明细。",if m=="tokens"{"输入与输出 tokens"}else if m=="debit"{"已知扣款"}else{"调用次数"},n);
                     view! {
                         <div class="usage-chart-layout">
                             <div class="usage-y-axis" aria-hidden="true"><span>{axis_label_for(max,m,fmt::currency_of(&data))}</span><span>{axis_label_for(max/2.0,m,fmt::currency_of(&data))}</span><span>{axis_label_for(0.0,m,fmt::currency_of(&data))}</span></div>
@@ -97,8 +124,9 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
                                     let x=i as f64*slot+(slot-bar_width)/2.0;let h=(selected_value(b,m)/max*232.0).clamp(0.0,232.0);
                                     let input_h=if m=="tokens"{(value(b,"input_tokens") as f64/max*232.0).clamp(0.0,h)}else{h};
                                     let output_h=(h-input_h).max(0.0);let info=interval_detail(b,&data);
-                                    view!{<g class="usage-chart-bucket" role="button" tabindex="0" aria-label=info.clone() on:mouseenter=move |_|selected.set(Some(i)) on:focus=move |_|selected.set(Some(i)) on:click=move |_|selected.set(Some(i)) on:keydown=move|ev:leptos::ev::KeyboardEvent|{if matches!(ev.key().as_str(),"Enter"|" "){ev.prevent_default();selected.set(Some(i));}}>
-                                        <title>{info.clone()}</title><rect x=(i as f64*slot).to_string() y="0" width=slot.to_string() height="240" class="usage-bar-hit"/>
+                                    view!{<g class="usage-chart-bucket" role="button" tabindex="0" aria-label=info.clone() on:mouseenter=move |_|selected.set(Some(i)) on:mouseleave=move |_|selected.set(None) on:focus=move |_|selected.set(Some(i)) on:blur=move |_|selected.set(None) on:click=move |_|selected.set(Some(i)) on:keydown=move|ev:leptos::ev::KeyboardEvent|{if matches!(ev.key().as_str(),"Enter"|" "){ev.prevent_default();selected.set(Some(i));}}>
+                                        <title>{info.clone()}</title><rect x=(i as f64*slot).to_string() y="0" width=slot.to_string() height="240" class="usage-bar-hit" aria-hidden="true"/>
+                                        <line x1=(i as f64*slot+slot/2.0).to_string() x2=(i as f64*slot+slot/2.0).to_string() y1="1" y2="239" class="usage-bucket-guide" aria-hidden="true"/>
                                         <rect x=x.to_string() y=(239.0-input_h).to_string() width=bar_width.to_string() height=input_h.to_string() class="usage-bar-input"/>
                                         <rect x=x.to_string() y=(239.0-input_h-output_h).to_string() width=bar_width.to_string() height=output_h.to_string() class="usage-bar-output"/>
                                     </g>}
@@ -106,11 +134,10 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
                             </svg><div class="usage-x-axis" aria-hidden="true"><span>{first}</span><span>{middle}</span><span>{last}</span></div></div>
                         </div>
                         <div class="usage-chart-footer">{if m=="tokens"{Some(view!{<div class="usage-chart-legend"><span><i class="usage-legend-input" aria-hidden="true"></i>"输入"</span><span><i class="usage-legend-output" aria-hidden="true"></i>"输出"</span></div>})}else{None}}
-                            <label class="usage-bucket-picker"><span>"时间段"</span><select aria-label="查看时间段用量" prop:value=move||selected.get().map(|i|i.to_string()).unwrap_or_default() on:change=move |e|selected.set(event_target_value(&e).parse().ok())><option value="">"选择区间查看明细"</option>{buckets.iter().enumerate().map(|(i,b)|view!{<option value=i.to_string()>{bucket_label(b,&data)}</option>}).collect_view()}</select></label>
                         </div>
                     }.into_any()
                 }}
-                <p class="usage-bucket-detail" role="status" aria-live="polite">{move||{let a=analytics.get();selected.get().and_then(|i|rows(&a,"buckets").get(i).cloned()).map(|b|interval_detail(&b,&a)).unwrap_or_else(||"悬停、点击柱形或选择时间段查看该区间用量。".into())}}</p>
+                <p class="usage-bucket-detail" role="status" aria-live="polite">{move||{let a=analytics.get();selected.get().and_then(|i|rows(&a,"buckets").get(i).cloned()).map(|b|interval_detail(&b,&a)).unwrap_or_else(||"悬停或聚焦柱形，查看该区间用量。".into())}}</p>
             </section>
             <section class="usage-models" aria-label="模型用量分布"><header class="usage-analysis-head"><div><h3>"模型分布"</h3><span class="muted small">"所选区间 · 已知 tokens"</span></div></header>
                 <div class="usage-model-list">{move||{
@@ -139,16 +166,33 @@ mod tests {
         assert_eq!(count(&json!({"input_tokens":null}),"input_tokens"),"—");
         assert_eq!(count(&json!({"input_tokens":0}),"input_tokens"),"0");
         assert_eq!(money(&json!({}),"known_debit_micro"),"—");
-        assert_eq!(money(&json!({"known_debit_micro":0}),"known_debit_micro"),"$0");
+        assert_eq!(money(&json!({"currency":"CNY","known_debit_micro":0}),"known_debit_micro"),"¥0");
     }
     #[test]
     fn chart_money_preserves_subcent_costs_and_selected_metric_units() {
-        let row=json!({"request_count":2,"ledger_count":3,"total_tokens":12,"known_debit_micro":1});
+        let row=json!({"currency":"CNY","request_count":2,"ledger_count":3,"total_tokens":12,"known_debit_micro":1});
         assert_eq!(selected_value(&row,"requests"),3.0);
         assert_eq!(selected_value(&row,"tokens"),12.0);
         assert_eq!(selected_value(&row,"debit"),0.000001);
-        assert_eq!(axis_label(selected_value(&row,"debit"),"debit"),"$0.000001");
-        assert_eq!(axis_label(0.0,"debit"),"$0");
+        assert_eq!(axis_label(selected_value(&row,"debit"),"debit"),"¥0.000001");
+        assert_eq!(axis_label(0.0,"debit"),"¥0");
+    }
+    #[test]
+    fn reporting_cny_is_authoritative_and_missing_fx_is_not_zero() {
+        let row=json!({"currency":"all","known_debit_micro":null,"known_debit_cny_micro":7_123_456,"total_tokens":123,"ledger_count":7});
+        assert_eq!(money(&row,"known_debit_micro"),"¥7.123456");
+        assert_eq!(selected_value(&row,"debit"),7.123456);
+        let unavailable=json!({"currency":"all","known_debit_micro":999,"known_debit_cny_micro":null,"total_tokens":123,"ledger_count":7});
+        assert_eq!(money(&unavailable,"known_debit_micro"),"汇率暂不可用");
+        assert_eq!(selected_value(&unavailable,"tokens"),123.0);
+        assert_eq!(selected_value(&unavailable,"requests"),7.0);
+        assert_eq!(money(&json!({"currency":"USD","known_debit_micro":1}),"known_debit_micro"),"汇率暂不可用");
+    }
+    #[test]
+    fn fx_note_reports_actual_rate_date_source_and_staleness() {
+        let row=json!({"reporting_fx":{"rate_nano":7_123_456_789_i64,"date":"2026-11-12","stale":true}});
+        assert_eq!(reporting_fx_note(&row,&Value::Null),"历史美元已自动折合人民币 · 1 USD = 7.123456789 CNY · 2026-11-12 · 来源 ECB（缓存汇率）");
+        assert!(reporting_fx_note(&json!({"known_debit_cny_micro":null}),&Value::Null).contains("调用次数和 tokens 仍完整统计"));
     }
     #[test]
     fn model_calls_count_attempts_and_keep_other_tail_in_shares() {
@@ -165,11 +209,11 @@ mod tests {
     }
     #[test]
     fn large_money_headlines_remain_compact_and_exact_values_remain_available() {
-        let row=json!({"known_debit_micro":40_030_000});
-        assert_eq!(headline_money(&row,"known_debit_micro"),"$40.03");
-        let row=json!({"known_debit_micro":1_234_567_890});
-        assert_eq!(headline_money(&row,"known_debit_micro"),"$1.23K");
-        assert_eq!(money(&row,"known_debit_micro"),"$1234.56789");
+        let row=json!({"currency":"CNY","known_debit_micro":40_030_000});
+        assert_eq!(headline_money(&row,"known_debit_micro"),"¥40.03");
+        let row=json!({"currency":"CNY","known_debit_micro":1_234_567_890});
+        assert_eq!(headline_money(&row,"known_debit_micro"),"¥1.23K");
+        assert_eq!(money(&row,"known_debit_micro"),"¥1234.56789");
     }
 }
 
@@ -225,7 +269,7 @@ fn ModelCallAnalysis(analytics: RwSignal<Value>) -> impl IntoView {
                                     }).collect_view()}
                                     {buckets.iter().enumerate().map(|(i,b)|{
                                         let label=bucket_label(b,&data);let lx=i as f64*hit_width;
-                                        view!{<g class="usage-chart-bucket usage-model-bucket" role="button" tabindex="0" aria-label=label.clone() on:mouseenter=move |_|selected.set(Some(i)) on:focus=move |_|selected.set(Some(i)) on:click=move |_|selected.set(Some(i)) on:keydown=move|ev:leptos::ev::KeyboardEvent|{if matches!(ev.key().as_str(),"Enter"|" "){ev.prevent_default();selected.set(Some(i));}}><title>{label.clone()}</title><rect x=lx.to_string() y="0" width=hit_width.to_string() height="240" class="usage-bar-hit"/></g>}
+                                        view!{<g class="usage-chart-bucket usage-model-bucket" role="button" tabindex="0" aria-label=label.clone() on:mouseenter=move |_|selected.set(Some(i)) on:mouseleave=move |_|selected.set(None) on:focus=move |_|selected.set(Some(i)) on:blur=move |_|selected.set(None) on:click=move |_|selected.set(Some(i)) on:keydown=move|ev:leptos::ev::KeyboardEvent|{if matches!(ev.key().as_str(),"Enter"|" "){ev.prevent_default();selected.set(Some(i));}}><title>{label.clone()}</title><rect x=lx.to_string() y="0" width=hit_width.to_string() height="240" class="usage-bar-hit" aria-hidden="true"/><line x1=(lx+hit_width/2.0).to_string() x2=(lx+hit_width/2.0).to_string() y1="1" y2="239" class="usage-bucket-guide" aria-hidden="true"/></g>}
                                     }).collect_view()}
                                 </svg><div class="usage-x-axis" aria-hidden="true"><span>{first}</span><span>{middle}</span><span>{last}</span></div></div>
                             </div>
@@ -233,13 +277,12 @@ fn ModelCallAnalysis(analytics: RwSignal<Value>) -> impl IntoView {
                                 let name=model_name(s);let calls=count(s,"ledger_count");let description=format!("{}：{}次调用。点击单独查看，再次点击恢复全部。",name,calls);
                                 view!{<button type="button" title=description aria-pressed=move||(focused.get()==Some(i)).to_string() class:active=move||focused.get()==Some(i) on:click=move |_|focused.update(|f|*f=if *f==Some(i){None}else{Some(i)})><i style=format!("border-color:{};border-top-style:{}",series_color(i),if i==0{"solid"}else{"dashed"}) aria-hidden="true"></i><span>{name.clone()}</span><small>{calls}</small></button>}
                             }).collect_view()}</div>
-                            <label class="usage-bucket-picker usage-model-bucket-picker"><span>"时间段"</span><select aria-label="查看模型调用时间段" prop:value=move||selected.get().map(|i|i.to_string()).unwrap_or_default() on:change=move |e|selected.set(event_target_value(&e).parse().ok())><option value="">"选择区间查看各模型调用次数"</option>{buckets.iter().enumerate().map(|(i,b)|view!{<option value=i.to_string()>{bucket_label(b,&data)}</option>}).collect_view()}</select></label>
                             <p class="usage-bucket-detail usage-model-bucket-detail" role="status" aria-live="polite">{move||{
                                 let a=analytics.get();let bs=rows(&a,"buckets");let ss=rows(&a,"model_series");
                                 selected.get().and_then(|i|bs.get(i).cloned()).map(|b|{
                                     let details=ss.iter().enumerate().filter(|(i,_)|focused.get().is_none_or(|f|f==*i)).map(|(_,s)|format!("{} {}次",model_name(s),fmt::num(model_bucket_count(s,value(&b,"start_at"))))).collect::<Vec<_>>().join("；");
                                     format!("{} · {}",bucket_label(&b,&a),details)
-                                }).unwrap_or_else(||"悬停、点击趋势图或选择时间段查看各模型调用次数；点击图例可单独查看模型。".into())
+                                }).unwrap_or_else(||"悬停或聚焦时间点，查看各模型调用次数；点击图例可单独查看模型。".into())
                             }}</p>
                         </div>}.into_any()
                     }

@@ -2315,3 +2315,17 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
  .usage-filter-bar .usage-period-start,.usage-filter-bar .usage-period-end { flex-direction:column; align-items:stretch; gap:4px; }
  .usage-filter-bar .usage-period-start label,.usage-filter-bar .usage-period-end label { width:auto; }
 }
+
+/* Explicit calendar/clock boundaries; chart sampling is never a range selector. */
+.usage-filter-bar #usage-period { width:144px; }
+.usage-custom-range { display:flex; flex:1 1 840px; flex-wrap:wrap; align-items:center; gap:8px 12px; min-width:0; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+.usage-custom-range input[type="date"] { width:144px; padding-inline:8px; }
+.usage-custom-range input[type="time"] { width:112px; padding-inline:8px; }
+.usage-range-to { color:var(--fg-2); font-size:12px; }
+.usage-custom-range .usage-range-help { flex:1 1 100%; margin:0; font-size:12px; line-height:1.5; }
+.usage-reporting-note { margin:0 0 12px; }
+@media(max-width:767px) {
+ .usage-custom-range { flex:1 1 100%; padding:12px; }
+ .usage-filter-bar .usage-custom-range .billing-field { flex-direction:column; align-items:stretch; flex:1 1 calc(50% - 12px); gap:4px; }
+ .usage-custom-range .usage-range-to { display:none; }
+}

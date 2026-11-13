@@ -31,16 +31,53 @@ pub fn current_objects(c: &Connection) -> Result<Value> {
         value["user_name"]=user_objects.iter().find(|v|v["id"]==user_id).map(|v|v["name"].clone()).unwrap_or(json!("已删除用户"));
         key_objects.push(value);
     }
-    let channels=c.prepare("SELECT c.id,c.name,c.enabled,COALESCE(p.enabled,1),p.name,k.label,k.id FROM channels c LEFT JOIN provider_connections pc ON pc.channel_id=c.id LEFT JOIN provider_channels p ON p.id=pc.provider_id LEFT JOIN source_credentials sc ON sc.source_id=c.id LEFT JOIN provider_credentials k ON k.id=sc.credential_id ORDER BY c.id")?.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?,r.get::<_,bool>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<i64>>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let channels=c.prepare("SELECT c.id,c.name,c.enabled,COALESCE(p.enabled,1),p.name,k.label,k.id,p.id,k.kind,a.label FROM channels c LEFT JOIN provider_connections pc ON pc.channel_id=c.id LEFT JOIN provider_channels p ON p.id=pc.provider_id LEFT JOIN source_credentials sc ON sc.source_id=c.id LEFT JOIN provider_credentials k ON k.id=sc.credential_id LEFT JOIN oauth_accounts a ON a.id=k.oauth_account_id ORDER BY c.id")?.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?,r.get::<_,bool>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<i64>>(6)?,r.get::<_,Option<i64>>(7)?,r.get::<_,Option<String>>(8)?,r.get::<_,Option<String>>(9)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut channel_objects=Vec::new();
-    for (id,source_name,enabled,parent,provider,credential,credential_id) in channels {
+    for (id,source_name,enabled,parent,provider,credential,credential_id,provider_id,credential_kind,oauth_label) in channels {
         let credential_valid=if credential_id.is_some() {super::provider_pool::source_credential(c,id)?.is_some_and(|v|v.enabled)}else{true};
         let name=[provider.as_deref(),credential.as_deref(),Some(source_name.as_str())].into_iter().flatten().filter(|v|!v.trim().is_empty()).collect::<Vec<_>>().join(" · ");
         let mut value=object(id,name,enabled&&parent&&credential_valid,if !enabled{"已停用"}else if !parent{"供应方已停用"}else if !credential_valid{"上游凭据不可用"}else{"有效"});
         value["source_name"]=json!(source_name);value["provider_name"]=json!(provider);value["credential_name"]=json!(credential);
+        value["provider_id"]=json!(provider_id);value["credential_id"]=json!(credential_id);value["credential_kind"]=json!(credential_kind);value["oauth_label"]=json!(oauth_label);
         channel_objects.push(value);
     }
-    Ok(json!({"users":user_objects,"keys":key_objects,"channels":channel_objects}))
+    let source_groups=source_groups(&channel_objects);
+    Ok(json!({"users":user_objects,"keys":key_objects,"channels":channel_objects,"source_groups":source_groups}))
+}
+/// A credential is an actual upstream connection; legacy model/effort wrappers
+/// sharing that credential are not separate choices in the usage filter.
+fn source_groups(channels:&[Value])->Vec<Value> {
+    let mut groups:Vec<Value>=Vec::new();
+    for channel in channels {
+        let Some(id)=channel["id"].as_i64() else {continue};
+        let credential=channel["credential_id"].as_i64();
+        let group_id=credential.map(|id|format!("credential:{id}")).unwrap_or_else(||format!("channel:{id}"));
+        let active=channel["state"]=="active";
+        if let Some(group)=groups.iter_mut().find(|g|g["id"]==group_id) {
+            group["channel_ids"].as_array_mut().unwrap().push(json!(id));
+            group["source_count"]=json!(group["source_count"].as_u64().unwrap_or(0)+1);
+            if active {
+                group["state"]=json!("active");group["status_label"]=json!("有效");
+                group["active_source_count"]=json!(group["active_source_count"].as_u64().unwrap_or(0)+1);
+            }
+            continue;
+        }
+        let provider=channel["provider_name"].as_str().unwrap_or("");
+        let account=if channel["credential_kind"]=="oauth" {channel["oauth_label"].as_str().filter(|s|!s.trim().is_empty())}else{None};
+        let credential_name=account.or_else(||channel["credential_name"].as_str()).unwrap_or("");
+        let name=if credential.is_some() {
+            compact_source_name(provider,credential_name)
+        }else{channel["source_name"].as_str().or_else(||channel["name"].as_str()).unwrap_or("历史接入").to_string()};
+        groups.push(json!({"id":group_id,"name":name,"state":if active{"active"}else{"historical"},"status_label":if active{"有效"}else{"历史 / 已停用"},"channel_ids":[id],"source_count":1,"active_source_count":u8::from(active),"provider_id":channel["provider_id"],"provider_name":channel["provider_name"],"credential_id":credential,"credential_name":credential_name,"credential_kind":channel["credential_kind"]}));
+    }
+    groups
+}
+fn compact_source_name(provider:&str,credential:&str)->String {
+    let mut parts:Vec<&str>=Vec::new();
+    for part in [provider,credential].into_iter().flat_map(|s|s.split(" · ")).map(str::trim).filter(|s|!s.is_empty()) {
+        if !parts.iter().any(|old|old.eq_ignore_ascii_case(part)) {parts.push(part);}
+    }
+    if parts.is_empty(){"未命名接入".into()}else{parts.join(" · ")}
 }
 // Seek once per distinct channel instead of visiting every historical ledger row.
 // Only removed channels load a snapshot, always from their greatest ledger ID.
@@ -49,6 +86,7 @@ pub fn objects(c: &Connection) -> Result<Value> {
     let mut catalog=current_objects(c)?;
     let deleted=c.prepare(HISTORICAL_CHANNELS_SQL)?.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     catalog["channels"].as_array_mut().unwrap().extend(deleted.into_iter().map(|(id,name)|object(id,name,false,"已删除")));
+    catalog["source_groups"]=json!(source_groups(catalog["channels"].as_array().unwrap()));
     Ok(catalog)
 }
 fn find<'a>(catalog: &'a Value, kind: &str, id: i64) -> Option<&'a Value> {
@@ -152,6 +190,39 @@ pub fn update_budget_currency(c:&Connection,scope:&str,id:i64,limit:Option<i64>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn usage_source_groups_collapse_model_wrappers_without_merging_distinct_keys() {
+        let(c,_,_)=fixture();
+        c.execute("INSERT INTO provider_channels(id,name,enabled,created_ms,canonical_state) VALUES(80,'OpenAI OAuth',1,0,'canonical')",[]).unwrap();
+        c.execute("INSERT INTO oauth_accounts(id,label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES(80,'个人授权','https://fixture.invalid','fixture-account','fixture-client','active','[]',9999999999999,0)",[]).unwrap();
+        c.execute("INSERT INTO provider_credentials(id,provider_id,kind,label,enabled,oauth_account_id,identity_hash,created_at_ms) VALUES(80,80,'oauth','旧包装 / sol-low · Key',1,80,'fixture-oauth',0),(81,80,'anonymous','另一接入',1,NULL,'fixture-other',0)",[]).unwrap();
+        for (id,name,enabled,credential) in [(80,"sol-low",1,80),(81,"sol-medium",1,80),(82,"luna-high",0,80),(83,"other",1,81)] {
+            c.execute("INSERT INTO channels(id,name,base_url,enabled,priority) VALUES(?1,?2,'https://fixture.invalid/v1',?3,0)",params![id,name,enabled]).unwrap();
+            c.execute("INSERT INTO provider_connections(channel_id,provider_id) VALUES(?1,80)",[id]).unwrap();
+            c.execute("INSERT INTO source_credentials(source_id,credential_id) VALUES(?1,?2)",params![id,credential]).unwrap();
+        }
+        let catalog=current_objects(&c).unwrap();
+        let groups=catalog["source_groups"].as_array().unwrap();
+        let oauth=groups.iter().find(|g|g["id"]=="credential:80").unwrap();
+        assert_eq!(oauth["name"],"OpenAI OAuth · 个人授权");
+        assert!(!oauth["name"].as_str().unwrap().contains("sol-low"));
+        assert_eq!(oauth["channel_ids"],json!([80,81,82]));
+        assert_eq!(oauth["source_count"],3);assert_eq!(oauth["active_source_count"],2);assert_eq!(oauth["state"],"active");
+        assert_eq!(groups.iter().find(|g|g["id"]=="credential:81").unwrap()["channel_ids"],json!([83]));
+        assert_eq!(groups.iter().find(|g|g["id"]=="channel:1").unwrap()["name"],"管理测试上游");
+        assert_eq!(catalog["channels"].as_array().unwrap().len(),5,"exact source IDs remain available for pricing and history");
+        c.execute("UPDATE provider_channels SET enabled=0 WHERE id=80",[]).unwrap();
+        assert!(current_objects(&c).unwrap()["source_groups"].as_array().unwrap().iter().filter(|g|g["credential_id"]==80||g["credential_id"]==81).all(|g|g["state"]=="historical"));
+    }
+    #[test]
+    fn deleted_usage_sources_keep_individual_history_choices() {
+        let(c,user,key)=fixture();
+        c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,source_snapshot) VALUES('group-history',?1,?2,1,99,'synthetic',0,0,0,0,'settled','{\"channel_name\":\"已移除接入\"}')",params![user,key]).unwrap();
+        let catalog=objects(&c).unwrap();
+        let old=catalog["source_groups"].as_array().unwrap().iter().find(|g|g["id"]=="channel:99").unwrap();
+        assert_eq!(old["name"],"已移除接入");assert_eq!(old["channel_ids"],json!([99]));assert_eq!(old["state"],"historical");
+        assert_eq!(compact_source_name("SiliconFlow","SiliconFlow · 配置 1"),"SiliconFlow · 配置 1");
+    }
     const LEGACY_HISTORICAL_CHANNELS_SQL:&str="SELECT l.channel_id,COALESCE(json_extract(l.source_snapshot,'$.channel_name'),json_extract(l.source_snapshot,'$.source_name'),'已删除渠道') FROM billing_ledger l JOIN (SELECT channel_id,MAX(id) AS latest_id FROM billing_ledger WHERE channel_id NOT IN (SELECT id FROM channels) GROUP BY channel_id) history ON history.latest_id=l.id ORDER BY l.channel_id";
     fn historical_rows_and_steps(c:&Connection,sql:&str)->(Vec<(i64,String)>,i32) {
         let mut statement=c.prepare(sql).unwrap();

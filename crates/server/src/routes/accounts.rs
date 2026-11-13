@@ -743,6 +743,7 @@ async fn portal(
     if q.before_id.is_some_and(|i| i <= 0) || q.limit.is_some_and(|i| !(1..=100).contains(&i)) {
         return Err(bad("分页参数无效"));
     }
+    let mut response = {
     let c = state.conn();
     if accounts::authenticate(&c, &browser.raw)?.is_none() {
         return Err(denied());
@@ -756,9 +757,11 @@ async fn portal(
     let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"currency":r.currency,"quantity_milli":r.quantity_milli,"bound_quantity_milli":r.bound_quantity_milli,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
     let summary=db::billing::usage_summary(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     let analytics=db::billing::usage_analytics(&c,&query,&summary).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
-    Ok(Json(
-        json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"analytics":analytics,"entries":entries,"next_before_id":next}}),
-    ))
+    json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"analytics":analytics,"entries":entries,"next_before_id":next}})
+    };
+    let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
+    crate::reporting_currency::apply(&mut response,quote.as_ref());
+    Ok(Json(response))
 }
 
 #[derive(Deserialize)]

@@ -74,14 +74,16 @@ impl Fixture {
 #[ignore="500k to 1m owner rows with wide requests and ledger; release on build-test"]
 async fn owner_heavy_portal_and_overview_preserve_accounting_and_latency() {
  let f=Fixture::new();let n=f.rows;
- let expected=json!({"currency":"CNY","request_count":(n+1)/2,"ledger_count":n,"input_tokens":(n-n/7)*10,"output_tokens":(n-n/11)*2,"unknown_input_entries":n/7,"unknown_output_entries":n/11,"unpriced_entries":n-n/3-n/5+n/15,"known_debit_micro":(n-n/13)*3,"total_tokens":(n-n/7)*10+(n-n/11)*2,"unknown_debit_entries":n/13});
+ let expected=json!({"currency":"all","request_count":(n+1)/2,"ledger_count":n,"input_tokens":(n-n/7)*10,"output_tokens":(n-n/11)*2,"unknown_input_entries":n/7,"unknown_output_entries":n/11,"unpriced_entries":n-n/3-n/5+n/15,"known_debit_micro":null,"total_tokens":(n-n/7)*10+(n-n/11)*2,"unknown_debit_entries":n/13});
  let observe=std::env::var_os("TOKENGO_PERF_OBSERVE_ONLY").is_some();let mut failures=Vec::new();
  for endpoint in ["/api/account/portal?limit=50","/api/account/overview/stats?hours=1","/api/account/overview/stats?hours=24","/api/account/overview/stats?hours=168","/api/account/overview/stats?hours=2160","/api/account/overview/logs?limit=50"] {
   let mut samples=Vec::new();
   for _ in 0..3 {
    let(status,body,us)=f.get(endpoint).await;assert_eq!(status,StatusCode::OK,"{endpoint}: {body}");
    if endpoint.contains("/portal") {
-    assert_eq!(body["usage"]["summary"],expected);
+    let summary=&body["usage"]["summary"];for(key,value)in expected.as_object().unwrap(){assert_eq!(&summary[key],value,"{key}");}
+    assert_eq!(summary["known_debit_cny_micro"],(n-n/13)*3);
+    assert_eq!(summary["display_currency"],"CNY");
     assert_eq!(body["usage"]["entries"].as_array().unwrap().len(),50);
     assert!(body["usage"]["entries"].as_array().unwrap().iter().all(|r|r["model"]=="owner-model"));
    } else if endpoint.contains("/stats") {

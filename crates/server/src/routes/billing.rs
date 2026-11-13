@@ -182,14 +182,19 @@ async fn admin_usage(
     State(state): State<SharedState>,
     Query(q): Query<UsageQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    let mut response = {
     let conn = state.conn();
-    let state=db::billing_management::validated_state(q.state.as_deref(),"all").map_err(mutation_error)?;
-    let catalog=if state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
+    let lifecycle_state=db::billing_management::validated_state(q.state.as_deref(),"all").map_err(mutation_error)?;
+    let catalog=if lifecycle_state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
     let (entries,next)=billing::usage_page_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
     let summary=billing::usage_summary_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
     let analytics=billing::usage_analytics_with_catalog(&conn,&q,Some(&catalog),&summary).map_err(mutation_error)?;
     let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
-    Ok(Json(json!({"entries":entries,"next_before_id":next,"summary":summary,"analytics":analytics})))
+    json!({"entries":entries,"next_before_id":next,"summary":summary,"analytics":analytics})
+    };
+    let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
+    crate::reporting_currency::apply(&mut response,quote.as_ref());
+    Ok(Json(response))
 }
 async fn self_usage(
     key: GatewayKey,
@@ -198,15 +203,23 @@ async fn self_usage(
 ) -> Result<Json<Value>, ApiError> {
     q.user_id = Some(key.auth.user_id);
     q.key_id = Some(key.auth.key_id);
+    let mut response = {
     let conn = state.conn();
     let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
     let summary=billing::usage_summary(&conn,&q).map_err(mutation_error)?;
     let analytics=billing::usage_analytics(&conn,&q,&summary).map_err(mutation_error)?;
-    let mut budgets = billing::budgets_currency(&conn, Some("user"), Some(key.auth.user_id),q.currency.as_deref().unwrap_or("CNY"))?;
-    budgets.extend(billing::budgets_currency(&conn, Some("key"), Some(key.auth.key_id),q.currency.as_deref().unwrap_or("CNY"))?);
-    Ok(Json(
-        json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics}),
-    ))
+    let currency=billing::usage_currency(&q).map_err(mutation_error)?;
+    let currencies=if currency=="all" {vec!["CNY","USD"]}else{vec![currency]};
+    let mut budgets=Vec::new();
+    for currency in currencies {
+        budgets.extend(billing::budgets_currency(&conn,Some("user"),Some(key.auth.user_id),currency)?);
+        budgets.extend(billing::budgets_currency(&conn,Some("key"),Some(key.auth.key_id),currency)?);
+    }
+    json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics})
+    };
+    let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
+    crate::reporting_currency::apply(&mut response,quote.as_ref());
+    Ok(Json(response))
 }
 
 #[cfg(test)]

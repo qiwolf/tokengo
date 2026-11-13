@@ -86,6 +86,7 @@ impl ModelLoads {
 }
 
 pub struct AppState {
+    pub(crate) reporting_fx: tokio::sync::Mutex<crate::reporting_currency::Cache>,
     pub(crate) compatibility_jobs: Mutex<crate::provider_diagnostics::Registry>,
     pub tool_rates: crate::source_rates::SourceRates,
     pub oauth: crate::oauth::OAuthRuntime,
@@ -275,7 +276,9 @@ impl AppState {
             );
         }
 
+        let reporting_fx=crate::reporting_currency::Cache::from_settings(&conn);
         let state = Arc::new(Self {
+            reporting_fx:tokio::sync::Mutex::new(reporting_fx),
             tool_rates: Default::default(),
             oauth: crate::oauth::OAuthRuntime::new()?,
             egress: crate::egress::Runtime::default(),

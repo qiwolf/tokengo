@@ -634,6 +634,7 @@ pub fn recover(conn: &Connection) -> Result<usize> {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageQuery {
     pub currency:Option<String>,
+    pub source_group_id:Option<String>,
     pub user_id: Option<i64>,
     pub key_id: Option<i64>,
     pub channel_id: Option<i64>,
@@ -645,9 +646,25 @@ pub struct UsageQuery {
     pub start_at: Option<i64>,
     pub end_at: Option<i64>,
 }
+/// Usage quantities span all original currencies by default; accounting stays original.
+pub fn usage_currency(q:&UsageQuery)->Result<&str> {
+    match q.currency.as_deref().unwrap_or("all") {
+        currency @ ("all"|"CNY"|"USD")=>Ok(currency),
+        _=>Err(bad("usage currency must be all, CNY or USD")),
+    }
+}
+fn usage_source_group(q:&UsageQuery)->Result<Option<(&str,i64)>> {
+    let Some(group)=q.source_group_id.as_deref() else{return Ok(None)};
+    let Some((kind,id))=group.split_once(':') else{return Err(bad("source_group_id must be credential:N or channel:N"))};
+    if !matches!(kind,"credential"|"channel")||id.is_empty()||!id.bytes().all(|b|b.is_ascii_digit()) {return Err(bad("invalid source_group_id"));}
+    let id=id.parse::<i64>().map_err(|_|bad("invalid source_group_id"))?;
+    if id<=0{return Err(bad("invalid source_group_id"));}
+    Ok(Some((kind,id)))
+}
 /// Validate before fast empty-result paths as well as before SQL execution.
 pub fn validate_usage_time(q:&UsageQuery)->Result<()> {
-    valid_currency(q.currency.as_deref().unwrap_or("CNY"))?;
+    usage_currency(q)?;
+    usage_source_group(q)?;
     if [q.start_at,q.end_at].into_iter().flatten().any(|v|v<0||v.checked_mul(1000).is_none()) {
         return Err(bad("时间必须为有效的 Unix 秒时间戳"));
     }
@@ -659,9 +676,14 @@ pub fn validate_usage_time(q:&UsageQuery)->Result<()> {
 fn usage_predicates(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,include_cursor:bool)->Result<(String,Vec<rusqlite::types::Value>)> {
     use rusqlite::types::Value;
     validate_usage_time(q)?;
-    let currency=valid_currency(q.currency.as_deref().unwrap_or("CNY"))?;
-    let mut sql=" AND currency=?".to_string();
-    let mut args=vec![Value::Text(currency.into())];
+    let currency=usage_currency(q)?;
+    let mut sql=String::new();
+    let mut args=Vec::new();
+    if currency!="all" {sql.push_str(" AND currency=?");args.push(Value::Text(currency.into()));}
+    if let Some((kind,id))=usage_source_group(q)? {
+        sql.push_str(if kind=="credential" {" AND channel_id IN (SELECT source_id FROM source_credentials WHERE credential_id=?)"}else{" AND channel_id=?"});
+        args.push(id.into());
+    }
     for (column,value) in [("user_id",q.user_id),("key_id",q.key_id),("channel_id",q.channel_id)] {
         if let Some(value)=value {sql.push_str(&format!(" AND {column}=?"));args.push(value.into());}
     }
@@ -680,6 +702,31 @@ fn usage_predicates(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,
     }
     Ok((sql,args))
 }
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageCurrencyAmount {
+    pub currency:String,
+    pub known_debit_micro:i64,
+    pub unknown_debit_entries:i64,
+}
+fn add_usage_amount(amounts:&mut Vec<UsageCurrencyAmount>,amount:UsageCurrencyAmount) {
+    if let Some(current)=amounts.iter_mut().find(|v|v.currency==amount.currency) {
+        current.known_debit_micro=current.known_debit_micro.saturating_add(amount.known_debit_micro);
+        current.unknown_debit_entries=current.unknown_debit_entries.saturating_add(amount.unknown_debit_entries);
+    } else {amounts.push(amount);amounts.sort_by(|a,b|a.currency.cmp(&b.currency));}
+}
+fn empty_usage_amounts(currency:&str)->Vec<UsageCurrencyAmount> {
+    if currency=="all" {Vec::new()}else{vec![UsageCurrencyAmount{currency:currency.into(),..Default::default()}]}
+}
+// Existing covering aggregate passes compute both supported currencies in place.
+// Do not rescan wide histories just to split the display amount by original currency.
+const USAGE_AMOUNT_COLUMNS:&str=",coalesce(sum(currency='CNY'),0),coalesce(sum(CASE WHEN currency='CNY' THEN debit_micro END),0),coalesce(sum(currency='CNY' AND debit_micro IS NULL),0),coalesce(sum(CASE WHEN currency='USD' THEN debit_micro END),0),coalesce(sum(currency='USD' AND debit_micro IS NULL),0)";
+fn usage_row_amounts(row:&rusqlite::Row<'_>,offset:usize,total:i64,currency:&str)->rusqlite::Result<Vec<UsageCurrencyAmount>> {
+    let cny_count:i64=row.get(offset)?;let mut amounts=Vec::new();
+    if cny_count>0 {amounts.push(UsageCurrencyAmount{currency:"CNY".into(),known_debit_micro:row.get(offset+1)?,unknown_debit_entries:row.get(offset+2)?});}
+    if total>cny_count {amounts.push(UsageCurrencyAmount{currency:"USD".into(),known_debit_micro:row.get(offset+3)?,unknown_debit_entries:row.get(offset+4)?});}
+    if amounts.is_empty(){amounts=empty_usage_amounts(currency);}
+    Ok(amounts)
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageSummary {
     pub currency:String,
@@ -691,7 +738,8 @@ pub struct UsageSummary {
     pub unknown_input_entries:i64,
     pub unknown_output_entries:i64,
     pub unpriced_entries:i64,
-    pub known_debit_micro:i64,
+    pub known_debit_micro:Option<i64>,
+    pub amounts_by_currency:Vec<UsageCurrencyAmount>,
     pub unknown_debit_entries:i64,
 }
 /// Full matching aggregate: paging cursors and limits never narrow the summary.
@@ -704,13 +752,15 @@ pub fn usage_summary_with_catalog(conn:&Connection,q:&UsageQuery,catalog:Option<
     // Separate grouped request count preserves the covering owner index plan
     // for lifetime queries rather than creating a COUNT(DISTINCT) temp tree.
     let table=usage_summary_table(q);
-    let sql=format!("SELECT (SELECT count(*) FROM (SELECT request_id FROM {table} WHERE request_id IS NOT NULL{predicate} GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(billing_unit='token' AND input_tokens IS NULL),0),coalesce(sum(billing_unit='token' AND output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL AND unit_price_id IS NULL),0),coalesce(sum(debit_micro),0),coalesce(sum(debit_micro IS NULL),0) FROM {table} WHERE 1=1{predicate}");
+    let money=if usage_currency(q)?=="all" {"NULL"}else{"coalesce(sum(debit_micro),0)"};
+    let sql=format!("SELECT (SELECT count(*) FROM (SELECT request_id FROM {table} WHERE request_id IS NOT NULL{predicate} GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(billing_unit='token' AND input_tokens IS NULL),0),coalesce(sum(billing_unit='token' AND output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL AND unit_price_id IS NULL),0),{money},coalesce(sum(debit_micro IS NULL),0){USAGE_AMOUNT_COLUMNS} FROM {table} WHERE 1=1{predicate}");
     let bindings=args.iter().chain(args.iter());
-    Ok(conn.query_row(&sql,rusqlite::params_from_iter(bindings),|r| {
+    let summary=conn.query_row(&sql,rusqlite::params_from_iter(bindings),|r| {
         let input_tokens:i64=r.get(2)?;
         let output_tokens:i64=r.get(3)?;
-        Ok(UsageSummary {currency:q.currency.clone().unwrap_or_else(cny_currency),request_count:r.get(0)?,ledger_count:r.get(1)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),unknown_input_entries:r.get(4)?,unknown_output_entries:r.get(5)?,unpriced_entries:r.get(6)?,known_debit_micro:r.get(7)?,unknown_debit_entries:r.get(8)?})
-    })?)
+        Ok(UsageSummary {currency:usage_currency(q).unwrap().into(),request_count:r.get(0)?,ledger_count:r.get(1)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),unknown_input_entries:r.get(4)?,unknown_output_entries:r.get(5)?,unpriced_entries:r.get(6)?,known_debit_micro:r.get(7)?,amounts_by_currency:usage_row_amounts(r,9,r.get(1)?,usage_currency(q).unwrap())?,unknown_debit_entries:r.get(8)?})
+    })?;
+    Ok(summary)
 }
 pub fn usage_summary(conn:&Connection,q:&UsageQuery)->Result<UsageSummary> {
     usage_summary_with_catalog(conn,q,None)
@@ -731,7 +781,8 @@ pub struct UsageBucket {
     pub input_tokens:i64,
     pub output_tokens:i64,
     pub total_tokens:i64,
-    pub known_debit_micro:i64,
+    pub known_debit_micro:Option<i64>,
+    pub amounts_by_currency:Vec<UsageCurrencyAmount>,
     pub unknown_input_entries:i64,
     pub unknown_output_entries:i64,
 }
@@ -744,7 +795,8 @@ pub struct UsageModel {
     pub input_tokens:i64,
     pub output_tokens:i64,
     pub total_tokens:i64,
-    pub known_debit_micro:i64,
+    pub known_debit_micro:Option<i64>,
+    pub amounts_by_currency:Vec<UsageCurrencyAmount>,
 }
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UsageModelBucket {
@@ -752,7 +804,8 @@ pub struct UsageModelBucket {
     pub ledger_count:i64,
     pub request_count:i64,
     pub total_tokens:i64,
-    pub known_debit_micro:i64,
+    pub known_debit_micro:Option<i64>,
+    pub amounts_by_currency:Vec<UsageCurrencyAmount>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageModelSeries {
@@ -766,6 +819,7 @@ pub struct UsageModelSeries {
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageAnalytics {
     pub currency:String,
+    pub amounts_by_currency:Vec<UsageCurrencyAmount>,
     pub start_at:i64,
     pub end_at:i64,
     pub effective_end_at:i64,
@@ -810,26 +864,28 @@ fn usage_analytics_at(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json:
     let bucket_seconds=usage_bucket_seconds(span);
     let effective_end_at=end.min(now);
     let elapsed=effective_end_at.saturating_sub(start);
-    let mut analytics=UsageAnalytics {currency:q.currency.clone().unwrap_or_else(cny_currency),start_at:start,end_at:end,effective_end_at,bucket_seconds,buckets:Vec::new(),models:Vec::new(),model_series:Vec::new(),average_rpm:if elapsed>0 {summary.request_count as f64*60.0/elapsed as f64}else{0.0},average_tpm:if elapsed>0 {summary.total_tokens as f64*60.0/elapsed as f64}else{0.0}};
+    let currency=usage_currency(q)?;
+    let money=if currency=="all" {"NULL"}else{"coalesce(sum(debit_micro),0)"};
+    let mut analytics=UsageAnalytics {currency:currency.into(),amounts_by_currency:summary.amounts_by_currency.clone(),start_at:start,end_at:end,effective_end_at,bucket_seconds,buckets:Vec::new(),models:Vec::new(),model_series:Vec::new(),average_rpm:if elapsed>0 {summary.request_count as f64*60.0/elapsed as f64}else{0.0},average_tpm:if elapsed>0 {summary.total_tokens as f64*60.0/elapsed as f64}else{0.0}};
     if span==0 {return Ok(analytics);}
     let count=span/bucket_seconds+i64::from(span%bucket_seconds>0);
-    analytics.buckets=(0..count).map(|i|UsageBucket{start_at:start+i*bucket_seconds,..Default::default()}).collect();
+    analytics.buckets=(0..count).map(|i|UsageBucket{start_at:start+i*bucket_seconds,known_debit_micro:(currency!="all").then_some(0),amounts_by_currency:empty_usage_amounts(currency),..Default::default()}).collect();
     let mut bindings=vec![rusqlite::types::Value::Integer(start*1000),rusqlite::types::Value::Integer(bucket_seconds*1000)];
     bindings.extend(args.iter().cloned());
-    let sql=format!("SELECT (created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0),coalesce(sum(billing_unit='token' AND input_tokens IS NULL),0),coalesce(sum(billing_unit='token' AND output_tokens IS NULL),0) FROM {table} WHERE 1=1{predicate} GROUP BY bucket ORDER BY bucket");
+    let sql=format!("SELECT (created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),{money},coalesce(sum(billing_unit='token' AND input_tokens IS NULL),0),coalesce(sum(billing_unit='token' AND output_tokens IS NULL),0){USAGE_AMOUNT_COLUMNS} FROM {table} WHERE 1=1{predicate} GROUP BY bucket ORDER BY bucket");
     let mut statement=conn.prepare(&sql)?;
     let buckets=statement.query_map(rusqlite::params_from_iter(bindings),|r|{
         let input_tokens:i64=r.get(3)?;let output_tokens:i64=r.get(4)?;
-        Ok((r.get::<_,i64>(0)?,UsageBucket{start_at:0,request_count:r.get(1)?,ledger_count:r.get(2)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),known_debit_micro:r.get(5)?,unknown_input_entries:r.get(6)?,unknown_output_entries:r.get(7)?}))
+        Ok((r.get::<_,i64>(0)?,UsageBucket{start_at:0,request_count:r.get(1)?,ledger_count:r.get(2)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),known_debit_micro:r.get(5)?,amounts_by_currency:usage_row_amounts(r,8,r.get(2)?,currency)?,unknown_input_entries:r.get(6)?,unknown_output_entries:r.get(7)?}))
     })?;
     for row in buckets {let(index,mut bucket)=row?;if let Some(slot)=analytics.buckets.get_mut(index as usize) {bucket.start_at=slot.start_at;*slot=bucket;}}
-    let sql=format!("SELECT model,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0) FROM {table} WHERE 1=1{predicate} GROUP BY model ORDER BY coalesce(sum(input_tokens),0)+coalesce(sum(output_tokens),0) DESC,count(*) DESC,model");
+    let sql=format!("SELECT model,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),{money}{USAGE_AMOUNT_COLUMNS} FROM {table} WHERE 1=1{predicate} GROUP BY model ORDER BY coalesce(sum(input_tokens),0)+coalesce(sum(output_tokens),0) DESC,count(*) DESC,model");
     let mut statement=conn.prepare(&sql)?;
     let models=statement.query_map(rusqlite::params_from_iter(args.iter()),|r|{
         let input_tokens:i64=r.get(3)?;let output_tokens:i64=r.get(4)?;
-        Ok(UsageModel{model:r.get(0)?,is_other:false,request_count:r.get(1)?,ledger_count:r.get(2)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),known_debit_micro:r.get(5)?})
+        Ok(UsageModel{model:r.get(0)?,is_other:false,request_count:r.get(1)?,ledger_count:r.get(2)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),known_debit_micro:r.get(5)?,amounts_by_currency:usage_row_amounts(r,6,r.get(2)?,currency)?})
     })?;
-    let mut other=UsageModel{model:"其他模型".into(),is_other:true,..Default::default()};
+    let mut other=UsageModel{model:"其他模型".into(),is_other:true,known_debit_micro:(currency!="all").then_some(0),..Default::default()};
     let mut call_leaders=Vec::<UsageModel>::new();let mut all_model_requests=0i64;
     for model in models {
         let model=model?;all_model_requests=all_model_requests.saturating_add(model.request_count);
@@ -838,13 +894,13 @@ fn usage_analytics_at(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json:
         call_leaders.sort_by(|a,b|b.ledger_count.cmp(&a.ledger_count).then_with(||a.model.cmp(&b.model)));
         call_leaders.truncate(8);
         if analytics.models.len()<8 {analytics.models.push(model);}else{
-            other.request_count=other.request_count.saturating_add(model.request_count);other.ledger_count=other.ledger_count.saturating_add(model.ledger_count);other.input_tokens=other.input_tokens.saturating_add(model.input_tokens);other.output_tokens=other.output_tokens.saturating_add(model.output_tokens);other.total_tokens=other.total_tokens.saturating_add(model.total_tokens);other.known_debit_micro=other.known_debit_micro.saturating_add(model.known_debit_micro);
+            other.request_count=other.request_count.saturating_add(model.request_count);other.ledger_count=other.ledger_count.saturating_add(model.ledger_count);other.input_tokens=other.input_tokens.saturating_add(model.input_tokens);other.output_tokens=other.output_tokens.saturating_add(model.output_tokens);other.total_tokens=other.total_tokens.saturating_add(model.total_tokens);other.known_debit_micro=other.known_debit_micro.zip(model.known_debit_micro).map(|(a,b)|a.saturating_add(b));for amount in model.amounts_by_currency{add_usage_amount(&mut other.amounts_by_currency,amount);}
         }
     }
     if other.ledger_count>0 {analytics.models.push(other);}
     let leading_calls=call_leaders.iter().map(|m|m.ledger_count).sum::<i64>();
     let leading_requests=call_leaders.iter().map(|m|m.request_count).sum::<i64>();
-    let blank_buckets=analytics.buckets.iter().map(|b|UsageModelBucket{start_at:b.start_at,..Default::default()}).collect::<Vec<_>>();
+    let blank_buckets=analytics.buckets.iter().map(|b|UsageModelBucket{start_at:b.start_at,known_debit_micro:(currency!="all").then_some(0),amounts_by_currency:empty_usage_amounts(currency),..Default::default()}).collect::<Vec<_>>();
     analytics.model_series=call_leaders.iter().map(|m|UsageModelSeries{model:m.model.clone(),is_other:false,ledger_count:m.ledger_count,request_count:m.request_count,buckets:blank_buckets.clone()}).collect();
     if summary.ledger_count>leading_calls {
         analytics.model_series.push(UsageModelSeries{model:"其他模型".into(),is_other:true,ledger_count:summary.ledger_count-leading_calls,request_count:all_model_requests-leading_requests,buckets:blank_buckets.clone()});
@@ -858,9 +914,9 @@ fn usage_analytics_at(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json:
         }
         case.push_str(&format!(" ELSE {} END",call_leaders.len()));
         bindings.push((start*1000).into());bindings.push((bucket_seconds*1000).into());bindings.extend(args.iter().cloned());
-        let sql=format!("SELECT {case} AS series,(created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0)+coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0) FROM {table} WHERE 1=1{predicate} GROUP BY series,bucket ORDER BY series,bucket");
+        let sql=format!("SELECT {case} AS series,(created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0)+coalesce(sum(output_tokens),0),{money}{USAGE_AMOUNT_COLUMNS} FROM {table} WHERE 1=1{predicate} GROUP BY series,bucket ORDER BY series,bucket");
         let mut statement=conn.prepare(&sql)?;
-        let grouped=statement.query_map(rusqlite::params_from_iter(bindings),|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,UsageModelBucket{start_at:0,request_count:r.get(2)?,ledger_count:r.get(3)?,total_tokens:r.get(4)?,known_debit_micro:r.get(5)?})))?;
+        let grouped=statement.query_map(rusqlite::params_from_iter(bindings),|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,UsageModelBucket{start_at:0,request_count:r.get(2)?,ledger_count:r.get(3)?,total_tokens:r.get(4)?,known_debit_micro:r.get(5)?,amounts_by_currency:usage_row_amounts(r,6,r.get(3)?,currency)?})))?;
         for row in grouped {
             let(series,index,mut bucket)=row?;
             let (Ok(series),Ok(index))=(usize::try_from(series),usize::try_from(index)) else {continue;};
@@ -875,7 +931,7 @@ fn usage_sql(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,limit:u
     // A sparse lifecycle/object/model filter can reject large snapshots. Select
     // IDs from a covering index first; the IN subquery's LIMIT bounds wide reads.
     let dated=q.start_at.is_some()||q.end_at.is_some();
-    let lifecycle_page=dated||state!="all"||q.user_id.is_some()||q.key_id.is_some()||q.channel_id.is_some()||q.model.is_some();
+    let lifecycle_page=dated||state!="all"||q.user_id.is_some()||q.key_id.is_some()||q.channel_id.is_some()||q.source_group_id.is_some()||q.model.is_some();
     let lifecycle_index=if dated {if q.user_id.is_some(){"billing_ledger_owner_time_summary"}else{"billing_ledger_time_summary"}}
         else if q.key_id.is_some() {"billing_ledger_key_lifecycle"}
         else if q.user_id.is_some() {"billing_ledger_user_lifecycle"}
@@ -1323,7 +1379,7 @@ mod usage_time_tests {
         let (rows,next)=usage_page(&c,&q).unwrap();assert_eq!(rows.len(),1);assert!(next.is_some());
         let summary=usage_summary(&c,&q).unwrap();
         assert_eq!((summary.request_count,summary.ledger_count,summary.input_tokens,summary.output_tokens,summary.total_tokens),(3,4,60,14,74));
-        assert_eq!((summary.unknown_input_entries,summary.unknown_output_entries,summary.known_debit_micro,summary.unknown_debit_entries),(1,0,21,1));
+        assert_eq!((summary.unknown_input_entries,summary.unknown_output_entries,summary.known_debit_micro,summary.unknown_debit_entries),(1,0,None,1));assert_eq!(summary.amounts_by_currency[0].known_debit_micro,21);
         q.before_id=next;let second=usage_summary(&c,&q).unwrap();assert_eq!(second.total_tokens,summary.total_tokens);assert_eq!(second.ledger_count,4);
         q.key_id=Some(1);q.channel_id=Some(1);q.model=Some("SYNTHETIC".into());
         let summary=usage_summary(&c,&q).unwrap();assert_eq!((summary.request_count,summary.ledger_count,summary.total_tokens),(1,2,15));
@@ -1361,7 +1417,7 @@ mod usage_time_tests {
         assert_eq!(analytics.buckets.iter().map(|b|b.total_tokens).collect::<Vec<_>>(),vec![15,0,59]);
         assert_eq!(analytics.buckets.iter().map(|b|b.ledger_count).collect::<Vec<_>>(),vec![2,0,2]);
         assert_eq!(analytics.buckets.iter().map(|b|b.total_tokens).sum::<i64>(),summary.total_tokens);
-        assert_eq!(analytics.buckets.iter().map(|b|b.known_debit_micro).sum::<i64>(),summary.known_debit_micro);
+        assert_eq!(analytics.buckets.iter().flat_map(|b|&b.amounts_by_currency).map(|a|a.known_debit_micro).sum::<i64>(),summary.amounts_by_currency.iter().map(|a|a.known_debit_micro).sum::<i64>());
         assert_eq!(analytics.models.iter().map(|m|m.total_tokens).sum::<i64>(),summary.total_tokens);
         assert_eq!(analytics.buckets[0].unknown_input_entries,1);
         assert!((analytics.average_rpm-3.0/180.0).abs()<1e-12);
@@ -1371,7 +1427,7 @@ mod usage_time_tests {
         for (i,bucket) in analytics.buckets.iter().enumerate() {
             assert_eq!(analytics.model_series.iter().map(|s|s.buckets[i].ledger_count).sum::<i64>(),bucket.ledger_count);
             assert_eq!(analytics.model_series.iter().map(|s|s.buckets[i].total_tokens).sum::<i64>(),bucket.total_tokens);
-            assert_eq!(analytics.model_series.iter().map(|s|s.buckets[i].known_debit_micro).sum::<i64>(),bucket.known_debit_micro);
+            assert_eq!(analytics.model_series.iter().flat_map(|s|&s.buckets[i].amounts_by_currency).map(|a|a.known_debit_micro).sum::<i64>(),bucket.amounts_by_currency.iter().map(|a|a.known_debit_micro).sum::<i64>());
             assert!(analytics.model_series.iter().all(|s|s.buckets[i].start_at==bucket.start_at));
         }
         assert_eq!(analytics.model_series.iter().map(|s|s.ledger_count).sum::<i64>(),summary.ledger_count);
@@ -1424,7 +1480,7 @@ mod usage_time_tests {
         assert_eq!(analytics.model_series[0].request_count,1);assert_eq!(analytics.model_series[0].buckets[0].ledger_count,3);
         assert_eq!(analytics.model_series.iter().map(|s|s.ledger_count).sum::<i64>(),14);
         assert_eq!(analytics.model_series.iter().map(|s|s.buckets[0].total_tokens).sum::<i64>(),133);
-        assert_eq!(analytics.model_series.iter().map(|s|s.buckets[0].known_debit_micro).sum::<i64>(),summary.known_debit_micro);
+        assert_eq!(analytics.model_series.iter().flat_map(|s|&s.buckets[0].amounts_by_currency).map(|a|a.known_debit_micro).sum::<i64>(),summary.amounts_by_currency.iter().map(|a|a.known_debit_micro).sum::<i64>());
     }
     #[test]
     fn invalid_time_ranges_fail_even_for_empty_active_catalog() {
@@ -1434,5 +1490,58 @@ mod usage_time_tests {
             assert!(usage_page_with_catalog(&c,&q,Some(&catalog)).is_err());
             assert!(usage_summary_with_catalog(&c,&q,Some(&catalog)).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod usage_currency_query_tests {
+    use super::*;
+    fn fixture()->Connection {
+        let c=crate::db::open_in_memory().unwrap();
+        for (attempt,user,key,request,channel,model,created,currency,input,output,debit) in [
+            ("cyber-old",49,95,1,1,"alpha",1000,"USD",100,20,Some(1000)),
+            ("andy-old",31,93,2,1,"alpha",1000,"USD",200,30,Some(2000)),
+            ("andy-new",31,93,3,2,"beta",2000,"CNY",300,40,Some(3000)),
+            ("andy-retry",31,93,3,2,"beta",2000,"USD",10,5,None),
+            ("foreign",88,88,4,3,"foreign",1000,"CNY",999,999,Some(9999)),
+        ] {
+            c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,status,input_tokens,output_tokens,debit_micro,currency) VALUES(?1,?2,?3,?4,?5,?6,0,0,0,?7,'ok',?8,?9,?10,?11)",params![attempt,user,key,request,channel,model,created,input,output,debit,currency]).unwrap();
+        }
+        c
+    }
+    fn amount<'a>(values:&'a [UsageCurrencyAmount],currency:&str)->&'a UsageCurrencyAmount {values.iter().find(|a|a.currency==currency).unwrap()}
+    #[test]
+    fn default_all_usage_includes_old_dollars_and_mixed_retries_without_summing_money() {
+        let c=fixture();let q=UsageQuery{user_id:Some(31),start_at:Some(0),end_at:Some(3600),limit:Some(1),before_id:Some(3),..Default::default()};
+        let summary=usage_summary(&c,&q).unwrap();assert_eq!(summary.currency,"all");assert_eq!((summary.request_count,summary.ledger_count,summary.total_tokens),(2,3,585));assert_eq!(summary.known_debit_micro,None);
+        assert_eq!(amount(&summary.amounts_by_currency,"CNY").known_debit_micro,3000);assert_eq!(amount(&summary.amounts_by_currency,"USD").known_debit_micro,2000);assert_eq!(amount(&summary.amounts_by_currency,"USD").unknown_debit_entries,1);
+        let(rows,_)=usage_page(&c,&q).unwrap();assert_eq!(rows.len(),1);assert_eq!(rows[0].currency,"USD");
+        let mut page=q.clone();page.before_id=None;page.limit=Some(200);assert_eq!(serde_json::to_value(usage_summary(&c,&page).unwrap()).unwrap(),serde_json::to_value(&summary).unwrap());
+        let analytics=usage_analytics_at(&c,&q,None,&summary,3600).unwrap();assert_eq!((analytics.buckets[0].request_count,analytics.buckets[0].total_tokens),(2,585));assert_eq!(analytics.buckets[0].known_debit_micro,None);
+        assert_eq!(amount(&analytics.buckets[0].amounts_by_currency,"CNY").known_debit_micro,3000);assert_eq!(amount(&analytics.buckets[0].amounts_by_currency,"USD").known_debit_micro,2000);
+        let beta=analytics.models.iter().find(|m|m.model=="beta").unwrap();assert_eq!(beta.known_debit_micro,None);assert_eq!((beta.request_count,beta.ledger_count,beta.total_tokens),(1,2,355));assert_eq!(amount(&beta.amounts_by_currency,"USD").unknown_debit_entries,1);
+        let series=analytics.model_series.iter().find(|m|m.model=="beta").unwrap();assert_eq!(series.buckets[0].known_debit_micro,None);assert_eq!(amount(&series.buckets[0].amounts_by_currency,"CNY").known_debit_micro,3000);
+        let value=serde_json::to_value(summary).unwrap();assert!(value["known_debit_micro"].is_null());
+    }
+    #[test]
+    fn old_usd_only_owner_has_full_default_usage_and_explicit_cny_is_an_exact_filter() {
+        let c=fixture();let mut q=UsageQuery{user_id:Some(49),key_id:Some(95),..Default::default()};let summary=usage_summary(&c,&q).unwrap();assert_eq!((summary.request_count,summary.total_tokens),(1,120));assert_eq!(summary.known_debit_micro,None);assert_eq!(amount(&summary.amounts_by_currency,"USD").known_debit_micro,1000);
+        q.currency=Some("CNY".into());let summary=usage_summary(&c,&q).unwrap();assert_eq!((summary.ledger_count,summary.total_tokens),(0,0));assert_eq!(summary.known_debit_micro,Some(0));
+        q.currency=Some("USD".into());let summary=usage_summary(&c,&q).unwrap();assert_eq!(summary.known_debit_micro,Some(1000));assert_eq!(serde_json::to_value(summary).unwrap()["known_debit_micro"],1000);
+        q.currency=Some("invalid".into());assert!(usage_page(&c,&q).is_err());
+    }
+    #[test]
+    fn source_group_spans_models_preserves_owner_scope_and_intersects_legacy_channel() {
+        let c=fixture();
+        // Credential ownership is enough for the usage selector; it does not grant a call permission.
+        c.execute("INSERT INTO channels(id,name,base_url) VALUES(1,'one','https://one.invalid'),(2,'two','https://two.invalid'),(3,'foreign','https://foreign.invalid')",[]).unwrap();
+        c.execute("INSERT INTO provider_channels(id,name,enabled,created_ms) VALUES(1,'group',1,0)",[]).unwrap();
+        c.execute("INSERT INTO provider_credentials(id,provider_id,kind,label,identity_hash,created_at_ms) VALUES(1,1,'anonymous','group','synthetic',0)",[]).unwrap();
+        c.execute("INSERT INTO source_credentials(source_id,credential_id) VALUES(1,1),(2,1)",[]).unwrap();
+        let mut q=UsageQuery{user_id:Some(31),source_group_id:Some("credential:1".into()),..Default::default()};assert_eq!(usage_summary(&c,&q).unwrap().ledger_count,3);
+        q.channel_id=Some(1);assert_eq!(usage_summary(&c,&q).unwrap().ledger_count,1);
+        q.source_group_id=Some("channel:2".into());assert_eq!(usage_summary(&c,&q).unwrap().ledger_count,0);
+        q.channel_id=None;assert_eq!(usage_summary(&c,&q).unwrap().ledger_count,2);
+        for invalid in ["credential:0","credential:-1","credential:1 OR 1=1","unknown:1","credential:9223372036854775808"] {q.source_group_id=Some(invalid.into());assert!(usage_page(&c,&q).is_err(),"{invalid}");}
     }
 }
