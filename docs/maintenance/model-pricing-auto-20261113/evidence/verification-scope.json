@@ -1,0 +1,15 @@
+{
+  "price_data_unchanged": true,
+  "production_asr_input": {
+    "executable_kind": "chat",
+    "configured_purpose": "audio",
+    "clear_identifier_subtype": "asr"
+  },
+  "regression": "pricing_model_defaults::explicit_audio_purpose_overrides_old_chat_kind_for_pricing_without_changing_routing",
+  "production_browser_control": {
+    "attempts": 2,
+    "result": "CUA getState timed out; no production authenticated browser operation completed this round"
+  },
+  "rendered_browser_authority": "build-test Chromium actual deployed WASM with synthetic API; 1440 and 390; 28 checks, 0 page errors",
+  "scope": "No actual price created, no model configuration rewritten, no real paid inference"
+}

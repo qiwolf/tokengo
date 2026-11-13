@@ -10,6 +10,8 @@ TokenGo is a self-hosted large language model (LLM) gateway for individuals and 
 
 指定生产专项：2026-11-13用量看板及后续统计修正已在237上线（schema47，未公开发版）；统一人民币展示、完整历史用量、日期与可选时刻筛选见[最新验收收据](docs/maintenance/usage-corrections-20261113/README.md)。
 
+2026-11-13模型价格表单修正：按模型用途切换计价、自动读取参数，见[专项收据](docs/maintenance/model-pricing-auto-20261113/README.md)。
+
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
 当前正式版：**[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（已正式发行，公开资产独立验收通过）。

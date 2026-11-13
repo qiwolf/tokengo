@@ -1,0 +1,678 @@
+{
+  "cases": [
+    {
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "incompatible_legacy_unit_hidden_current_and_no_price_cap_copy",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 60000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "name": "configured_model_limits_readonly_no_repeat_inputs",
+          "passed": true
+        },
+        {
+          "name": "configured_token_submit_only_price_and_identity",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1500000,
+            "model": "text model",
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "name": "missing_only_bound_fallback_and_no_stale_source_limit",
+          "passed": true,
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "input_micro_per_million": 2000000,
+            "max_input_tokens": 32000,
+            "model": "text model",
+            "output_micro_per_million": 4000000
+          }
+        },
+        {
+          "name": "source_change_clears_manual_bound",
+          "passed": true
+        },
+        {
+          "name": "embedding_known_zero_output_has_no_output_price_or_limit_prompt",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 200000,
+            "model": "embedding model",
+            "output_micro_per_million": 0
+          }
+        },
+        {
+          "name": "asr_duration_units_and_submit",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 600000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "name": "tts_explicit_real_basis_not_token_or_guessed_unit",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 5000000,
+            "micro_per_unit": 1000,
+            "model": "tts model",
+            "unit": "character"
+          }
+        },
+        {
+          "name": "image_quantity_scheme",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "image model",
+            "unit": "image"
+          }
+        },
+        {
+          "name": "video_explicit_quantity_basis",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "video model",
+            "unit": "video"
+          }
+        },
+        {
+          "name": "video_seconds_not_audio_label_or_token_scheme",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 12500,
+            "micro_per_unit": 20000,
+            "model": "video model",
+            "unit": "second"
+          }
+        },
+        {
+          "name": "tool_request_scheme",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 30000,
+            "model": "search model"
+          }
+        },
+        {
+          "name": "unknown_model_asks_only_for_missing_pricing_basis",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 10000,
+            "model": "unknown model"
+          }
+        },
+        {
+          "name": "failed_save_stays_open_preserves_prices",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 60000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1500000,
+            "model": "text model",
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "input_micro_per_million": 2000000,
+            "max_input_tokens": 32000,
+            "model": "text model",
+            "output_micro_per_million": 4000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 200000,
+            "model": "embedding model",
+            "output_micro_per_million": 0
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 600000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 5000000,
+            "micro_per_unit": 1000,
+            "model": "tts model",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "image model",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "video model",
+            "unit": "video"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 12500,
+            "micro_per_unit": 20000,
+            "model": "video model",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 30000,
+            "model": "search model"
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 10000,
+            "model": "unknown model"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1000000,
+            "model": "text model",
+            "output_micro_per_million": 2000000
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM, synthetic local API; no production or vendor contact"
+    },
+    {
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "incompatible_legacy_unit_hidden_current_and_no_price_cap_copy",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 60000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "name": "configured_model_limits_readonly_no_repeat_inputs",
+          "passed": true
+        },
+        {
+          "name": "configured_token_submit_only_price_and_identity",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1500000,
+            "model": "text model",
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "name": "missing_only_bound_fallback_and_no_stale_source_limit",
+          "passed": true,
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "input_micro_per_million": 2000000,
+            "max_input_tokens": 32000,
+            "model": "text model",
+            "output_micro_per_million": 4000000
+          }
+        },
+        {
+          "name": "source_change_clears_manual_bound",
+          "passed": true
+        },
+        {
+          "name": "embedding_known_zero_output_has_no_output_price_or_limit_prompt",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 200000,
+            "model": "embedding model",
+            "output_micro_per_million": 0
+          }
+        },
+        {
+          "name": "asr_duration_units_and_submit",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 600000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "name": "tts_explicit_real_basis_not_token_or_guessed_unit",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 5000000,
+            "micro_per_unit": 1000,
+            "model": "tts model",
+            "unit": "character"
+          }
+        },
+        {
+          "name": "image_quantity_scheme",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "image model",
+            "unit": "image"
+          }
+        },
+        {
+          "name": "video_explicit_quantity_basis",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "video model",
+            "unit": "video"
+          }
+        },
+        {
+          "name": "video_seconds_not_audio_label_or_token_scheme",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 12500,
+            "micro_per_unit": 20000,
+            "model": "video model",
+            "unit": "second"
+          }
+        },
+        {
+          "name": "tool_request_scheme",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 30000,
+            "model": "search model"
+          }
+        },
+        {
+          "name": "unknown_model_asks_only_for_missing_pricing_basis",
+          "passed": true,
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 10000,
+            "model": "unknown model"
+          }
+        },
+        {
+          "name": "failed_save_stays_open_preserves_prices",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 60000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1500000,
+            "model": "text model",
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "input_micro_per_million": 2000000,
+            "max_input_tokens": 32000,
+            "model": "text model",
+            "output_micro_per_million": 4000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 200000,
+            "model": "embedding model",
+            "output_micro_per_million": 0
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 600000,
+            "micro_per_unit": 600000,
+            "model": "asr model",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 5000000,
+            "micro_per_unit": 1000,
+            "model": "tts model",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "image model",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 4000,
+            "micro_per_unit": 200000,
+            "model": "video model",
+            "unit": "video"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 12500,
+            "micro_per_unit": 20000,
+            "model": "video model",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 30000,
+            "model": "search model"
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 10000,
+            "model": "unknown model"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1000000,
+            "model": "text model",
+            "output_micro_per_million": 2000000
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM, synthetic local API; no production or vendor contact"
+    }
+  ],
+  "passed": 2,
+  "expected_cases": 2,
+  "failure": null,
+  "limitations": "Synthetic responses verify UI scheme/units/inputs/payloads; backend correctness, live model configuration and deployment are separately verified."
+}

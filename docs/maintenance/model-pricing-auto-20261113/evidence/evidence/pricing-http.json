@@ -1,0 +1,23 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server",
+    "--test",
+    "pricing_model_defaults",
+    "--test",
+    "pricing_currency_catalog",
+    "--test",
+    "billing",
+    "--test",
+    "request_billing"
+  ],
+  "cwd": "/srv/build/tokengo-model-pricing-auto-20261113/source",
+  "exit_code": 0,
+  "seconds": 125.74709796905518
+}
