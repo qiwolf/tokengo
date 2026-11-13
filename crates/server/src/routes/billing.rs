@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/pricing", get(prices).post(create))
+        .route("/api/pricing/options",get(pricing_options))
         .route("/api/unit-pricing",get(unit_prices).post(create_unit_price))
         .route(
             "/api/request-pricing",
@@ -42,6 +43,9 @@ async fn prices(
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({"prices":billing::list_prices(&state.conn())?})))
 }
+async fn pricing_options(_auth:AdminAuth,State(state):State<SharedState>)->Result<Json<Value>,ApiError> {
+    Ok(Json(json!({"options":super::pricing_options::list(&state.conn())?})))
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewPrice {
@@ -50,8 +54,8 @@ struct NewPrice {
     model: String,
     input_micro_per_million: i64,
     output_micro_per_million: i64,
-    max_input_tokens: i64,
-    max_output_tokens: i64,
+    #[serde(default)] max_input_tokens: Option<i64>,
+    #[serde(default)] max_output_tokens: Option<i64>,
 }
 async fn create(
     _auth: AdminAuth,
@@ -59,6 +63,11 @@ async fn create(
     payload: Result<Json<NewPrice>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let Json(p) = payload.map_err(|_| ApiError::bad_request("Invalid pricing body"))?;
+    let c=state.conn();
+    let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
+    super::pricing_options::require_kind(option.as_ref(),"token").map_err(mutation_error)?;
+    let max_input_tokens=option.as_ref().and_then(|v|v.max_input_tokens).or(p.max_input_tokens).ok_or_else(||ApiError::bad_request("未找到模型的单次输入上限，请补充 token 数量。"))?;
+    let max_output_tokens=option.as_ref().and_then(|v|v.max_output_tokens).or(p.max_output_tokens).ok_or_else(||ApiError::bad_request("未找到模型的单次总输出上限，请补充 token 数量。"))?;
     let p = Price {
         currency:p.currency,
         id: 0,
@@ -66,11 +75,11 @@ async fn create(
         model: p.model,
         input_micro_per_million: p.input_micro_per_million,
         output_micro_per_million: p.output_micro_per_million,
-        max_input_tokens: p.max_input_tokens,
-        max_output_tokens: p.max_output_tokens,
+        max_input_tokens,
+        max_output_tokens,
     };
     let result =
-        billing::create_price(&state.conn(), &p, &_auth.actor_label()).map_err(mutation_error)?;
+        billing::create_price(&c, &p, &_auth.actor_label()).map_err(mutation_error)?;
     Ok(Json(json!({"price":result})))
 }
 async fn request_prices(
@@ -95,6 +104,10 @@ async fn create_request_price(
     payload: Result<Json<NewRequestPrice>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let Json(p) = payload.map_err(|_| ApiError::bad_request("Invalid request pricing body"))?;
+    if !p.model.starts_with("passthrough:") {
+        let c=state.conn();let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
+        super::pricing_options::require_kind(option.as_ref(),"request").map_err(mutation_error)?;
+    }
     let price = RequestPrice {
         currency:p.currency,
         id: 0,
@@ -117,6 +130,11 @@ struct NewUnitPrice {
 }
 async fn create_unit_price(auth:AdminAuth,State(state):State<SharedState>,payload:Result<Json<NewUnitPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
     let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid unit pricing body"))?;
+    {
+        let c=state.conn();let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
+        super::pricing_options::require_kind(option.as_ref(),"unit").map_err(mutation_error)?;
+        if option.as_ref().is_some_and(|v|!v.allowed_units.contains(&p.unit.as_str())) {return Err(ApiError::bad_request("所选计价单位不适用于该模型类型。"));}
+    }
     let p=billing::UnitPrice{id:0,channel_id:p.channel_id,model:p.model,currency:p.currency,unit:p.unit,micro_per_unit:p.micro_per_unit,max_quantity_milli:p.max_quantity_milli};
     let result=billing::create_unit_price(&state.conn(),&p,&auth.actor_label()).map_err(mutation_error)?;
     Ok(Json(json!({"unit_price":result})))
