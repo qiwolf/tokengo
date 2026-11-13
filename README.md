@@ -8,6 +8,8 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 TokenGo is a self-hosted large language model (LLM) gateway for individuals and small teams. Bring API providers, supported subscription accounts and local models into one console. Expose Chat, Responses, Messages and other endpoints according to source capabilities, with shared model, key, access, routing and accounting management.
 
+指定生产专项：2026-11-13用量看板与人民币计价已在237上线（schema47，未公开发版），见[部署收据](docs/maintenance/billing-deploy237-20261113/README.md)。
+
 [中文使用指南](docs/guide.zh-CN.md) · [English guide](docs/guide.en.md) · [English first](README.en.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
 当前正式版：**[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（已正式发行，公开资产独立验收通过）。

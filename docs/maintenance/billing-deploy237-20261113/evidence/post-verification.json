@@ -1,0 +1,22 @@
+{
+  "verified": true,
+  "current": "/opt/tokengo/releases/billing-cny-0bc90faa0a7f-31a51312",
+  "running_server_sha256": "31a513122caed66e00ed6119fd8482f6797d1836e50d817b1496e907bf464dbd",
+  "schema": 47,
+  "price_counts": {
+    "billing_prices": 5,
+    "billing_request_prices": 12,
+    "billing_unit_prices": 0
+  },
+  "ledger_currency_counts": {
+    "CNY": 116,
+    "USD": 720661
+  },
+  "test_key_markers": 4,
+  "health": {
+    "http://127.0.0.1:3160/readyz": 200,
+    "http://127.0.0.1/readyz": 200,
+    "https://api.qlf.net.cn/readyz": 200
+  },
+  "snapshot_timer": "active"
+}

@@ -1,0 +1,39 @@
+{
+  "authority": "observed via CUA Chrome existing root session at live HTTPS after reload",
+  "url": "https://api.qlf.net.cn/ui/#billing",
+  "new_login_attempt": "isolated build-test existing stored password returned401; did not retry/reset; used existing Chrome session",
+  "checks": {
+    "default_today_cny": true,
+    "cny_natural_calls_observed": 35,
+    "cny_tokens_observed": 6658,
+    "cny_calls_unpriced": 35,
+    "usd_week_unique_requests": 185856,
+    "usd_week_attempts": 224073,
+    "usd_week_total_tokens_display": "14.66亿",
+    "model_trend_distribution_ranking": true,
+    "owner31_filtered_key_options": 13,
+    "changing_owner45_cleared_key": true,
+    "owner45_key_options": 1,
+    "price_model_first": true,
+    "bge_model_source_options": 3,
+    "upstream_model_and_api_url_visible": true,
+    "unit_options": [
+      "second",
+      "minute",
+      "hour",
+      "character",
+      "byte",
+      "image",
+      "video"
+    ],
+    "no_form_submissions": true,
+    "horizontal_overflow": false
+  },
+  "screenshot": "Captured and visually inspected through CUA in chat tool transcript; not exported to disk",
+  "limitations": [
+    "ordinary-user live login not exercised",
+    "no production ASR call",
+    "no pricing/budget/configuration writes",
+    "no new test identity or model calls"
+  ]
+}

@@ -1,0 +1,66 @@
+[
+  {
+    "file": "crates/server/src/gateway.rs",
+    "current_sha256": "3822931a56deb4317d6e38c9620fb969ad789d96b8f072b9e280e76c6be9e809",
+    "baseline_adjusted_sha256": "04dadff1e3aa22f87af9081eac6e9a53b0060c0db668040fe4f3d003a29b9a1d",
+    "expected_preexisting_sha256": "04dadff1e3aa22f87af9081eac6e9a53b0060c0db668040fe4f3d003a29b9a1d",
+    "matches": true,
+    "provenance": "capacity baseline after removing committed CNY additions"
+  },
+  {
+    "file": "crates/server/src/protocol_config.rs",
+    "current_sha256": "24f1b64ad288a1786f3f0f90923b48a4652df0fd544ec5c01e50bb6be3f5eccb",
+    "baseline_adjusted_sha256": "24f1b64ad288a1786f3f0f90923b48a4652df0fd544ec5c01e50bb6be3f5eccb",
+    "expected_preexisting_sha256": "24f1b64ad288a1786f3f0f90923b48a4652df0fd544ec5c01e50bb6be3f5eccb",
+    "matches": true,
+    "provenance": "capacity baseline after removing committed CNY additions"
+  },
+  {
+    "file": "crates/server/src/routes/admin.rs",
+    "current_sha256": "d5588fe89074cbb7fdd869ac09741014cded050c48bf0fda53fe444c5745c90c",
+    "baseline_adjusted_sha256": "19ac4df9d34ddfafb9edaf7eeec80a1be148edf583e7519367f9b424bbaf8df5",
+    "expected_preexisting_sha256": "19ac4df9d34ddfafb9edaf7eeec80a1be148edf583e7519367f9b424bbaf8df5",
+    "matches": true,
+    "provenance": "capacity baseline after removing committed CNY additions"
+  },
+  {
+    "file": "crates/server/tests/channel_protocol_patch.rs",
+    "current_sha256": "8045af51bfa91d0f4498ee60a4843921303a4f210bf9b30cc4ed8143cbb9e032",
+    "baseline_adjusted_sha256": "8045af51bfa91d0f4498ee60a4843921303a4f210bf9b30cc4ed8143cbb9e032",
+    "expected_preexisting_sha256": "8045af51bfa91d0f4498ee60a4843921303a4f210bf9b30cc4ed8143cbb9e032",
+    "matches": true,
+    "provenance": "capacity baseline after removing committed CNY additions"
+  },
+  {
+    "file": "crates/server/tests/protocol_safety.rs",
+    "current_sha256": "24088c0234a71501175f2be4fed1916718be0d06519486d56862a0f299947268",
+    "baseline_adjusted_sha256": "8c1d28cdb4e00bed3f05d4946aca34fffe735c1e50e9f6aac0c0f08b15369df0",
+    "expected_preexisting_sha256": "8c1d28cdb4e00bed3f05d4946aca34fffe735c1e50e9f6aac0c0f08b15369df0",
+    "matches": true,
+    "provenance": "capacity baseline after removing committed CNY additions"
+  },
+  {
+    "file": "crates/server/tests/provider_pool.rs",
+    "current_sha256": "8c9bab07b3ab2fca9b096a656af22a51ff6ee4a77ff4730f82c0a3b5162d4014",
+    "baseline_adjusted_sha256": "eba223dccb65a8977d7c6c244aa8b7751169bef6699206e8830e0aae0bf40e5c",
+    "expected_preexisting_sha256": "eba223dccb65a8977d7c6c244aa8b7751169bef6699206e8830e0aae0bf40e5c",
+    "matches": true,
+    "provenance": "capacity baseline after removing all mechanical CNY Price constructor additions, including preexisting unstaged test block"
+  },
+  {
+    "file": "crates/web/src/pages/connection_parameters.rs",
+    "current_sha256": "0f7c854e8e6890ee18260499604c4c9ee55174a37e96bf3ff4fc2880fd10e8a1",
+    "baseline_adjusted_sha256": "0f7c854e8e6890ee18260499604c4c9ee55174a37e96bf3ff4fc2880fd10e8a1",
+    "expected_preexisting_sha256": "0f7c854e8e6890ee18260499604c4c9ee55174a37e96bf3ff4fc2880fd10e8a1",
+    "matches": true,
+    "provenance": "deployed web entry fix"
+  },
+  {
+    "file": "crates/web/src/pages/provider_keys.rs",
+    "current_sha256": "4f304544adcd37729498c207149db18ccf775676ad1594e48b6fbcf8d10589a2",
+    "baseline_adjusted_sha256": "4f304544adcd37729498c207149db18ccf775676ad1594e48b6fbcf8d10589a2",
+    "expected_preexisting_sha256": "4f304544adcd37729498c207149db18ccf775676ad1594e48b6fbcf8d10589a2",
+    "matches": true,
+    "provenance": "deployed web entry fix"
+  }
+]

@@ -1,0 +1,100 @@
+{
+  "authority": "Mac local files and retained build-test evidence; no builds/tests rerun",
+  "current_head": "0bc90faa0a7fd677526bed89b818606da0ac80e9",
+  "source_manifest_sha256": "2b18f139b3838078ae2be979c82982748b7ced804e3fcd719cfc12696d690159",
+  "source_manifest_recorded_base": "92033c938c1bbcea87d83925e8eecc3a1ea8dbb3",
+  "current_source_files_checked": 330,
+  "mismatches": [],
+  "worktree_patch_sha256": "1ad4815dd1ecbbd5f45d66e0edd5583c993ecc462d7576dc58a09ff475461ee7",
+  "preexisting_provenance_8_of_8_match": true,
+  "dirty_provenance": "dirty-provenance.json",
+  "artifacts": {
+    "server-verification-snapshot.tar.gz": {
+      "path": "/Users/andy/Documents/ChatGPT/LLM \u4e2d\u8f6c\u7ad9\u5f00\u53d1/review/cny-unit-billing-20261113/artifacts/server-verification-snapshot.tar.gz",
+      "sha256": "aec1296c2f9c9abd3d3ad4bf1bde51c977e454e830a45b14ebc2bfb8495d51f7",
+      "bytes": 6312296,
+      "files": {
+        "tokengo-server": "31a513122caed66e00ed6119fd8482f6797d1836e50d817b1496e907bf464dbd"
+      },
+      "file_mtimes": {
+        "tokengo-server": "2026-11-13T18:46:40"
+      }
+    },
+    "web-dist.tar.gz": {
+      "path": "/Users/andy/Documents/ChatGPT/LLM \u4e2d\u8f6c\u7ad9\u5f00\u53d1/review/cny-unit-billing-20261113/artifacts/web-dist.tar.gz",
+      "sha256": "2a3e7201d68276ee06482bd5d3955e70f8941ab591ae244fe76f5b51dd3ed66b",
+      "bytes": 1557101,
+      "files": {
+        "usage-dashboard-ece166ffbc8fb703.css": "4af7b6e682fd5327505182b5a1fa1fb3f31c112b4070a778e5378835c99cd2a7",
+        "style-dad5de70207e46b9.css": "66a9e68f7b07e256a38ac0fea18dd603ba449dbbd2fb4d107515cb2ded75753e",
+        "console-design-8f60f8b8f6cbf2e7.css": "55369df063a46deac3180bc0d1723f58889a549602a59ea191d5dc1c6a90b974",
+        "account-workspace-4df435622eca3d70.css": "58dcb5237803521838d9b3c0d7566a002955f217942ede4bd272f229e303f9c4",
+        "index.html": "c126d16ed2836d191517b714e90d01b0af60bf3ed406ec920134b19d058edd10",
+        "tokengo-web-9b7f149b31b37b1e.js": "438a9b93ea85bd825ef3cab702a06f48c83ad6e8837f4c35e83a8c9114f81749",
+        "tokengo-web-9b7f149b31b37b1e_bg.wasm": "e762461126bb39c895c373e6db6d286f412291dec1b3db051a501cca8b56223e",
+        "provider-workspace-ea99438577ec8a95.css": "687e1bed56fc2bde2beb6c6b67bdd7e689889411903c8ca700803848ee066160",
+        "family-logos/manifest.json": "22234643a761b3beb924b00726f971eafccc94121a72f279b341d14a8e125f92",
+        "family-logos/README.md": "6cb45bae84102e517b65e4542401a7ede2ee04c2cde0d247ccaf034d135ae709",
+        "family-logos/claude.svg": "a3101f3047a119aa11825ad9369510f0c472428c8c52d420e31bc62db44a8364",
+        "family-logos/qwen.svg": "a158a0e3ed5b541e4f91384ece02c3acf0a0d81b7b11a46d77bafb248b09e32c",
+        "family-logos/grok.svg": "9175fc90c22655160231976c849f25a03b888d7cc0e04c5f1b987b659bb07c95",
+        "family-logos/glm.svg": "e748cb5108ce37b116d7a5ba97d37e0ae97eadf6849b0de11afb248e244a01e1",
+        "family-logos/LICENSE.lobe-icons": "add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a",
+        "family-logos/deepseek.svg": "deba5f98a5c1796e20fcac3149bcd7eb8a32f0bdd04d048819400b1f28bd1439",
+        "family-logos/LICENSE.OpenDesign": "9d95806a26532623360eb84bb17d298f394b55ef73fb4c0796d99b4319b2b0da",
+        "family-logos/opencode.svg": "7cfa6e9d6726f7c9fa26c7d9aef0dfec52d20a137380454340f30f12ccbfd302",
+        "family-logos/opendesign.svg": "922d2643ed66e24c9587766a4371232a304fdc48402f3ddc0c29f4c3f1631a30",
+        "family-logos/doubao.svg": "3cd31ba03ae44b8c29561597a3b863809efecb13fcdfd08407a086df86a69b55",
+        "family-logos/mistral.svg": "722f74b289d95486b43662fe24fa883b333701296f618406cd0ed502299170b6",
+        "family-logos/cohere.svg": "84d0ee3cbe66f030e5a18cb2c86da9166ab2137c7a98781693bb1fbf31e392b9",
+        "family-logos/commandcode.svg": "0b3090f6e9194f32520e5b98ea43c5bc1a0f04644c94d1bade69fab7413e1531",
+        "family-logos/gpt.svg": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186",
+        "family-logos/kimi.svg": "0bdb95375d7c6e90a1850e91cd36770da2bc98fa33ec2d783f4a8fed027da85f",
+        "family-logos/mimo.svg": "b04ad7dad52af2212c4567daf0ee6856f2c4625c92c680a27f9880295d558b71",
+        "family-logos/gemini.svg": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602",
+        "family-logos/minimax.svg": "7f7187fa6d9b341ac5f22f6c5a970523afb439dc45566d64eb4f4b9b604d6b01",
+        "family-logos/llama.svg": "adf9f2c1a646ccd3a37ca8c2e7e5985d64630cd633f4b95fba393d1d44e0578c"
+      },
+      "file_mtimes": {
+        "./usage-dashboard-ece166ffbc8fb703.css": "2026-11-13T18:22:48",
+        "./style-dad5de70207e46b9.css": "2026-11-13T18:22:48",
+        "./console-design-8f60f8b8f6cbf2e7.css": "2026-11-13T18:22:48",
+        "./account-workspace-4df435622eca3d70.css": "2026-11-13T18:22:48",
+        "./index.html": "2026-11-13T18:25:09",
+        "./tokengo-web-9b7f149b31b37b1e.js": "2026-11-13T18:24:58",
+        "./tokengo-web-9b7f149b31b37b1e_bg.wasm": "2026-11-13T18:25:09",
+        "./provider-workspace-ea99438577ec8a95.css": "2026-11-13T18:22:48",
+        "./family-logos/manifest.json": "2026-11-13T18:22:48",
+        "./family-logos/README.md": "2026-11-13T18:22:48",
+        "./family-logos/claude.svg": "2026-11-13T18:22:48",
+        "./family-logos/qwen.svg": "2026-11-13T18:22:48",
+        "./family-logos/grok.svg": "2026-11-13T18:22:48",
+        "./family-logos/glm.svg": "2026-11-13T18:22:48",
+        "./family-logos/LICENSE.lobe-icons": "2026-11-13T18:22:48",
+        "./family-logos/deepseek.svg": "2026-11-13T18:22:48",
+        "./family-logos/LICENSE.OpenDesign": "2026-11-13T18:22:48",
+        "./family-logos/opencode.svg": "2026-11-13T18:22:48",
+        "./family-logos/opendesign.svg": "2026-11-13T18:22:48",
+        "./family-logos/doubao.svg": "2026-11-13T18:22:48",
+        "./family-logos/mistral.svg": "2026-11-13T18:22:48",
+        "./family-logos/cohere.svg": "2026-11-13T18:22:48",
+        "./family-logos/commandcode.svg": "2026-11-13T18:22:48",
+        "./family-logos/gpt.svg": "2026-11-13T18:22:48",
+        "./family-logos/kimi.svg": "2026-11-13T18:22:48",
+        "./family-logos/mimo.svg": "2026-11-13T18:22:48",
+        "./family-logos/gemini.svg": "2026-11-13T18:22:48",
+        "./family-logos/minimax.svg": "2026-11-13T18:22:48",
+        "./family-logos/llama.svg": "2026-11-13T18:22:48"
+      }
+    }
+  },
+  "features_from_exact_tested_source": [
+    "ledger day/week/month/custom period and full-window totals",
+    "compact admin/user usage dashboard and model call analysis",
+    "CNY default with immutable historical USD separation",
+    "model-first source confirmation/current enabled source filter",
+    "unit pricing and native ASR media-duration billing"
+  ],
+  "reuse_recommendation": "Reuse exact verified server and web artifacts; preserve and explicitly identify the existing capacity/CAS, routing isolation and saved-source entry fixes carried by the 8 dirty files. Do not deploy a HEAD-only rebuild that drops these existing production patches.",
+  "validation_boundary": "1450 backend/integration passes, 198 web native tests, 8 browser scenarios retained. Three old capacity/source-generation assertions conflict with preexisting deployed capacity identity logic; recorded separately, no unconditional full-suite pass. No new production upstream acceptance implied."
+}

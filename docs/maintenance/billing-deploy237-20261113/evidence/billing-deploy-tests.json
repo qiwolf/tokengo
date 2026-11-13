@@ -1,0 +1,29 @@
+{
+  "host": "build-test",
+  "cwd": "/srv/build/tokengo-billing-deploy237-20261113-tests",
+  "command": [
+    "python3",
+    "-B",
+    "test_billing_deploy.py"
+  ],
+  "exit_code": 0,
+  "passed": 5,
+  "cases": [
+    "success migration45->47 and retained config/CLI/patch provenance",
+    "migration failure cold restore45 while snapshot writers paused",
+    "post-stop quiet failure restarts old service without snapshot",
+    "ingress-open attempt preserves new schema47 and resumed business write",
+    "initial inactive timer remains inactive"
+  ],
+  "source_sha256": {
+    "deploy.py": "005a56cbf5c8cf6243e95910b6e9c68a6fc8bfa5e1508673e023d3101a1df548",
+    "common.py": "cd9220079c4e4ede301567fa74510ff3093a8b7c85f8969fa38c55a950b9b636",
+    "test_billing_deploy.py": "4cd30608a17b6c8f499777143f8ab6b516b35fcae15a22dedc5e88138d8847eb"
+  },
+  "boundary": "Unchanged deploy.py except filesystem gate root redirected; common.py lifecycle/network/systemd/storage boundaries replaced with isolated synthetic mocks; no production touched; migration command simulated with synthetic SQLite money rows; actual Rust SQL migration covered separately.",
+  "review_findings_fixed": [
+    "Snapshot restore now pauses timer and waits writer before replacing stopped state",
+    "StopProgress.issued used to recover after systemctl stop but failed post-stop check"
+  ],
+  "remaining_blockers": []
+}

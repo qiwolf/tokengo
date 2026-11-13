@@ -1,0 +1,15 @@
+test_inactive_timer_stays_inactive (__main__.DeployFlow.test_inactive_timer_stays_inactive) ... ok
+test_migration_failure_stopped_restore_with_writer_paused (__main__.DeployFlow.test_migration_failure_stopped_restore_with_writer_paused) ... ok
+test_opening_failure_preserves_new_business_write (__main__.DeployFlow.test_opening_failure_preserves_new_business_write) ... ok
+test_partial_stop_restarts_old_without_snapshot (__main__.DeployFlow.test_partial_stop_restarts_old_without_snapshot) ... ok
+test_success (__main__.DeployFlow.test_success) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.434s
+
+OK
+{"case": "inactive_timer", "exit_code": 0, "schema": 47, "ledger_count": 1, "writer_restored": true, "passed": true}
+{"case": "migration_failure", "exit_code": 1, "schema": 45, "ledger_count": 1, "writer_restored": true, "passed": true}
+{"case": "open_then_fail", "exit_code": 1, "schema": 47, "ledger_count": 2, "writer_restored": true, "passed": true}
+{"case": "stop_partial", "exit_code": 1, "schema": 45, "ledger_count": 1, "writer_restored": true, "passed": true}
+{"case": "success", "exit_code": 0, "schema": 47, "ledger_count": 1, "writer_restored": true, "passed": true}
