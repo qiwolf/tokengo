@@ -1,5 +1,7 @@
 # TokenGo
 
+2026-11-14计费预占与来源容量fallback补丁：[实现与验收状态](docs/maintenance/billing-reservation-fallback-20261114/README.md)。
+
 **轻量部署，简单接入，统一管理大模型。**
 
 **A lightweight gateway. A simpler way to connect and manage your models.**

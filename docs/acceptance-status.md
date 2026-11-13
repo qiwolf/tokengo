@@ -1,5 +1,9 @@
 # 功能与验收状态
 
+## 2026-11-14 修正：计费预占与来源切换
+
+build-test必要回归729通过/4既有忽略，部署流程4通过；真实模型与部署收据按实际完成状态后补。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。
+
 ## 2026-11-13 后续修正：模型价格表单
 
 自动读取模型参数，按模型用途切换 Token、时长、数量及按次字段；ASR 显式音频用途优先于保留的 Chat 执行类型。build-test 定向接口与真实 WASM 桌面／手机交互验证通过。生产部署、公开资源校验与浏览器连接边界见收据。见[验收收据](maintenance/model-pricing-auto-20261113/README.md)。

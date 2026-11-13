@@ -1,5 +1,9 @@
 # 更新日志 / Changelog
 
+## 2026-11-14 修正：长输入预占与来源容量 fallback
+
+长JSON不再按字节上界直接判定模型token超窗；本地容量不足继续适配后续来源，真实上游400与会话pin规则保留。见[收据](docs/maintenance/billing-reservation-fallback-20261114/README.md)。
+
 ## 2026-11-13 后续修正：按模型类型配置价格
 
 模型价格统一入口按用途选择计价方式；已有模型参数自动读取，仅缺项补填。显式展示用途优先于执行类型，解决 ASR 仍按 Token 配置的问题。未修改模型路由、定价数据或历史账目，schema47 保持。见[验收收据](docs/maintenance/model-pricing-auto-20261113/README.md)。

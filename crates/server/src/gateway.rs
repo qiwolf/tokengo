@@ -613,6 +613,19 @@ fn output_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
 fn admission_bound(body:&Value,endpoint:EndpointKind)->Result<(i64,i64),ApiError> {
     Ok((admission_input_bound(body,endpoint)?,output_bound(body,endpoint)?))
 }
+/// JSON bytes are a conservative reservation ceiling, not measured model tokens.
+/// Generation reservations trust the source context contract already used for opaque input.
+/// Reserve the smaller of those two upper bounds without truncating the payload.
+/// Never use a price cap here: it does not constrain what an upstream can bill.
+/// Vector/rerank requests can batch multiple contexts, so retain their byte bound.
+fn generation_input_reservation(input:i64,endpoint:EndpointKind,context:Option<(i64,i64)>)->i64 {
+    if endpoint.is_generation() {
+        context.map(|v|v.0).filter(|limit|*limit>0).map_or(input,|limit|input.min(limit))
+    } else {input}
+}
+fn token_bound_error(kind:&'static str,scope:&str,input:i64,output:i64,max_input:i64,max_output:i64)->ApiError {
+    ApiError::new(StatusCode::BAD_REQUEST,kind,format!("Request exceeds configured {scope} token bounds: input reservation {input}, input limit {max_input}; output reservation {output}, output limit {max_output}"))
+}
 fn admission_input_bound(body:&Value,endpoint:EndpointKind)->Result<i64,ApiError> {
     if endpoint.tool_kind().is_some() {return Ok(0);}
     let bytes = serde_json::to_vec(body).map_err(|e|ApiError::bad_request(e.to_string()))?.len();
@@ -734,7 +747,7 @@ fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Optio
     Ok(bounds)
 }
 fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
-    let mut input=admission_input_bound(body,endpoint)?;
+    let mut input=generation_input_reservation(admission_input_bound(body,endpoint)?,endpoint,context);
     let mut output=if let Some(contract)=contract {
         crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
     } else {output_bound(body,endpoint)?};
@@ -765,14 +778,14 @@ fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price
         }
         if endpoint.has_image(body) {input=context.map(|v|v.0).unwrap_or(p.max_input_tokens);}
         if input>p.max_input_tokens || output>p.max_output_tokens {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST,"billing_token_limit","Request exceeds configured billing token bounds"));
+            return Err(token_bound_error("billing_token_limit","billing",input,output,p.max_input_tokens,p.max_output_tokens));
         }
     }
     if let Some(contract)=contract {
         output=crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
     }
     if let Some((max_input,max_output))=context {
-        if input>max_input || output>max_output {return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","Request exceeds configured source token bounds"));}
+        if input>max_input || output>max_output {return Err(token_bound_error("source_token_limit","source",input,output,max_input,max_output));}
     }
     Ok((input,output))
 }
@@ -781,15 +794,18 @@ fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price
 /// omitted. Unknown monetary prices remain unknown.
 fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (max_input,max_output)=context.filter(|(i,o)|*i>0&&*o>0).ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"source_limits_required","ChatGPT plan requests require verified full provider context and output bounds"))?;
-    let (mut input,_)=admission_bound(body,EndpointKind::Responses)?;
+    let mut input=generation_input_reservation(admission_input_bound(body,EndpointKind::Responses)?,EndpointKind::Responses,context);
     let output=if crate::parameter_budgets::cap_value(body,"max_output_tokens").is_some() {
         let cap=output_bound(body,EndpointKind::Responses)?;
         if cap<16 {return Err(ApiError::bad_request("ChatGPT plan max_output_tokens must be at least 16"));}
         cap
     } else {max_output};
     if crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses,body) || crate::protocol::has_image(crate::protocol::Protocol::Responses,body) {input=max_input;}
-    if input>max_input || output>max_output || price.is_some_and(|p|input>p.max_input_tokens||output>p.max_output_tokens) {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST,"source_token_limit","ChatGPT plan request exceeds configured source or billing token bounds"));
+    if input>max_input || output>max_output {
+        return Err(token_bound_error("source_token_limit","source",input,output,max_input,max_output));
+    }
+    if let Some(p)=price.filter(|p|input>p.max_input_tokens||output>p.max_output_tokens) {
+        return Err(token_bound_error("billing_token_limit","billing",input,output,p.max_input_tokens,p.max_output_tokens));
     }
     Ok((input,output))
 }
@@ -1355,6 +1371,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             1
         };
         let mut planned_output = None;
+        let mut planned_input: Option<i64> = None;
         let mut output_contract_error = None;
         for candidate in &plan.entries {
             let c = state.conn();
@@ -1366,6 +1383,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             ).map_err(crate::db::DbError::from)?;
             let managed_openai=crate::oauth_external::channel_managed_openai(&c,candidate.channel.id.0)
                 .map_err(|_|ApiError::internal("OAuth source identity unavailable"))?;
+            let candidate_context=if has_oauth {oauth_bound} else {candidate.protocols.context_bounds()};
+            let candidate_input=generation_input_reservation(input,req.endpoint,candidate_context);
+            planned_input=Some(planned_input.unwrap_or(0).max(candidate_input));
             let candidate_output = if let Some(protocol) = req.endpoint.protocol() {
                 let native = match candidate.protocols.select(protocol) {Some(native)=>native,None=>continue};
                 let contract = parameter_context(&candidate.channel,
@@ -1419,6 +1439,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             } else { 0 };
             planned_output = Some(planned_output.unwrap_or(0).max(candidate_output));
         }
+        if let Some(planned) = planned_input { input = planned; }
         if let Some(planned) = planned_output { output = planned; }
         else if let Some(note) = output_contract_error {
             let error = ApiError::bad_request(note); guard.reject(&error); return Err(error);
@@ -1633,6 +1654,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     // 满了**不硬压上去**（现网 503「bridge busy」151 次就是这么来的）：先换别的渠道；
     // 所有渠道都满，才在门口排队等一个名额，等到再重跑一遍。排队有预算上限，不会挂死。
     let mut last_policy_error: Option<ApiError> = None;
+    let mut local_capacity_rejected = std::collections::HashSet::new();
     let mut pre_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     let mut pre_credential_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     let mut pool_control = PoolControl::default();
@@ -1649,6 +1671,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         let mut local_busy = false;
 
         'channels: for entry_idx in order.iter().copied() {
+            if local_capacity_rejected.contains(&entry_idx) {continue;}
             let Some(Candidate {
                 name,
                 channel,
@@ -2299,8 +2322,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 )?;
                                 if live_affinity.as_ref().is_some_and(|token| {
                                     token.credential_id != credential.id
-                                        && plan.entries.iter().any(|candidate| {
-                                            candidate.credential.as_ref().is_some_and(|other| {
+                                        && plan.entries.iter().enumerate().any(|(index,candidate)| {
+                                            !local_capacity_rejected.contains(&index) && candidate.credential.as_ref().is_some_and(|other| {
                                                 other.id == token.credential_id
                                                     && pool_group(
                                                         candidate.target.as_ref(),
@@ -2320,16 +2343,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                     return Err(error);
                                 }
                             }
-                            if !pool_control.tokens.contains_key(&credential.provider_id) {
-                                let token =
-                                    crate::db::provider_pool::ensure_affinity_for_selection(
-                                        &c,
-                                        current.user_id,
-                                        credential.provider_id,
-                                        credential.id,
-                                    )?;
-                                pool_control.tokens.insert(credential.provider_id, token);
-                            }
+
                         }
                     }
                     let price = crate::db::billing::price(&c, name, channel.id.0)?;
@@ -2392,7 +2406,19 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     };
                     let (input, output) = match bounds {
                         Ok(bounds)=>bounds,
-                        Err(error) if error.kind=="source_parameter_budget"=>{last_policy_error=Some(error);continue 'channels;}
+                        Err(error) if matches!(error.kind,"source_parameter_budget"|"billing_token_limit"|"source_token_limit")=>{
+                            if existing_pin.is_some() {guard.reject(&error);return Err(error);}
+                            // No request was sent: capacity mismatch is source-local,
+                            // independent of the route's *upstream* HTTP 400 switches.
+                            local_capacity_rejected.insert(entry_idx);
+                            if let Some(credential)=credential {
+                                pool_control.selected.remove(&pool_group(target.as_ref(),credential,name));
+                            }
+                            active_target=order.iter().copied().skip_while(|index|*index!=entry_idx).skip(1)
+                                .filter(|index|!local_capacity_rejected.contains(index))
+                                .find_map(|index|plan.entries[index].target.as_ref().map(|target|target.position));
+                            last_policy_error=Some(error);continue 'channels;
+                        }
                         Err(error)=>{guard.reject(&error);return Err(error);}
                     };
                     if admitted_output.is_some_and(|reserved| output > reserved) {
@@ -2418,6 +2444,20 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     if let Some(estimate)=reservation_estimate.as_ref().filter(|value|value.origin!="contract") {
                         let note=format!("Output reservation uses {} tokens; origin={}; confidence={}; supplier hard cap not verified",estimate.output_tokens,estimate.origin,estimate.confidence);
                         adaptation_note=Some(adaptation_note.take().map(|previous|format!("{previous}; {note}")).unwrap_or(note));
+                    }
+                    if pooled && !balanced_node {
+                        if let Some(credential)=credential {
+                            if !pool_control.tokens.contains_key(&credential.provider_id) {
+                                let token =
+                                    crate::db::provider_pool::ensure_affinity_for_selection(
+                                        &c,
+                                        current.user_id,
+                                        credential.provider_id,
+                                        credential.id,
+                                    )?;
+                                pool_control.tokens.insert(credential.provider_id, token);
+                            }
+                        }
                     }
                     let attempt_id = format!("{}:{}", request_id, ordinal);
                     let reservation = if req.endpoint.tool_kind().is_some() {
@@ -2511,7 +2551,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 }
                 // A later real source attempt supersedes an earlier representational mismatch.
                 if last_policy_error.as_ref().is_some_and(|error| {
-                    matches!(error.kind, "protocol_not_supported" | "oauth_unavailable")
+                    matches!(error.kind, "protocol_not_supported" | "oauth_unavailable" | "source_parameter_budget" | "billing_token_limit" | "source_token_limit")
                 }) {
                     last_policy_error = None;
                 }
@@ -5102,8 +5142,9 @@ mod tests {
         let c=crate::parameter_contracts::Context {base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",model:"qwen3.7-plus",protocol:crate::protocol::Protocol::Responses,api_version:None,is_oauth:false,profile_override:Some("dashscope")};
         let mut body=json!({"input":"test"});
         let original=body.clone();
-        // Input admission fails only after an omitted cap would be materialized.
-        assert!(billing_bound_with_contract(&mut body,EndpointKind::Responses,None,Some((1,1024)),Some(&c)).is_err());
+        // A source output ceiling below the protocol minimum fails only after
+        // an omitted cap would be materialized; input bytes are not token counts.
+        assert!(billing_bound_with_contract(&mut body,EndpointKind::Responses,None,Some((4096,1)),Some(&c)).is_err());
         assert_eq!(body,original);
         let mut body=json!({"input":"test","max_output_tokens":32});
         let (_,output)=billing_bound_with_contract(&mut body,EndpointKind::Responses,None,Some((4096,1024)),Some(&c)).unwrap();
@@ -5338,3 +5379,42 @@ mod tests {
             drop(guard);server.abort();std::fs::remove_dir_all(dir).ok();
         }
     }
+
+#[cfg(test)]
+mod billing_input_reservation_tests {
+    use super::*;
+    fn price(input:i64,output:i64)->crate::db::billing::Price {
+        crate::db::billing::Price {currency:"CNY".into(),id:1,channel_id:1,model:"synthetic".into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:input,max_output_tokens:output}
+    }
+    #[test]
+    fn billing_generation_reserves_source_ceiling_without_treating_json_bytes_as_tokens() {
+        for endpoint in [EndpointKind::Chat,EndpointKind::Responses,EndpointKind::Messages] {
+            let mut body=if endpoint==EndpointKind::Responses {serde_json::json!({"input":"中文 test ".repeat(300),"max_output_tokens":64})} else {serde_json::json!({"messages":[{"role":"user","content":"中文 test ".repeat(300)}],"max_tokens":64})};
+            let original=body.clone();
+            assert!(admission_input_bound(&body,endpoint).unwrap()>1000);
+            assert_eq!(billing_bound_with_context(&mut body,endpoint,Some(&price(1000,128)),Some((1000,128))).unwrap(),(1000,64));
+            assert_eq!(body,original,"preflight must not truncate, rewrite, or clamp client content");
+        }
+    }
+    #[test]
+    fn billing_generation_keeps_small_input_byte_reservations_and_requires_funded_bounds() {
+        let mut body=serde_json::json!({"messages":[{"role":"user","content":"hello"}],"max_tokens":64});
+        let bound=admission_input_bound(&body,EndpointKind::Chat).unwrap();
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(1000,128)),Some((1000,128))).unwrap().0,bound);
+        body["messages"][0]["content"]=Value::String("x".repeat(2000));
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(500,128)),Some((1000,128))).unwrap_err().kind,"billing_token_limit");
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(1000,128)),None).unwrap_err().kind,"billing_token_limit");
+    }
+    #[test]
+    fn billing_subscription_reserves_full_source_ceiling_for_large_text() {
+        let body=serde_json::json!({"input":"abcdefghij ".repeat(300),"max_output_tokens":64});
+        assert_eq!(subscription_bound(&body,Some(&price(1000,128)),Some((1000,128))).unwrap(),(1000,64));
+    }
+    #[test]
+    fn billing_generation_bounds_do_not_clip_embedding_or_rerank_batches() {
+        for endpoint in [EndpointKind::Embeddings,EndpointKind::Rerank] {
+            let mut body=serde_json::json!({"input":"x".repeat(2000),"query":"q","documents":["d"]});
+            assert_eq!(billing_bound_with_context(&mut body,endpoint,Some(&price(1000,0)),Some((1000,0))).unwrap_err().kind,"billing_token_limit");
+        }
+    }
+}
