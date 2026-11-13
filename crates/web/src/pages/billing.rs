@@ -101,6 +101,7 @@ fn named(row:&Value, field:&str, fallback:&str)->String {
 }
 fn state_label(row:&Value)->String {named(row,"status_label","历史对象")}
 fn price_is_current(row:&Value,rows:&[Value])->bool {
+    if let Some(latest)=row["is_latest"].as_bool(){return latest;}
     !rows.iter().any(|other|other["channel_id"]==row["channel_id"]&&other["model"]==row["model"]&&price_row_kind(other)==price_row_kind(row)&&row_currency(other)==row_currency(row)&&other["id"].as_i64()>row["id"].as_i64())
 }
 fn price_source_name(row:&Value,objects:&Value)->String {
@@ -109,7 +110,7 @@ fn price_source_name(row:&Value,objects:&Value)->String {
 fn service_price(row:&Value)->bool {row["model"].as_str().is_some_and(|name|name.starts_with("passthrough:"))}
 fn price_model_name(row:&Value)->String {if service_price(row){"服务调用".into()}else{api::text(row,"model")}}
 fn price_effective(row:&Value,rows:&[Value],objects:&Value)->bool {
-    row_currency(row)=="CNY"&&price_is_current(row,rows)&&api::rows(objects,"channels").iter().any(|o|o["id"]==row["channel_id"]&&o["state"]=="active")
+    row_currency(row)=="CNY"&&row["enabled"]!=false&&row["deleted"]!=true&&price_is_current(row,rows)&&api::rows(objects,"channels").iter().any(|o|o["id"]==row["channel_id"]&&o["state"]=="active")
 }
 fn ledger_identity(row: &Value) -> (String, String, String) {
     let source=named(row,"channel_name","历史上游接入");
@@ -247,16 +248,28 @@ fn compatible_price_kind(row:&Value,options:&[PriceOption])->bool {
     if service_price(row){return true;}
     options.iter().find(|o|row["channel_id"].as_i64()==Some(o.source_id)&&row["model"].as_str()==Some(o.model.as_str())).is_none_or(|o|{let configured=o.metadata["pricing_kind"].as_str().unwrap_or("unknown");compatible_price_unit(row,o)&&(configured=="unknown"||price_row_kind(row)==configured||api::rows(&o.metadata,"allowed_pricing_kinds").iter().any(|k|k.as_str()==Some(price_row_kind(row))))})
 }
+fn model_price_endpoint(kind:&str)->&'static str {match kind{"unit"=>"/api/unit-pricing","request"=>"/api/request-pricing",_=>"/api/pricing"}}
+async fn load_model_prices()->Result<Vec<Value>,crate::api::ApiErr> {
+    let mut all=Vec::new();
+    for (path,array) in [("/api/pricing?include_deleted=true","prices"),("/api/unit-pricing?include_deleted=true","unit_prices"),("/api/request-pricing?include_deleted=true","request_prices")] {
+        let response=api::request("GET",path,None).await?;all.extend(api::rows(&response,array));
+    }
+    Ok(all)
+}
+fn price_visible(row:&Value,scope:&str,rows:&[Value])->bool {
+    match scope {"all"=>true,"deleted"=>row["deleted"]==true,"history"=>row["deleted"]!=true&&(!price_is_current(row,rows)||row_currency(row)!="CNY"),_=>row["deleted"]!=true&&price_is_current(row,rows)&&row_currency(row)=="CNY"}
+}
 #[component]
 fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
     let sources=price_sources(ctx);let versions=RwSignal::new("current".to_string());let rows=RwSignal::new(Vec::<Value>::new());
     let busy=RwSignal::new(false);let error=RwSignal::new(String::new());let message=RwSignal::new(String::new());
+    let edit_target=RwSignal::new(None::<(&'static str,i64)>);let pending_delete=RwSignal::new(None::<Value>);
     let channel=RwSignal::new(String::new());let model=RwSignal::new(String::new());let input=RwSignal::new(String::new());let output=RwSignal::new(String::new());let max_in=RwSignal::new(String::new());let max_out=RwSignal::new(String::new());let unit=RwSignal::new(String::new());let manual_kind=RwSignal::new(String::new());
     let selected=Memo::new(move |_|selected_price_option(&channel.get(),&model.get(),&sources.get(),&objects.get()));
     let scheme=Memo::new(move |_|selected.get().map(|option|price_scheme(&option,&manual_kind.get())).unwrap_or_default());
     let on_selection=Callback::new(move|()|{input.set(String::new());output.set(String::new());max_in.set(String::new());max_out.set(String::new());manual_kind.set(String::new());error.set(String::new());message.set(String::new());unit.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|o.metadata["recommended_unit"].as_str().map(str::to_string)).unwrap_or_default());});
     let load=move |_| {if busy.get_untracked(){return;}busy.set(true);error.set(String::new());leptos::task::spawn_local(async move {
-        let result=async {let mut all=Vec::new();for (path,array) in [("/api/pricing","prices"),("/api/unit-pricing","unit_prices"),("/api/request-pricing","request_prices")] {let response=api::request("GET",path,None).await?;all.extend(api::rows(&response,array));}Ok::<_,crate::api::ApiErr>(all)}.await;
+        let result=load_model_prices().await;
         match result {Ok(v)=>rows.set(v),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);
     });};load(());
     let save=move|ev:leptos::ev::SubmitEvent| {
@@ -264,26 +277,67 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
         let Some(option)=selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked())else{error.set("请选择当前有效渠道上已配置的模型。".into());return;};
         let (path,item,body)=match model_price_payload(&option,&manual_kind.get_untracked(),&input.get_untracked(),&output.get_untracked(),&max_in.get_untracked(),&max_out.get_untracked(),&unit.get_untracked()){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
         busy.set(true);error.set(String::new());message.set(String::new());
-        leptos::task::spawn_local(async move {match api::request("POST",path,Some(body)).await {Ok(v)=>{rows.update(|all|all.insert(0,v[item].clone()));message.set("人民币价格版本已创建。历史账目保留。".into());billing_dialog("price-dialog",false);},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});
+        let editing=edit_target.get_untracked();let save_path=editing.map(|(path,id)|format!("{path}/{id}")).unwrap_or_else(||path.to_owned());
+        leptos::task::spawn_local(async move {match api::request(if editing.is_some(){"PUT"}else{"POST"},&save_path,Some(body)).await {
+            Ok(v)=>{match load_model_prices().await {Ok(all)=>rows.set(all),Err(e)=>{rows.update(|all|all.insert(0,v[item].clone()));error.set(format!("价格已保存，刷新列表失败：{}",e.message));}}message.set(if editing.is_some(){"价格已修改，新版本用于后续调用；历史账目保留。"}else{"人民币价格版本已创建。历史账目保留。"}.into());edit_target.set(None);billing_dialog("price-dialog",false);},
+            Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});
+    };
+    let edit_price=Callback::new(move|r:Value|{
+        let kind=price_row_kind(&r);let legacy=row_currency(&r)!="CNY";
+        channel.set(api::text(&r,"channel_id"));model.set(api::text(&r,"model"));on_selection.run(());
+        let selected=selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked());
+        let target=selected.as_ref().map(|o|price_scheme(o,kind)).unwrap_or_else(||kind.into());let unit_valid=selected.as_ref().is_some_and(|o|compatible_price_unit(&r,o));manual_kind.set(kind.into());
+        if target==kind&&unit_valid {
+            input.set(if legacy{String::new()}else{r[match kind{"token"=>"input_micro_per_million","unit"=>"micro_per_unit",_=>"micro_per_call"}].as_i64().map(policy_editor::money_input).unwrap_or_default()});
+            output.set(if legacy{String::new()}else{r["output_micro_per_million"].as_i64().map(policy_editor::money_input).unwrap_or_default()});
+            max_in.set(if kind=="unit"{r["max_quantity_milli"].as_i64().map(quantity_milli_input).unwrap_or_default()}else{r["max_input_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default()});
+            max_out.set(r["max_output_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default());
+            if selected.as_ref().is_some_and(|o|api::rows(&o.metadata,"allowed_units").iter().any(|u|u==&r["unit"])){unit.set(api::text(&r,"unit"));}
+        }
+        edit_target.set((!legacy&&price_is_current(&r,&rows.get_untracked())&&target==kind&&unit_valid&&r["deleted"]!=true).then(||(model_price_endpoint(kind),r["id"].as_i64().unwrap_or(0))));
+        message.set(if target!=kind{"模型类型已变更，请按当前计价方式重新填写。"}else if !unit_valid{"原计价单位不适用于当前模型，请确认新单位并重新填写。"}else if legacy{"请重新填写人民币价格，旧美元单价不会直接复制。"}else{"修改后生成新版本，后续调用使用新价格，历史账目保留。"}.into());
+        billing_dialog("price-dialog",true);
+    });
+    let change_state=Callback::new(move|(r,enabled):(Value,bool)|{
+        if busy.get_untracked(){return;}busy.set(true);error.set(String::new());message.set(String::new());
+        let path=format!("{}/{}",model_price_endpoint(price_row_kind(&r)),api::text(&r,"id"));
+        leptos::task::spawn_local(async move {
+            match api::request("PATCH",&path,Some(json!({"enabled":enabled}))).await {
+                Ok(_)=>{match load_model_prices().await {Ok(all)=>rows.set(all),Err(e)=>error.set(format!("状态已保存，刷新列表失败：{}",e.message))}message.set(if enabled{"价格已启用，后续调用按此价格计费。"}else{"价格已停用，后续调用不再使用此价格；历史账目保留。"}.into());},
+                Err(e)=>{ctx.note_err(&e);error.set(e.message);}
+            }busy.set(false);
+        });
+    });
+    let remove_price=move |_|{
+        if busy.get_untracked(){return;}let Some(r)=pending_delete.get_untracked()else{return;};busy.set(true);error.set(String::new());message.set(String::new());
+        let path=format!("{}/{}",model_price_endpoint(price_row_kind(&r)),api::text(&r,"id"));
+        leptos::task::spawn_local(async move {
+            match api::request("DELETE",&path,None).await {
+                Ok(_)=>{match load_model_prices().await {Ok(all)=>rows.set(all),Err(e)=>error.set(format!("价格已删除，刷新列表失败：{}",e.message))}message.set("价格已删除，可在“已删除”范围查看；历史账目保留。".into());pending_delete.set(None);billing_dialog("price-delete-dialog",false);},
+                Err(e)=>{ctx.note_err(&e);error.set(e.message);}
+            }busy.set(false);
+        });
     };
     view! {
-        <section class="card"><header class="card-head"><div><h2>"模型价格"</h2><p class="muted small">"选择模型和来源渠道，自动使用对应计价方式与已配置参数。"</p></div><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{channel.set(String::new());model.set(String::new());on_selection.run(());billing_dialog("price-dialog",true);}>"配置人民币价格"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|load(())>"刷新价格"</button></div></header><div class="card-body">
-            <div class="billing-toolbar"><div class="billing-field"><label for="price-versions">"价格范围"</label><select id="price-versions" prop:value=versions on:change=move|e|versions.set(event_target_value(&e))><option value="current">"当前人民币价格"</option><option value="history">"历史版本（含美元）"</option><option value="all">"全部版本"</option></select></div><p class="muted small">"新价格以人民币结算，最多6位小数；0 表示明确免费。"</p></div>
-            <div class="table-wrap"><table class="billing-price-table"><thead><tr><th>"模型 / 来源渠道"</th><th>"计价方式 / 价格"</th><th>"单次用量上限"</th><th>"版本状态"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|r|{let current=price_effective(r,&rows.get(),&objects.get())&&compatible_price_kind(r,&sources.get());versions.get()=="all"||(versions.get()=="current"&&current)||(versions.get()=="history"&&!current)}).map(|r|{
+        <section class="card"><header class="card-head"><div><h2>"模型价格"</h2><p class="muted small">"选择模型和来源渠道，自动使用对应计价方式与已配置参数。"</p></div><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{edit_target.set(None);channel.set(String::new());model.set(String::new());on_selection.run(());billing_dialog("price-dialog",true);}>"配置人民币价格"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|load(())>"刷新价格"</button></div></header><div class="card-body">
+            <div class="billing-toolbar"><div class="billing-field"><label for="price-versions">"价格范围"</label><select id="price-versions" prop:value=versions on:change=move|e|versions.set(event_target_value(&e))><option value="current">"当前配置（含停用）"</option><option value="history">"历史版本（含美元）"</option><option value="deleted">"已删除"</option><option value="all">"全部版本"</option></select></div><p class="muted small">"新价格以人民币结算，最多6位小数；0 表示明确免费。"</p></div>
+            <div class="table-wrap"><table class="billing-price-table"><thead><tr><th>"模型 / 来源渠道"</th><th>"计价方式 / 价格"</th><th>"单次用量上限"</th><th>"版本状态"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|r|{price_visible(r,&versions.get(),&rows.get())}).map(|r|{
                 let source_name=price_source_name(&r,&objects.get());let model_label=price_model_name(&r);let current=price_effective(&r,&rows.get(),&objects.get())&&compatible_price_kind(&r,&sources.get());let legacy=row_currency(&r)!="CNY";let kind=price_row_kind(&r);
-                let status=format!("{} · 版本 {}",if legacy {"历史美元"}else if current {"当前有效"}else{"历史 / 配置已变更"},api::text(&r,"id"));
+                let status=format!("{} · 版本 {}",if r["deleted"]==true {"已删除"}else if legacy {"历史美元"}else if r["enabled"]==false {"已停用"}else if current {"当前有效"}else{"历史 / 配置已变更"},api::text(&r,"id"));
                 let amount=match kind {"token"=>format!("输入 {} / 输出 {} / 百万 Token",row_money(&r,"input_micro_per_million"),row_money(&r,"output_micro_per_million")),"unit"=>format!("{} / {}",row_money(&r,"micro_per_unit"),unit_label(r["unit"].as_str().unwrap_or(""))),_=>format!("{} / 次",row_money(&r,"micro_per_call"))};
                 let cap=match kind {"token"=>format!("输入 {} / 总输出 {} Token",api::text(&r,"max_input_tokens"),api::text(&r,"max_output_tokens")),"unit"=>{let n=r["max_quantity_milli"].as_i64().map(quantity_milli_input).unwrap_or_else(||"未知".into());if duration_unit(r["unit"].as_str().unwrap_or("")){let task=sources.get().iter().find(|o|r["channel_id"].as_i64()==Some(o.source_id)&&r["model"].as_str()==Some(o.model.as_str())).map(|o|duration_subject(o.metadata["task_type"].as_str().unwrap_or(""))).unwrap_or("媒体");format!("{n} {task}秒")}else{format!("{n} {}",unit_label(r["unit"].as_str().unwrap_or("")))}},_=>"每次调用".into()};
-                view!{<tr><td data-label="模型 / 来源"><strong class="billing-price-model">{model_label}</strong><small class="billing-price-source">{source_name}</small></td><td data-label="计价方式 / 价格">{amount}</td><td data-label="单次用量上限">{cap}</td><td data-label="版本状态"><span class="tag billing-price-version">{status}</span></td><td data-label="操作">{if service_price(&r) {view!{<button type="button" class="ghost" on:click=move |_|ctx.go(crate::Page::Services)>"管理服务价格"</button>}.into_any()}else{view!{<button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{
-                    channel.set(api::text(&r,"channel_id"));model.set(api::text(&r,"model"));on_selection.run(());
-                    let selected=selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked());let target=selected.as_ref().map(|o|price_scheme(o,kind)).unwrap_or_else(||kind.into());let unit_valid=selected.as_ref().is_some_and(|o|compatible_price_unit(&r,o));manual_kind.set(kind.into());
-                    if target==kind&&unit_valid {input.set(if legacy{String::new()}else{r[match kind{"token"=>"input_micro_per_million","unit"=>"micro_per_unit",_=>"micro_per_call"}].as_i64().map(policy_editor::money_input).unwrap_or_default()});output.set(if legacy{String::new()}else{r["output_micro_per_million"].as_i64().map(policy_editor::money_input).unwrap_or_default()});max_in.set(if kind=="unit"{r["max_quantity_milli"].as_i64().map(quantity_milli_input).unwrap_or_default()}else{r["max_input_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default()});max_out.set(r["max_output_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default());if selected.as_ref().is_some_and(|o|api::rows(&o.metadata,"allowed_units").iter().any(|u|u==&r["unit"])){unit.set(api::text(&r,"unit"));}}
-                    message.set(if target!=kind{"模型类型已变更，旧价格和上限不会复制，请按当前计价方式重新填写。"}else if !unit_valid{"原计价单位不适用于当前模型，旧单价和上限不会复制。请确认新单位并重新填写。"}else if legacy{"请重新填写人民币价格，旧美元单价不会直接复制。"}else{"保存将创建新版本，历史账目不变。"}.into());billing_dialog("price-dialog",true);
-                }>{if legacy {"配置人民币价格"}else{"创建新版本"}}</button>}.into_any()}}</td></tr>}
+                view!{<tr><td data-label="模型 / 来源"><strong class="billing-price-model">{model_label}</strong><small class="billing-price-source">{source_name}</small></td><td data-label="计价方式 / 价格">{amount}</td><td data-label="单次用量上限">{cap}</td><td data-label="版本状态"><span class="tag billing-price-version">{status}</span></td><td data-label="操作">{if service_price(&r) {view!{<button type="button" class="ghost" on:click=move |_|ctx.go(crate::Page::Services)>"管理服务价格"</button>}.into_any()}else if r["deleted"]==true {view!{<span class="muted small">"已归档，历史账目可查询"</span>}.into_any()}else{
+                    let edit_row=r.clone();let toggle_row=r.clone();let delete_row=r.clone();let latest=price_is_current(&r,&rows.get());let enabled=r["enabled"]!=false;
+                    view!{<div class="billing-price-actions">
+                        <button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|edit_price.run(edit_row.clone())>{if legacy{"配置人民币价格"}else if latest{"修改"}else{"复制为新版本"}}</button>
+                        {if latest&&!legacy {view!{<button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|change_state.run((toggle_row.clone(),!enabled))>{if enabled{"停用"}else{"启用"}}</button>}.into_any()}else{().into_any()}}
+                        <button type="button" class="ghost danger" disabled=move||busy.get() on:click=move |_|{pending_delete.set(Some(delete_row.clone()));error.set(String::new());billing_dialog("price-delete-dialog",true);}>"删除"</button>
+                    </div>}.into_any()
+                }}</td></tr>}
             }).collect_view()}</tbody></table></div>
             <p role="status">{move||if busy.get(){"正在加载价格…"}else if rows.get().is_empty(){"暂无模型价格，请先选择模型配置。"}else{""}}</p><p role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p>
-            <BillingDialog id="price-dialog" title="配置人民币价格（创建新版本）" busy=busy><form on:submit=save><fieldset disabled=move||busy.get()><div class="form-grid">
-                <PriceModelSource prefix="price" channel=channel model=model options=sources objects=objects on_selection=on_selection/>
+            <BillingDialog id="price-dialog" title="配置人民币价格" busy=busy><form on:submit=save><fieldset disabled=move||busy.get()><div class="form-grid">
+                {move||if edit_target.get().is_some(){view!{<div class="billing-selected-object" style="grid-column:1 / -1"><strong>{model.get()}</strong><p class="muted small">{selected.get().map(|o|o.channel).unwrap_or_default()}</p><p class="muted small">"修改当前模型和来源的价格；保存后生成新版本。"</p></div>}.into_any()}else{view!{<PriceModelSource prefix="price" channel=channel model=model options=sources objects=objects on_selection=on_selection/>}.into_any()}}
                 {move||selected.get().map(|option|{
                     let metadata=option.metadata.clone();let kind=scheme.get();let input_bound=metadata_bound(&option,"max_input_tokens");let output_bound=metadata_bound(&option,"max_output_tokens");let duration_bound=configured_duration_bound(&option);let subject=duration_subject(metadata["task_type"].as_str().unwrap_or(""));let selected_unit=unit.get();let duration=duration_unit(&selected_unit);
                     view!{
@@ -303,7 +357,13 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
                         }.into_any()}else{().into_any()}}
                     }
                 })}
-            </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("price-dialog",false)>"取消"</button><button type="submit" class="primary" disabled=move||busy.get()||scheme.get().is_empty()>"创建人民币价格版本"</button></div></fieldset></form></BillingDialog>
+            </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("price-dialog",false)>"取消"</button><button type="submit" class="primary" disabled=move||busy.get()||scheme.get().is_empty()>{move||if edit_target.get().is_some(){"保存修改"}else{"创建人民币价格版本"}}</button></div></fieldset></form></BillingDialog>
+            <BillingDialog id="price-delete-dialog" title="删除价格配置" busy=busy>
+                <p>{move||pending_delete.get().map(|r|format!("删除 {} · 版本 {}？",price_model_name(&r),api::text(&r,"id"))).unwrap_or_default()}</p>
+                <p class="muted small">"删除后不再用于后续调用，旧版本不会自动恢复。历史账目及原价格快照保留。"</p>
+                <p role="alert">{move||error.get()}</p>
+                <div class="module-dialog-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|billing_dialog("price-delete-dialog",false)>"取消"</button><button type="button" class="primary danger" disabled=move||busy.get() on:click=remove_price>"确认删除"</button></div>
+            </BillingDialog>
         </div></section>
     }
 }
@@ -543,5 +603,25 @@ mod automatic_price_form_tests {
         let token=json!({"id":1,"channel_id":5,"model":"test-model","currency":"CNY","input_micro_per_million":1});
         let unit=json!({"id":10,"channel_id":5,"model":"test-model","currency":"CNY","micro_per_unit":1,"unit":"second"});
         assert!(price_is_current(&token,&[token.clone(),unit.clone()]));assert!(price_is_current(&unit,&[token,unit.clone()]));
+    }
+}
+
+#[cfg(test)]
+mod price_lifecycle_tests {
+    use super::*;
+    #[test]
+    fn disabled_or_deleted_latest_price_is_not_effective_and_does_not_revive_history() {
+        let objects=json!({"channels":[{"id":1,"state":"active"}]});
+        let old=json!({"id":1,"channel_id":1,"model":"test","currency":"CNY","input_micro_per_million":100,"enabled":true,"is_latest":false});
+        let mut latest=json!({"id":2,"channel_id":1,"model":"test","currency":"CNY","input_micro_per_million":200,"enabled":false,"is_latest":true});
+        assert!(!price_effective(&latest,&[old.clone(),latest.clone()],&objects));
+        assert!(!price_effective(&old,&[old.clone(),latest.clone()],&objects));
+        latest["enabled"]=json!(true);latest["deleted"]=json!(true);
+        assert!(!price_effective(&latest,&[old,latest.clone()],&objects));
+    }
+    #[test]
+    fn backend_latest_identity_prevents_hidden_archive_reviving_an_older_price() {
+        let old=json!({"id":1,"channel_id":1,"model":"test","currency":"CNY","input_micro_per_million":100,"is_latest":false});
+        assert!(!price_is_current(&old,std::slice::from_ref(&old)));
     }
 }

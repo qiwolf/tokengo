@@ -1,5 +1,9 @@
 # 模型兼容核实清单
 
+## 2026-11-14 模型价格管理
+
+三类价格支持修改、停用/启用与删除归档，历史价格和账目保留。build-test服务端676、Web216、真实WASM交互44项通过；生产状态见[收据](maintenance/price-lifecycle-20261114/README.md)。
+
 ## 2026-11-14 修正：计费预占与来源切换
 
 输入字节预占、来源token窗口、实际usage分别处理。生产相同长请求DeepSeek fallback及Sol均完整输出；DeepSeek实际落主帐号56，Sol落64。没有据此宣称所有前置候选均完成上游调用；DeepSeek主帐号未定价仍如实为unpriced。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。

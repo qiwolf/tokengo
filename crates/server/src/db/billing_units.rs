@@ -21,7 +21,8 @@ pub fn unit_cost(p:&UnitPrice,quantity_milli:i64)->Result<i64> {
 fn unit_price_row(r:&rusqlite::Row<'_>)->rusqlite::Result<UnitPrice> {Ok(UnitPrice{id:r.get(0)?,channel_id:r.get(1)?,model:r.get(2)?,currency:r.get(3)?,unit:r.get(4)?,micro_per_unit:r.get(5)?,max_quantity_milli:r.get(6)?})}
 const UNIT_PRICE_SELECT:&str="SELECT id,channel_id,model,currency,unit,micro_per_unit,max_quantity_milli FROM billing_unit_prices";
 pub fn unit_price(c:&Connection,model:&str,channel_id:i64)->Result<Option<UnitPrice>> {
-    Ok(c.query_row(&format!("{UNIT_PRICE_SELECT} WHERE channel_id=?1 AND model=?2 AND currency='CNY' ORDER BY id DESC LIMIT 1"),params![channel_id,tokengo_shared::normalize_model_name(model)],unit_price_row).optional()?)
+    let selected=c.query_row(&format!("{UNIT_PRICE_SELECT} WHERE channel_id=?1 AND model=?2 AND currency='CNY' ORDER BY id DESC LIMIT 1"),params![channel_id,tokengo_shared::normalize_model_name(model)],unit_price_row).optional()?;
+    match selected {Some(p) if price_version_enabled(c,"unit",p.id)?=>Ok(Some(p)),_=>Ok(None)}
 }
 pub fn list_unit_prices(c:&Connection)->Result<Vec<UnitPrice>> {
     Ok(c.prepare(&format!("{UNIT_PRICE_SELECT} ORDER BY id DESC LIMIT 1000"))?.query_map([],unit_price_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -67,6 +68,7 @@ fn reserve_unit_inner(c:&Connection,user:i64,key:i64,request:i64,attempt:&str,ch
         c.commit()?;return Ok(row.id);
     }
     if let Some(price)=price {
+        require_price_version_enabled(&c,"unit",price.id)?;
         let stored=c.query_row(&format!("{UNIT_PRICE_SELECT} WHERE id=?1"),[price.id],unit_price_row).optional()?.ok_or_else(||bad("unknown unit price version"))?;
         if stored!=*price {return Err(bad("unit price snapshot mismatch"));}
     }

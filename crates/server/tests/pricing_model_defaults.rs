@@ -83,7 +83,16 @@ async fn price_mutation_rechecks_source_and_model_activity_without_touching_old_
     let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");let original=v["price"].clone();
     db::model_routes::set_enabled(&f.state.conn(),"chat",false).unwrap();let(status,_)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::BAD_REQUEST);
     db::model_routes::set_enabled(&f.state.conn(),"chat",true).unwrap();db::channels::set_enabled(&f.state.conn(),tokengo_shared::ChannelId(f.channel),false).unwrap();let(status,_)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::BAD_REQUEST);
-    let prices=db::billing::list_prices(&f.state.conn()).unwrap();assert_eq!(prices.len(),1);assert_eq!(serde_json::to_value(&prices[0]).unwrap(),original);
+    let prices=db::billing::list_prices(&f.state.conn()).unwrap();assert_eq!(prices.len(),1);
+    // API lifecycle metadata is separate from the immutable financial price.
+    // Compare every persisted price field, then check the lifecycle independently.
+    let mut original_price=original.clone();
+    for field in ["enabled","deleted","is_latest","effective"] {original_price.as_object_mut().unwrap().remove(field);}
+    assert_eq!(serde_json::to_value(&prices[0]).unwrap(),original_price);
+    assert_eq!(original["enabled"],true);assert_eq!(original["deleted"],false);
+    assert_eq!(original["is_latest"],true);assert_eq!(original["effective"],true);
+    let current=db::billing::enrich_price(&f.state.conn(),"token",serde_json::to_value(&prices[0]).unwrap()).unwrap();
+    for field in ["enabled","deleted","is_latest","effective"] {assert_eq!(current[field],original[field],"source/model activation must not rewrite price lifecycle: {field}");}
 }
 
 #[tokio::test]

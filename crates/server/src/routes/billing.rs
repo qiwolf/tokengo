@@ -8,7 +8,7 @@ use crate::{
     SharedState,
 };
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     routing::get,
     Json, Router,
 };
@@ -17,12 +17,15 @@ use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/pricing", get(prices).post(create))
+        .route("/api/pricing/{id}",axum::routing::put(update_token_price).patch(token_price_state).delete(delete_token_price))
         .route("/api/pricing/options",get(pricing_options))
         .route("/api/unit-pricing",get(unit_prices).post(create_unit_price))
+        .route("/api/unit-pricing/{id}",axum::routing::put(update_unit_price).patch(unit_price_state).delete(delete_unit_price))
         .route(
             "/api/request-pricing",
             get(request_prices).post(create_request_price),
         )
+        .route("/api/request-pricing/{id}",axum::routing::put(update_request_price).patch(request_price_state).delete(delete_request_price))
         .route("/api/budgets", get(budgets).put(update_budget))
         .route("/api/billing/objects", get(objects))
         .route("/api/usage", get(admin_usage))
@@ -30,6 +33,8 @@ pub fn router() -> Router<SharedState> {
 }
 fn mutation_error(e: db::DbError) -> ApiError {
     match e {
+        db::DbError::Other(s) if s.starts_with("price_conflict:")=>ApiError::new(axum::http::StatusCode::CONFLICT,"price_conflict",s),
+        db::DbError::Other(s) if s.starts_with("unknown_price:")=>ApiError::not_found(s),
         db::DbError::Other(s) => ApiError::bad_request(s),
         e => e.into(),
     }
@@ -37,11 +42,10 @@ fn mutation_error(e: db::DbError) -> ApiError {
 async fn objects(_auth: AdminAuth, State(state): State<SharedState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(db::billing_management::objects(&state.conn())?))
 }
-async fn prices(
-    _auth: AdminAuth,
-    State(state): State<SharedState>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!({"prices":billing::list_prices(&state.conn())?})))
+#[derive(Deserialize,Default)]
+struct PriceListQuery {#[serde(default)] include_deleted:bool}
+async fn prices(_auth:AdminAuth,State(state):State<SharedState>,Query(q):Query<PriceListQuery>)->Result<Json<Value>,ApiError> {
+    Ok(Json(json!({"prices":billing::price_lifecycle_rows(&state.conn(),"token",q.include_deleted).map_err(mutation_error)?})))
 }
 async fn pricing_options(_auth:AdminAuth,State(state):State<SharedState>)->Result<Json<Value>,ApiError> {
     Ok(Json(json!({"options":super::pricing_options::list(&state.conn())?})))
@@ -63,7 +67,11 @@ async fn create(
     payload: Result<Json<NewPrice>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let Json(p) = payload.map_err(|_| ApiError::bad_request("Invalid pricing body"))?;
-    let c=state.conn();
+    store_token_price(&state.conn(),p,&_auth.actor_label(),None)
+}
+fn store_token_price(c:&rusqlite::Connection,p:NewPrice,actor:&str,previous:Option<i64>)->Result<Json<Value>,ApiError> {
+
+    if let Some(id)=previous {billing::require_current_price(c,"token",id,p.channel_id,&p.model,&p.currency).map_err(mutation_error)?;}
     let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
     super::pricing_options::require_kind(option.as_ref(),"token").map_err(mutation_error)?;
     let max_input_tokens=option.as_ref().and_then(|v|v.max_input_tokens).or(p.max_input_tokens).ok_or_else(||ApiError::bad_request("未找到模型的单次输入上限，请补充 token 数量。"))?;
@@ -79,16 +87,16 @@ async fn create(
         max_output_tokens,
     };
     let result =
-        billing::create_price(&c, &p, &_auth.actor_label()).map_err(mutation_error)?;
-    Ok(Json(json!({"price":result})))
+        billing::create_price(c, &p, actor).map_err(mutation_error)?;
+    Ok(Json(json!({"price":billing::enrich_price(c,"token",serde_json::to_value(result).map_err(|_|ApiError::internal("price serialization failed"))?).map_err(mutation_error)?})))
 }
-async fn request_prices(
-    _auth: AdminAuth,
-    State(state): State<SharedState>,
-) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"request_prices":billing::list_request_prices(&state.conn())?}),
-    ))
+async fn update_token_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>,payload:Result<Json<NewPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid pricing body"))?;
+    store_token_price(&state.conn(),p,&auth.actor_label(),Some(id))
+}
+
+async fn request_prices(_auth:AdminAuth,State(state):State<SharedState>,Query(q):Query<PriceListQuery>)->Result<Json<Value>,ApiError> {
+    Ok(Json(json!({"request_prices":billing::price_lifecycle_rows(&state.conn(),"request",q.include_deleted).map_err(mutation_error)?})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,8 +112,12 @@ async fn create_request_price(
     payload: Result<Json<NewRequestPrice>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let Json(p) = payload.map_err(|_| ApiError::bad_request("Invalid request pricing body"))?;
+    store_request_price(&state.conn(),p,&auth.actor_label(),None)
+}
+fn store_request_price(c:&rusqlite::Connection,p:NewRequestPrice,actor:&str,previous:Option<i64>)->Result<Json<Value>,ApiError> {
+    if let Some(id)=previous {billing::require_current_price(c,"request",id,p.channel_id,&p.model,&p.currency).map_err(mutation_error)?;}
     if !p.model.starts_with("passthrough:") {
-        let c=state.conn();let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
+        let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
         super::pricing_options::require_kind(option.as_ref(),"request").map_err(mutation_error)?;
     }
     let price = RequestPrice {
@@ -115,12 +127,17 @@ async fn create_request_price(
         model: p.model,
         micro_per_call: p.micro_per_call,
     };
-    let result = billing::create_request_price(&state.conn(), &price, &auth.actor_label())
+    let result = billing::create_request_price(c, &price, actor)
         .map_err(mutation_error)?;
-    Ok(Json(json!({"request_price":result})))
+    Ok(Json(json!({"request_price":billing::enrich_price(c,"request",serde_json::to_value(result).map_err(|_|ApiError::internal("price serialization failed"))?).map_err(mutation_error)?})))
 }
-async fn unit_prices(_auth:AdminAuth,State(state):State<SharedState>)->Result<Json<Value>,ApiError> {
-    Ok(Json(json!({"unit_prices":billing::list_unit_prices(&state.conn())?})))
+async fn update_request_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>,payload:Result<Json<NewRequestPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid request pricing body"))?;
+    store_request_price(&state.conn(),p,&auth.actor_label(),Some(id))
+}
+
+async fn unit_prices(_auth:AdminAuth,State(state):State<SharedState>,Query(q):Query<PriceListQuery>)->Result<Json<Value>,ApiError> {
+    Ok(Json(json!({"unit_prices":billing::price_lifecycle_rows(&state.conn(),"unit",q.include_deleted).map_err(mutation_error)?})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,15 +147,31 @@ struct NewUnitPrice {
 }
 async fn create_unit_price(auth:AdminAuth,State(state):State<SharedState>,payload:Result<Json<NewUnitPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
     let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid unit pricing body"))?;
+    store_unit_price(&state.conn(),p,&auth.actor_label(),None)
+}
+fn store_unit_price(c:&rusqlite::Connection,p:NewUnitPrice,actor:&str,previous:Option<i64>)->Result<Json<Value>,ApiError> {
+    if let Some(id)=previous {billing::require_current_price(c,"unit",id,p.channel_id,&p.model,&p.currency).map_err(mutation_error)?;}
     {
-        let c=state.conn();let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
+        let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
         super::pricing_options::require_kind(option.as_ref(),"unit").map_err(mutation_error)?;
         if option.as_ref().is_some_and(|v|!v.allowed_units.contains(&p.unit.as_str())) {return Err(ApiError::bad_request("所选计价单位不适用于该模型类型。"));}
     }
     let p=billing::UnitPrice{id:0,channel_id:p.channel_id,model:p.model,currency:p.currency,unit:p.unit,micro_per_unit:p.micro_per_unit,max_quantity_milli:p.max_quantity_milli};
-    let result=billing::create_unit_price(&state.conn(),&p,&auth.actor_label()).map_err(mutation_error)?;
-    Ok(Json(json!({"unit_price":result})))
+    let result=billing::create_unit_price(c,&p,actor).map_err(mutation_error)?;
+    Ok(Json(json!({"unit_price":billing::enrich_price(c,"unit",serde_json::to_value(result).map_err(|_|ApiError::internal("price serialization failed"))?).map_err(mutation_error)?})))
 }
+async fn update_unit_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>,payload:Result<Json<NewUnitPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid unit pricing body"))?;
+    store_unit_price(&state.conn(),p,&auth.actor_label(),Some(id))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PriceStateUpdate {enabled:bool}
+fn lifecycle_response(state:&SharedState,auth:&AdminAuth,kind:&str,item:&str,id:i64,enabled:Option<bool>)->Result<Json<Value>,ApiError> {
+    let row=billing::change_price_state(&state.conn(),kind,id,enabled,&auth.actor_label()).map_err(mutation_error)?;
+    let mut value=json!({});value[item]=row;Ok(Json(value))
+}
+
 #[derive(Deserialize)]
 struct BudgetQuery {
     #[serde(default="billing::cny_currency")] currency:String,
@@ -397,4 +430,28 @@ mod request_pricing_tests {
         drop(state);
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+async fn token_price_state(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>,payload:Result<Json<PriceStateUpdate>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid price state; enabled is required"))?;
+    lifecycle_response(&state,&auth,"token","price",id,Some(p.enabled))
+}
+async fn delete_token_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>)->Result<Json<Value>,ApiError> {
+    lifecycle_response(&state,&auth,"token","price",id,None)
+}
+
+async fn unit_price_state(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>,payload:Result<Json<PriceStateUpdate>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid price state; enabled is required"))?;
+    lifecycle_response(&state,&auth,"unit","unit_price",id,Some(p.enabled))
+}
+async fn delete_unit_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>)->Result<Json<Value>,ApiError> {
+    lifecycle_response(&state,&auth,"unit","unit_price",id,None)
+}
+
+async fn request_price_state(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>,payload:Result<Json<PriceStateUpdate>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid price state; enabled is required"))?;
+    lifecycle_response(&state,&auth,"request","request_price",id,Some(p.enabled))
+}
+async fn delete_request_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>)->Result<Json<Value>,ApiError> {
+    lifecycle_response(&state,&auth,"request","request_price",id,None)
 }

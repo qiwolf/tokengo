@@ -1,5 +1,9 @@
 # 更新日志 / Changelog
 
+## 2026-11-14 模型价格管理
+
+三类价格支持修改、停用/启用与删除归档，历史价格和账目保留。build-test服务端676、Web216、真实WASM交互44项通过；生产状态见[收据](docs/maintenance/price-lifecycle-20261114/README.md)。
+
 ## 2026-11-14 修正：长输入预占与来源容量 fallback
 
 长JSON不再按字节上界直接判定模型token超窗；本地容量不足继续适配后续来源，真实上游400与会话pin规则保留。见[收据](docs/maintenance/billing-reservation-fallback-20261114/README.md)。

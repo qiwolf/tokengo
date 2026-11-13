@@ -346,3 +346,7 @@ p {text-wrap:pretty;}
 /* Keep long Key/owner names readable in both desktop and stacked call rows. */
 .console-content .recent-key {display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px;}
 .console-content .recent-key>span:last-child {min-width:0;overflow-wrap:anywhere;}
+
+.console-content .billing-price-actions {display:flex;flex-wrap:wrap;gap:8px;min-width:136px;max-width:224px;}
+.console-content .billing-price-actions>button {min-height:36px;white-space:nowrap;}
+@media(max-width:768px) {.console-content .billing-price-actions {max-width:none;}.console-content .billing-price-actions>button {min-height:44px;}}

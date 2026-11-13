@@ -1,5 +1,9 @@
 # 功能与验收状态
 
+## 2026-11-14 模型价格管理
+
+三类价格支持修改、停用/启用与删除归档，历史价格和账目保留。build-test服务端676、Web216、真实WASM交互44项通过；生产状态见[收据](maintenance/price-lifecycle-20261114/README.md)。
+
 ## 2026-11-14 修正：计费预占与来源切换
 
 build-test必要回归729通过/4既有忽略，部署流程4通过；00:07完成生产更新，两模型相同长请求由400恢复为200且完整流式输出，来源与账本已读回。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。

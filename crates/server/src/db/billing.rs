@@ -77,6 +77,7 @@ pub struct Ledger {
     pub settled_ms: Option<i64>,
 }
 include!("billing_units.rs");
+include!("billing_price_lifecycle.rs");
 
 fn bad(message: &str) -> DbError {
     DbError::Other(message.into())
@@ -118,7 +119,8 @@ fn price_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Price> {
 pub fn price(conn:&Connection,model:&str,channel_id:i64)->Result<Option<Price>> {price_currency(conn,model,channel_id,"CNY")}
 fn price_currency(conn:&Connection,model:&str,channel_id:i64,currency:&str)->Result<Option<Price>> {
     valid_currency(currency)?;
-    Ok(conn.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model),currency],price_row).optional()?)
+    let selected=conn.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model),currency],price_row).optional()?;
+    match selected {Some(p) if price_version_enabled(conn,"token",p.id)?=>Ok(Some(p)),_=>Ok(None)}
 }
 pub fn list_prices(conn: &Connection) -> Result<Vec<Price>> {
     let mut s=conn.prepare("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices ORDER BY id DESC LIMIT 1000")?;
@@ -307,6 +309,7 @@ pub fn reserve(
         return Ok(id);
     }
     if p.currency!="CNY" {return Err(bad("new reservations require CNY price"));}
+    require_price_version_enabled(&c,"token",p.id)?;
     let stored=c.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices WHERE id=?1",[p.id],price_row).optional()?.ok_or_else(||bad("unknown pricing version"))?;
     if stored != *p {
         return Err(bad("pricing snapshot mismatch"));
@@ -1088,7 +1091,8 @@ pub fn request_price(
 fn request_price_currency(conn:&Connection,model:&str,channel_id:i64,currency:&str)->Result<Option<RequestPrice>> {
     valid_currency(currency)?;
 
-    Ok(conn.query_row("SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model),currency],request_price_row).optional()?)
+    let selected=conn.query_row("SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model),currency],request_price_row).optional()?;
+    match selected {Some(p) if price_version_enabled(conn,"request",p.id)?=>Ok(Some(p)),_=>Ok(None)}
 }
 pub fn list_request_prices(conn: &Connection) -> Result<Vec<RequestPrice>> {
     let mut s=conn.prepare("SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices ORDER BY id DESC LIMIT 1000")?;
@@ -1158,6 +1162,7 @@ pub fn reserve_request(
         return Ok(id);
     }
     if p.currency!="CNY" {return Err(bad("new reservations require CNY price"));}
+    require_price_version_enabled(&c,"request",p.id)?;
     let stored = c
         .query_row(
             "SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices WHERE id=?1",
