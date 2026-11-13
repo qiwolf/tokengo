@@ -1,0 +1,133 @@
+{
+  "host": "tokengo-geren-wangguan",
+  "current": "/opt/tokengo/releases/model-limits-discovery-235b7bcb88b3-cfde508a",
+  "running_sha256": "cfde508a623200a2924d0f651b6750a8315887f0385a281350953de93864377e",
+  "schema": 47,
+  "health": {
+    "http://127.0.0.1:3160/readyz": 200,
+    "http://127.0.0.1/readyz": 200,
+    "https://api.qlf.net.cn/readyz": 200
+  },
+  "price_hashes": {
+    "billing_prices": "012d6414484a053c94cfe119217103a1e79e7732a42bb6fcf099fd9aba980467",
+    "billing_request_prices": "7e9f80621c5393c6060492177cc99b556a31124849f80d5ff6f3c5690ce705d3",
+    "billing_unit_prices": "67e076c54419715bd596eac171aa92bfc8893066d1bc522fd91e14bb386c8c7d"
+  },
+  "verified": true,
+  "requests": [
+    {
+      "id": 634428,
+      "ts_ms": 1794591619595,
+      "model": "gpt-6.1-sol",
+      "status": "ok",
+      "http_status": null,
+      "channel_id": 64,
+      "input_tokens": 79294,
+      "output_tokens": 9,
+      "input_tokens_known": 1,
+      "output_tokens_known": 1,
+      "usage_source": "upstream",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-billing-recovery-20261113-post-discovery-long-sol"
+    },
+    {
+      "id": 634429,
+      "ts_ms": 1794591619625,
+      "model": "Deepseek-v4.1-flash-fallback",
+      "status": "ok",
+      "http_status": null,
+      "channel_id": 60,
+      "input_tokens": 96062,
+      "output_tokens": 30,
+      "input_tokens_known": 1,
+      "output_tokens_known": 1,
+      "usage_source": "upstream",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-billing-recovery-20261113-post-discovery-long-deepseek"
+    }
+  ],
+  "attempts": [
+    {
+      "request_id": 634428,
+      "ordinal": 0,
+      "channel_id": 64,
+      "outcome": "success",
+      "http_status": null,
+      "duration_ms": 30259,
+      "error": null,
+      "model_name": "gpt-6.1-sol",
+      "upstream_model": "gpt-6.1-sol"
+    },
+    {
+      "request_id": 634429,
+      "ordinal": 0,
+      "channel_id": 60,
+      "outcome": "success",
+      "http_status": null,
+      "duration_ms": 24600,
+      "error": null,
+      "model_name": "OpenCode-Deepseek-v4.1-flash",
+      "upstream_model": "deepseek-v4.1-flash"
+    }
+  ],
+  "ledgers": [
+    {
+      "request_id": 634428,
+      "channel_id": 64,
+      "model": "gpt 6.1 sol",
+      "price_id": 34,
+      "input_bound": 272000,
+      "output_bound": 128000,
+      "input_tokens": 79294,
+      "output_tokens": 9,
+      "usage_certainty": "reported",
+      "status": "ok",
+      "outcome": "ok",
+      "overrun": 0,
+      "reserved_micro": 937600,
+      "debit_micro": 79341,
+      "observed_cost_micro": 79341
+    },
+    {
+      "request_id": 634429,
+      "channel_id": 60,
+      "model": "opencode deepseek v4.1 flash",
+      "price_id": 37,
+      "input_bound": 600563,
+      "output_bound": 128000,
+      "input_tokens": 96062,
+      "output_tokens": 30,
+      "usage_certainty": "reported",
+      "status": "ok",
+      "outcome": "ok",
+      "overrun": 0,
+      "reserved_micro": 1112563,
+      "debit_micro": 96182,
+      "observed_cost_micro": 96182
+    }
+  ],
+  "settlement": {
+    "host": "tokengo-geren-wangguan",
+    "budget_scopes": [
+      {
+        "scope": "key",
+        "scope_id": 126,
+        "currency": "CNY",
+        "reserved_micro": 0,
+        "frozen": 0
+      },
+      {
+        "scope": "user",
+        "scope_id": 31,
+        "currency": "CNY",
+        "reserved_micro": 0,
+        "frozen": 0
+      }
+    ],
+    "pending_test_ledgers": 0,
+    "ledger_reserved_micro_semantics": "immutable initial authorization amount; active budget holds are billing_budgets.reserved_micro"
+  },
+  "price_rows_preserved_during_code_deployment": true
+}

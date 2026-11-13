@@ -1,0 +1,50 @@
+{
+  "verified_at_utc": "2026-11-13T17:39:30.035906+00:00",
+  "host": "build-test",
+  "web_artifact_sha256": "5cdec6bf7d80b8cbedbf1fa275403b6d251ec08dc72bdef2db610c0a75e3e4f7",
+  "web_artifact_bytes": 1592119,
+  "web_build_exit_code": 0,
+  "web_build_manifest_sha256": "2ac2fd76906545c8d6e9b7eca2aa32a5844cfb307c821b85ac37c4010bd53510",
+  "guarded_manifest_sha256": "6d66062727f00b618f9468fc12c94021aa51145218062f308fab575e954c2fd0",
+  "web_sources_unchanged_reviewed_to_guarded": true,
+  "dist_unchanged_before_after_each_browser": true,
+  "local_tar_verified_against_remote_dist_file_hashes": true,
+  "passed_cases": 6,
+  "passed_checks": 92,
+  "screenshots": 36,
+  "cases": {
+    "lifecycle-qa": {
+      "passed_cases": 2,
+      "passed_checks": 44,
+      "widths": [
+        1440,
+        390
+      ],
+      "screenshots": 20,
+      "result_path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/model-limits-discovery-20261114/evidence/lifecycle-qa-reviewed/browser-results.json"
+    },
+    "automatic-price-qa": {
+      "passed_cases": 2,
+      "passed_checks": 16,
+      "widths": [
+        1440,
+        390
+      ],
+      "screenshots": 6,
+      "result_path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/model-limits-discovery-20261114/evidence/automatic-price-qa-reviewed/browser-results.json"
+    },
+    "source-limits-qa": {
+      "passed_cases": 2,
+      "passed_checks": 32,
+      "widths": [
+        1440,
+        390
+      ],
+      "screenshots": 10,
+      "result_path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/model-limits-discovery-20261114/evidence/source-limits-qa-reviewed/browser-results.json"
+    }
+  },
+  "limitations": "Actual compiled WASM with synthetic API responses; no production or supplier inference performed; current server is built separately by parent.",
+  "automatic_price_unknown_manual_draft_scenario_verified": true,
+  "script_version_correction": "First reviewed automatic-price run used old remote script. Preserved before-unknown-scenario output; synced latest Mac QA script and reran only automatic-price against unchanged exact dist."
+}

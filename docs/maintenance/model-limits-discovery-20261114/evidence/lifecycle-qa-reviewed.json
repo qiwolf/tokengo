@@ -1,0 +1,862 @@
+{
+  "cases": [
+    {
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "token_edit_generates_version_without_changing_identity",
+          "passed": true
+        },
+        {
+          "name": "stale_version_error_is_visible_and_retryable",
+          "passed": true
+        },
+        {
+          "name": "token_disabled_remains_visible_in_current_configuration",
+          "passed": true
+        },
+        {
+          "name": "token_reenable_current_price",
+          "passed": true
+        },
+        {
+          "name": "token_cancel_delete_sends_no_mutation",
+          "passed": true
+        },
+        {
+          "name": "token_deleting_latest_does_not_revive_old_version",
+          "passed": true
+        },
+        {
+          "name": "token_deleted_price_is_inspectable",
+          "passed": true
+        },
+        {
+          "name": "token_historical_amount_and_bounds_retained",
+          "passed": true
+        },
+        {
+          "name": "unit_edit_generates_version_without_changing_identity",
+          "passed": true
+        },
+        {
+          "name": "unit_disabled_remains_visible_in_current_configuration",
+          "passed": true
+        },
+        {
+          "name": "unit_reenable_current_price",
+          "passed": true
+        },
+        {
+          "name": "unit_cancel_delete_sends_no_mutation",
+          "passed": true
+        },
+        {
+          "name": "unit_deleting_latest_does_not_revive_old_version",
+          "passed": true
+        },
+        {
+          "name": "unit_deleted_price_is_inspectable",
+          "passed": true
+        },
+        {
+          "name": "unit_historical_amount_and_bounds_retained",
+          "passed": true
+        },
+        {
+          "name": "request_edit_generates_version_without_changing_identity",
+          "passed": true
+        },
+        {
+          "name": "request_disabled_remains_visible_in_current_configuration",
+          "passed": true
+        },
+        {
+          "name": "request_reenable_current_price",
+          "passed": true
+        },
+        {
+          "name": "request_cancel_delete_sends_no_mutation",
+          "passed": true
+        },
+        {
+          "name": "request_deleting_latest_does_not_revive_old_version",
+          "passed": true
+        },
+        {
+          "name": "request_deleted_price_is_inspectable",
+          "passed": true
+        },
+        {
+          "name": "request_historical_amount_and_bounds_retained",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/11",
+          "method": "PUT",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1250000,
+            "max_input_tokens": 128000,
+            "max_output_tokens": 8192,
+            "model": "text model",
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "PATCH",
+          "body": {
+            "enabled": true
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "DELETE",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/21",
+          "method": "PUT",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 600000,
+            "micro_per_unit": 800000,
+            "model": "asr model",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/1021",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/1021",
+          "method": "PATCH",
+          "body": {
+            "enabled": true
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/1021",
+          "method": "DELETE",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/31",
+          "method": "PUT",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 40000,
+            "model": "search model"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/1031",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/1031",
+          "method": "PATCH",
+          "body": {
+            "enabled": true
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/1031",
+          "method": "DELETE",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM with synthetic lifecycle APIs; real backend and production are verified separately"
+    },
+    {
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "token_edit_generates_version_without_changing_identity",
+          "passed": true
+        },
+        {
+          "name": "stale_version_error_is_visible_and_retryable",
+          "passed": true
+        },
+        {
+          "name": "token_disabled_remains_visible_in_current_configuration",
+          "passed": true
+        },
+        {
+          "name": "token_reenable_current_price",
+          "passed": true
+        },
+        {
+          "name": "token_cancel_delete_sends_no_mutation",
+          "passed": true
+        },
+        {
+          "name": "token_deleting_latest_does_not_revive_old_version",
+          "passed": true
+        },
+        {
+          "name": "token_deleted_price_is_inspectable",
+          "passed": true
+        },
+        {
+          "name": "token_historical_amount_and_bounds_retained",
+          "passed": true
+        },
+        {
+          "name": "unit_edit_generates_version_without_changing_identity",
+          "passed": true
+        },
+        {
+          "name": "unit_disabled_remains_visible_in_current_configuration",
+          "passed": true
+        },
+        {
+          "name": "unit_reenable_current_price",
+          "passed": true
+        },
+        {
+          "name": "unit_cancel_delete_sends_no_mutation",
+          "passed": true
+        },
+        {
+          "name": "unit_deleting_latest_does_not_revive_old_version",
+          "passed": true
+        },
+        {
+          "name": "unit_deleted_price_is_inspectable",
+          "passed": true
+        },
+        {
+          "name": "unit_historical_amount_and_bounds_retained",
+          "passed": true
+        },
+        {
+          "name": "request_edit_generates_version_without_changing_identity",
+          "passed": true
+        },
+        {
+          "name": "request_disabled_remains_visible_in_current_configuration",
+          "passed": true
+        },
+        {
+          "name": "request_reenable_current_price",
+          "passed": true
+        },
+        {
+          "name": "request_cancel_delete_sends_no_mutation",
+          "passed": true
+        },
+        {
+          "name": "request_deleting_latest_does_not_revive_old_version",
+          "passed": true
+        },
+        {
+          "name": "request_deleted_price_is_inspectable",
+          "passed": true
+        },
+        {
+          "name": "request_historical_amount_and_bounds_retained",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/11",
+          "method": "PUT",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1250000,
+            "max_input_tokens": 128000,
+            "max_output_tokens": 8192,
+            "model": "text model",
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "PATCH",
+          "body": {
+            "enabled": true
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/1011",
+          "method": "DELETE",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/21",
+          "method": "PUT",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 600000,
+            "micro_per_unit": 800000,
+            "model": "asr model",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/1021",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/1021",
+          "method": "PATCH",
+          "body": {
+            "enabled": true
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing/1021",
+          "method": "DELETE",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/31",
+          "method": "PUT",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 40000,
+            "model": "search model"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/1031",
+          "method": "PATCH",
+          "body": {
+            "enabled": false
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/1031",
+          "method": "PATCH",
+          "body": {
+            "enabled": true
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing/1031",
+          "method": "DELETE",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM with synthetic lifecycle APIs; real backend and production are verified separately"
+    }
+  ],
+  "passed": 2,
+  "expected_cases": 2,
+  "failure": null,
+  "limitations": "Synthetic responses verify UI scheme/units/inputs/payloads; backend correctness, live model configuration and deployment are separately verified."
+}
