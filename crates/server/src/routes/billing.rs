@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
+        .merge(super::model_limits::router())
         .route("/api/pricing", get(prices).post(create))
         .route("/api/pricing/{id}",axum::routing::put(update_token_price).patch(token_price_state).delete(delete_token_price))
         .route("/api/pricing/options",get(pricing_options))
@@ -58,8 +59,13 @@ struct NewPrice {
     model: String,
     input_micro_per_million: i64,
     output_micro_per_million: i64,
-    #[serde(default)] max_input_tokens: Option<i64>,
-    #[serde(default)] max_output_tokens: Option<i64>,
+    #[serde(default,deserialize_with="provided_token_bound")] max_input_tokens: Option<i64>,
+    #[serde(default,deserialize_with="provided_token_bound")] max_output_tokens: Option<i64>,
+}
+// Omitted limits use automatic metadata; explicitly supplied null/non-integers
+// are invalid instead of silently reverting an administrator's edited value.
+fn provided_token_bound<'de,D:serde::Deserializer<'de>>(deserializer:D)->Result<Option<i64>,D::Error>{
+    i64::deserialize(deserializer).map(Some)
 }
 async fn create(
     _auth: AdminAuth,
@@ -74,8 +80,21 @@ fn store_token_price(c:&rusqlite::Connection,p:NewPrice,actor:&str,previous:Opti
     if let Some(id)=previous {billing::require_current_price(c,"token",id,p.channel_id,&p.model,&p.currency).map_err(mutation_error)?;}
     let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
     super::pricing_options::require_kind(option.as_ref(),"token").map_err(mutation_error)?;
-    let max_input_tokens=option.as_ref().and_then(|v|v.max_input_tokens).or(p.max_input_tokens).ok_or_else(||ApiError::bad_request("未找到模型的单次输入上限，请补充 token 数量。"))?;
-    let max_output_tokens=option.as_ref().and_then(|v|v.max_output_tokens).or(p.max_output_tokens).ok_or_else(||ApiError::bad_request("未找到模型的单次总输出上限，请补充 token 数量。"))?;
+    let non_generation=option.as_ref().is_some_and(|v|matches!(v.task_type.as_str(),"embeddings"|"rerank"));
+    let generation=option.as_ref().is_some_and(|v|v.task_type=="chat");
+    if p.max_input_tokens.is_some_and(|v|v<=0)||p.max_output_tokens.is_some_and(|v|v<0||(generation&&v==0)) {
+        return Err(ApiError::bad_request("输入窗口须为正整数；生成模型的最大输出须为正整数。"));
+    }
+    if non_generation&&p.max_output_tokens.is_some_and(|v|v!=0) {
+        return Err(ApiError::bad_request("向量与重排模型没有生成输出，最大输出须为0。"));
+    }
+    // Automatic source declarations prefill the form; submitted administrator
+    // values adjust this price version without rewriting source configuration.
+    let max_input_tokens=p.max_input_tokens.or_else(||option.as_ref().and_then(|v|v.max_input_tokens)).ok_or_else(||ApiError::bad_request("未找到模型的单次输入上限，请补充 token 数量。"))?;
+    let max_output_tokens=p.max_output_tokens.or_else(||option.as_ref().and_then(|v|v.max_output_tokens)).ok_or_else(||ApiError::bad_request("未找到模型的单次总输出上限，请补充 token 数量。"))?;
+    if max_input_tokens<=0||max_output_tokens<0||(generation&&max_output_tokens==0) {
+        return Err(ApiError::bad_request("模型输入/输出窗口无效，请填写有效的token数量。"));
+    }
     let p = Price {
         currency:p.currency,
         id: 0,

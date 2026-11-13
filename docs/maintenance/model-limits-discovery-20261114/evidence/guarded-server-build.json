@@ -1,0 +1,17 @@
+{
+  "host": "build-test",
+  "source_phase": "guarded",
+  "source_manifest_sha256": "6d66062727f00b618f9468fc12c94021aa51145218062f308fab575e954c2fd0",
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server"
+  ],
+  "cwd": "/srv/build/tokengo-model-limits-discovery-20261114/source",
+  "exit_code": 0,
+  "seconds": 71.97514867782593
+}

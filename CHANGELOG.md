@@ -1,5 +1,9 @@
 # 更新日志 / Changelog
 
+## 2026-11-14 来源容量探测与管理员调整
+
+来源参数及Token价格表单按同来源模型目录自动补齐上限，显示出处与时间；管理员可调整并重新探测，未知保持未知。已有配置逐项核对，DeepSeek来源及价格按供应方声明对齐，保留128000客户端请求与历史费率。见[验收收据](docs/maintenance/model-limits-discovery-20261114/README.md)。
+
 ## 2026-11-14 模型价格管理
 
 三类价格支持修改、停用/启用与删除归档，历史价格和账目保留。build-test服务端676、Web216、真实WASM交互44项通过；生产状态见[收据](docs/maintenance/price-lifecycle-20261114/README.md)。

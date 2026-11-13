@@ -21,6 +21,7 @@ pub(super) struct PricingOption {
     pub input_bound_source:Option<&'static str>,
     pub output_bound_source:Option<&'static str>,
     pub automatic_settlement:bool,
+    pub limits_discovery:Option<serde_json::Value>,
 }
 fn subtype(raw:&str)->Option<&'static str> {
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -92,9 +93,15 @@ pub(super) fn for_mapping(c:&Connection,channel:ChannelId,mapping:&channels::Mod
             input=Some(value);input_source=Some(if manual.is_some(){"model_context_override"}else{"upstream_catalog"});
         }
     }
+    // Fresh, same-source supplier declarations fill only missing administrator values.
+    let limits_discovery=super::model_limits::saved_discovery(c,channel.0,&mapping.model,crate::model_registry::upstream(mapping))?;
+    if let Some(discovery)=limits_discovery.as_ref() {
+        if input.is_none(){input=discovery["limits"]["max_input_tokens"].as_i64().filter(|v|*v>0);input_source=input.map(|_|"source_model_discovery");}
+        if output.is_none(){output=discovery["limits"]["max_output_tokens"].as_i64().filter(|v|*v>0);output_source=output.map(|_|"source_model_discovery");}
+    }
     if matches!(task_type.as_str(),"embeddings"|"rerank") {output=Some(0);output_source=Some("non_generation_model");}
     if input.is_none(){input_source=None;}if output.is_none(){output_source=None;}
-    Ok(PricingOption{channel_id:channel.0,model:tokengo_shared::normalize_model_name(&mapping.model),upstream:crate::model_registry::upstream(mapping).into(),task_type,task_source,pricing_kind:pricing_kind.into(),allowed_pricing_kinds,recommended_unit,allowed_units,max_input_tokens:input,max_output_tokens:output,max_audio_seconds:None,input_bound_source:input_source,output_bound_source:output_source,automatic_settlement})
+    Ok(PricingOption{channel_id:channel.0,model:tokengo_shared::normalize_model_name(&mapping.model),upstream:crate::model_registry::upstream(mapping).into(),task_type,task_source,pricing_kind:pricing_kind.into(),allowed_pricing_kinds,recommended_unit,allowed_units,max_input_tokens:input,max_output_tokens:output,max_audio_seconds:None,input_bound_source:input_source,output_bound_source:output_source,automatic_settlement,limits_discovery})
 }
 pub(super) fn list(c:&Connection)->db::Result<Vec<PricingOption>> {
     let mut out=Vec::new();

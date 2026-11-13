@@ -1354,6 +1354,10 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
 
     let mut admitted_input = None;
     let mut admitted_output = None;
+    // Discovery can refresh while this request waits at a source gate. Remember
+    // the admitted supplier input window so a later larger/unknown declaration
+    // cannot enlarge an already recorded TPM reservation for ordinary text.
+    let mut admitted_discovery_inputs: HashMap<(i64,String),i64> = HashMap::new();
     if let Some(auth) = &req.auth {
         let mut input = admission_input_bound(&req.body, req.endpoint).map_err(|error| {
             guard.reject(&error); error
@@ -1383,7 +1387,12 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             ).map_err(crate::db::DbError::from)?;
             let managed_openai=crate::oauth_external::channel_managed_openai(&c,candidate.channel.id.0)
                 .map_err(|_|ApiError::internal("OAuth source identity unavailable"))?;
-            let candidate_context=if has_oauth {oauth_bound} else {candidate.protocols.context_bounds()};
+            let candidate_context=if has_oauth {oauth_bound} else {crate::routes::model_limits::effective_context(&c,candidate.channel.id.0,&candidate.name,candidate.channel.upstream_model(&candidate.name),candidate.protocols.context_bounds())?};
+            if !has_oauth && candidate.protocols.context_bounds().is_none() {
+                if let Some((input,_))=candidate_context {
+                    admitted_discovery_inputs.insert((candidate.channel.id.0,candidate.name.clone()),input);
+                }
+            }
             let candidate_input=generation_input_reservation(input,req.endpoint,candidate_context);
             planned_input=Some(planned_input.unwrap_or(0).max(candidate_input));
             let candidate_output = if let Some(protocol) = req.endpoint.protocol() {
@@ -1414,7 +1423,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         }}
                     }
                 }
-                let ceiling = if has_oauth { oauth_bound } else { candidate.protocols.context_bounds() };
+                let ceiling = candidate_context;
                 let bound = if managed_openai && default_output {
                     ceiling.map(|v|v.1).ok_or_else(|| "OAuth source requires verified full context/output bounds".to_owned())
                 } else if protocol!=native && !default_output {
@@ -1478,10 +1487,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         |r| r.get(0),
                     )
                     .map_err(crate::db::DbError::from)?;
-                let context = if has_oauth {
-                    oauth_bound
-                } else {
-                    candidate.protocols.context_bounds()
+                let context = if has_oauth {oauth_bound} else {
+                    crate::routes::model_limits::effective_context(&c,candidate.channel.id.0,&candidate.name,candidate.channel.upstream_model(&candidate.name),candidate.protocols.context_bounds())?
                 };
                 let bound = context.map(|v| v.0).or(crate::db::billing::price(
                     &c,
@@ -2351,7 +2358,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         Some(credential) => credential
                             .max_input_tokens
                             .zip(credential.max_output_tokens),
-                        None => protocols.context_bounds(),
+                        None => crate::routes::model_limits::effective_context(&c,channel.id.0,name,&sent_model,protocols.context_bounds())?,
                     };
                     let image_input = req.endpoint.has_image(&req.body);
                     let tpm_limited = current.effective_policy().tpm.is_some()
@@ -2425,7 +2432,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"source_output_changed","Source output exceeds the admitted reservation; retry with current configuration"));
                         continue 'channels;
                     }
-                    if full_context_input && admitted_input.is_some_and(|reserved| input > reserved)
+                    let discovery_input_changed=req.endpoint.is_generation()
+                        && admitted_discovery_inputs.get(&(channel.id.0,name.clone()))
+                            .is_some_and(|previous|context.map(|value|value.0)!=Some(*previous));
+                    if (full_context_input || discovery_input_changed)
+                        && admitted_input.is_some_and(|reserved| input > reserved)
                     {
                         let error=ApiError::new(StatusCode::BAD_REQUEST,"source_context_changed","Source context exceeds the admitted input reservation; retry with current configuration");
                         guard.reject(&error);
@@ -2531,7 +2542,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     "upstream_model":sent_model,"config_revision":revision,"binding_generation":binding_generation,"upstream_protocol":upstream_protocol,"client_protocol":req.endpoint.protocol(),
                     "virtual_model_scope":plan.virtual_route.as_ref().map(|r|if r.shared {"shared"} else {"private"}),"virtual_model_id":plan.virtual_route.as_ref().map(|route|route.id),"virtual_model_version":plan.virtual_route.as_ref().map(|route|route.version),
                     "target_position":target.as_ref().map(|target|target.position),"provider_id":credential.as_ref().map(|credential|credential.provider_id),"credential_id":credential.as_ref().map(|credential|credential.id),"credential_revision":credential.as_ref().map(|credential|credential.revision),
-                    "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision),"reservation_estimate":reservation_estimate});
+                    "oauth_account_id":oauth.as_ref().map(|c|c.account_id),"oauth_credential_revision":oauth.as_ref().map(|c|c.credential_revision),"reservation_estimate":reservation_estimate,"context_bound_source":if oauth.is_some()||protocols.context_bounds().is_some(){"administrator_or_oauth"}else if context.is_some(){"supplier_model_catalog"}else{"unknown"}});
                     if let Err(e)=c.execute("UPDATE billing_ledger SET source_snapshot=?2,input_bound=?3,output_bound=?4 WHERE id=?1",rusqlite::params![id,source.to_string(),input,output]) {
                     if crate::db::billing::release(&c,id,"not_sent").is_ok(){guard.reservation=None;}
                     return Err(ApiError::from(crate::db::DbError::from(e)));

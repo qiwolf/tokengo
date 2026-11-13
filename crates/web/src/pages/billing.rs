@@ -227,8 +227,8 @@ fn model_price_payload(option:&PriceOption,manual_kind:&str,input:&str,output:&s
     match kind.as_str(){
         "token"=>{
             body["input_micro_per_million"]=json!(amount);body["output_micro_per_million"]=json!(if metadata_bound(option,"max_output_tokens")==Some(0){0}else{policy_editor::optional_limit(output)?.ok_or_else(||"请填写输出价格；免费请填 0。".to_string())?});
-            if metadata_bound(option,"max_input_tokens").is_none(){body["max_input_tokens"]=json!(api::integer(max_input,"单次输入上限（Token）",true)?);}
-            if metadata_bound(option,"max_output_tokens").is_none(){body["max_output_tokens"]=json!(api::integer(max_output,"单次总输出上限（Token）",true)?);}
+            body["max_input_tokens"]=json!(if max_input.trim().is_empty(){metadata_bound(option,"max_input_tokens").ok_or_else(||"请填写单次输入上限（Token）".to_string())?}else{api::integer(max_input,"单次输入上限（Token）",true)?});
+            body["max_output_tokens"]=json!(if metadata_bound(option,"max_output_tokens")==Some(0){0}else if max_output.trim().is_empty(){metadata_bound(option,"max_output_tokens").ok_or_else(||"请填写单次总输出上限（Token）".to_string())?}else{api::integer(max_output,"单次总输出上限（Token）",true)?});
             Ok(("/api/pricing","price",body))
         },
         "unit"=>{
@@ -248,6 +248,13 @@ fn compatible_price_kind(row:&Value,options:&[PriceOption])->bool {
     if service_price(row){return true;}
     options.iter().find(|o|row["channel_id"].as_i64()==Some(o.source_id)&&row["model"].as_str()==Some(o.model.as_str())).is_none_or(|o|{let configured=o.metadata["pricing_kind"].as_str().unwrap_or("unknown");compatible_price_unit(row,o)&&(configured=="unknown"||price_row_kind(row)==configured||api::rows(&o.metadata,"allowed_pricing_kinds").iter().any(|k|k.as_str()==Some(price_row_kind(row))))})
 }
+// Unknown discovery may invalidate a previous automatic prefill, but it must
+// never erase an existing price bound or an administrator's edited draft.
+fn discovered_price_bound(current:&str,declared:&Value,replace:bool,dirty:bool,automatic:bool)->String {
+    if !replace&&(dirty||!automatic){return current.into();}
+    if let Some(value)=declared.as_i64().filter(|value|*value>0){return value.to_string();}
+    if automatic&&!dirty{String::new()}else{current.into()}
+}
 fn model_price_endpoint(kind:&str)->&'static str {match kind{"unit"=>"/api/unit-pricing","request"=>"/api/request-pricing",_=>"/api/pricing"}}
 async fn load_model_prices()->Result<Vec<Value>,crate::api::ApiErr> {
     let mut all=Vec::new();
@@ -265,9 +272,46 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
     let busy=RwSignal::new(false);let error=RwSignal::new(String::new());let message=RwSignal::new(String::new());
     let edit_target=RwSignal::new(None::<(&'static str,i64)>);let pending_delete=RwSignal::new(None::<Value>);
     let channel=RwSignal::new(String::new());let model=RwSignal::new(String::new());let input=RwSignal::new(String::new());let output=RwSignal::new(String::new());let max_in=RwSignal::new(String::new());let max_out=RwSignal::new(String::new());let unit=RwSignal::new(String::new());let manual_kind=RwSignal::new(String::new());
+    let limit_dirty_in=RwSignal::new(false);let limit_dirty_out=RwSignal::new(false);let detecting=RwSignal::new(false);let detection=RwSignal::new(None::<Value>);let detection_note=RwSignal::new(String::new());let last_detection=RwSignal::new(None::<(i64,String)>);let detection_generation=RwSignal::new(0u64);let limit_edit_revision=RwSignal::new(0u64);
     let selected=Memo::new(move |_|selected_price_option(&channel.get(),&model.get(),&sources.get(),&objects.get()));
     let scheme=Memo::new(move |_|selected.get().map(|option|price_scheme(&option,&manual_kind.get())).unwrap_or_default());
-    let on_selection=Callback::new(move|()|{input.set(String::new());output.set(String::new());max_in.set(String::new());max_out.set(String::new());manual_kind.set(String::new());error.set(String::new());message.set(String::new());unit.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|o.metadata["recommended_unit"].as_str().map(str::to_string)).unwrap_or_default());});
+    let on_selection=Callback::new(move|()|{input.set(String::new());output.set(String::new());limit_dirty_in.set(false);limit_dirty_out.set(false);detection_generation.update(|v|*v+=1);detecting.set(false);detection.set(None);detection_note.set(String::new());max_in.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|metadata_bound(&o,"max_input_tokens")).map(|n|n.to_string()).unwrap_or_default());max_out.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|metadata_bound(&o,"max_output_tokens")).map(|n|n.to_string()).unwrap_or_default());manual_kind.set(String::new());error.set(String::new());message.set(String::new());unit.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|o.metadata["recommended_unit"].as_str().map(str::to_string)).unwrap_or_default());});
+    let detect_limits=Callback::new(move|replace:bool|{
+        let Some(option)=selected.get_untracked()else{return;};
+        if price_scheme(&option,&manual_kind.get_untracked())!="token" {return;}
+        let pair=(option.source_id,option.model.clone());last_detection.set(Some(pair.clone()));detection_generation.update(|v|*v+=1);let sequence=detection_generation.get_untracked();let edit_revision=limit_edit_revision.get_untracked();detecting.set(true);detection_note.set("正在读取供应方模型目录…".into());
+        leptos::task::spawn_local(async move {
+            let result=api::request("POST",&format!("/api/channels/{}/limits/discover",pair.0),Some(json!({"model":pair.1}))).await;
+            if detection_generation.try_get_untracked()!=Some(sequence)||selected.try_get_untracked().flatten().map(|v|(v.source_id,v.model))!=Some(pair.clone()){return;}
+            match result {
+                Ok(value)=>{
+                    let limits=&value["limits"];
+                    let unchanged=limit_edit_revision.get_untracked()==edit_revision;
+                    let auto_in=metadata_bound(&option,"max_input_tokens").is_none()||option.metadata["input_bound_source"]=="source_model_discovery";
+                    let auto_out=metadata_bound(&option,"max_output_tokens").is_none()||option.metadata["output_bound_source"]=="source_model_discovery";
+                    if unchanged {
+                        max_in.set(discovered_price_bound(&max_in.get_untracked(),&limits["max_input_tokens"],replace,limit_dirty_in.get_untracked(),auto_in));
+                        if metadata_bound(&option,"max_output_tokens")!=Some(0) {
+                            max_out.set(discovered_price_bound(&max_out.get_untracked(),&limits["max_output_tokens"],replace,limit_dirty_out.get_untracked(),auto_out));
+                        }
+                    }
+                    sources.update(|all|{if let Some(option)=all.iter_mut().find(|v|v.source_id==pair.0&&v.model==pair.1){for (field,origin) in [("max_input_tokens","input_bound_source"),("max_output_tokens","output_bound_source")] {if option.metadata[field].is_null()||option.metadata[origin]=="source_model_discovery"{option.metadata[field]=limits[field].clone();option.metadata[origin]=if limits[field].is_null(){Value::Null}else{json!("source_model_discovery")};}}option.metadata["limits_discovery"]=value.clone();}});
+                    let time=value["discovered_at_ms"].as_f64().map(|ms|js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms)).to_locale_string("zh-CN",&wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default()).unwrap_or_default();
+                    detection_note.set(if value["status"]=="supplier_declared"{if replace{format!("供应方目录声明 · {time}；探测值已填入，可继续调整。")}else{format!("供应方目录声明 · {time}；已填入未手工修改的项目，可继续调整。")}}else{"供应方目录未声明这些上限；保留现有值，未知项目请补填。".into()});detection.set(Some(value));
+                },
+                Err(e)=>{ctx.note_err(&e);detection_note.set(format!("未能探测：{}；可保留或手工填写上限。",e.message));}
+            }detecting.set(false);
+        });
+    });
+    Effect::new(move |_|{
+        let Some(option)=selected.get()else{return;};
+        if price_scheme(&option,&manual_kind.get())!="token" {return;}
+        let pair=(option.source_id,option.model.clone());
+        if last_detection.get_untracked().as_ref()!=Some(&pair)&&["max_input_tokens","max_output_tokens"].iter().any(|field|metadata_bound(&option,field).is_none()) {
+            detect_limits.run(false);
+        }
+    });
+    let shown_discovery=Memo::new(move |_|detection.get().or_else(||selected.get().and_then(|o|o.metadata.get("limits_discovery").filter(|v|v.is_object()).cloned())));
     let load=move |_| {if busy.get_untracked(){return;}busy.set(true);error.set(String::new());leptos::task::spawn_local(async move {
         let result=load_model_prices().await;
         match result {Ok(v)=>rows.set(v),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);
@@ -294,6 +338,7 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
             max_out.set(r["max_output_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default());
             if selected.as_ref().is_some_and(|o|api::rows(&o.metadata,"allowed_units").iter().any(|u|u==&r["unit"])){unit.set(api::text(&r,"unit"));}
         }
+        limit_dirty_in.set(true);limit_dirty_out.set(true);
         edit_target.set((!legacy&&price_is_current(&r,&rows.get_untracked())&&target==kind&&unit_valid&&r["deleted"]!=true).then(||(model_price_endpoint(kind),r["id"].as_i64().unwrap_or(0))));
         message.set(if target!=kind{"模型类型已变更，请按当前计价方式重新填写。"}else if !unit_valid{"原计价单位不适用于当前模型，请确认新单位并重新填写。"}else if legacy{"请重新填写人民币价格，旧美元单价不会直接复制。"}else{"修改后生成新版本，后续调用使用新价格，历史账目保留。"}.into());
         billing_dialog("price-dialog",true);
@@ -347,9 +392,10 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
                         {if !kind.is_empty(){let price_label=match kind.as_str(){"token"=>"输入价格（元 / 百万 Token）".to_string(),"unit"=>format!("价格（元 / {}）",if selected_unit.is_empty(){"所选单位"}else{unit_label(&selected_unit)}),_=>"价格（元 / 次）".into()};view!{<label for="price-in">{price_label}</label><input id="price-in" required type="text" inputmode="decimal" prop:value=input aria-describedby="price-error" on:input=move|e|input.set(event_target_value(&e))/ >}.into_any()}else{().into_any()}}
                         {if kind=="token"{view!{
                             {if output_bound==Some(0){view!{<p class="muted small" style="grid-column:1 / -1">"该模型不生成输出 Token，仅配置输入价格；输出价格为 0。"</p>}.into_any()}else{view!{<label for="price-out">"输出价格（元 / 百万 Token）"</label><input id="price-out" required type="text" inputmode="decimal" prop:value=output aria-describedby="price-error" on:input=move|e|output.set(event_target_value(&e))/>}.into_any()}}
-                            <div id="price-model-bounds" class="billing-selected-object" style="grid-column:1 / -1"><p class="muted small">{format!("单次输入上限：{}；单次总输出上限：{}。",input_bound.map(|n|format!("{n} Token（来自模型配置）")).unwrap_or_else(||"未配置".into()),output_bound.map(|n|format!("{n} Token（来自模型配置）")).unwrap_or_else(||"未配置".into()))}</p><p class="muted small">"用于调用前预占额度和单次用量检查，完成后按实际已报告用量结算。总输出包含一次生成的全部结果及上游计入输出的推理用量。"</p></div>
-                            {if input_bound.is_none(){view!{<label for="price-max-in">"单次输入上限（Token）"</label><div class="billing-field"><input id="price-max-in" required inputmode="numeric" prop:value=max_in aria-describedby="price-input-help price-error" on:input=move|e|max_in.set(event_target_value(&e))/><small id="price-input-help" class="muted">"模型配置中未找到输入上限，请补填；建议在来源渠道的模型参数中维护。"</small></div>}.into_any()}else{().into_any()}}
-                            {if output_bound.is_none(){view!{<label for="price-max-out">"单次总输出上限（Token）"</label><div class="billing-field"><input id="price-max-out" required inputmode="numeric" prop:value=max_out aria-describedby="price-output-help price-error" on:input=move|e|max_out.set(event_target_value(&e))/><small id="price-output-help" class="muted">"模型配置中未找到输出上限，请补填；一次生成多份结果时填写合计上限。"</small></div>}.into_any()}else{().into_any()}}
+                            <div id="price-model-bounds" class="billing-selected-object" style="grid-column:1 / -1"><p class="muted small">"上限自动取自来源配置或供应方模型目录，可由管理员调整；结算仍使用实际用量。"</p><p class="muted small">{format!("参考输入：{}；参考总输出：{}。",input_bound.map(|n|format!("{n} Token")).unwrap_or_else(||"未知".into()),output_bound.map(|n|format!("{n} Token")).unwrap_or_else(||"未知".into()))}</p>
+                            <button type="button" class="ghost" disabled=move||detecting.get()||busy.get() on:click=move |_|detect_limits.run(true)>"重新探测并填入"</button><p role="status" class="muted small">{move||{let note=detection_note.get();if !note.is_empty(){note}else{shown_discovery.get().map(|v|{let time=v["discovered_at_ms"].as_f64().map(|ms|js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms)).to_locale_string("zh-CN",&wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default()).unwrap_or_default();format!("供应方目录声明 · {time}；管理员可调整。")}).unwrap_or_default()}}}</p>{move||shown_discovery.get().map(|v|view!{<p class="muted small">{format!("探测来源：{}",api::text(&v,"source_url"))}</p>})}</div>
+                            <label for="price-max-in">"单次输入预占上限（Token）"</label><input id="price-max-in" required inputmode="numeric" prop:value=max_in aria-describedby="price-input-help price-error" on:input=move|e|{limit_dirty_in.set(true);limit_edit_revision.update(|v|*v+=1);max_in.set(event_target_value(&e));}/><small id="price-input-help" class="muted" style="grid-column:1 / -1">"系统自动带入可用值；调整计价预占不会扩大供应方实际窗口。"</small>
+                            {if output_bound!=Some(0){view!{<label for="price-max-out">"单次总输出预占上限（Token）"</label><input id="price-max-out" required inputmode="numeric" prop:value=max_out aria-describedby="price-output-help price-error" on:input=move|e|{limit_dirty_out.set(true);limit_edit_revision.update(|v|*v+=1);max_out.set(event_target_value(&e));}/><small id="price-output-help" class="muted" style="grid-column:1 / -1">"总输出包含本次生成结果与上游计入输出的推理用量；上限应能覆盖客户端请求。"</small>}.into_any()}else{().into_any()}}
                         }.into_any()}else if kind=="unit"{view!{
                             {if duration&&duration_bound.is_some(){view!{<p id="price-model-bounds" class="muted small" style="grid-column:1 / -1">{format!("单次{subject}时长上限：{} 秒（来自模型配置）。",duration_bound.unwrap())}</p>}.into_any()}else{let cap_label=if duration{format!("单次{subject}时长上限（秒）")}else{format!("单次数量上限（{}）",if selected_unit.is_empty(){"所选单位"}else{unit_label(&selected_unit)})};view!{<label for="price-max-quantity">{cap_label}</label><div class="billing-field"><input id="price-max-quantity" required inputmode="decimal" prop:value=max_in aria-describedby="price-quantity-help price-error" on:input=move|e|max_in.set(event_target_value(&e))/><small id="price-quantity-help" class="muted">{if duration{format!("模型未配置时长上限，请补填{subject}秒数；最多3位小数。单价按所选秒、分钟或小时换算。")}else{"模型未配置数量上限，请按所选单位补填，最多3位小数。".into()}}</small></div>}.into_any()}}
                             <p class="muted small" style="grid-column:1 / -1">{if metadata["task_type"]=="asr"{"语音识别按音频实际时长结算，使用秒、分钟或小时单价；不使用 Token 或接口响应耗时。"}else if metadata["task_type"]=="tts"{"请按供应方选择字符或 UTF-8 字节单价，二者不可混用。"}else if metadata["task_type"]=="video"{"请按供应方选择每段视频或视频时长单价；时长上限始终填写视频秒数。"}else{"计价单位须与供应方实际账单一致。"}}</p>
@@ -357,7 +403,7 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
                         }.into_any()}else{().into_any()}}
                     }
                 })}
-            </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("price-dialog",false)>"取消"</button><button type="submit" class="primary" disabled=move||busy.get()||scheme.get().is_empty()>{move||if edit_target.get().is_some(){"保存修改"}else{"创建人民币价格版本"}}</button></div></fieldset></form></BillingDialog>
+            </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("price-dialog",false)>"取消"</button><button type="submit" class="primary" disabled=move||busy.get()||detecting.get()||scheme.get().is_empty()>{move||if edit_target.get().is_some(){"保存修改"}else{"创建人民币价格版本"}}</button></div></fieldset></form></BillingDialog>
             <BillingDialog id="price-delete-dialog" title="删除价格配置" busy=busy>
                 <p>{move||pending_delete.get().map(|r|format!("删除 {} · 版本 {}？",price_model_name(&r),api::text(&r,"id"))).unwrap_or_default()}</p>
                 <p class="muted small">"删除后不再用于后续调用，旧版本不会自动恢复。历史账目及原价格快照保留。"</p>
@@ -533,16 +579,16 @@ mod automatic_price_form_tests {
         let mut result=price_options_from_channels(&rows,&Default::default()).remove(0);result.metadata=metadata;result
     }
     #[test]
-    fn configured_model_bounds_are_not_duplicated_in_price_request() {
+    fn configured_model_bounds_are_automatically_submitted_with_price() {
         let p=option(json!({"pricing_kind":"token","max_input_tokens":128000,"max_output_tokens":8192}));
         let (path,_,body)=model_price_payload(&p,"","1.5","6","","","").unwrap();
-        assert_eq!(path,"/api/pricing");assert!(body.get("max_input_tokens").is_none());assert!(body.get("max_output_tokens").is_none());assert_eq!(body["input_micro_per_million"],1500000);
+        assert_eq!(path,"/api/pricing");assert_eq!(body["max_input_tokens"],128000);assert_eq!(body["max_output_tokens"],8192);assert_eq!(body["input_micro_per_million"],1500000);
     }
     #[test]
     fn non_generating_models_use_zero_output_without_repeated_parameter_input() {
         let p=option(json!({"task_type":"embeddings","pricing_kind":"token","max_input_tokens":8192,"max_output_tokens":0}));
         assert_eq!(metadata_bound(&p,"max_output_tokens"),Some(0));
-        let (_,_,body)=model_price_payload(&p,"","0.2","","","","").unwrap();assert_eq!(body["output_micro_per_million"],0);assert!(body.get("max_output_tokens").is_none());
+        let (_,_,body)=model_price_payload(&p,"","0.2","","","","").unwrap();assert_eq!(body["output_micro_per_million"],0);assert_eq!(body["max_output_tokens"],0);
     }
     #[test]
     fn existing_valid_by_call_scheme_can_be_edited_while_new_defaults_to_tokens() {
@@ -551,11 +597,12 @@ mod automatic_price_form_tests {
         let row=json!({"channel_id":5,"model":p.model,"micro_per_call":10000});assert!(compatible_price_kind(&row,&[p]));
     }
     #[test]
-    fn only_missing_bound_is_requested_and_not_reused_across_sources() {
+    fn administrator_output_override_is_preserved_while_input_requires_a_value() {
         let p=option(json!({"pricing_kind":"token","max_input_tokens":null,"max_output_tokens":4096}));
         assert!(model_price_payload(&p,"","1","2","","","").is_err());
         let (_,_,body)=model_price_payload(&p,"","1","2","32000","123","").unwrap();
-        assert_eq!(body["max_input_tokens"],32000);assert!(body.get("max_output_tokens").is_none());
+        assert_eq!(body["max_input_tokens"],32000);assert_eq!(body["max_output_tokens"],123);
+        let (_,_,automatic)=model_price_payload(&p,"","1","2","32000","","").unwrap();assert_eq!(automatic["max_output_tokens"],4096);
     }
     #[test]
     fn model_task_selects_matching_price_api_and_unit() {
@@ -623,5 +670,45 @@ mod price_lifecycle_tests {
     fn backend_latest_identity_prevents_hidden_archive_reviving_an_older_price() {
         let old=json!({"id":1,"channel_id":1,"model":"test","currency":"CNY","input_micro_per_million":100,"is_latest":false});
         assert!(!price_is_current(&old,std::slice::from_ref(&old)));
+    }
+}
+
+#[cfg(test)]
+mod automatic_limit_input_tests {
+    use super::*;
+    fn option()->PriceOption {PriceOption{source_id:1,model:"chat".into(),upstream:"chat".into(),provider:"provider".into(),channel:"source".into(),credential:"key".into(),base_url:"https://synthetic.invalid/v1".into(),metadata:json!({"pricing_kind":"token","max_input_tokens":1000000,"max_output_tokens":384000})}}
+    #[test]
+    fn administrator_adjusted_limits_are_submitted_instead_of_discarded() {
+        let (_,_,body)=model_price_payload(&option(),"","1","4","64000","128000","").unwrap();
+        assert_eq!(body["max_input_tokens"],64000);assert_eq!(body["max_output_tokens"],128000);
+    }
+    #[test]
+    fn automatic_limits_are_used_when_the_administrator_has_not_changed_them() {
+        let (_,_,body)=model_price_payload(&option(),"","1","4","1000000","384000","").unwrap();
+        assert_eq!(body["max_input_tokens"],1000000);assert_eq!(body["max_output_tokens"],384000);
+    }
+}
+
+#[cfg(test)]
+mod price_discovery_draft_tests {
+    use super::*;
+    #[test]
+    fn unknown_discovery_preserves_existing_prices_and_administrator_edits() {
+        for unknown in [Value::Null,json!(0),json!(-1),json!("1000000")] {
+            // Editing loads persisted limits with dirty=true; even the explicit
+            // refresh button cannot replace a valid bound with an unknown value.
+            assert_eq!(discovered_price_bound("512000",&unknown,true,true,true),"512000");
+            assert_eq!(discovered_price_bound("128000",&unknown,false,true,true),"128000");
+            // Configured administrator metadata is preserved without local edits.
+            assert_eq!(discovered_price_bound("64000",&unknown,true,false,false),"64000");
+        }
+    }
+    #[test]
+    fn stale_automatic_prefills_clear_and_positive_explicit_refresh_remains_available() {
+        assert_eq!(discovered_price_bound("512000",&Value::Null,true,false,true),"");
+        assert_eq!(discovered_price_bound("512000",&Value::Null,false,false,true),"");
+        assert_eq!(discovered_price_bound("512000",&json!(1000000),false,true,true),"512000");
+        assert_eq!(discovered_price_bound("512000",&json!(1000000),true,true,true),"1000000");
+        assert_eq!(discovered_price_bound("",&json!(1000000),false,false,true),"1000000");
     }
 }

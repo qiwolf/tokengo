@@ -1,0 +1,13 @@
+{
+  "host": "build-test",
+  "source_phase": "reviewed",
+  "source_manifest_sha256": "2ac2fd76906545c8d6e9b7eca2aa32a5844cfb307c821b85ac37c4010bd53510",
+  "command": [
+    "trunk",
+    "build",
+    "--release"
+  ],
+  "cwd": "/srv/build/tokengo-model-limits-discovery-20261114/source/crates/web",
+  "exit_code": 0,
+  "seconds": 135.35449051856995
+}

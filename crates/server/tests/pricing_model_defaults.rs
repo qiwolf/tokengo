@@ -51,9 +51,9 @@ async fn creating_token_price_uses_current_config_and_prompts_only_for_missing_b
     f.configure_bounds(128000,32000);
     let raw_before=db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap();
     let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],128000);assert_eq!(v["price"]["max_output_tokens"],32000);
-    // A stale client cannot change already-configured model parameters by posting
-    // the old duplicate fields. Missing configuration still accepts explicit fallback.
-    let(status,v)=f.call("/api/pricing",Some(manual),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],128000);assert_eq!(v["price"]["max_output_tokens"],32000);assert_eq!(raw_before,db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap());
+    // Administrators may adjust prefilled price bounds without rewriting the
+    // source protocol parameters. Omitted fields still inherit current metadata.
+    let(status,v)=f.call("/api/pricing",Some(manual),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],1000);assert_eq!(v["price"]["max_output_tokens"],2000);assert_eq!(raw_before,db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap());
     f.configure_bounds(256000,64000);let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],256000);assert_eq!(v["price"]["max_output_tokens"],64000);
     for name in ["voice","speak","picture","movie","tool","audio"]{let(status,_)=f.call("/api/pricing",Some(f.price(name)),true).await;assert_eq!(status,StatusCode::BAD_REQUEST,"{name}");}
 }
@@ -103,4 +103,17 @@ async fn explicit_audio_purpose_overrides_old_chat_kind_for_pricing_without_chan
     let(status,_)=f.call("/api/pricing",Some(f.price("voice")),true).await;assert_eq!(status,StatusCode::BAD_REQUEST);
     let(status,v)=f.call("/api/unit-pricing",Some(json!({"channel_id":f.channel,"model":"voice","unit":"minute","micro_per_unit":120000,"max_quantity_milli":60000})),true).await;assert_eq!(status,StatusCode::OK,"{v}");
     let c=f.state.conn();assert_eq!(db::kinds::get(&c,"voice").unwrap().unwrap().kind,tokengo_shared::ModelKind::Chat);assert_eq!(db::model_access::catalog_purpose(&c,"voice").unwrap(),"audio");assert!(db::billing::list_prices(&c).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn explicit_price_bounds_remain_editable_and_invalid_explicit_values_never_fall_back(){
+ let f=Fixture::new();f.configure_bounds(128000,32000);
+ let original=db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap();
+ let mut body=f.price("chat");body["max_input_tokens"]=json!(256000);body["max_output_tokens"]=json!(64000);
+ let(status,v)=f.call("/api/pricing",Some(body.clone()),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],256000);assert_eq!(v["price"]["max_output_tokens"],64000);
+ let old_id=v["price"]["id"].as_i64().unwrap();body["max_input_tokens"]=json!(64000);body["max_output_tokens"]=json!(16000);
+ let response=app(f.state.clone()).oneshot(Request::builder().method("PUT").uri(format!("/api/pricing/{old_id}")).header("authorization",format!("Bearer {}",f.admin)).header("content-type","application/json").body(Body::from(body.to_string())).unwrap()).await.unwrap();assert_eq!(response.status(),StatusCode::OK);let raw=to_bytes(response.into_body(),1<<20).await.unwrap();let v:Value=serde_json::from_slice(&raw).unwrap();assert_eq!(v["price"]["max_input_tokens"],64000);assert_eq!(v["price"]["max_output_tokens"],16000);
+ for field in ["max_input_tokens","max_output_tokens"] {for value in [json!(-1),json!(0),Value::Null,json!("1024"),json!(1.5)] {let mut body=f.price("chat");body[field]=value.clone();let(status,v)=f.call("/api/pricing",Some(body),true).await;assert_eq!(status,StatusCode::BAD_REQUEST,"{field}={value} must not silently use auto metadata: {v}");}}
+ for model in ["embed","rank"] {let mut body=f.price(model);body["max_input_tokens"]=json!(4096);body["max_output_tokens"]=json!(0);let(status,v)=f.call("/api/pricing",Some(body.clone()),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],4096);assert_eq!(v["price"]["max_output_tokens"],0);body["max_output_tokens"]=json!(64);assert_eq!(f.call("/api/pricing",Some(body),true).await.0,StatusCode::BAD_REQUEST);}
+ assert_eq!(original,db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap());
 }

@@ -16,6 +16,7 @@ pub mod network;
 pub mod identity;
 pub mod billing;
 mod pricing_options;
+pub(crate) mod model_limits;
 pub mod audio;
 pub mod admin;
 pub mod model_routing;

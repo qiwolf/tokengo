@@ -24,6 +24,23 @@ fn client_protocol_status(raw:&str, protocol:&str)->(&'static str,bool) {
 }
 fn effort_key(protocol: &str) -> &str {match protocol{"chat"=>"reasoning_effort","responses"=>"reasoning.effort","messages"=>"output_config.effort",_=>"由来源确认"}}
 fn cap_key(protocol: &str) -> &str {match protocol{"chat"=>"max_tokens / max_completion_tokens","responses"=>"max_output_tokens","messages"=>"max_tokens",_=>"由来源确认"}}
+fn capacity_value(raw:&str,key:&str)->String {
+    serde_json::from_str::<Value>(raw).ok().and_then(|v|v.get(key).cloned()).map(|v|v.as_str().map(str::to_owned).unwrap_or_else(||if v.is_null(){String::new()}else{v.to_string()})).unwrap_or_default()
+}
+fn edit_capacity(raw:&str,key:&str,text:&str)->String {
+    let Ok(mut value)=serde_json::from_str::<Value>(raw)else{return raw.into();};
+    let Some(map)=value.as_object_mut()else{return raw.into();};
+    if text.trim().is_empty(){map.remove(key);}else{map.insert(key.into(),text.parse::<i64>().map(|n|json!(n)).unwrap_or_else(|_|json!(text)));}value.to_string()
+}
+fn fill_discovered_limits(raw:&str,limits:&Value,replace:bool)->String {
+    let Ok(mut value)=serde_json::from_str::<Value>(raw)else{return raw.into();};
+    if !value.is_object(){return raw.into();}
+    for key in ["max_input_tokens","max_output_tokens"] {
+        if let Some(n)=limits[key].as_i64().filter(|n|*n>0) {
+            if replace||value.get(key).is_none_or(|v|v.is_null()){value[key]=json!(n);}
+        }
+    }value.to_string()
+}
 #[component]
 pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
     let sources=StoredValue::new(source_ids);
@@ -34,7 +51,7 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
     let client=RwSignal::new("chat".to_string());
     let loading=RwSignal::new(false);let busy=RwSignal::new(false);
     let error=RwSignal::new(String::new());let note=RwSignal::new(String::new());
-    let load_generation=RwSignal::new(0u64);
+    let load_generation=RwSignal::new(0u64);let discovery_generation=RwSignal::new(0u64);let discovering=RwSignal::new(false);let declaration=RwSignal::new(None::<Value>);let discovery_note=RwSignal::new(String::new());let last_discovered=RwSignal::new(None::<(i64,String)>);
     let load=Callback::new(move |()| {
         load_generation.update(|v|*v+=1);let load_id=load_generation.get_untracked();
         loading.set(true);error.set(String::new());
@@ -61,6 +78,26 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
             if let Some(next)=next.filter(|next|*next!=current){client.set(next);}
         }
     });
+    let discover=Callback::new(move|replace:bool|{
+        let Some(id)=selected.get_untracked()else{return;};let name=model.get_untracked();if name.is_empty(){return;}
+        let pair=(id,name.clone());last_discovered.set(Some(pair.clone()));discovery_generation.update(|v|*v+=1);let sequence=discovery_generation.get_untracked();let starting_limits=(capacity_value(&protocols.get_untracked(),"max_input_tokens"),capacity_value(&protocols.get_untracked(),"max_output_tokens"));discovering.set(true);discovery_note.set("正在读取供应方模型目录…".into());
+        leptos::task::spawn_local(async move {
+            let result=api::request("POST",&format!("/api/channels/{id}/limits/discover"),Some(json!({"model":name}))).await;
+            if discovery_generation.try_get_untracked()!=Some(sequence)||selected.try_get_untracked()!=Some(Some(id))||model.try_get_untracked()!=Some(pair.1){return;}
+            match result {
+                Ok(value)=>{
+                    protocols.update(|raw|{let unchanged=(capacity_value(raw,"max_input_tokens"),capacity_value(raw,"max_output_tokens"))==starting_limits;*raw=fill_discovered_limits(raw,&value["limits"],replace&&unchanged);});
+                    let time=value["discovered_at_ms"].as_f64().map(|ms|js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms)).to_locale_string("zh-CN",&wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default()).unwrap_or_default();
+                    discovery_note.set(if value["status"]=="supplier_declared"{format!("供应方目录声明 · {time}；可调整后保存，已有手工配置优先。")}else{"供应方目录未声明这些上限，请保留现有配置或手工补填。".into()});declaration.set(Some(value));
+                },
+                Err(e)=>{ctx.note_err(&e);discovery_note.set(format!("未能探测：{}；现有值保持，可手工填写。",e.message));}
+            }discovering.set(false);
+        });
+    });
+    Effect::new(move |_|{
+        let Some(id)=selected.get()else{return;};let name=model.get();if name.is_empty()||loading.get(){return;}
+        if last_discovered.get_untracked()!=Some((id,name)){discover.run(false);}
+    });
     let save=move |event:leptos::ev::SubmitEvent|{
         event.prevent_default();if busy.get_untracked(){return;}
         let Some(id)=selected.get_untracked()else{error.set("请先选择已保存的来源。".into());return;};
@@ -76,10 +113,13 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
     view!{<section class="connection-parameters"><h3>"参数与转发"</h3><p class="account-help">"这里显示刚保存的真实来源和模型。客户端接入协议是用户调用本系统的协议；供应方接口协议是本系统请求供应方时使用的协议。"</p>
         <Show when=move||loading.get()><p role="status">"正在读取已保存的来源与模型…"</p></Show>
         <Show when=move||!loading.get()&&channels.get().is_empty()><p role="alert">"没有可配置的已保存来源，请返回列表重新打开此凭据。"</p></Show>
-        <Show when=move||{channels.get().len()>1}><label class="account-field"><span>"当前来源"</span><select prop:value=move||selected.get().map(|id|id.to_string()).unwrap_or_default() on:change=move|e|selected.set(event_target_value(&e).parse().ok())>{move||channels.get().into_iter().map(|c|view!{<option value=c["id"].to_string()>{api::text(&c,"name")}</option>}).collect_view()}</select><span class="account-help">"本页只修改所选来源，不批量覆盖同凭据的其他来源。"</span></label></Show>
-        <div class="policy-limits"><label class="account-field"><span>"当前模型"</span><select prop:value=model on:change=move|e|model.set(event_target_value(&e))>{move||channels.get().into_iter().find(|r|r["id"].as_i64()==selected.get()).map(|r|api::rows(&r,"models").into_iter().map(|m|{let name=api::text(&m,"model");view!{<option value=name.clone()>{name.clone()}</option>}}).collect_view())}</select></label>
-        <label class="account-field"><span>"客户端接入协议"</span><select prop:value=client on:change=move|e|client.set(event_target_value(&e))>{move||["chat","responses","messages"].into_iter().map(|kind|{let (status,available)=client_protocol_status(&protocols.get(),kind);view!{<option value=kind disabled=!available>{format!("{} · {status}",protocol_label(kind))}</option>}}).collect_view()}</select><span class="account-help">"仅预览转发方式，例如 /v1/chat/completions；不会修改来源或客户端配置。"</span></label></div>
+        <Show when=move||{channels.get().len()>1}><label class="account-field"><span>"当前来源"</span><select aria-label="当前来源" prop:value=move||selected.get().map(|id|id.to_string()).unwrap_or_default() on:change=move|e|selected.set(event_target_value(&e).parse().ok())>{move||channels.get().into_iter().map(|c|view!{<option value=c["id"].to_string()>{api::text(&c,"name")}</option>}).collect_view()}</select><span class="account-help">"本页只修改所选来源，不批量覆盖同凭据的其他来源。"</span></label></Show>
+        <div class="policy-limits"><label class="account-field"><span>"当前模型"</span><select aria-label="当前模型" prop:value=model on:change=move|e|model.set(event_target_value(&e))>{move||channels.get().into_iter().find(|r|r["id"].as_i64()==selected.get()).map(|r|api::rows(&r,"models").into_iter().map(|m|{let name=api::text(&m,"model");view!{<option value=name.clone()>{name.clone()}</option>}}).collect_view())}</select></label>
+        <label class="account-field"><span>"客户端接入协议"</span><select aria-label="客户端接入协议" prop:value=client on:change=move|e|client.set(event_target_value(&e))>{move||["chat","responses","messages"].into_iter().map(|kind|{let (status,available)=client_protocol_status(&protocols.get(),kind);view!{<option value=kind disabled=!available>{format!("{} · {status}",protocol_label(kind))}</option>}}).collect_view()}</select><span class="account-help">"仅预览转发方式，例如 /v1/chat/completions；不会修改来源或客户端配置。"</span></label></div>
         <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()><label class="account-field"><span>"供应方接口协议"</span><select prop:value=move||primary(&protocols.get()) on:change=move|e|protocols.update(|raw|*raw=choose_primary(raw,&event_target_value(&e)))>{move||serde_json::from_str::<Value>(&protocols.get()).ok().map(|v|api::rows(&v,"native").into_iter().filter_map(|v|v.as_str().map(str::to_owned)).map(|p|view!{<option value=p.clone()>{protocol_label(&p).to_string()}</option>}).collect_view())}</select><span class="account-help">"优先使用已声明的原生协议，例如供应方 /responses；OAuth 线路仍受服务端固定传输约束。"</span></label>
+        <div class="policy-limits"><label class="account-field"><span>"来源输入窗口（Token）"</span><input id="source-max-input" type="text" inputmode="numeric" prop:value=move||capacity_value(&protocols.get(),"max_input_tokens") on:input=move|e|protocols.update(|raw|*raw=edit_capacity(raw,"max_input_tokens",&event_target_value(&e)))/><span class="account-help">"按当前模型的目录声明自动补缺；保存来源设置会作用于该来源全部模型。"</span></label>
+        <label class="account-field"><span>"来源最大输出（Token）"</span><input id="source-max-output" type="text" inputmode="numeric" prop:value=move||capacity_value(&protocols.get(),"max_output_tokens") on:input=move|e|protocols.update(|raw|*raw=edit_capacity(raw,"max_output_tokens",&event_target_value(&e)))/><span class="account-help">"保留未知，不把默认值当作供应方声明。"</span></label></div>
+        <div class="account-actions"><button type="button" class="ghost" disabled=move||discovering.get() on:click=move |_|discover.run(true)>"重新探测并填入"</button></div><p role="status" class="account-help">{move||discovery_note.get()}</p>{move||declaration.get().map(|v|view!{<p class="account-help">{format!("探测来源：{}",api::text(&v,"source_url"))}</p>})}
         <label class="account-check"><input type="checkbox" prop:checked=move||{serde_json::from_str::<Value>(&protocols.get()).ok().is_some_and(|v|v["allow_conversion"]==true)} on:change=move|e|protocols.update(|raw|*raw=patch_flag(raw,"allow_conversion",event_target_checked(&e)))/>"允许在可无损表达的协议之间转换"</label>
         <div class="table-wrap"><table><thead><tr><th>"参数"</th><th>"客户端请求"</th><th>"供应方接收"</th><th>"处理规则"</th></tr></thead><tbody>
         <tr><td>"推理强度"</td><td><code>{move||effort_key(&client.get()).to_string()}</code></td><td><code>{move||effort_key(&primary(&protocols.get())).to_string()}</code></td><td>"保留显式档位；按来源能力校验，不自动降档"</td></tr>
@@ -116,4 +156,16 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
         assert_eq!(client_protocol_status(raw,"messages"),("不可用",false));
         assert_eq!(client_protocol_status(&patch_flag(raw,"allow_conversion",true),"messages"),("经转换",true));
     }
+}
+
+#[cfg(test)] mod discovery_input_tests {
+ use super::*;
+ #[test] fn automatic_fill_preserves_admin_decisions_and_unrelated_protocol_fields(){
+  let raw=json!({"native":["chat"],"allow_conversion":true,"max_input_tokens":500000}).to_string();let limits=json!({"max_input_tokens":1000000,"max_output_tokens":384000});
+  let value:Value=serde_json::from_str(&fill_discovered_limits(&raw,&limits,false)).unwrap();assert_eq!(value["max_input_tokens"],500000);assert_eq!(value["max_output_tokens"],384000);assert_eq!(value["allow_conversion"],true);assert_eq!(value["native"],json!(["chat"]));
+  let value:Value=serde_json::from_str(&fill_discovered_limits(&raw,&limits,true)).unwrap();assert_eq!(value["max_input_tokens"],1000000);
+ }
+ #[test] fn unknown_or_invalid_declarations_do_not_invent_zero_bounds(){
+  for limits in [json!({}),json!({"max_input_tokens":0,"max_output_tokens":-1}),json!({"max_input_tokens":"1M","max_output_tokens":null})] {let value:Value=serde_json::from_str(&fill_discovered_limits(r#"{"native":["chat"]}"#,&limits,false)).unwrap();assert!(value.get("max_input_tokens").is_none());assert!(value.get("max_output_tokens").is_none());}
+ }
 }
