@@ -43,10 +43,13 @@ fn task(c:&Connection,channel:ChannelId,mapping:&channels::ModelMapping)->db::Re
     let purpose=db::model_access::catalog_purpose(c,&mapping.model)?;
     let entries=db::catalog::routing_entries(c,channel,&[upstream])?;
     let claims=entries.iter().filter(|e|same_model_name(&e.model,upstream)).filter_map(|e|e.kind.as_deref()).collect::<Vec<_>>();
+    // Configured presentation purpose is the administrator's current model type.
+    // Older executable kinds may retain Chat for transport compatibility; that
+    // must not turn an explicitly configured ASR/audio price back into tokens.
+    // This precedence is billing-only and never changes the routing kind.
     if purpose=="tools" {return Ok(("tools".into(),"model_purpose".into()));}
-    let mut kind=declared.as_ref().map(|k|k.kind).unwrap_or(ModelKind::Unknown);
-    let mut origin=if declared.is_some(){"model_kind"}else{"unknown"};
-    if !kind.is_set()&&!purpose.is_empty() {if purpose=="tools" {return Ok(("tools".into(),"model_purpose".into()));}kind=ModelKind::parse(&purpose);origin="model_purpose";}
+    let mut kind=if purpose.is_empty(){declared.as_ref().map(|k|k.kind).unwrap_or(ModelKind::Unknown)}else{ModelKind::parse(&purpose)};
+    let mut origin=if !purpose.is_empty(){"model_purpose"}else if declared.is_some(){"model_kind"}else{"unknown"};
     if !kind.is_set() {
         let mut kinds=Vec::new();for raw in &claims {let k=if subtype(raw).is_some(){ModelKind::Audio}else{ModelKind::parse(raw)};if k.is_set()&&!kinds.contains(&k){kinds.push(k);}}
         if kinds.len()==1{kind=kinds[0];origin="upstream_catalog";}

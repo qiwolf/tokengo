@@ -85,3 +85,13 @@ async fn price_mutation_rechecks_source_and_model_activity_without_touching_old_
     db::model_routes::set_enabled(&f.state.conn(),"chat",true).unwrap();db::channels::set_enabled(&f.state.conn(),tokengo_shared::ChannelId(f.channel),false).unwrap();let(status,_)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::BAD_REQUEST);
     let prices=db::billing::list_prices(&f.state.conn()).unwrap();assert_eq!(prices.len(),1);assert_eq!(serde_json::to_value(&prices[0]).unwrap(),original);
 }
+
+#[tokio::test]
+async fn explicit_audio_purpose_overrides_old_chat_kind_for_pricing_without_changing_routing(){
+    let f=Fixture::new();f.configure_bounds(8192,2048);
+    {let c=f.state.conn();db::kinds::set(&c,"voice",tokengo_shared::ModelKind::Chat).unwrap();db::model_access::set_catalog_purpose(&c,"voice","audio").unwrap();}
+    let(status,v)=f.call("/api/pricing/options",None,true).await;assert_eq!(status,StatusCode::OK,"{v}");let voice=v["options"].as_array().unwrap().iter().find(|r|r["model"]=="voice").unwrap();assert_eq!(voice["task_type"],"asr");assert_eq!(voice["pricing_kind"],"unit");assert_eq!(voice["allowed_units"],json!(["second","minute","hour"]));
+    let(status,_)=f.call("/api/pricing",Some(f.price("voice")),true).await;assert_eq!(status,StatusCode::BAD_REQUEST);
+    let(status,v)=f.call("/api/unit-pricing",Some(json!({"channel_id":f.channel,"model":"voice","unit":"minute","micro_per_unit":120000,"max_quantity_milli":60000})),true).await;assert_eq!(status,StatusCode::OK,"{v}");
+    let c=f.state.conn();assert_eq!(db::kinds::get(&c,"voice").unwrap().unwrap().kind,tokengo_shared::ModelKind::Chat);assert_eq!(db::model_access::catalog_purpose(&c,"voice").unwrap(),"audio");assert!(db::billing::list_prices(&c).unwrap().is_empty());
+}
