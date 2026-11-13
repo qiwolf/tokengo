@@ -169,7 +169,7 @@ fn tariff(f: &Fixture) {
     let conn = f.state.conn();
     db::billing::create_price(
         &conn,
-        &db::billing::Price {
+        &db::billing::Price{currency:"CNY".into(),
             id: 0,
             channel_id: 1,
             model: "allowed".into(),
@@ -302,7 +302,7 @@ async fn fallback_charges_each_attempt_without_reusing_previous_usage() {
         for channel in [1, 2] {
             db::billing::create_price(
                 &c,
-                &db::billing::Price {
+                &db::billing::Price{currency:"CNY".into(),
                     id: 0,
                     channel_id: channel,
                     model: "allowed".into(),
@@ -417,7 +417,7 @@ async fn successful_unpriced_call_does_not_grant_ability_to_spend_on_paid_fallba
         let c = f.state.conn();
         db::billing::create_price(
             &c,
-            &db::billing::Price {
+            &db::billing::Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: 1,
                 model: "allowed".into(),
@@ -519,7 +519,7 @@ async fn unaffordable_source_is_skipped_without_poisoning_health_when_free_fallb
         .unwrap();
         db::billing::create_price(
             &c,
-            &db::billing::Price {
+            &db::billing::Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: id.0,
                 model: "allowed".into(),

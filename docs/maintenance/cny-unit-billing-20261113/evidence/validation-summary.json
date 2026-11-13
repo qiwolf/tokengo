@@ -1,0 +1,14 @@
+{
+  "host": "build-test",
+  "coverage": "workspace-scoped-verified before proxy + workspace-remaining from proxy; web native and WASM separately",
+  "passed": 1450,
+  "failed": 1,
+  "ignored": 15,
+  "filtered": 2,
+  "known_conflicts": [
+    "chat_opaque_replay_rejects_changed_source_generation",
+    "summary_replay_requires_exact_declared_source_and_current_generation",
+    "source_bounds_change_invalidates_existing_opaque_pin"
+  ],
+  "note": "First two excluded in scoped run after observed failures. Third observed in remaining run. All three conflict with pre-existing capacity identity edits; no unconditional full-suite pass."
+}

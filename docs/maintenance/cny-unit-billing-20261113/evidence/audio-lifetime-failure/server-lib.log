@@ -1,0 +1,28 @@
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-cny-unit-billing-20261113/source/crates/server)
+error[E0597]: `v` does not live long enough
+  --> crates/server/src/audio_meter.rs:12:6
+   |
+11 |       let v:Value=serde_json::from_slice(body).ok()?;
+   |           - binding `v` declared here
+12 |       [v.pointer("/usage/audio_seconds"),v.pointer("/usage/seconds"),v.pointer("/usage/duration"),v.get("duration")]
+   |       -^ borrowed value does not live long enough
+   |  _____|
+   | |
+13 | |         .into_iter().flatten().filter_map(Value::as_f64).find_map(seconds_ms)
+   | |________________________________________________________- a temporary with access to the borrow is created here ...
+14 |   }
+   |   -
+   |   |
+   |   `v` dropped here while still borrowed
+   |   ... and the borrow might be used here, when that temporary is dropped and runs the destructor for type `std::iter::FilterMap<std::iter::Flatten<std::array::IntoIter<std::option::Option<&serde_json::Value>, 4>>, for<'a> fn(&'a serde_json::Value) -> std::option::Option<f64> {serde_json::Value::as_f64}>`
+   |
+   = note: the temporary is part of an expression at the end of a block;
+           consider forcing this temporary to be dropped sooner, before the block's local variables are dropped
+help: for example, you could save the expression's value in a new local variable `x` and then make `x` be the expression at the end of the block
+   |
+12 ~     let x = [v.pointer("/usage/audio_seconds"),v.pointer("/usage/seconds"),v.pointer("/usage/duration"),v.get("duration")]
+13 ~         .into_iter().flatten().filter_map(Value::as_f64).find_map(seconds_ms); x
+   |
+
+For more information about this error, try `rustc --explain E0597`.
+error: could not compile `tokengo-server` (lib test) due to 1 previous error

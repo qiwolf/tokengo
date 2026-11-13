@@ -1,0 +1,1787 @@
+warning: function `billing_bound_with_context` is never used
+   --> crates/server/src/gateway.rs:713:4
+    |
+713 | fn billing_bound_with_context(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i6...
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `checked_text` is never used
+   --> crates/server/src/vector_compat.rs:785:4
+    |
+785 | fn checked_text(value: &Value, max: usize) -> bool {
+    |    ^^^^^^^^^^^^
+
+warning: function `within_verified_domain` is never used
+   --> crates/server/src/vector_compat.rs:835:15
+    |
+835 | pub(crate) fn within_verified_domain(contract: &Contract, kind: ModelKind, body: &Value) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_allowed` is never used
+  --> crates/server/src/vector_renewal.rs:76:15
+   |
+76 | pub(crate) fn source_allowed(c:&Connection,user:i64,contract:&vector_compat::Contract,source:i64,model:&str)->Result<bool,vr::Virtua...
+   |               ^^^^^^^^^^^^^^
+
+warning: `tokengo-server` (lib) generated 5 warnings
+warning: `tokengo-server` (lib) generated 5 warnings (5 duplicates)
+warning: unnecessary parentheses around closure body
+   --> crates/web/src/pages/user_overview.rs:135:26
+    |
+135 | ...   <Show when=move||(category.get()>0)><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用...
+    |                        ^                ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+135 -         <Show when=move||(category.get()>0)><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用","按类型","按模型","按客户端"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"仅你自己的调用 · 5秒自动刷新"</span></header>
+135 +         <Show when=move||category.get()>0><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用","按类型","按模型","按客户端"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"仅你自己的调用 · 5秒自动刷新"</span></header>
+    |
+
+warning: `tokengo-web` (lib) generated 1 warning (run `cargo fix --lib -p tokengo-web` to apply 1 suggestion)
+warning: `tokengo-web` (lib test) generated 1 warning (1 duplicate)
+   Compiling tokengo-server v0.34.0 (/srv/build/tokengo-cny-unit-billing-20261113/source/crates/server)
+warning: function `contract_fingerprint` is never used
+    --> crates/server/src/vector_compat.rs:1501:15
+     |
+1501 | pub(crate) fn contract_fingerprint(contract:&Contract)->&str{&contract.fingerprint}
+     |               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tokengo-server` (lib test) generated 2 warnings (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 6.38s
+     Running unittests src/main.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/tokengo-2cd0c7d294d3e798)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/tokengo_server-3d34d4a0410ef1de)
+
+running 623 tests
+test audio_meter::tests::mp3_counts_complete_vbr_frames ... ok
+test audio_meter::tests::wav_uses_media_bytes_and_validates_truncation ... ok
+test audio_meter::tests::provider_duration_never_comes_from_tokens_or_latency ... ok
+test config::tests::defaults_are_loopback_only ... ok
+test config::tests::empty_web_dir_env_is_treated_as_unset ... ok
+test config::tests::env_overrides_win ... ok
+test config::tests::find_web_dir_requires_an_index_html ... ok
+test contract_evidence::tests::identity_is_bounded_typed_and_never_echoes_endpoint_or_header_material ... ok
+test contract_evidence::tests::minimax_and_deepseek_evidence_never_expand_by_brand_or_future_model ... ok
+test contract_evidence::tests::source_hashes_are_scoped_and_documentary_updates_are_not_runtime_grants ... ok
+test contract_evidence::tests::unknown_model_and_api_revision_do_not_borrow_exact_rule_evidence ... ok
+test crypto::tests::load_or_init_creates_then_reuses_the_same_key ... ok
+test crypto::tests::load_or_init_refuses_a_world_readable_key_file ... ok
+test crypto::tests::mask_never_reveals_the_middle ... ok
+test crypto::tests::rejects_bad_key_shapes ... ok
+test crypto::tests::round_trip ... ok
+test crypto::tests::same_plaintext_encrypts_differently_each_time ... ok
+test crypto::tests::tampered_ciphertext_fails ... ok
+test crypto::tests::wrong_master_key_fails_loudly ... ok
+test custom_probes::oauth_native_probe_tests::external_oauth_probes_use_the_bound_native_protocol ... ok
+test custom_probes::oauth_native_probe_tests::native_messages_diagnostic_keeps_its_cap_and_nonstream_body ... ok
+test db::account_overview::tests::one_pass_owner_stats_match_sql_oracle_for_nullable_history_and_ties ... ok
+test admission::user_diagnostic_tests::user_diagnostic_cancel_releases_concurrency_but_keeps_tpm_and_live_disable ... ok
+test admission::user_diagnostic_tests::user_diagnostic_shares_rpm_with_vkeys_without_impersonating_key ... ok
+test db::account_overview::tests::owner_index_bounds_recent_and_window_queries_despite_foreign_noise ... ok
+test billing_writer::measured_intent_tests::measured_quantity_is_fsynced_and_replayed_before_unknown_recovery ... ok
+test db::account_overview::tests::owner_stats_preserve_sql_integer_overflow_errors ... ok
+test db::billing::currency_unit_tests::audio_milliseconds_charge_exact_cny_and_ancestor_hold_is_idempotent ... ok
+test db::billing::currency_unit_tests::scalar_units_and_currency_queries_do_not_mix_money ... ok
+test db::billing::currency_unit_tests::migration_preserves_usd_snapshots_pending_holds_and_is_idempotent ... ok
+test db::billing::currency_unit_tests::unit_overrun_keeps_observed_cost_caps_debit_and_freezes ... ok
+test db::billing::currency_unit_tests::unknown_measured_usage_keeps_hold_and_not_sent_is_known_zero ... ok
+test db::billing::query_performance_tests::selective_usage_and_money_queries_use_existing_or_covering_indexes ... ok
+test db::billing::usage_time_tests::analytics_bounds_empty_future_and_long_ranges_are_finite_and_bounded ... ok
+test db::billing::query_performance_tests::sparse_lifecycle_queries_read_covering_ids_before_bounded_wide_rows ... ok
+test db::billing::usage_time_tests::analytics_zero_fills_time_buckets_and_ignores_cursor_with_identical_scope ... ok
+test db::billing::usage_time_tests::dated_lookups_select_covering_time_index_before_reading_snapshots ... ok
+test db::billing::usage_time_tests::analytics_model_tail_is_combined_without_losing_usage ... ok
+test db::billing::usage_time_tests::invalid_time_ranges_fail_even_for_empty_active_catalog ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_budget_is_atomic_user_only_and_freeze_blocks_send ... ok
+test db::billing::usage_time_tests::time_range_summary_matches_all_rows_not_cursor_and_respects_every_filter ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_unpriced_cannot_bypass_capped_budget ... ok
+test db::billing::query_performance_tests::all_lifecycle_filter_combinations_cover_sparse_and_empty_matches ... ok
+test db::billing::user_diagnostic_tests::user_diagnostic_unknown_usage_retains_hold_and_restart_recovers ... ok
+test db::billing_management::tests::budget_filtering_happens_before_cap_without_historical_ledger_reads ... ok
+test db::billing_management::tests::budget_management_rejects_unknown_objects_and_preserves_money_and_audit ... ok
+test db::billing_management::tests::expired_or_disabled_ancestor_keys_are_historical ... ok
+test db::billing_management::tests::historical_channel_seeks_match_legacy_empty_extreme_ids_and_latest_null_fallback ... ok
+test db::billing_management::tests::historical_channel_vm_steps_follow_distinct_channels_not_ledger_length ... ok
+test db::billing_management::tests::ledger_names_and_state_survive_archival_and_filter_before_pagination ... ok
+test db::billing_management::tests::source_names_disambiguate_credentials_and_disabled_credentials_are_historical ... ok
+test db::billing_management::tests::lifecycle_pagination_handles_ancient_active_and_no_matching_active_rows ... ok
+test db::billing_management::tests::indexed_history_preserves_latest_snapshot_and_large_ledger_pagination ... ok
+test db::catalog::tests::a_second_pull_replaces_the_whole_thing ... ok
+test db::catalog::tests::the_diff_reports_renames_by_name_not_by_position ... ok
+test db::billing_management::tests::usage_cursor_requires_a_real_next_row_and_preserves_state_filters ... ok
+test db::catalog::tests::explicit_type_claims_survive_catalog_round_trip ... ok
+test db::catalog::tests::vision_claims_are_adopted_on_refresh_and_save ... ok
+test db::catalog::tests::deleting_a_channel_takes_its_catalog_with_it ... ok
+test db::catalog::tests::what_the_upstream_did_not_say_is_stored_as_null ... ok
+test db::channels::tests::a_failed_channel_create_rolls_back_completely ... ok
+test db::channels::tests::create_read_update_delete ... ok
+test db::channels::tests::deleting_a_channel_wipes_its_secret_too ... ok
+test db::channels::tests::duplicate_model_names_are_rejected ... ok
+test db::channels::tests::legacy_headers_migrate_once_without_loss_or_double_encryption ... ok
+test db::channels::tests::list_returns_everything_with_children ... ok
+test db::channels::tests::headers_are_replaced_wholesale_and_keep_order ... ok
+test db::channels::tests::per_channel_model_names_are_stored ... ok
+test db::channels::tests::rejects_empty_fields ... ok
+test db::channels::tests::rows_written_without_the_column_default_to_not_vision ... ok
+test db::channels::tests::secret_round_trips_and_is_never_plain_in_the_db ... ok
+test db::channels::tests::vision_flag_round_trips_per_model_name ... ok
+test db::faults::safety_tests::late_failure_cannot_overwrite_retry_or_success ... ok
+test db::channels::tests::set_model_vision_only_touches_that_one_row ... ok
+test db::faults::tests::conservative_classifier ... ok
+test db::faults::safety_tests::pause_survives_connection_reopen ... ok
+test db::faults::safety_tests::quota_deadline_releases_exactly_one_trial ... ok
+test db::faults::safety_tests::rename_preserves_pause_headers_allow_only_one_trial ... ok
+test db::faults::tests::old_config_cannot_suspend_new_key ... ok
+test db::faults::tests::single_recovery_and_scopes ... ok
+test db::kinds::tests::a_manual_choice_wins_over_what_traffic_learns ... ok
+test db::kinds::tests::the_migration_copies_the_kinds_models_already_have ... ok
+test db::kinds::tests::the_three_hand_only_kinds_round_trip ... ok
+test db::maintenance::tests::default_retention_is_thirty_days ... ok
+test db::maintenance::tests::deleting_a_request_takes_its_attempts_with_it ... ok
+test db::maintenance::tests::a_batch_never_exceeds_the_limit ... ok
+test db::maintenance::tests::info_reports_the_oldest_row_and_the_file_size ... ok
+test db::maintenance::tests::incremental_vacuum_is_idempotent ... ok
+test db::maintenance::tests::maintenance_info_avoids_row_by_row_history_scan ... ok
+test db::maintenance::tests::prune_only_touches_rows_older_than_the_cutoff ... ok
+test db::maintenance::tests::reclaim_space_is_weekly_not_every_tick ... ok
+test db::maintenance::tests::prune_records_when_it_ran ... ok
+test db::maintenance::tests::retention_is_clamped_and_survives_junk ... ok
+test db::maintenance::tests::the_oldest_rows_go_first ... ok
+test db::maintenance::tests::zero_days_means_never_delete ... ok
+test db::model_access::presentation_tests::display_name_uses_canonical_identity_and_clear_does_not_touch_access ... ok
+test db::model_access::presentation_tests::purpose_normalizes_model_key_without_touching_executable_kind ... ok
+test db::model_routes::tests::a_name_nobody_declares_is_not_servable ... ok
+test db::model_routes::tests::auto_has_no_candidates_when_nothing_is_checked ... ok
+test db::model_routes::management_preview_tests::request_snapshot_preview_matches_live_candidate_order_and_cooldowns ... ok
+test db::model_routes::tests::candidates_are_split_by_endpoint_kind ... ok
+test db::model_routes::tests::disabling_the_only_channel_hides_the_name ... ok
+test db::model_routes::tests::catalog_types_follow_aliases_preserve_manual_and_report_conflicts ... ok
+test db::model_routes::tests::old_attempts_fall_out_of_the_window ... ok
+test db::model_routes::tests::point_routes_match_list_for_every_kind_and_normalized_spelling ... ok
+test db::model_routes::tests::routing_ignores_reasoning_catalog_hydration_and_unrelated_bad_channel_rows ... ok
+test db::model_routes::tests::point_routes_preserve_context_conflict_policy_visibility_and_live_source_changes ... ok
+test db::model_routes::tests::spellings_of_one_name_collapse_into_one_row ... ok
+test db::model_routes::tests::the_channel_order_is_the_try_order ... ok
+test db::model_routes::tests::the_order_follows_recent_results ... ok
+test db::operations_tokens::tests::issuance_rolls_back_when_audit_fails ... ok
+test db::model_routes::tests::vision_requests_only_pick_seeing_models ... ok
+test db::model_routes::tests::the_reserved_name_is_not_a_row ... ok
+test db::operations_tokens::tests::lifecycle_hash_only_and_atomic_audit ... ok
+test db::operations_tokens::tests::revocation_rolls_back_when_audit_fails ... ok
+test db::operations_tokens::tests::revoked_tokens_and_instance_survive_reopen ... ok
+test db::operations_tokens::tests::root_rotation_does_not_revoke_and_audit_has_no_secret ... ok
+test db::passthrough::tests::credentials_encrypted_no_echo_kept_and_removed_atomically ... ok
+test db::passthrough::tests::grants_default_deny_descendants_recheck_revocation ... ok
+test db::operations_tokens::tests::validation_limit_expiry_and_instance ... ok
+test db::passthrough::tests::internal_sources_reject_llm_setters_pricing_and_machine_writes ... ok
+test db::passthrough::tests::service_policy_intersection_and_self_service_do_not_invent_user_grants ... ok
+test db::passthrough::tests::longest_disabled_route_does_not_fall_back_and_internal_channels_are_hidden ... ok
+test db::passthrough::tests::validates_reserved_names_headers_and_paths ... ok
+test db::passthrough::tests::service_directory_is_safe_scoped_and_deleted_grants_can_be_removed ... ok
+test db::passthrough::tests::prices_immutable_ids_not_reused_and_invalid_grants_rollback ... ok
+test db::passthrough::tests::user_service_grants_inherit_narrow_and_revocation_overrides_legacy_acl ... ok
+test db::policy::ranking_tests::cooldown_survives_reopen_and_success_clears_failures ... ok
+test db::policy::ranking_tests::exploration_is_disabled_by_default_and_only_five_percent_of_draws ... ok
+test db::policy::ranking_tests::non_scoring_strategies_do_not_read_attempt_history ... ok
+test db::policy::ranking_tests::exploration_short_circuits_used_history_and_prefers_unused_model ... ok
+test db::policy::ranking_tests::sequence_is_persistent_and_balance_rotates ... ok
+test db::policy::tests::gradient_reset_and_single_recovery_lease ... ok
+test db::policy::threshold_tests::only_third_failure_cools_and_recovery_failure_escalates ... ok
+test db::query_performance_migration_tests::upgrade_v44_keeps_history_and_prewarms_exact_rebuildable_totals ... ok
+test db::requests::bounded_stats_query_tests::streaming_channel_counts_match_sql_ties_and_numeric_average_oracle ... ok
+test db::requests::bounded_stats_query_tests::streaming_channels_preserve_nullable_integer_legacy_projection ... ok
+test db::requests::bounded_stats_query_tests::request_statistics_projection_never_opens_wide_request_table ... ok
+test db::provider_channels::snapshot_tests::provider_list_reuses_snapshot_without_staling_visibility_or_availability ... ok
+test db::requests::tests::an_unknown_endpoint_is_never_guessed_as_chat ... ok
+test db::requests::tests::a_failure_without_a_recorded_reason_still_shows_up ... ok
+test db::requests::bounded_stats_query_tests::recent_channel_statistics_do_not_visit_old_attempt_history ... ok
+test db::requests::tests::a_request_survives_the_whole_lifecycle ... ok
+test db::requests::tests::deleting_a_request_takes_its_attempts_with_it ... ok
+test db::requests::tests::interrupted_recovery_and_late_progress_preserve_terminal_records ... ok
+test db::requests::tests::attempts_keep_order_and_count_failures ... ok
+test db::requests::tests::batched_stats_match_legacy_with_retries_unknowns_and_missing_clients ... ok
+test db::requests::tests::model_statistics_attribute_auto_to_actual_model ... ok
+test db::requests::tests::new_requests_are_running_until_finished ... ok
+test db::requests::tests::recent_calls_expose_actual_model_without_changing_request_name ... ok
+test db::requests::tests::single_pass_stats_preserve_nullable_history_and_endpoint_average_rounding ... ok
+test db::requests::tests::request_key_labels_distinguish_owners_and_preserve_history ... ok
+test db::requests::tests::prune_keeps_recent_rows ... ok
+test db::requests::tests::stats_60k_performance_and_legacy_oracle ... ignored, 60k management performance benchmark; run in release mode
+test db::requests::tests::single_pass_stats_preserve_binary_top50_and_sqlite_model_case_rules ... ok
+test db::requests::tests::single_pass_stats_report_integer_sum_overflow ... ok
+test db::requests::tests::stats_break_down_by_model_client_and_error ... ok
+test db::requests::tests::single_pass_stats_skip_unused_final_channel_sums ... ok
+test db::requests::tests::stats_split_requests_by_the_endpoint_they_really_used ... ok
+test db::requests::tests::stats_count_attempts_as_the_denominator ... ok
+test db::requests::tests::time_window_filters_old_rows ... ok
+test db::requests::tests::usage_migration_preserves_legacy_totals_and_marks_ambiguous_zero ... ok
+test db::routing::tests::a_fresh_router_restores_the_switched_state_after_restart ... ok
+test db::routing::tests::corrupt_config_falls_back_instead_of_crashing ... ok
+test db::routing::tests::routing_config_round_trips ... ok
+test db::routing::tests::save_overwrites_not_appends ... ok
+test db::routing::tests::state_round_trips_exactly ... ok
+test db::routing::tests::unknown_model_has_no_state ... ok
+test db::routing::timeout_compat_tests::legacy_timeout_config_preserves_existing_values ... ok
+test db::routing::timeout_compat_tests::no_saved_config_uses_new_defaults_without_writing ... ok
+test db::scores::tests::aggregate_refresh_rolls_back_with_dirty_queue_on_failure ... ok
+test db::scores::tests::ambiguous_and_canceled_attempts_never_score ... ok
+test db::scores::tests::bounded_score_and_dirty_invocation_query_plans ... ok
+test db::scores::tests::lifetime_totals_refresh_late_changes_and_avoid_history_on_clean_reads ... ok
+test db::scores::tests::totals_60k_performance_and_legacy_oracle ... ignored, 60k lifetime invocation benchmark; run in release mode
+test db::scores::tests::lifetime_totals_preserve_canonical_retry_deduplication ... ok
+test db::scores::tests::one_late_invocation_dirties_only_its_request_among_large_history ... ok
+test db::scores::tests::same_channel_different_models_have_independent_scores ... ok
+test db::sessions::tests::an_old_hash_only_key_reads_back_as_none ... ok
+test db::scores::tests::totals_deduplicate_and_survive_pruning ... ok
+test db::sessions::tests::changing_password_kicks_everyone_out ... ok
+test db::sessions::tests::expired_sessions_stop_working_and_get_purged ... ok
+test db::sessions::tests::password_hash_is_not_the_password_and_verifies ... ok
+test db::sessions::tests::same_password_hashes_differently ... ok
+test db::sessions::tests::no_password_set_means_login_is_refused ... ok
+test db::sessions::tests::gateway_key_is_hashed_not_stored_plain ... ok
+test db::sessions::tests::session_lifecycle ... ok
+test db::sessions::tests::set_then_login ... ok
+test db::sessions::tests::short_panel_password_is_rejected ... ok
+test db::settings::tests::bools_are_parsed_leniently ... ok
+test db::settings::tests::set_get_overwrite_delete ... ok
+test db::sessions::tests::the_gateway_key_can_be_read_back_but_only_as_ciphertext ... ok
+test db::tests::cascade_delete_cleans_children ... ok
+test db::tests::foreign_keys_are_enforced ... ok
+test db::tests::migrations_create_the_expected_tables ... ok
+test db::tests::no_catalog_tables_leak_in ... ok
+test db::tests::migrate_is_idempotent ... ok
+test db::tests::request_paths_migration_preserves_v42_rows_and_history ... ok
+test egress::tests::explicit_policy_overrides_do_not_parse_legacy_openai_proxy_environment ... ok
+test egress::tests::family_is_selected_from_official_endpoint_not_model_name ... ok
+test egress::tests::independently_sealed_equal_proxy_credentials_are_the_same_account_route ... ok
+test egress::tests::proxy_url_rejects_embedded_credentials_and_unsupported_schemes_without_echo ... ok
+test egress::tests::source_provider_family_precedence_and_family_override_are_owned ... ok
+test db::tests::upgrading_a_leg_era_database_renames_things_and_keeps_the_rows ... ok
+test db::usage_time_migration_tests::upgrade_v45_preserves_ledger_and_adds_idempotent_time_indexes ... ok
+test egress::tests::credentials_are_encrypted_redacted_and_proxy_changes_require_explicit_action ... ok
+test gateway::oauth_tests::oauth_cap_stream_keeps_length_usage_and_priced_settlement ... ok
+test gateway::oauth_tests::oauth_caps_reject_below_minimum_above_model_ceiling_and_bad_types_before_source ... ok
+test gateway::oauth_tests::oauth_chat_schema_reaches_source_and_invalid_output_caps_do_not ... ok
+test gateway::oauth_tests::oauth_caps_preserve_truncation_usage_and_subscription_ledger ... ok
+test gateway::oauth_tests::oauth_client_native_dials_override_connection_defaults_without_model_suffix_inference ... ok
+test gateway::oauth_tests::oauth_mapping_defaults_and_provider_default_supersede_legacy_binding_without_affecting_explicit_client ... ok
+test gateway::oauth_tests::oauth_nonstream_conversion_native_stream_billing_and_explicit_limit_rejection ... ok
+test gateway::precommit_shape_tests::empty_terminal_diagnostic_is_bounded_and_contains_no_payloads ... ok
+test gateway::rerank_admission_tests::rerank_admission_counts_query_for_every_document ... ok
+test gateway::oauth_tests::oauth_explicit_cap_uses_cap_for_tpm_admission_instead_of_full_ceiling ... ok
+test gateway::tests::declared_generic_source_context_accounts_for_audio_and_images_without_price ... ok
+test gateway::tests::declared_source_context_cannot_be_underreserved_by_smaller_price_cap ... ok
+test gateway::tests::endpoint_paths_match_the_openai_shape ... ok
+test gateway::tests::execution_and_accounting_guards_reject_only_enabled_controls ... ok
+test gateway::tests::explicit_source_cap_is_rejected_without_clamping_and_warmup_keeps_zero ... ok
+test gateway::tests::input_additional_tools_cannot_hide_hosted_tools_or_provider_tool_search ... ok
+test gateway::tests::limits_only_learn_explicit_output_caps ... ok
+test gateway::tests::native_output_caps_cannot_bypass_generation_quota ... ok
+test gateway::tests::native_usage_includes_cached_input_and_nested_final_response ... ok
+test gateway::tests::nullable_caps_normalize_and_default_before_budgeting ... ok
+test gateway::tests::only_the_model_field_is_rewritten ... ok
+test gateway::tests::p0_dashscope_default_cap_failure_is_atomic ... ok
+test gateway::tests::sse_completion_requires_done_or_all_choices_finished_and_no_error ... ok
+test gateway::tests::sse_scanner_ignores_junk_and_does_not_grow_forever ... ok
+test gateway::tests::sse_scanner_keeps_the_last_usage_it_saw ... ok
+test gateway::tests::sse_scanner_survives_split_lines_and_multibyte ... ok
+test gateway::tests::subscription_caps_keep_model_price_and_opaque_input_bounds ... ok
+test gateway::tests::subscription_context_bounds_do_not_invent_a_token_price ... ok
+test gateway::tests::usage_is_read_from_openai_and_anthropic_shapes ... ok
+test gateway::vector_capacity_tests::precise_capacity_signatures_only_match_correct_vector_kind_and_status ... ok
+test gateway_key::tests::digest_is_keyed_and_not_the_plaintext ... ok
+test gateway_key::tests::forgetting_kills_the_fast_path ... ok
+test gateway_key::tests::remembers_only_the_key_that_passed ... ok
+test gateway_key::tests::the_cache_expires ... ok
+test janitor::tests::a_single_run_is_bounded ... ok
+test janitor::tests::the_interval_is_daily ... ok
+test logging::bounded_event_regressions::cloning_an_active_writer_does_not_duplicate_its_partial_event ... ok
+test logging::bounded_event_regressions::every_rotated_file_obeys_the_exact_budget_including_notices ... ok
+test logging::bounded_event_regressions::flush_and_drop_preserve_unterminated_events_exactly_once ... ok
+test logging::bounded_event_regressions::flushing_an_unterminated_event_preserves_it_in_the_file_too ... ok
+test logging::bounded_event_regressions::fragmented_utf8_and_multiple_lines_are_complete_events ... ok
+test logging::bounded_event_regressions::independent_writer_clones_do_not_mix_pending_events ... ok
+test logging::bounded_event_regressions::memory_budget_evicts_old_lines_even_below_line_capacity ... ok
+test logging::bounded_event_regressions::memory_lines_are_bounded_in_utf8_and_mark_truncation ... ok
+test logging::bounded_event_regressions::one_write_with_multiple_events_keeps_separate_filterable_lines ... ok
+test logging::bounded_event_regressions::writer_marks_oversized_events_then_recovers_for_the_next_event ... ok
+test logging::expiry_generation_regressions::direct_level_or_deadline_mutations_invalidate_old_timers ... ok
+test logging::expiry_generation_regressions::equal_deadlines_still_have_distinct_timer_generations ... ok
+test logging::expiry_generation_regressions::failed_filter_changes_preserve_the_valid_expiry ... ok
+test logging::expiry_generation_regressions::filter_reload_failure_preserves_the_reported_level_and_deadline ... ok
+test logging::tests::detached_control_records_the_level_without_a_subscriber ... ok
+test logging::tests::level_and_keyword_filters_work ... ok
+test logging::tests::level_words_are_normalised_and_junk_is_rejected ... ok
+test logging::tests::the_buffer_keeps_only_the_newest_lines ... ok
+test logging::tests::the_log_file_rotates_and_keeps_a_bounded_number_of_files ... ok
+test message_roles::tests::developer_text_blocks_are_joined_without_separator_or_content_loss ... ok
+test message_roles::tests::documented_provider_models_fold_privileged_text_atomically ... ok
+test message_roles::tests::explicit_deepseek_contract_can_adapt_a_configured_proxy ... ok
+test message_roles::tests::glm53_flash_exact_models_fold_text_and_reject_late_instructions_atomically ... ok
+test message_roles::tests::known_models_non_chat_and_native_system_are_untouched ... ok
+test message_roles::tests::late_developer_rejects_instead_of_reordering_or_changing_priority ... ok
+test message_roles::tests::leading_developer_becomes_system_preserving_order_and_fields ... ok
+test message_roles::tests::managed_oauth_ignores_even_explicit_deepseek_override ... ok
+test message_roles::tests::native_system_and_conversation_are_untouched ... ok
+test message_roles::tests::other_providers_unknown_hosts_and_non_chat_are_not_guessed ... ok
+test message_roles::tests::roles_require_exact_source_model_and_chat_and_leave_oauth_untouched ... ok
+test message_roles::tests::siliconflow_observed_role_contract_is_exact_and_atomic ... ok
+test message_roles::tests::siliconflow_observed_three_models_fold_leading_text_without_brand_expansion ... ok
+test message_roles::tests::siliconflow_single_system_prefix_merges_text_in_order_and_rejects_loss_atomically ... ok
+test message_roles::tests::system_disabled_models_reject_privileged_roles_without_downgrade ... ok
+test message_roles::tests::unsupported_developer_content_rejects_without_partial_mutation ... ok
+test gateway::oauth_tests::oauth_null_output_caps_are_omitted_and_reserve_the_verified_subscription_ceiling ... ok
+test gateway::oauth_tests::oauth_responses_accepts_output_cap_aliases_without_weakening_conflict_or_ceiling_checks ... ok
+test oauth::tests::account_catalog_caches_safe_metadata_only_for_unchanged_current_bindings ... ok
+test oauth::tests::authorization_audit_failure_rolls_back_credentials_atomically ... ok
+test gateway::stream_only_responses_collect_json_without_waiting_for_eof_and_keep_failure_usage ... ok
+test oauth::tests::bindings_reject_old_secrets_wrong_hosts_and_invalid_defaults_and_track_changes ... ok
+test oauth::tests::callback_validation_state_and_denial_never_exchange_or_overwrite ... ok
+test oauth::tests::canceled_pkce_attempt_cannot_create_an_account_after_token_exchange ... ok
+test oauth::tests::catalog_rejects_unknown_mixed_malformed_or_credential_shapes ... ok
+test oauth::tests::cancelling_refresh_waiter_still_persists_rotated_pair ... ok
+test oauth::tests::custom_probe_oauth_collects_sse_despite_missing_wrong_mixed_mime_and_gzip_and_accepts_json ... ok
+test oauth::tests::custom_probe_oauth_expired_refresh_failure_revocation_and_binding_change_never_dispatch_stale_auth ... ok
+test oauth::tests::custom_probe_oauth_native_sse_verified_headers_refresh_and_subscription_cost ... ok
+test oauth::tests::drop_fields_are_rejected_at_bind_and_live_credential_revalidation ... ok
+test oauth::tests::expired_too_early_refresh_and_cross_subject_refresh_fail_closed ... ok
+test oauth::tests::portable_luna_none_covers_fresh_and_cached_catalogs_without_private_settings ... ok
+test oauth::tests::registration_persists_encrypted_tokens_stable_host_and_once_only_state ... ok
+test oauth::tests::provider_credential_catalog_uses_bound_official_account_without_editing_models ... ok
+test oauth::tests::revocation_during_refresh_prevents_stale_cas_and_bumps_bound_generation ... ok
+test oauth::tests::rotating_refresh_is_serialized_persisted_and_does_not_change_binding_owner ... ok
+test oauth::tests::token_reply_rejects_header_unsafe_access_and_control_refresh_tokens ... ok
+test oauth::tests::restart_and_independent_runtimes_share_refresh_cas_and_model_catalog ... ok
+test oauth_external::tests::copilot_initiator_and_vision_follow_the_final_chat_body ... ok
+test oauth_external::tests::copilot_models_require_an_explicit_usable_chat_endpoint ... ok
+test oauth_external::tests::copilot_nonexpiring_tokens_do_not_require_a_refresh_token_or_invent_expiry ... ok
+test oauth_external::tests::cancellation_clears_pending_secrets_even_with_a_claimed_poll ... ok
+test oauth::tests::siwc_catalog_preserves_slug_visibility_order_and_capabilities ... ok
+test oauth_external::tests::kimi_omitted_token_kind_and_integer_string_expiry_follow_its_sdk ... ok
+test oauth_external::tests::minimax_expiry_units_follow_the_fixed_official_contract ... ok
+test oauth_external::tests::minimax_live_catalog_shape_exposes_public_models_without_claiming_account_entitlement ... ok
+test oauth_external::tests::only_missing_or_declared_kimi_protocol_uses_legacy_chat ... ok
+test oauth_external::tests::published_clients_work_without_deployment_registration_and_overrides_are_checked ... ok
+test oauth_external::tests::token_validation_rejects_wrong_kind_missing_refresh_and_scope ... ok
+test oauth_external::tests::verification_links_are_fixed_to_the_selected_provider ... ok
+test openai_transport::tests::dedicated_proxy_reaches_only_the_client_configured_for_it ... ok
+test openai_transport::tests::invalid_proxy_errors_never_echo_credentials ... ok
+test oauth_external::tests::expired_unrefreshable_copilot_grant_requires_only_its_own_reauthorization ... ok
+test parameter_budgets::tests::inclusive_conversion_is_exact_model_and_atomic ... ok
+test parameter_budgets::tests::native_unknown_reservation_uses_existing_policy_without_claiming_supplier_bound ... ok
+test parameter_budgets::tests::nullable_caps_are_omitted_and_never_zero_or_unbounded ... ok
+test parameter_budgets::tests::oauth_never_uses_native_provider_thinking_override ... ok
+test parameter_budgets::tests::ordinary_total_limits_reject_conflicts_and_overflow_without_mutation ... ok
+test parameter_budgets::tests::p0_dashscope_responses_never_use_answer_cap_as_total ... ok
+test parameter_budgets::tests::siliconflow_answer_caps_never_underreserve_reasoning ... ok
+test parameter_budgets::tests::zero_is_only_an_explicit_native_cache_warm_contract ... ok
+test parameter_budgets::tests::zero_warmup_keeps_input_usage_and_rejects_invalid_success_shapes ... ok
+test parameter_contracts::tests::anthropic_modes_budgets_and_forced_tools_are_not_equivalent ... ok
+test parameter_contracts::tests::anthropic_sampling_rules_use_actual_api_version_and_preserve_native_extras ... ok
+test parameter_contracts::tests::cache_policies_are_not_renamed_and_stream_options_require_streaming ... ok
+test parameter_contracts::tests::descriptor_is_bounded_and_inventory_is_not_a_support_claim ... ok
+test parameter_contracts::tests::endpoint_and_manual_profiles_are_explicit_and_do_not_infer_from_names_or_ports ... ok
+test parameter_contracts::tests::gemini_native_and_compatibility_effort_fields_are_not_confused ... ok
+test parameter_contracts::tests::gpt6_tools_sampling_and_exact_model_rules_preserve_intent ... ok
+test parameter_contracts::tests::oauth_profile_cannot_bypass_its_source_contract ... ok
+test parameter_contracts::tests::p1_anthropic_mythos_and_coding_lines_have_exact_contracts ... ok
+test parameter_contracts::tests::p1_minimax_effort_bridge_keeps_native_levels_and_modes_separate ... ok
+test parameter_contracts::tests::public_api_model_restrictions_do_not_override_managed_oauth_catalog ... ok
+test parameter_contracts::tests::resource_execution_is_not_enabled_by_a_native_or_vendor_profile ... ok
+test parameter_contracts::tests::versioned_evidence_identity_does_not_grant_runtime_capabilities ... ok
+test parameter_contracts::tests::w08_workspace_endpoints_are_exact_and_manual_profile_wins ... ok
+test parameter_contracts_china::p1_combinations::deepseek_chat_forcing_requires_explicit_off ... ok
+test parameter_contracts_china::p1_combinations::deepseek_native_responses_rejects_ignored_intent ... ok
+test parameter_contracts_china::p1_combinations::glm_format_tools_and_product_line_are_explicit ... ok
+test parameter_contracts_china::p1_combinations::kimi_responses_is_separate_from_chat_k3_and_k2 ... ok
+test parameter_contracts_china::p1_combinations::qwen_tool_controls_are_model_and_mode_specific ... ok
+test parameter_contracts_china::p1_hosted_none::hosted_models_do_not_inherit_qwen_none_adapter ... ok
+test parameter_contracts_china::tests::ark_minimal_is_off_not_low_and_explicit_off_constraints_are_checked ... ok
+test parameter_contracts_china::tests::dashscope_caps_have_distinct_scopes_and_missing_budget_is_unknown ... ok
+test parameter_contracts_china::tests::dashscope_glm52_changes_scope_only_with_explicit_budget ... ok
+test parameter_contracts_china::tests::explicit_nulls_are_never_rewritten_as_defaults ... ok
+test parameter_contracts_china::tests::glm_history_switch_is_preserved_and_53_cannot_turn_thinking_off ... ok
+test parameter_contracts_china::tests::kimi_code_preserved_thinking_is_not_an_off_switch ... ok
+test parameter_contracts_china::tests::kimi_k26_none_maps_only_to_its_documented_off_control ... ok
+test parameter_contracts_china::tests::kimi_k3_fixed_sampling_and_thinking_only_are_not_silently_downgraded ... ok
+test parameter_contracts_china::tests::local_serving_capabilities_are_not_inferred_from_model_brand ... ok
+test parameter_contracts_china::tests::mimo_none_is_off_but_other_efforts_are_not_differentiated ... ok
+test parameter_contracts_china::tests::minimax_models_and_protocol_defaults_are_not_collapsed ... ok
+test parameter_contracts_china::tests::p0_dashscope_responses_caps_are_protocol_and_model_specific ... ok
+test parameter_contracts_china::tests::p1_deepseek_strict_requires_documented_beta_source_and_uniform_tools ... ok
+test parameter_contracts_china::tests::qwen_explicit_effort_budget_is_documented_but_omission_is_not_invented ... ok
+test parameter_contracts_china::tests::siliconflow_answer_only_limits_are_not_total_caps ... ok
+test parameter_contracts_china::tests::siliconflow_unknown_switches_and_undocumented_aliases_do_not_shrink_reservation ... ok
+test parameter_contracts_china::tests::unknown_dashscope_budget_is_not_a_verified_reasoning_ceiling ... ok
+test parameter_contracts_china::tests::unknown_model_and_unknown_native_extensions_are_not_removed_or_rejected ... ok
+test passthrough::tests::connection_fields_are_filtered_case_insensitively ... ok
+test prober::tests::only_red_counts_as_seeing_the_image ... ok
+test prober::tests::probe_body_stays_tiny ... ok
+test oauth_external::tests::issuer_is_not_guessed_from_model_or_brand_substrings ... ok
+test prober::tests::probe_model_falls_back_to_whatever_the_channel_actually_serves ... ok
+test operations_guard::latency_logging_tests::slow_lock_is_visible_with_default_filter_without_sql_or_values ... ok
+test prober::tests::truncation_is_recognised_only_from_finish_reason_length ... ok
+test prober::tests::vision_test_body_carries_a_real_image ... ok
+test protocol::boundary_tests::converted_responses_are_stateless_and_tool_item_ids_stable ... ok
+test protocol::boundary_tests::text_and_tools_convert_directly_between_responses_and_messages ... ok
+test protocol::boundary_tests::truncated_response_and_usage_zero_keep_their_meaning ... ok
+test protocol::boundary_tests::unsupported_semantics_are_never_silently_dropped ... ok
+test prober::tests::probe_model_prefers_the_alias_of_that_model_name ... ok
+test protocol::collect::tests::incomplete_failed_missing_terminal_conflicts_and_gaps_fail_closed ... ok
+test protocol::collect::tests::native_opaque_reasoning_and_parallel_function_items_survive ... ok
+test protocol::collect::tests::oauth_null_caps_are_omitted_without_zero_limit ... ok
+test protocol::collect::tests::oauth_output_cap_is_preserved_and_validated ... ok
+test protocol::collect::tests::oauth_transport_rejects_unsupported_limits_and_respects_native_fields_and_explicit_dials ... ok
+test protocol::collect::tests::preserves_final_items_when_terminal_output_is_empty_and_does_not_require_tcp_eof ... ok
+test protocol::collect::tests::subscription_client_tools_keep_names_schemas_and_replay_identity ... ok
+test protocol::collect::tests::total_stream_memory_is_bounded_even_with_small_frames ... ok
+test protocol::explicit_disabled_reasoning_conversion_tests::messages_explicit_none_is_preserved_for_both_targets_and_active_effort_still_rejected ... ok
+test protocol::explicit_disabled_reasoning_conversion_tests::responses_explicit_none_survives_chat_roundtrip_without_becoming_default ... ok
+test protocol::image_bound_tests::image_detection_includes_native_tool_results ... ok
+test protocol::llama_conversion_tests::llama_timings_do_not_change_portable_text_or_token_usage ... ok
+test protocol::minimax_codec::tests::w09_controls_fold_to_single_system_as_documented_semantic_fold ... ok
+test protocol::minimax_codec::tests::w09_masked_empty_or_error_shapes_do_not_hide_semantic_policy_flags ... ok
+test protocol::minimax_codec::tests::w09_off_intent_maps_only_on_m3_and_missing_thought_stays_missing ... ok
+test protocol::minimax_codec::tests::w09_official_split_reply_preserves_diagnostics_raw_and_literal_answer ... ok
+test protocol::minimax_codec::tests::w09_policy_is_exact_source_model_protocol_not_brand_guess ... ok
+test protocol::minimax_codec::tests::w09_provider_metadata_does_not_accept_opaque_nested_or_unbounded_values ... ok
+test protocol::minimax_codec::tests::w09_request_rejects_false_opaque_summary_and_always_on_off ... ok
+test protocol::minimax_codec::tests::w09_request_selects_split_and_preserves_raw_tool_history ... ok
+test protocol::minimax_codec::tests::w09_semantic_and_schema_errors_are_protocol_faults_but_actual_provider_error_is_not ... ok
+test protocol::minimax_codec::tests::w09_semantic_flags_provider_errors_and_unknown_state_are_not_metadata ... ok
+test protocol::minimax_codec::tests::w09_stream_is_incremental_bounded_and_carries_provider_diagnostics ... ok
+test protocol::minimax_codec::tests::w09_stream_late_sensitive_and_truncated_or_reordered_thought_fail_closed ... ok
+test protocol::minimax_codec::tests::w09_strict_intent_is_preserved_without_claiming_upstream_enforcement ... ok
+test protocol::native_validation_tests::chat_preserves_legacy_tools_multimodal_reasoning_and_refusals ... ok
+test protocol::native_validation_tests::native_empty_chat_and_messages_are_not_success ... ok
+test protocol::native_validation_tests::native_responses_require_completed_actual_payload ... ok
+test protocol::request::modern_cli_tests::active_reasoning_opaque_inputs_and_nonadvisory_include_remain_explicitly_rejected ... ok
+test protocol::request::modern_cli_tests::claude_plain_text_and_disabled_effort_convert_but_real_effort_or_format_do_not ... ok
+test protocol::request::modern_cli_tests::disabled_codex_reasoning_and_advisory_hints_convert_without_claiming_cache_or_opaque_state ... ok
+test protocol::request::nullable_cap_tests::null_output_cap_is_omitted_in_protocol_conversion ... ok
+test protocol::sse::tests::all_six_directions_preserve_text_parallel_tool_identity_json_and_usage ... ok
+test protocol::sse::tests::chat_tool_arguments_transcode_to_both_target_lifecycles ... ok
+test protocol::sse::tests::chat_waits_for_post_finish_usage ... ok
+test protocol::sse::tests::done_only_text_is_preserved_and_structured_tool_input_is_validated ... ok
+test protocol::sse::tests::eof_chat_finish_is_success_but_truncated_tool_json_is_not ... ok
+test protocol::sse::tests::final_responses_snapshot_is_not_silently_dropped ... ok
+test protocol::sse::tests::frames_preserve_crlf_multiline_and_chunked_unicode ... ok
+test protocol::sse::tests::messages_cache_usage_is_total_monotonic_and_checked ... ok
+test protocol::sse::tests::messages_wire_required_usage_does_not_create_source_usage ... ok
+test protocol::sse::tests::native_legacy_function_call_is_meaningful_but_conversion_explicitly_refuses ... ok
+test protocol::sse::tests::oversized_frame_and_missing_terminal_are_rejected ... ok
+test protocol::sse::tests::reasoning_conversion_refuses_before_target_output ... ok
+test protocol::sse::tests::responses_incomplete_and_messages_errors_are_not_success ... ok
+test protocol::tests::chat_response_format_maps_text_and_json_object ... ok
+test protocol::tests::chat_response_format_maps_to_responses_without_changing_schema ... ok
+test protocol::tests::chat_response_format_rejects_lossy_or_malformed_conversion ... ok
+test protocol::tests::chat_response_format_validates_schema_name_boundaries ... ok
+test protocol::tests::converted_chat_stream_requests_real_usage_but_native_stream_is_unchanged ... ok
+test protocol::tests::format_and_verbosity_coexist_and_invalid_alias_shapes_do_not_override ... ok
+test protocol::tests::native_keeps_opaque_fields ... ok
+test protocol::tests::native_response_shapes_are_protocol_specific ... ok
+test protocol::tests::new_controls_have_explicit_dispositions_for_all_six_protocol_pairs ... ok
+test protocol::tests::nonstream_tools_usage_and_finish_convert ... ok
+test protocol::tests::responses_text_rejects_unrepresentable_nested_controls_without_mutating_input ... ok
+test protocol::tests::same_semantic_identity_and_cache_controls_survive_roundtrip_independently ... ok
+test protocol::tests::shared_controls_validate_shapes_but_do_not_rename_retention_into_ttl ... ok
+test protocol::tests::structured_format_roundtrips_keep_schema_controls_and_explicit_null ... ok
+test protocol::tests::text_tools_and_results_round_trip_all_protocol_pairs ... ok
+test protocol::tests::unknown_state_images_and_thinking_fail_explicitly ... ok
+test protocol::tests::verbosity_maps_both_directions_without_inventing_format_or_default ... ok
+test prober::tests::probe_model_refuses_to_guess_the_virtual_name ... ok
+test protocol_config::context_capability_tests::context_pairs_and_chat_reasoning_replay_require_valid_explicit_declarations ... ok
+test protocol::collect::tests::capped_reasoning_terminal_retains_final_ciphertext_without_relaxing_other_conflicts ... ok
+test protocol_config::parameter_profile_tests::compatible_proxy_profile_is_explicit_and_bounded ... ok
+test protocol_config::parameter_profile_tests::old_sources_keep_the_exact_serialized_protocol_identity ... ok
+test protocol_config::capacity_identity_repair_tests::malformed_old_document_repair_invalidates_identity_and_semantic_defaults_do_not ... ok
+test protocol_config::generation_tests::identity_changes_advance_generation_but_capacity_changes_preserve_it ... ok
+test protocol_config::tests::defaults_never_infer_responses_from_source_name ... ok
+test protocol_config::tests::malformed_capabilities_fail_closed ... ok
+test protocol_config::w08_runtime_tests::w08_offline_identity_is_bounded_unverified_and_invalidates_cache ... ok
+test protocol_sessions::anonymous_tests::anonymous_resolution_never_imports_explicit_ownership_or_oversized_input ... ok
+test protocol_sessions::anonymous_tests::anonymous_resolution_rejects_ambiguous_sources_and_expired_artifacts ... ok
+test protocol_sessions::anonymous_tests::anonymous_resolution_requires_all_artifacts_from_one_authorized_scope ... ok
+test protocol_sessions::artifact_boundary_tests::a_signature_prefix_is_not_issued_before_block_stop ... ok
+test protocol_sessions::artifact_boundary_tests::nonstream_artifact_count_has_the_same_bound_as_stream ... ok
+test protocol_sessions::artifact_tests::signature_deltas_are_registered_as_one_complete_signature ... ok
+test protocol_sessions::artifact_tests::signature_is_usable_only_after_issuance_to_same_key_session_source ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_500_floor_and_idle_boundary_are_separate_from_hard_ttl ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_input_reuse_refreshes_old_history_before_lru_eviction ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_lru_lookup_uses_its_covering_index_without_a_sort ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_prunes_only_idle_excess_and_keeps_500_recent_values ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_large_pool_records_cleanup_cost_without_a_timing_gate ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_pruning_is_bounded_and_failed_issuance_restores_deleted_history ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_recent_activity_can_exceed_soft_window_and_other_owners_are_isolated ... ok
+test protocol_sessions::cold_retention_tests::cold_retention_reused_state_and_evictions_survive_database_reopen ... ok
+test protocol_sessions::expired_backlog_tests::actual_issuance_does_not_repeat_expiration_in_the_cold_retention_pass ... ok
+test protocol_sessions::expired_backlog_tests::expired_artifact_left_behind_cleanup_cannot_be_refreshed_by_a_proof ... ok
+test protocol_sessions::expired_backlog_tests::protocol_capacity_million_active_rejects_without_evicting_then_allows_new_epoch ... ignored, million-artifact capacity and epoch query budget; run in release mode
+test protocol_sessions::expired_backlog_tests::protocol_capacity_million_expired_backlog_does_not_block_actual_issuance ... ignored, million-artifact expired-backlog capacity query budget; run in release mode
+test protocol_sessions::migration_tests::legacy_pins_migrate_but_unowned_artifact_digests_are_invalidated ... ok
+test protocol_sessions::expired_backlog_tests::expired_cleanup_is_bounded_even_for_one_owner_with_many_children ... ok
+test protocol_sessions::expired_backlog_tests::expired_owner_collision_starts_a_new_epoch_and_requires_actual_reissuance ... ok
+test protocol_sessions::retention_tests::artifact_expiry_is_independent_of_a_recently_active_session ... ok
+test protocol_sessions::retention_tests::closed_signature_is_issued_but_foreign_session_and_unclosed_prefix_are_not ... ok
+test oauth::tests::rejects_jwt_signature_issuer_audience_expiry_nonce_subject_and_wrong_account ... ok
+test protocol_sessions::retention_tests::failed_issuance_rolls_back_pin_and_artifacts_and_retains_pending_for_retry ... ok
+test protocol_sessions::tests::colon_delimiters_cannot_alias_session_and_model ... ok
+test protocol_sessions::tests::only_valid_plain_reasoning_is_exempt_from_opaque_ownership ... ok
+test protocol_sessions::tests::opaque_blocks_are_not_confused_with_tool_argument_text ... ok
+test protocol_sessions::tests::persistence_notes_distinguish_fixed_internal_failures ... ok
+test protocol_sessions::tests::persistence_notes_do_not_expose_unknown_or_sqlite_details ... ok
+test protocol_sessions::retention_tests::global_and_session_limits_protect_active_state_without_an_owner_lifetime_quota ... ok
+test reasoning_capabilities::named_metadata_tests::claude_named_boolean_support_keeps_modes_separate_from_strengths ... ok
+test reasoning_capabilities::named_metadata_tests::false_and_omitted_flags_never_invent_supported_values ... ok
+test protocol_sessions::retention_tests::redacted_thinking_stream_data_is_issued_only_when_block_stops ... ok
+test reasoning_capabilities::named_metadata_tests::modes_without_effort_do_not_claim_or_deny_strength_levels ... ok
+test reasoning_capabilities::named_metadata_tests::named_metadata_invalid_types_and_conflicts_clear_partial_results ... ok
+test reasoning_capabilities::named_metadata_tests::old_cache_deserializes_and_empty_new_fields_remain_omitted ... ok
+test reasoning_capabilities::named_metadata_tests::origin_wire_is_only_assigned_for_documented_explicit_metadata_shapes ... ok
+test reasoning_capabilities::tests::booleans_absence_and_names_do_not_invent_levels ... ok
+test protocol_sessions::retention_tests::inactive_sessions_expire_cascade_and_cannot_revive_opaque_history ... ok
+test reasoning_capabilities::tests::cache_is_scoped_to_exact_source_and_upstream_but_not_mapping_changes ... ok
+test reasoning_capabilities::tests::catalog_removing_a_configured_default_never_restores_legacy_defaults ... ok
+test protocol_sessions::tests::session_ownership_is_key_scoped_and_cannot_be_overwritten ... ok
+test reasoning_capabilities::named_metadata_tests::manually_confirmed_levels_do_not_erase_source_modes_or_origin ... ok
+test reasoning_capabilities::tests::deepseek_effort_metadata_is_explicit_and_conflicts_fail_closed ... ok
+test reasoning_capabilities::tests::deepseek_catalog_discovery_preserves_documented_native_client_aliases ... ok
+test reasoning_capabilities::tests::deepseek_none_rejects_conflicting_or_unknown_thinking_without_mutation ... ok
+test reasoning_capabilities::tests::cross_protocol_none_preserves_openai_and_explicit_third_party_capabilities ... ok
+test reasoning_capabilities::tests::deepseek_none_uses_native_wire_toggle_and_reports_mutation_without_defaults ... ok
+test reasoning_capabilities::tests::defaults_are_per_logical_mapping_and_explicit_native_effort_wins ... ok
+test reasoning_capabilities::tests::malformed_conflicting_or_unknown_defaults_fail_closed ... ok
+test reasoning_capabilities::tests::invalid_manual_mode_or_default_does_not_partially_save ... ok
+test reasoning_capabilities::tests::legacy_manual_lists_keep_replace_semantics_and_provenance ... ok
+test reasoning_capabilities::tests::manual_append_keeps_source_levels_and_saves_custom_default_together ... ok
+test reasoning_capabilities::tests::manual_append_preserves_deepseek_native_aliases_but_replace_can_exclude ... ok
+test reasoning_capabilities::tests::cross_protocol_none_rejects_known_exclusions_and_preserves_unknown_legacy_contract ... ok
+test reasoning_capabilities::tests::messages_none_conversion_does_not_reenable_deepseek_reasoning ... ok
+test reasoning_capabilities::tests::none_manual_exclusion_and_explicit_default_remain_authoritative ... ok
+test reasoning_capabilities::tests::remapping_alias_to_another_upstream_never_reuses_manual_claims ... ok
+test reasoning_capabilities::tests::none_compatibility_never_revives_unknown_unsupported_or_stale_catalogs ... ok
+test reasoning_capabilities::tests::siwc_levels_and_default_are_read_without_descriptions_or_name_guesses ... ok
+test reasoning_capabilities::tests::responses_none_conversion_restores_declared_deepseek_off_intent ... ok
+test reasoning_capabilities::tests::verified_terra_none_scope_is_exact ... ok
+test reasoning_capabilities::tests::portable_none_augments_only_exact_official_provider_contracts ... ok
+test request_plan::tests::detailed_rejection_reports_are_typed_secret_free_and_atomic ... ok
+test request_plan::tests::failure_discards_all_partial_transformations ... ok
+test request_plan::tests::known_model_unknown_preserved_fields_never_become_supported_native ... ok
+test request_plan::tests::source_pipeline_failure_after_role_change_and_defaults_keeps_original_atomic ... ok
+test request_plan::tests::source_pipeline_records_actual_roles_defaults_and_validation_without_values ... ok
+test request_plan::tests::success_returns_the_same_final_body_that_was_metered_once ... ok
+test reasoning_capabilities::tests::verified_terra_none_still_requires_official_openai_endpoint ... ok
+test routes::accounts::operations_stepup_tests::browser_snapshot_rejects_password_rotation_and_revoked_sessions ... ok
+test routes::accounts::portal_query_plan_tests::lifetime_summary_matches_distinct_oracle_for_nulls_retries_and_owners ... ok
+test routes::account_overview::tests::user_grant_freezes_owner_and_rechecks_credential_role_and_version_before_read ... ok
+test routes::accounts::portal_query_plan_tests::lifetime_summary_reads_only_owner_covering_index ... ok
+test reasoning_capabilities::tests::verified_terra_none_augments_only_current_supported_catalog ... ok
+test routes::admin::tests::bearer_and_cookie_tokens_are_both_accepted ... ok
+test routes::admin::tests::client_ip_prefers_forwarded_header ... ok
+test routes::admin::tests::diagnostic_selection_uses_requested_mapping_and_rejects_unavailable_models ... ok
+test routes::admin::tests::missing_or_empty_tokens_are_none ... ok
+test routes::admin::model_list_query_tests::batched_detection_statuses_match_latest_schedule_per_model ... ok
+test routes::audio::tests::asr_disabled_parent_without_credential_cannot_receive_calls ... ok
+test routes::audio::tests::asr_key_model_scope_cannot_be_bypassed ... ok
+test routes::admin::model_list_query_tests::exploration_counts_cover_real_not_null_schema_with_fixed_vm_budget ... ok
+test reasoning_capabilities::tests::provider_names_and_lookalike_endpoints_do_not_grant_none ... ok
+test routes::audio::tests::asr_measures_audio_and_maps_model_without_forwarding_client_key ... ok
+test routes::audio::tests::asr_reported_audio_seconds_override_container_not_token_count ... ok
+test routes::operations::tests::exactly_registered_methods_are_allowed ... ok
+test routes::operations::tests::sensitive_diagnostics_and_legacy_urls_are_projected ... ok
+test routes::proxy::tests::body_must_be_json_with_a_model ... ok
+test routes::proxy::tests::responses_cache_key_is_advisory_and_never_resolves_identity ... ok
+test routes::proxy::tests::responses_identity_preserves_priority_and_validates_all_candidates ... ok
+test routes::proxy::tests::stream_defaults_to_false ... ok
+test routes::web::tests::content_types_cover_what_trunk_emits ... ok
+test routes::billing::request_pricing_tests::request_pricing_is_admin_only_versioned_and_ledger_preserves_units ... ok
+test routes::web::tests::traversal_paths_are_rejected ... ok
+test runtime_identity::tests::invalid_identifiers_or_oversized_evidence_do_not_echo_input ... ok
+test runtime_identity::tests::standard_api_claims_are_partial_unverified_and_redacted ... ok
+test routes::audio::tests::asr_malformed_upload_and_inactive_model_never_reach_upstream ... ok
+test search_tools::tests::fetch_rejects_credentials_and_nonhttp ... ok
+test search_tools::tests::rejects_wrong_types_ranges_and_ip ... ok
+test search_tools::tests::request_count_not_result_count ... ok
+test search_tools::tests::unicode_defaults_and_unknown_fields ... ok
+test search_tools::tests::valid_empty_and_invalid_are_distinct ... ok
+test source_rates::tests::same_account_shares_rate_but_tool_and_other_account_have_separate_windows ... ok
+test state::model_load_tests::direct_traffic_counts_and_exploration_stays_first ... ok
+test state::model_load_tests::idle_selection_reserves_atomically_and_releases_on_drop ... ok
+test routes::identity::key_label_tests::admin_key_display_follows_owner_without_renaming_or_rotating_key ... ok
+test search_tools::capability_tests::capabilities_explicit_and_binding_generation_changes_only_with_config ... ok
+test state::tests::a_busy_db_never_fails_persist_state_it_queues_instead ... ok
+test routes::web::tests::the_panel_assets_go_out_compressed_and_cached ... ok
+test state::tests::only_the_newest_state_per_model_is_written_back ... ok
+test state::tests::init_opens_db_and_creates_a_master_key_once ... ok
+test state::tests::persist_state_queues_when_the_routing_lock_is_held ... ok
+test state::tests::secrets_helper_is_usable_independently ... ok
+test state::tests::persist_state_works_when_nothing_is_held ... ok
+test state::tests::routing_config_survives_a_restart ... ok
+test state::tests::routing_state_survives_a_restart_through_the_state_object ... ok
+test state::tests::the_channel_gate_limits_how_many_requests_run_at_once ... ok
+test type_detector::tests::requires_endpoint_specific_payload_not_just_http_200 ... ok
+test upstream::tests::a_channel_without_a_key_sends_no_authorization_at_all ... ok
+test upstream::tests::an_empty_but_well_formed_list_is_not_confused_with_junk ... ok
+test upstream::tests::custom_authorization_works_without_key_and_overrides_bearer ... ok
+test upstream::tests::custom_headers_are_rendered_per_request ... ok
+test upstream::tests::duplicates_keep_the_first_entry_and_upstream_order ... ok
+test upstream::tests::explicit_catalog_types_are_parsed_without_guessing ... ok
+test upstream::tests::free_is_only_the_word_free_or_all_zero_prices ... ok
+test upstream::tests::junk_never_becomes_a_model_name ... ok
+test upstream::tests::oauth_diagnostic_destination_uses_provider_identity_not_responses_for_every_account ... ok
+test upstream::tests::openai_style_model_list_is_parsed ... ok
+test upstream::tests::opencode_catalog_mapping_never_applies_to_other_origins_or_unknown_paths ... ok
+test upstream::tests::opencode_catalog_uses_the_official_shared_directory ... ok
+test upstream::tests::openrouter_style_details_are_read ... ok
+test upstream::tests::other_envelopes_and_spellings_are_recognised ... ok
+test upstream::tests::other_real_shapes_are_recognised_too ... ok
+test upstream::tests::probe_errors_are_structured_bounded_and_redacted ... ok
+test upstream::tests::retry_after_only_trusts_plain_seconds ... ok
+test upstream::tests::siliconflow_bge_compatibility_preserves_other_models_sources_and_endpoints ... ok
+test upstream::tests::siliconflow_bge_compatibility_preserves_unsupported_dimensions_and_encodings ... ok
+test upstream::tests::siliconflow_bge_native_dimensions_are_omitted_without_changing_payload ... ok
+test upstream::tests::the_catalog_carries_only_what_the_upstream_actually_said ... ok
+test upstream::tests::the_channel_key_becomes_a_bearer_header ... ok
+test upstream::tests::the_session_header_carries_the_stable_id_and_is_dropped_when_there_is_none ... ok
+test upstream::tests::the_total_count_survives_the_cap ... ok
+test upstream::tests::url_join_handles_trailing_and_leading_slashes ... ok
+test upstream::tests::uuid_is_a_fresh_one_each_time ... ok
+test upstream::tests::whitespace_is_trimmed_and_blanks_dropped ... ok
+test vector_compat::tests::certification_size_is_evidence_not_a_user_request_limit ... ok
+test state::writer_concurrency_tests::concurrent_drainers_cannot_deliver_newer_progress_before_an_older_batch ... ok
+test vector_compat::tests::cross_source_rerank_accepts_near_tie_swaps_but_rejects_material_disagreement ... ok
+test vector_compat::tests::embedding_output_checks_dimensions_indexes_and_nonzero ... ok
+test vector_compat::tests::full_observation_budget_covers_every_declared_embedding_request ... ok
+test vector_compat::tests::full_rerank_output_requires_all_candidates_and_original_text ... ok
+test vector_compat::tests::legacy_evidence_remains_readable_without_capping_live_capacity ... ok
+test vector_compat::tests::live_output_does_not_impose_probe_normalization_on_provider_requests ... ok
+test vector_compat::tests::long_workload_noise_budget_is_bounded_and_does_not_weaken_stable_sources ... ok
+test vector_compat::tests::noisy_source_compatibility_is_not_transitive ... ok
+test vector_compat::tests::previous_v2_and_v3_workload_evidence_remains_readable ... ok
+test state::writer_concurrency_tests::a_busy_database_requeues_without_losing_outstanding_count_or_order ... ok
+test vector_compat::tests::provider_rerank_extensions_and_large_query_are_forwardable_without_certification_claim ... ok
+test vector_compat::tests::request_validation_preserves_real_provider_capabilities_outside_evidence ... ok
+test vector_compat::tests::rerank_checks_document_domain_and_result_contract ... ok
+test vector_compat::tests::runtime_base64_embeddings_validate_finite_values_and_requested_dimension ... ok
+test vector_compat::tests::runtime_embeddings_do_not_inherit_diagnostic_dimension_or_numeric_space ... ok
+test vector_compat::tests::runtime_embeddings_reject_bad_cardinality_indexes_dimensions_and_values ... ok
+test vector_compat::tests::runtime_rerank_accepts_different_order_but_checks_result_shape_and_documents ... ok
+test vector_compat::tests::same_dimension_does_not_prove_equivalence ... ok
+test vector_compat::tests::token_batches_base64_and_requested_dimensions_keep_output_integrity ... ok
+test vector_compat::tests::workload_profile_accepts_300_full_length_original_documents_and_embeddings ... ok
+test vision_detector::fingerprint_contract_tests::fingerprint_keeps_fixed_v32_debug_hash_contract ... ok
+test vision_detector::fingerprint_contract_tests::provider_metadata_and_model_switch_do_not_reset_existing_backoff ... ok
+test vision_detector::fingerprint_contract_tests::source_and_vision_contract_changes_still_invalidate_fingerprint ... ok
+test vision_detector::tests::only_an_explicit_correct_answer_passes ... ok
+test state::writer_concurrency_tests::pending_writes_counts_the_batch_currently_being_delivered ... ok
+test vector_compat::tests::probe_cancellation_charges_unknown_usage_without_regular_request_rows ... ok
+test vector_compat::tests::compatibility_source_capacity_busy_rejects_before_billing_and_releases_on_drop ... ok
+
+test result: ok. 619 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 46.87s
+
+     Running unittests src/main.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/tokengo_server-15d6cab666250f48)
+
+running 6 tests
+test tests::shutdown_waits_for_inflight_http_response ... ok
+test tests::signal_child ... ignored, subprocess helper invoked by process_sigterm_drains_real_http_request
+test tests::stuck_http_request_returns_shutdown_error_within_budget ... ok
+test tests::process_sigterm_drains_real_http_request ... ok
+test tests::final_flush_persists_queued_routing_state ... ok
+test tests::corrupt_outbox_cannot_be_reported_as_successful_shutdown ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/account_overview.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/account_overview-4e197a85d8a13c83)
+
+running 7 tests
+test mixed_usage_certainty_and_terminal_statuses_remain_explicit ... ok
+test owner_logs_details_and_stats_never_reveal_other_owners_or_admin_fields ... ok
+test owner_statistics_window_top50_and_nullable_usage_are_filtered_before_aggregation ... ok
+test schema44_adds_only_the_owner_index_and_preserves_schema43_requests ... ok
+test model_statistics_follow_actual_logical_models_with_neutral_auto_and_passthrough_labels ... ok
+test pagination_filters_before_limit_and_revoked_keys_keep_history_but_disabled_users_cannot_read ... ok
+test time_order_cursors_are_owner_scoped_and_foreign_equals_missing ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.38s
+
+     Running tests/account_query_performance.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/account_query_performance-1148252656a31f36)
+
+running 1 test
+test owner_heavy_portal_and_overview_preserve_accounting_and_latency ... ignored, 500k to 1m owner rows with wide requests and ledger; release on build-test
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/admission.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/admission-9b3e850eae631f5e)
+
+running 14 tests
+test parent_revocation_between_authentication_and_admission_fails_closed ... ok
+test rejected_key_cannot_consume_another_keys_user_allowance ... ok
+test own_key_revocation_after_authentication_is_enforced ... ok
+test own_key_limits_tightened_after_authentication_are_enforced ... ok
+test sibling_keys_share_parent_rpm_and_concurrency ... ok
+test simultaneous_admissions_cannot_oversubscribe_a_window ... ok
+test sibling_reservations_also_charge_parent_tpm_and_survive_restart ... ok
+test slots_intersect_and_drop_releases_both_scopes_without_refunding_rate_window ... ok
+test stale_snapshot_cannot_change_reservation_owner ... ok
+test tpm_reserves_input_and_maximum_output_at_both_scopes ... ok
+test user_rpm_aggregates_keys_while_key_rpm_is_independent ... ok
+test user_limits_tightened_after_authentication_are_enforced ... ok
+test zero_limits_and_overflow_deny_without_reservations ... ok
+test window_survives_restart_and_expiration_restores_capacity ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.04s
+
+     Running tests/background_policy.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/background_policy-12717fb5cd4c1c99)
+
+running 4 tests
+test inherited_route_still_discovers_type_and_checks_vision_over_http ... ok
+test disabling_during_vision_detection_prevents_truncation_retry ... ok
+test disabled_route_creates_no_type_or_vision_jobs_and_sends_no_inference ... ok
+test disabling_during_type_detection_prevents_later_endpoint_requests ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.31s
+
+     Running tests/billing.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/billing-016f0e11da849a00)
+
+running 18 tests
+test ancestor_budget_is_shared_and_snapshot_survives_parent_deletion ... ok
+test exact_cost_ceil_and_immutable_price_versions ... ok
+test both_budget_layers_roll_back_atomically_and_lowering_blocks_new_holds ... ok
+test isolated_frozen_ancestor_blocks_child_priced_and_free_reservations ... ok
+test negatives_overflows_and_price_snapshot_tampering_are_rejected ... ok
+test billing_http_pricing_exists_and_requires_panel_auth ... ok
+test idempotent_reservation_settlement_release_and_retention_are_independent ... ok
+test overrun_keeps_provider_cost_visible_caps_debit_and_freezes_future_budgeted_attempts ... ok
+test partial_usage_can_prove_overrun_without_claiming_a_complete_provider_cost ... ok
+test removing_a_finite_limit_never_implicitly_unfreezes_after_overrun ... ok
+test real_http_pricing_budgets_audit_and_bounded_usage ... ok
+test real_http_self_usage_cannot_read_another_key_and_paginates_without_secrets ... ok
+test partial_missing_usage_is_estimated_but_reported_zero_is_zero ... ok
+test restart_conservatively_charges_outstanding_once_without_diagnostic_rows ... ok
+test two_connections_cannot_overreserve_the_same_budget ... ok
+test unlimited_overrun_freezes_new_priced_and_zero_cost_attempts ... ok
+test unpriced_ledger_stays_unknown_and_any_finite_ancestor_budget_requires_configuration ... ok
+test unpriced_does_not_bypass_any_frozen_user_key_or_ancestor_allocation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.25s
+
+     Running tests/billing_writer.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/billing_writer-dc00fae7aa927fb5)
+
+running 9 tests
+test bad_json_is_quarantined_and_never_allows_automatic_unknown_recovery ... ok
+test failed_known_settlement_is_durable_and_replayed_before_unknown_recovery ... ok
+test committed_sqlite_with_leftover_intent_replay_does_not_debit_twice ... ok
+test incomplete_atomic_write_is_not_silently_recovered_as_unknown_usage ... ok
+test financial_holds_and_replay_use_full_sqlite_durability_before_outbox_deletion ... ok
+test different_database_spool_is_rejected_instead_of_charging_a_matching_reservation_id ... ok
+test readonly_sqlite_still_gets_a_durable_known_usage_intent ... ok
+test spool_contains_only_accounting_intent_and_cannot_replace_pending_known_usage ... ok
+test runtime_retry_flushes_known_usage_without_process_restart ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s
+
+     Running tests/capability_discovery.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/capability_discovery-10306f8e0af62391)
+
+running 4 tests
+test failures_back_off_without_erasing_previous_metadata ... ok
+test aggregation_requires_all_eligible_mapped_metadata_and_ignores_disabled ... ok
+test discovers_new_alias_and_persists_without_accounting_or_disabled_fetches ... ok
+test late_key_change_or_disable_cannot_apply_old_results ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+     Running tests/catalog_query_performance.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/catalog_query_performance-1c5b92bd38e2c9f4)
+
+running 1 test
+test catalog_directories_current_and_tenfold_scale ... ignored, configuration-cardinality release benchmark; run isolated on build-test
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/channel_protocol_patch.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/channel_protocol_patch-414cfc5a03ede56b)
+
+running 4 tests
+test protocol_editor_preserves_credentials_models_and_rejects_stale_generation ... ok
+test malformed_proxy_credentials_are_not_echoed_or_persisted ... ok
+test capacity_only_update_preserves_identity_but_raw_hash_cas_rejects_stale_form ... ok
+test generic_background_catalog_cannot_replace_oauth_account_metadata ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+
+     Running tests/chat_opaque_ownership.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/chat_opaque_ownership-0bb0af292c7c066e)
+
+running 9 tests
+test chat_opaque_extraction_ignores_arguments_and_preserves_scope ... ok
+test chat_message_snapshot_followed_by_delta_keeps_complete_value ... ok
+test chat_stream_does_not_issue_open_choice_and_bounds_new_state ... ok
+test chat_stream_message_snapshots_require_choice_close_and_do_not_concatenate ... ok
+test authoritative_chat_message_snapshot_retires_stale_delta_fields ... ok
+test foreign_chat_state_cannot_borrow_an_identical_native_artifact ... ok
+test foreign_chat_opaque_fields_never_pass_native_responses_or_messages ... ok
+test ordinary_chat_does_not_acquire_native_source_pin ... ok
+test chat_opaque_json_and_sse_replay_preserve_and_reject_foreign_values ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.74s
+
+     Running tests/chat_reasoning_alias_gateway.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/chat_reasoning_alias_gateway-b93573f9554db621)
+
+running 1 test
+test chat_reasoning_alias_keeps_live_key_user_and_model_permissions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/custom_probes.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/custom_probes-a6fb8f8cc0e3f41b)
+
+running 10 tests
+test custom_probe_crud_optimistic_versions_persist_without_dispatch ... ok
+test custom_probe_reentry_disabled_deleted_inflight_and_source_removal_are_safe ... ok
+test custom_probe_native_shapes_mapping_contains_dimensions_and_no_ledger_or_fallback_writes ... ok
+test custom_probe_root_only_csrf_and_invalid_configuration_do_not_dispatch ... ok
+test custom_probe_scheduler_only_runs_due_enabled_and_slow_probe_does_not_block_other_due_probes ... ok
+test custom_probe_reparent_while_waiting_old_key_gate_never_dispatches_stale_identity ... ok
+test rerank_probe_uses_query_documents_native_results_and_system_diagnostic_ledger ... ok
+test custom_probe_cancel_and_shared_key_gate_do_not_leave_reserved_or_revive_deleted_probe ... ok
+test custom_probe_tools_normalize_match_units_qps_cost_and_missing_price ... ok
+test custom_probe_status_timeout_body_limit_redirect_and_safe_results ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.06s
+
+     Running tests/deepseek_roles_gateway.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/deepseek_roles_gateway-d6a999d1c38997d4)
+
+running 8 tests
+test buffered_chat_tool_indexes_preserve_function_call_order_and_identity ... ok
+test conversion_disabled_still_rejects_before_upstream ... ok
+test deepseek_responses_function_call_and_output_history_round_trip ... ok
+test malformed_or_reordered_buffered_tool_indexes_and_unknown_fields_are_rejected ... ok
+test converted_reasoning_replay_without_declaration_preserves_raw_tools_and_single_settlement ... ok
+test openai_profile_preserves_native_developer_role ... ok
+test deepseek_role_adapter_does_not_bypass_model_permissions_or_opaque_checks ... ok
+test deepseek_chat_and_responses_preserve_instructions_alias_usage_and_wire_formats ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.15s
+
+     Running tests/diagnostic_accounting.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/diagnostic_accounting-c8bd323e9735ec2c)
+
+running 8 tests
+test known_tokens_use_immutable_provider_price_but_never_debit_a_user ... ok
+test reservation_and_settlement_are_idempotent_without_replacing_known_usage ... ok
+test not_sent_is_zero_but_restart_of_pending_sends_remains_unknown ... ok
+test invalid_units_and_cross_unit_settlement_cannot_finish_a_reservation ... ok
+test subscription_reports_usage_without_claiming_a_zero_dollar_provider_cost ... ok
+test reused_attempt_must_match_model_source_and_billing_mode_not_only_snapshots ... ok
+test unknown_price_or_partial_token_usage_never_becomes_a_fabricated_zero ... ok
+test search_request_units_zero_one_and_unknown_have_distinct_cost_semantics ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+
+     Running tests/error_response.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/error_response-9e8c5a82a8d1a3a4)
+
+running 11 tests
+test empty_terminal_event_is_rejected_before_client_commit ... ok
+test broken_error_transport_can_fall_back ... ok
+test error_event_before_first_output_uses_fallback ... ok
+test error_body_remaining_request_budget_terminates_without_fallback ... ok
+test finite_errors_preserve_status_body_and_retry_after ... ok
+test continuously_dripping_error_has_total_attempt_deadline ... ok
+test oversized_error_is_rejected_before_fallback ... ok
+test native_error_after_output_is_preserved_without_replay ... ok
+test terminal_event_completes_without_waiting_for_connection_eof ... ok
+test heartbeat_only_200_has_precommit_deadline_and_falls_back ... ok
+test hanging_400_429_and_500_bodies_fail_over_and_release_capacity ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.85s
+
+     Running tests/gateway_keys.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/gateway_keys-c20dd7dd361d4fbe)
+
+running 7 tests
+test legacy_gateway_delete_preserves_managed_credentials_and_hides_tombstones ... ok
+test async_auth_verifier_cannot_resurrect_a_deleted_key ... ok
+test legacy_gateway_delete_revocation_rolls_back_when_audit_fails ... ok
+test concurrent_validation_and_deletion_cannot_refill_a_revoked_cache ... ok
+test slow_auth_does_not_starve_the_async_runtime ... ok
+test legacy_migration_preserves_hash_and_ciphertext_once_and_never_resurrects ... ok
+test named_keys_routes_revocation_restart_and_settings_compatibility ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+
+     Running tests/identity.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/identity-59a40ce80e21360f)
+
+running 12 tests
+test cached_identity_revalidates_user_policy_role_expiry_and_parent_revocation ... ok
+test admin_role_and_both_explicit_capabilities_are_required_and_revalidated ... ok
+test child_expiry_and_limits_cannot_escape_parent_and_restart_preserves_ownership ... ok
+test auth_context_policy_version_is_stable_and_tracks_effective_ancestry_and_expiry ... ok
+test child_key_self_service_is_limited_to_its_own_subtree ... ok
+test credential_cache_is_bound_to_live_hash_and_key_status ... ok
+test encrypted_recoverable_secrets_owner_scope_and_child_policy_are_enforced ... ok
+test identity_mutation_rolls_back_when_durable_audit_cannot_be_written ... ok
+test identity_routes_exist_and_require_the_correct_credential_kind ... ok
+test scoped_admin_vkeys_manage_route_b_without_access_to_legacy_secrets ... ok
+test version_24_database_migrates_existing_keys_without_rekeying ... ok
+test legacy_argon_credentials_migrate_to_admin_and_late_verification_cannot_resurrect_them ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.91s
+
+     Running tests/identity_proxy.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/identity_proxy-c1c48f5127a811e6)
+
+running 17 tests
+test channel_and_paid_permission_cannot_be_bypassed_by_alias ... ok
+test budget_denial_precedes_any_provider_call ... ok
+test auto_and_diagnostic_aliases_never_escape_model_permission ... ok
+test fallback_charges_each_attempt_without_reusing_previous_usage ... ok
+test embedding_usage_and_tool_rounds_are_distinct_attributed_ledger_entries ... ok
+test key_request_rate_is_enforced_before_forwarding ... ok
+test immutable_identity_policy_snapshot_follows_each_billed_attempt ... ok
+test model_permission_is_checked_before_call_and_hidden_from_list ... ok
+test multiple_choices_reserve_total_generation_and_cannot_bypass_budget ... ok
+test missing_provider_usage_never_becomes_zero_cost ... ok
+test real_usage_settles_both_budgets_with_identity_and_price_snapshot ... ok
+test revoked_key_stops_after_cached_success ... ok
+test successful_unpriced_call_does_not_grant_ability_to_spend_on_paid_fallback ... ok
+test stream_cancel_settles_partial_usage_and_returns_concurrency_slot ... ok
+test unaffordable_source_is_skipped_without_poisoning_health_when_free_fallback_exists ... ok
+test unpriced_usage_is_unknown_and_finite_budget_requires_pricing ... ok
+test unavailable_route_does_not_disclose_unauthorized_source_names ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.80s
+
+     Running tests/kimi_summary_history.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/kimi_summary_history-5859ee02e701fdf7)
+
+running 8 tests
+test generic_conversion_keeps_summary_distinct_from_raw_reasoning ... ok
+test malformed_or_oversized_summary_cannot_be_issued ... ok
+test summary_proofs_are_separate_from_ciphertext_and_bound_to_complete_snapshots ... ok
+test other_native_providers_do_not_apply_kimi_summary_bounds_to_output ... ok
+test valid_openai_explicit_summary_history_keeps_legacy_native_behavior ... ok
+test native_kimi_json_and_sse_complete_output_replays_anonymous_and_explicit ... ok
+test invalid_summary_source_never_falls_back_to_legacy_verification ... ok
+test summary_source_policy_uses_official_endpoint_or_explicit_profile_not_branding ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 5.83s
+
+     Running tests/litellm_import.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/litellm_import-03deab3e638f41e3)
+
+running 8 tests
+test panel_only_manual_conflicts_and_database_failure_roll_back ... ok
+test multilevel_fallback_maps_exact_names_and_rejects_invalid_graphs ... ok
+test imported_native_protocols_use_source_credentials_and_exact_names ... ok
+test imported_fallback_chain_executes_a_b_c_once_with_global_retries_unchanged ... ok
+test reimport_preserves_source_disable_and_detects_deleted_policy ... ok
+test removals_preserve_sources_and_manual_aliases ... ok
+test unknown_fallback_env_provider_and_semantics_fail_closed_without_values ... ok
+test strict_preview_apply_idempotent_update_restart_and_secret_redaction ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.85s
+
+     Running tests/local_balance.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/local_balance-69246655e7cce0b1)
+
+running 17 tests
+test all_nodes_busy_waits_for_whichever_node_frees_capacity ... ok
+test balanced_and_ordinary_aliases_do_not_invert_channel_and_credential_gates ... ok
+test disabled_cooling_and_unauthorized_nodes_are_skipped_then_recovery_rejoins ... ok
+test cloud_primary_failure_before_busy_locals_still_waits_for_local_capacity ... ok
+test cloud_primary_shared_planning_does_not_consume_direct_model_rotation ... ok
+test direct_and_shared_entrypoints_each_keep_their_own_rotation ... ok
+test failed_node_is_not_retried_while_waiting_for_busy_survivor ... ok
+test http_fault_and_transport_fault_reach_the_other_credential ... ok
+test local_strategy_is_validated_and_does_not_change_chat_identity ... ok
+test full_credential_or_channel_uses_other_local_node_without_waiting ... ok
+test private_aliases_with_the_same_name_have_owner_scoped_rotations ... ok
+test local_400_and_429_follow_explicit_provider_switch_rules ... ok
+test ordered_local_busy_cloud_failure_returns_without_requeueing_local_nodes ... ok
+test ordered_single_node_aliases_prefer_gpu03_then_gpu01_then_cloud_without_waiting ... ok
+test shared_target_balances_the_target_model_not_the_public_alias ... ok
+test single_endpoint_vector_provider_retains_key_affinity_despite_local_policy ... ok
+test same_user_local_vectors_round_robin_without_affinity_and_keep_full_payload ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.41s
+
+     Running tests/lock_order.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/lock_order-c1b918f1f3a08afc)
+
+running 2 tests
+test delete_policy_does_not_hold_db_while_waiting_for_routing ... ok
+test put_policy_does_not_hold_db_while_waiting_for_routing ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/logging_runtime.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/logging_runtime-462ce10350ee9f42)
+
+running 2 tests
+test obsolete_log_timer_cannot_shorten_a_newer_debug_window ... ok
+test obsolete_log_timer_cannot_override_a_newer_manual_setting ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/logical_models.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/logical_models-45d00796c1d6944a)
+
+running 5 tests
+test logical_mapping_api_accepts_aliases_and_trims_without_normalizing_upstream ... ok
+test invalid_logical_mappings_are_rejected_without_partial_create_or_update ... ok
+test configured_logical_route_slice_uses_per_model_zero_retry_and_diagnostic_isolation ... ok
+test logical_aliases_keep_disabled_channel_model_and_vision_boundaries ... ok
+test three_source_alias_failover_and_single_source_diagnostics_survive_restart ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s
+
+     Running tests/managed_users.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/managed_users-ab40baf837836b24)
+
+running 24 tests
+test admin_key_list_includes_exact_owner_budgets_without_extra_requests ... ok
+test busy_hashing_or_revoked_root_cannot_leave_half_created_users ... ok
+test created_keys_reveal_exact_secret_from_encrypted_storage_without_exposing_list_or_audit ... ok
+test concurrent_creation_obeys_active_key_cap_without_deleting_legacy_keys ... ok
+test delete_user_requires_csrf_and_rolls_back_unsettled_user ... ok
+test credential_updates_revoke_sessions_keep_identity_and_legacy_duplicate_links ... ok
+test deleted_revoked_key_hides_from_lists_but_preserves_ancestry_and_financial_history ... ok
+test delete_user_revokes_login_and_keys_retains_history_and_cannot_resurrect ... ok
+test deleting_disabled_key_rolls_back_revocation_and_tombstone_when_audit_fails ... ok
+test deleting_revoked_key_rolls_back_when_audit_cannot_be_persisted ... ok
+test disabled_keys_can_be_deleted_by_owner_or_admin_and_permanently_block_children ... ok
+test existing_identity_gains_login_without_rewriting_keys_and_root_stays_separate ... ok
+test hash_only_legacy_keys_are_explicitly_unavailable_and_decryption_failure_never_returns_plaintext ... ok
+test key_delete_requires_inactive_state_ownership_browser_csrf_or_explicit_administrator ... ok
+test key_reveal_requires_owner_browser_csrf_or_administrator_and_does_not_restore_revoked_keys ... ok
+test resuming_self_paused_key_enforces_parent_and_active_key_capacity ... ok
+test passthrough_owner_directory_and_user_grants_are_explicit_and_scoped ... ok
+test reveal_audit_failure_hides_plaintext_and_encrypted_creation_failure_rolls_back_all_changes ... ok
+test self_paused_key_can_resume_but_admin_disabled_expired_and_revoked_keys_cannot ... ok
+test self_service_catalog_is_authorized_visible_and_contains_no_connection_secrets ... ok
+test self_service_budgets_cannot_raise_clear_or_escape_user_or_parent_caps ... ok
+test service_key_default_inherits_and_legacy_restrictions_remain_editable ... ok
+test self_service_enforces_csrf_scope_and_only_narrows_keys ... ok
+test unified_creation_is_atomic_and_login_and_self_service_work ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.12s
+
+     Running tests/management_performance.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/management_performance-46c46b6222fee784)
+
+running 1 test
+test representative_management_latency_and_live_mutations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.48s
+
+     Running tests/migrate_only.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/migrate_only-91b3cb064387f1c0)
+
+running 1 test
+test migrate_only_preserves_business_rows_and_never_initializes_runtime_services ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/minimax_split_gateway.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/minimax_split_gateway-ecc3c5be77ba6796)
+
+running 4 tests
+test w09_explicit_nosplit_and_signed_messages_fail_before_transport_native_stays_native ... ok
+test w09_semantic_provider_faults_never_become_successful_responses ... ok
+test w09_http_and_sse_tools_replay_complete_raw_history_and_neutral_metadata ... ok
+test w09_policy_semantics_never_retry_or_switch_source_before_or_after_commit ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.20s
+
+     Running tests/model_registry.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/model_registry-fbb2e34668ccc073)
+
+running 6 tests
+test exact_ids_conflicts_and_invalid_payloads ... ok
+test real_registry_fetch ... ignored
+test alternate_failure_backoff_stale_expiry_and_download_bounds ... ok
+test cache_restart_aliases_nominal_only_and_upstream_precedence ... ok
+test explicit_associations_crud_auth_isolation_restart_and_mapping_changes ... ok
+test user_confirmed_capacity_alias_auto_minimum_restart_and_invalidation ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+     Running tests/model_routing.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/model_routing-deacb6b00c9ba5f4)
+
+running 5 tests
+test auto_respects_the_selected_logical_models_zero_retry_policy ... ok
+test per_model_probe_override_controls_scheduled_recovery ... ok
+test policy_orders_targets_overrides_retries_and_survives_restart ... ok
+test explicit_target_list_is_an_allowlist_and_delete_restores_defaults ... ok
+test policy_requires_admin_validates_atomically_and_excludes_auto ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+
+     Running tests/model_timeouts.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/model_timeouts-6d9f420370b0aaf7)
+
+running 2 tests
+test timeout_api_validates_persists_restarts_deletes_and_preserves_inheritance ... ok
+test actual_stream_and_nonstream_deadlines_apply_only_to_selected_model ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/native_audio.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/native_audio-3835d744e8c44fca)
+
+running 9 tests
+test audio_skips_an_undeclared_primary_without_spending_an_attempt ... ok
+test audio_admission_reserves_full_context_against_finite_tpm ... ok
+test assistant_audio_id_history_never_reaches_undeclared_source ... ok
+test declared_native_audio_preserves_payload_and_records_reported_tokens ... ok
+test malformed_audio_and_audio_conversion_never_reach_source ... ok
+test native_audio_requires_priced_context_bound_before_any_upstream_call ... ok
+test native_input_audio_capability_does_not_enable_audio_output ... ok
+test file_handles_and_nontext_output_cannot_reuse_the_audio_input_capability ... ok
+test undeclared_source_is_rejected_even_with_free_pricing ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+     Running tests/native_reservation_estimates.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/native_reservation_estimates-885389ef9e37479f)
+
+running 4 tests
+test real_usage_overrun_is_recorded_once_and_existing_freeze_blocks_followup ... ok
+test native_default_estimate_is_unpriced_and_finite_money_budget_still_requires_price ... ok
+test native_json_and_sse_use_price_estimate_without_source_metadata_and_settle_reported_usage_once ... ok
+test estimates_do_not_override_explicit_price_permissions_or_tpm_limits ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
+
+     Running tests/oauth_admin.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/oauth_admin-a4d4264ff77f2abe)
+
+running 1 test
+test oauth_routes_require_panel_root_not_admin_vkey_and_publish_no_credentials ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/oauth_buffered_response.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/oauth_buffered_response-06a46f733489f914)
+
+running 6 tests
+test native_response_retains_every_provider_value_and_general_converter_stays_strict ... ok
+test cap_truncation_retains_phase_usage_and_length_finish ... ok
+test observed_metadata_is_preserved_without_inventing_reasoning_or_usage ... ok
+test non_observed_control_or_meter_values_are_rejected ... ok
+test structured_output_echo_is_preserved_without_rejecting_chat_result ... ok
+test supported_generation_dials_are_echoes_without_fabricated_reasoning ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/oauth_system_instructions.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/oauth_system_instructions-0b9a17957d37aa8d)
+
+running 4 tests
+test native_developer_and_opaque_items_remain_unchanged ... ok
+test system_normalization_rejects_lossy_or_reordered_inputs ... ok
+test chatbox_system_prompt_survives_chat_to_subscription_conversion ... ok
+test leading_system_messages_keep_order_and_existing_instructions ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/operations_tokens.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/operations_tokens-7b67c86b09c0b0b9)
+
+running 20 tests
+test browser_token_list_without_write_csrf_header_and_mutation_csrf_enforcement ... ok
+test diagnostic_projection_excludes_raw_error_and_runtime_text ... ok
+test browser_stepup_single_display_and_default_expiry ... ok
+test documented_python_runs_unchanged_against_isolated_http_and_revocation ... ok
+test durable_audit_failure_rolls_back_business_write ... ok
+test every_registered_action_reaches_its_real_handler_without_machine_denial ... ok
+test logging_permissions::active_machine_log_level_change_records_the_machine_actor ... ok
+test forbidden_actions_and_mixed_auth_fail_closed ... ok
+test logging_permissions::failed_runtime_audit_prevents_log_level_and_expiry_mutation ... ok
+test lifetime_bounds_active_limit_and_expired_slots ... ok
+test long_token_history_does_not_hide_active_identity ... ok
+test logging_permissions::revoked_machine_cannot_change_log_level_or_expiry ... ok
+test machine_self_check_channel_roundtrip_and_actor_audit ... ok
+test mock_upstream_error_body_never_appears_in_machine_probe_diagnostics ... ok
+test model_catalog_credential_echo_is_rejected_before_persist_and_on_historical_reads ... ok
+test oauth_provider_binding_is_forbidden_without_side_effects ... ok
+test request_body_credential_aliases_are_rejected_before_business_write ... ok
+test ordinary_root_rename_and_password_rotation_preserve_independent_token ... ok
+test revoked_in_flight_machine_context_cannot_commit_late_write ... ok
+test revoke_expire_restart_and_security_reset ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.30s
+
+     Running tests/panel_accounts.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/panel_accounts-f110ef59a36f5ba0)
+
+running 19 tests
+test configured_setup_rejects_before_consuming_any_hash_slot ... ok
+test fresh_cookie_setup_is_atomic_and_echoes_gateway_key_only_once ... ok
+test account_disable_reset_and_restart_preserve_revocation_and_hash_only_sessions ... ok
+test legacy_cookie_csrf_malformed_credentials_and_api_admin_never_grant_panel_root ... ok
+test in_flight_login_cannot_issue_session_after_root_rename_or_password_reset ... ok
+test legacy_session_digest_is_not_a_bearer_and_old_raw_sessions_migrate ... ok
+test linked_user_disable_and_reenable_never_revives_old_cookie ... ok
+test migrated_root_cookie_restores_and_csrf_covers_management ... ok
+test login_throttle_and_expiry_are_bounded_without_account_enumeration ... ok
+test ordinary_cookie_cannot_manage_and_portal_is_explicit_owner_projection ... ok
+test portal_ledger_scope_and_unknown_meter_are_not_replaced_by_foreign_values ... ok
+test migration32_copies_the_original_short_password_hash_and_legacy_session_without_reset ... ok
+test portal_time_range_summary_is_owner_scoped_and_independent_of_paging ... ok
+test root_management_cannot_reset_root_without_current_password_or_disable_it ... ok
+test root_actor_revocation_during_hash_cannot_create_or_reset_accounts ... ok
+test root_username_change_requires_password_and_closes_legacy_password_only_backdoor ... ok
+test root_password_changes_sync_legacy_and_revoke_both_session_kinds ... ok
+test wrong_disabled_and_unknown_accounts_are_indistinguishable ... ok
+test session_logout_during_stepup_hash_cannot_change_password_or_profile ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.12s
+
+     Running tests/passthrough.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/passthrough-b54c324a9be22114)
+
+running 8 tests
+test denied_longer_route_never_falls_back_and_allowlist_blocks_restart ... ok
+test forwards_binary_query_and_only_backend_auth_and_counts_one_without_tokens ... ok
+test mtphotos_api_key_alias_all_methods_strip_false_and_encoded_paths ... ok
+test manual_probe_records_system_cost_without_user_budget_or_body_echo ... ok
+test rejects_budget_tpm_and_upload_bound_before_upstream ... ok
+test queued_service_request_rechecks_user_grant_before_upstream_bytes ... ok
+test rejects_normalized_path_and_preserves_raw_upstream_error_and_rpm ... ok
+test request_paths_are_captured_without_query_and_not_guessed_from_later_routes ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+
+     Running tests/passthrough_admin.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/passthrough_admin-4ec1d9177181ced8)
+
+running 2 tests
+test anonymous_and_nonroot_and_ops_cannot_manage_routes ... ok
+test root_crud_secret_masking_revision_and_hidden_sources ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/passthrough_transport.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/passthrough_transport-1d0e5cf721acd94d)
+
+running 9 tests
+test chunked_upload_limit_returns_413_and_settles_unknown_without_holds ... ok
+test client_disconnect_releases_concurrency_and_keeps_unknown_units ... ok
+test api_key_alias_rejects_conflicts_and_replaces_backend_credential ... ok
+test head_settles_at_headers_without_polling_downstream_body ... ok
+test invalid_gzip_stays_opaque ... ok
+test redirect_does_not_follow ... ok
+test real_http_204_and_304_settle_once ... ok
+test deadline_fires_even_when_downstream_does_not_read ... ok
+test read_timeout_releases_concurrency_and_keeps_unknown_units ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.25s
+
+     Running tests/plain_reasoning.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/plain_reasoning-f5644592e8c4db48)
+
+running 8 tests
+test opaque_summary_ambiguous_or_misordered_reasoning_stays_rejected ... ok
+test completed_snapshot_only_raw_reasoning_is_meaningful_and_collectable ... ok
+test plain_reasoning_and_tools_round_trip_without_summary_or_encryption ... ok
+test malformed_id_late_reasoning_and_conflicting_sse_snapshot_are_rejected ... ok
+test reasoning_usage_known_zero_unknown_and_invalid_remain_distinct ... ok
+test reasoning_part_done_seals_deltas_but_allows_identical_final_snapshots ... ok
+test streaming_plain_reasoning_keeps_final_item_and_reverse_deltas ... ok
+test real_http_reasoning_tool_result_replay_preserves_source_and_ledger ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/pricing_currency_catalog.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/pricing_currency_catalog-e0a53d27df55d52a)
+
+running 1 test
+test catalog_global_model_state_and_portal_currency_match_new_editors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/protocol_conversion_faults.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_conversion_faults-f0eb33be653429a0)
+
+running 4 tests
+test malformed_source_sse_retains_channel_fault_and_cooldown ... ok
+test postcommit_conversion_mismatch_errors_without_replay_or_source_cooldown ... ok
+test precommit_conversion_mismatch_falls_back_without_source_cooldown ... ok
+test nonstream_conversion_mismatch_does_not_trip_native_source ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.52s
+
+     Running tests/protocol_moderation_metadata.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_moderation_metadata-46805bb6d937a646)
+
+running 13 tests
+test captured_moderation_shape_converts_to_chat_and_messages_with_exact_usage ... ok
+test bounded_opaque_moderation_refuses_oversize_deep_or_excess_nodes ... ok
+test native_responses_keep_original_moderation_frame_bytes ... ok
+test opaque_audit_fields_cannot_set_payload_meter_or_terminal_state ... ok
+test native_sparse_final_output_bytes_are_unchanged ... ok
+test optional_identity_and_opaque_moderation_values_are_supported ... ok
+test metadata_then_error_falls_back_without_waiting_for_open_source_eof ... ok
+test unknown_control_namespaces_or_invalid_envelopes_are_rejected ... ok
+test metadata_only_cannot_commit_and_falls_back ... ok
+test unsafe_control_after_committed_text_errors_without_replay ... ok
+test real_http_moderation_stream_completes_with_usage_and_adaptation_notice ... ok
+test real_http_sparse_final_output_finishes_without_fallback_or_lost_usage ... ok
+test unsafe_control_metadata_before_output_is_local_rejection_and_falls_back ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.88s
+
+     Running tests/protocol_reasoning_parameters.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_reasoning_parameters-6f293d84098c064d)
+
+running 10 tests
+test chat_effort_alias_never_silently_discards_unknown_or_malformed_semantics ... ok
+test active_effort_and_tier_round_trip_without_model_alias_or_case_changes ... ok
+test chat_effort_object_alias_merges_identical_canonical_values_and_rejects_conflicts ... ok
+test chat_effort_object_alias_is_wire_equivalent_only_when_converting_to_responses ... ok
+test disabled_responses_reasoning_preserves_explicit_none_without_inventing_an_effort ... ok
+test converted_parameter_tokens_are_bounded_and_native_payload_is_untouched ... ok
+test messages_effort_tier_signature_and_budget_boundaries_remain_closed ... ok
+test opaque_reasoning_and_active_summary_still_cannot_cross_protocols ... ok
+test responses_active_effort_with_disabled_summary_is_representable ... ok
+test tier_maps_independently_and_chat_none_is_not_rewritten ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_routes.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_routes-e3b6a0ff428a58c9)
+
+running 13 tests
+test chat_rejects_a_body_over_the_dialogue_transport_limit ... ok
+test claude_session_header_is_namespaced_and_client_version_headers_do_not_override_source ... ok
+test cancelling_each_native_http_stream_releases_vkey_and_channel_concurrency ... ok
+test explicit_native_session_pins_source_and_isolates_keys_and_credential_generations ... ok
+test hidden_provider_state_and_unmetered_server_tools_are_rejected_before_send ... ok
+test cancelling_native_http_before_precommit_releases_the_pending_request ... ok
+test large_dialogue_bodies_reach_each_native_upstream ... ok
+test native_auth_conflicts_duplicates_and_invalid_shapes_never_reach_upstream ... ok
+test native_source_probe_uses_declared_protocol_instead_of_assuming_chat ... ok
+test native_tool_history_and_unknown_fields_are_preserved_without_internal_body_keys ... ok
+test opaque_native_history_requires_its_key_binding_and_reserves_full_input_bound ... ok
+test native_routes_do_not_bypass_virtual_key_policy_or_unknown_continuation ... ok
+test responses_and_messages_reach_their_native_paths_with_virtual_key_auth ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.22s
+
+     Running tests/protocol_safety.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_safety-75b89aec8f7da572)
+
+running 11 tests
+test early_pricing_denial_has_no_phantom_attempt_or_canceled_status ... ok
+test capacity_only_change_keeps_issued_opaque_history_and_applies_new_budget ... ok
+test cancellation_before_and_after_headers_records_exactly_one_canceled_attempt ... ok
+test issued_nonstream_and_sse_artifacts_replay_only_for_same_owner_and_generation ... ok
+test known_unavailable_pin_precedes_unrelated_unbounded_source_admission ... ok
+test postcommit_local_artifact_failure_is_not_a_source_fault ... ok
+test local_artifact_storage_failure_never_falls_back_or_cools_sources ... ok
+test precommit_pin_storage_failure_is_local_fault_not_cancellation ... ok
+test queued_request_cannot_outlive_model_disable ... ok
+test unclosed_sse_signature_prefix_is_never_issued ... ok
+test revoked_queued_key_is_a_client_error_not_a_client_cancel ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.33s
+
+     Running tests/protocol_selection_matrix.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_selection_matrix-aa4446bd4323c30b)
+
+running 28 tests
+test converted_chat_effort_alias_keeps_explicit_effort_ahead_of_mapping_defaults ... ok
+test dual_consumer_chooses_its_endpoint_and_dual_upstream_preserves_it ... ok
+test chat_consumer_bridges_to_responses_only_upstream_when_enabled ... ok
+test invalid_converted_chat_effort_aliases_are_rejected_before_outbound_attempts ... ok
+test dual_consumer_responses_request_bridges_to_chat_only_upstream_when_enabled ... ok
+test native_hosted_tools_are_explicitly_rejected_by_metering_boundary ... ok
+test native_responses_does_not_strip_its_native_controls ... ok
+test chat_only_consumer_keeps_chat_native_for_chat_only_or_dual_upstream ... ok
+test native_responses_opaque_output_is_preserved_without_chat_fabrication ... ok
+test pinned_continuation_failure_preserves_model_routing_stream ... ok
+test pinned_continuation_failure_preserves_model_routing_nonstream ... ok
+test pinned_continuation_success_preserves_model_routing_nonstream ... ok
+test responses_anonymous_opaque_replay_honors_live_key_revocation ... ok
+test nonrepresentable_responses_fields_are_rejected_without_hiding_them_in_user_text ... ok
+test pinned_continuation_success_preserves_model_routing_stream ... ok
+test responses_anonymous_opaque_replay_rejects_changed_source_generation ... ok
+test responses_anonymous_opaque_replay_rejects_replacement_source ... ok
+test responses_anonymous_opaque_replay_rejects_foreign_key_unknown_artifacts_and_explicit_session ... ok
+test responses_anonymous_opaque_source_failure_does_not_fallback ... ok
+test responses_ordinary_tool_replay_keeps_usage_without_client_extensions ... ok
+test responses_cold_history_outside_soft_window_expires_and_is_not_silently_replayed ... ok
+test responses_real_session_cannot_borrow_another_key_or_shared_cache_conversation_binding ... ok
+test responses_real_session_header_survives_cache_prefix_changes_and_isolates_shared_cache_keys ... ok
+test responses_real_session_rejects_opaque_replay_after_source_generation_changes ... ok
+test responses_real_session_preserves_opaque_tool_history_in_both_transport_modes ... ok
+test unsupported_protocol_with_conversion_off_never_calls_upstream ... ok
+test responses_anonymous_opaque_tool_replay_preserves_json_sse_and_cache_changes ... ok
+test responses_recent_history_above_4096_accepts_new_opaque_json_and_sse_without_client_changes ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.59s
+
+     Running tests/protocol_sparse_terminal.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/protocol_sparse_terminal-edccca64e3d5d2ec)
+
+running 11 tests
+test complete_aggregate_keeps_existing_snapshot_only_path ... ok
+test nonempty_aggregate_contradiction_remains_an_error ... ok
+test closed_text_parts_allow_sparse_terminal_and_exact_usage ... ok
+test closed_parallel_tools_allow_sparse_terminal_preserving_ids_and_json ... ok
+test sparse_empty_or_unclosed_response_cannot_finish_as_success ... ok
+test sparse_missing_usage_does_not_invent_source_zero ... ok
+test sparse_exception_is_not_missing_null_or_nonarray_output ... ok
+test sparse_rejects_duplicate_or_late_parts_and_bounds ... ok
+test sparse_target_text_and_parallel_tool_arguments_are_exact_without_replay ... ok
+test sparse_text_requires_matching_closed_identity_and_all_part_lifecycles ... ok
+test sparse_tools_require_closed_arguments_item_identity_and_call_identity ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_catalog.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_catalog-7b7a29678a8e30f3)
+
+running 13 tests
+test discovery_requires_admin_and_bound_oauth_account ... ok
+test errors_and_catalog_secret_echoes_are_not_exposed ... ok
+test a_rotated_key_cannot_return_a_stale_catalog ... ok
+test compatible_proxy_catalog_keeps_its_configured_protocol_path ... ok
+test explicit_reveal_is_root_only_csrf_protected_uncached_and_not_in_lists ... ok
+test local_draft_endpoints_preserve_port_and_invalid_urls_are_rejected ... ok
+test local_key_without_models_is_unroutable_until_models_are_configured ... ok
+test new_opencode_go_credentials_have_their_own_stable_session_headers ... ok
+test opencode_defaults_do_not_leak_to_payg_proxies_or_unrecognized_sources ... ok
+test online_key_can_disable_legacy_model_inheritance_until_models_are_configured ... ok
+test saved_and_draft_keys_discover_independent_catalogs_without_configuration_writes ... ok
+test reveal_requires_consistent_api_secrets_and_never_returns_oauth_tokens ... ok
+test stored_custom_headers_are_used_and_catalog_redirects_are_not_followed ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.91s
+
+     Running tests/provider_channels.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_channels-db875d11e723aeb0)
+
+running 26 tests
+test connection_delete_cleans_explicit_grants_without_broadening_and_retains_ledger ... ok
+test deleting_credential_carrier_keeps_shared_key_and_remaining_mapping ... ok
+test catalog_purpose_is_display_only_and_optional_updates_preserve_or_clear_it ... ok
+test deleting_scheduled_only_target_disables_alias_without_falling_through_to_default ... ok
+test legacy_editor_omission_does_not_reenable_and_explicit_mapping_switch_preserves_generation ... ok
+test grouping_is_explicit_unique_validated_root_and_csrf_only ... ok
+test enabled_model_parent_and_visibility_filter_real_forward_and_public_list ... ok
+test managed_non_auth_headers_duplicate_identity_rolls_back_entire_key ... ok
+test managed_non_auth_headers_keep_authentication_and_reject_auth_bypass_atomically ... ok
+test managed_non_auth_headers_preserve_anonymous_and_oauth_authentication_boundaries ... ok
+test deletion_busy_and_invalid_config_roll_back_every_change ... ok
+test manual_reasoning_append_and_default_save_atomically_with_legacy_replace ... ok
+test managed_non_auth_headers_reject_cross_provider_credential_ownership ... ok
+test managed_non_auth_headers_sync_all_key_sources_and_preserve_models_and_history ... ok
+test migration_33_preserves_existing_connections_models_and_secrets ... ok
+test metadata_request_cannot_assign_old_identity_capabilities_after_secret_change ... ok
+test presentation_changes_roll_back_if_audit_storage_fails ... ok
+test new_unknown_model_catalog_purpose_round_trips_without_changing_runtime_contract ... ok
+test presentation_endpoints_reject_invalid_missing_unprivileged_and_csrf_requests ... ok
+test presentation_rename_preserves_all_runtime_identity_and_api_names ... ok
+test provider_delete_cascades_config_preserves_history_and_other_provider ... ok
+test provider_delete_requires_root_and_browser_csrf ... ok
+test pulled_reasoning_metadata_maps_exact_model_and_configures_only_explicit_defaults ... ok
+test provider_membership_atomic_model_switch_and_restart_preserve_identity ... ok
+test reasoning_defaults_reach_real_chat_and_explicit_invalid_null_and_other_alias_remain_distinct ... ok
+test shared_provider_never_broadens_existing_connection_acl ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.45s
+
+     Running tests/provider_compatibility.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_compatibility-6701b217a89a9e5d)
+
+running 1 test
+test versioned_provider_shapes_are_chunk_boundary_invariant ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_defaults.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_defaults-dc83d363d65ded50)
+
+running 1 test
+test minimax_protocol_defaults_and_explicit_modes_preserve_source_intent ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/provider_diagnostics.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_diagnostics-14ee4b9ccc6a79ac)
+
+running 13 tests
+test diagnostics_require_management_auth ... ok
+test configured_catalog_purpose_is_displayed_separately_without_changing_runtime_or_identity ... ok
+test embeddings_lane_opens_a_real_existing_probe_and_executes_embedding_shape ... ok
+test jobs_enforce_channel_scope_and_cookie_csrf_for_writes ... ok
+test inference_result_is_source_bound_and_never_echoes_provider_text ... ok
+test stale_expected_identity_and_unknown_fields_never_start_network ... ok
+test dashscope_responses_uses_legal_api_minimum_and_estimates_unverified_native_budgets ... ok
+test runtime_collection_is_unverified_candidate_and_does_not_save_caps ... ok
+test static_diagnostics_are_bounded_and_do_not_probe_or_mutate ... ok
+test unknown_sources_remain_usable_and_oauth_tools_offer_the_authenticated_existing_entry ... ok
+test verification_is_explicit_deduplicated_cancelable_and_stale ... ok
+test native_inference_rejects_http_200_errors_and_accepts_only_valid_protocol_bodies ... ok
+test verification_total_deadline_bounds_the_entire_request ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.34s
+
+     Running tests/provider_diagnostics_browser.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_diagnostics_browser-7e57a42e35ba1c12)
+
+running 1 test
+test browser_acceptance_harness ... ignored, explicit browser acceptance only; starts a loopback app until finish marker or TTL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_live_siliconflow.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_live_siliconflow-289c1ff4fc40f4fe)
+
+running 3 tests
+test live_siliconflow_developer_diagnostic ... ignored, one paid SiliconFlow diagnostic; requires explicit authorization and in-memory key
+test live_siliconflow_qwen_json_sse_and_tool_roundtrip ... ignored, paid real SiliconFlow API; requires explicit authorization and in-memory key
+test live_siliconflow_selected_native_role_json_sse ... ignored, two paid SiliconFlow native calls for one selected exact model; explicit authorization required
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_parameter_combinations.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_parameter_combinations-572b3520a9520c31)
+
+running 4 tests
+test kimi_summary_output_replays_only_with_issued_source_proof ... ok
+test converted_requests_enforce_destination_contract_without_changing_defaults ... ok
+test deepseek_strict_default_does_not_escape_to_unverified_beta_transport ... ok
+test china_parameter_rejection_precedes_upstream_and_reservation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+
+     Running tests/provider_pool.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_pool-f1a40af69f6b5e3b)
+
+running 19 tests
+test canonical_urls_preserve_base_paths_and_reject_secret_or_query_urls ... ok
+test credential_crud_preserves_sources_and_rotates_generation_only_for_identity_changes ... ok
+test disabling_the_only_credential_removes_provider_routable_model_counts ... ok
+test credential_mapping_remove_readd_preserves_bge_aliases_and_financial_history ... ok
+test different_url_assignment_is_conflict_and_atomic ... ok
+test empty_pool_fix_keeps_eligible_source_working ... ok
+test empty_pool_fix_preserves_real_missing_context_denial ... ok
+test first_oauth_credential_has_responses_and_verified_bounds_without_a_template ... ok
+test local_endpoint_validation_and_single_supplier_guard ... ok
+test last_usable_mapping_removal_blocks_references_but_not_another_keys_copy ... ok
+test local_endpoints_preserve_identity_restart_and_isolate_key_rotation ... ok
+test empty_pool_reports_availability_before_opaque_input_pricing ... ok
+test local_two_ports_route_only_the_declared_model_and_upstream_mapping ... ok
+test migration_splits_endpoints_preserves_source_identity_and_is_idempotent ... ok
+test missing_secrets_and_different_auth_headers_never_collapse_credentials ... ok
+test moving_a_carrier_then_rotating_never_changes_the_old_pool_secret ... ok
+test planning_does_not_set_affinity_and_cas_cannot_overwrite_a_newer_choice ... ok
+test tools_credentials_require_explicit_scope_and_preserve_independent_capabilities ... ok
+test schema_37_defaults_existing_suppliers_to_single_without_rewriting_sources ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.97s
+
+     Running tests/provider_roles_gateway.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_roles_gateway-b00aaec5e839ebcf)
+
+running 8 tests
+test provider_roles_gateway_runs_after_responses_to_chat_conversion ... ok
+test provider_roles_gateway_unknown_source_openai_and_siliconflow_preserve_developer ... ok
+test provider_roles_gateway_outbound_text_order_and_fields ... ok
+test siliconflow_single_system_prefix_and_rejects_unmergeable_metadata_without_transport ... ok
+test siliconflow_verified_model_folds_prefix_after_native_and_responses_conversion ... ok
+test siliconflow_verified_model_rejects_late_and_nontext_developer_before_transport ... ok
+test provider_roles_gateway_unmatched_model_is_not_rewritten ... ok
+test provider_roles_gateway_rejects_unrepresentable_messages_without_upstream ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.11s
+
+     Running tests/provider_trace_messages.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_trace_messages-8fbc7fa00cfe943d)
+
+running 4 tests
+test typed_trace_json_messages_roundtrips_preserve_message_tool_and_usage_identity ... ok
+test trace_metadata_rejects_invalid_conflicting_or_semantic_expansions_without_mutating_source ... ok
+test early_and_late_trace_sse_preserves_tool_text_terminal_and_roundtrip_for_all_chunks ... ok
+test native_messages_json_and_sse_trace_extensions_are_forwarded_without_rewriting ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/provider_usage_metadata.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/provider_usage_metadata-480ab81a2a68fe6c)
+
+running 8 tests
+test glm_sse_semantic_extensions_are_rejected ... ok
+test glm_request_id_is_typed_metadata_and_semantic_extensions_stay_rejected ... ok
+test kimi_cache_subsets_json_are_conserved_and_raw_usage_retained ... ok
+test partial_sse_usage_keeps_unknown_buckets_and_validates_against_known_input ... ok
+test kimi_sse_final_usage_duplicates_preserve_subsets_without_double_counting ... ok
+test metadata_boundaries_missing_buckets_and_roundtrip_do_not_invent_usage ... ok
+test sse_partial_subset_conflicts_and_trace_changes_fail_closed ... ok
+test raw_usage_size_and_depth_limits_are_stable_across_repeated_conversion ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/proxy.rs (/srv/build/tokengo-cny-unit-billing-20261113/target/release/deps/proxy-6c508008d4afc62b)
+
+running 135 tests
+test a_clean_eof_without_a_terminal_event_is_not_a_success_or_retried ... ok
+test a_channel_that_declared_other_names_never_receives_this_name ... ok
+test a_candidate_cools_only_after_three_consecutive_failures ... ok
+test a_channel_cap_queues_instead_of_stampeding_the_upstream ... ok
+test a_dead_primary_is_retried_then_the_next_channel_takes_over ... ok
+test a_client_that_hangs_up_is_recorded_as_canceled ... ok
+test a_failing_probe_pushes_the_checkpoint_forward ... ok
+test a_malformed_body_is_a_400 ... ok
+test a_model_name_with_a_slash_works_in_the_panel_api ... ok
+test a_name_nobody_declares_is_404_and_says_where_to_go ... ok
+test a_name_whose_channels_are_all_disabled_is_404 ... ok
+test a_name_whose_channels_are_all_off_is_404_and_recorded ... ok
+test a_plain_chat_request_is_forwarded_and_accounted ... ok
+test a_reply_that_stays_truncated_is_not_a_yes_and_says_so ... ok
+test a_saturated_channel_makes_the_request_try_the_other_one ... ok
+test a_text_request_ignores_the_vision_marker ... ok
+test account_trial_is_single_and_only_success_clears_pause ... ok
+test admin_can_save_policy_move_order_and_reset_cooldown ... ok
+test all_cooling_returns_service_unavailable_not_client_error ... ok
+test active_stream_outlives_attempt_deadline_and_accepts_final_line_without_newline ... ok
+test ambiguous_payment_error_is_not_an_account_fault ... ok
+test an_image_request_does_not_reroute_the_plain_traffic ... ok
+test an_empty_reply_is_retried_instead_of_being_passed_through ... ok
+test an_image_request_only_goes_to_a_channel_marked_as_seeing ... ok
+test an_image_request_without_a_seeing_channel_is_refused_up_front ... ok
+test an_inconclusive_probe_changes_nothing ... ok
+test an_unknown_model_is_404_without_touching_any_channel ... ok
+test auto_only_picks_models_of_the_same_kind ... ok
+test auto_falls_over_to_the_next_candidate ... ok
+test auto_scores_same_channel_models_separately_and_scope_changes_apply_immediately ... ok
+test autonomous_type_detection_needs_no_user_traffic_and_respects_scope ... ok
+test autonomous_vision_verifies_real_model_alias_and_enables_auto_images ... ok
+test a_long_retry_after_applies_only_after_three_failures ... ok
+test broken_stream_reports_transport_failure_once ... ok
+test cancel_nonstream_releases_without_failure ... ok
+test catalog_refresh_and_channel_save_publish_explicit_vision_for_aliases ... ok
+test channel_api_accepts_custom_alias ... ok
+test client_errors_are_returned_as_is_and_never_switch_channels ... ok
+test deleting_something_that_is_not_there_says_404_not_500 ... ok
+test completed_stream_teaches_the_served_model_type ... ok
+test autonomous_detection_checks_embedding_and_rerank_response_shapes ... ok
+test detector_background_task_identifies_without_any_client_request ... ok
+test direct_model_cooling_matches_auto_without_upstream_calls ... ok
+test dropping_stream_body_is_canceled_without_cooldown_failure ... ok
+test embeddings_go_to_their_own_route ... ok
+test everything_down_returns_a_clear_502 ... ok
+test explicit_reasoning_is_never_dropped_and_legacy_extensions_follow_the_declared_mapping ... ok
+test failed_autonomous_detection_backs_off_and_disabled_models_are_skipped ... ok
+test failed_before_any_attempt_records_the_request_but_no_attempt ... ok
+test failed_vision_does_not_grant_capability_and_backs_off ... ok
+test failed_requests_never_teach_a_model_type ... ok
+test explicit_account_fault_switches_once_and_pauses_all_models ... ok
+test idle_auto_skips_loaded_model_and_releases_request_occupancy ... ok
+test idle_stream_times_out_once_and_reports_idle_not_missing_marker ... ok
+test in_flight_request_is_running_and_records_upstream_before_completion ... ok
+test learned_output_caps_only_bound_omitted_defaults_and_context_errors_still_fall_back ... ok
+test model_permission_fault_does_not_pause_other_models ... ok
+test model_switch_controls_direct_auto_and_listing_without_deleting_mapping ... ok
+test high_concurrency_never_turns_a_good_request_into_a_500 ... ok
+test models_lists_only_what_really_works ... ok
+test nonstream_body_timeout_is_not_an_empty_success ... ok
+test nonstream_completion_has_its_own_deadline ... ok
+test nonstream_long_timeout_switches_without_same_candidate_retry ... ok
+test invalid_success_bodies_fail_over_before_committing ... ok
+test per_channel_model_names_and_custom_headers_reach_the_upstream ... ok
+test pool_virtual_cases::affinity_switched_while_queued_prevents_sending_the_old_key ... ok
+test pool_virtual_cases::anonymous_responses_replay_keeps_later_private_target_after_status_switch ... ok
+test pool_virtual_cases::changed_alias_version_between_targets_stops_stale_plan ... ok
+test pool_virtual_cases::committed_sse_never_replays_on_another_credential_and_releases_gates ... ok
+test pool_virtual_cases::concurrent_old_429_responses_cannot_push_affinity_twice ... ok
+test pool_virtual_cases::concurrent_strategy_distributes_users_without_vkey_randomization ... ok
+test pool_virtual_cases::embedding_endpoint_rejects_unknown_kind_multi_target_alias ... ok
+test pool_virtual_cases::explicit_400_is_request_local_and_disabled_switches_stop ... ok
+test nonstream_request_budget_is_shared_across_candidates ... ok
+test pool_virtual_cases::explicit_429_respects_retry_after_for_the_rejected_model_key ... ok
+test pool_virtual_cases::live_user_revocation_between_targets_prevents_second_attempt ... ok
+test pool_virtual_cases::live_vkey_revocation_between_targets_prevents_second_attempt ... ok
+test pool_virtual_cases::native_pin_overrides_affinity_and_prevents_key_switch_replay ... ok
+test pool_virtual_cases::pooled_standard_models_keep_global_provider_failover_preference ... ok
+test pool_virtual_cases::private_alias_visibility_and_target_acl_follow_each_vkey ... ok
+test pool_virtual_cases::same_user_two_vkeys_keep_one_upstream_identity_and_switch_once ... ok
+test pool_virtual_cases::scheduled_alias_uses_current_window_and_rejects_no_default ... ok
+test pool_virtual_cases::selected_credential_disable_between_attempts_rejects_stale_snapshot ... ok
+test pool_virtual_cases::standard_models_list_and_calls_exclude_disabled_pool_keys ... ok
+test pool_virtual_cases::virtual_chain_does_not_inherit_connection_failure_fallback ... ok
+test fixed_delay_real_http_four_concurrency_levels_balance_the_ledger ... ok
+test pool_virtual_cases::virtual_chain_does_not_inherit_network_or_5xx_fallback ... ok
+test pool_virtual_cases::virtual_chains_one_two_three_four_preserve_alias_and_real_attempts ... ok
+test probes_reject_invalid_success_bodies ... ok
+test probing_skips_a_channel_without_any_model_name ... ok
+test pulling_models_for_an_unknown_channel_is_404 ... ok
+test pulling_the_model_list_reports_a_real_failure ... ok
+test recent_calls_keep_user_agent_and_stream_first_byte_latency ... ok
+test rerank_usage_cases::rerank_meter_cache_overflow_cannot_be_replaced_by_smaller_token_fallback ... FAILED
+test rerank_usage_cases::rerank_meter_does_not_treat_other_endpoint_tokens_as_usage ... FAILED
+test rerank_usage_cases::rerank_meter_invalid_or_absent_values_stay_unknown ... FAILED
+test rerank_usage_cases::rerank_meter_preserves_wrapped_usage_and_anthropic_cache_counts ... FAILED
+test rerank_document_backfill_precedes_runtime_validation ... ok
+test rerank_usage_cases::rerank_meter_rejected_results_do_not_gain_token_fallback_usage ... ok
+test rerank_usage_cases::rerank_meter_usage_zero_and_per_field_precedence ... FAILED
+test rerank_usage_cases::rerank_meter_tokens_and_meta_reach_diagnostics_and_priced_or_unpriced_ledger ... FAILED
+test reserved_auto_cannot_be_saved_as_channel_model ... ok
+test retry_budget_caps_attempt_headers_but_not_active_streams ... ok
+test review_documents_remaining_header_and_usage_boundaries ... ok
+test scoring_keeps_failed_candidate_identity_after_auto_fallback ... ok
+test sequence_keeps_using_a_then_cools_it_and_returns_after_reset ... ok
+test sessions_respect_explicit_id_and_gateway_key_namespace ... ok
+test streaming_headers_still_have_a_deadline ... ok
+test streaming_is_passed_through_and_usage_is_scraped ... ok
+test the_auto_row_is_hidden_when_nothing_is_checked ... ok
+test the_auto_row_looks_like_a_plain_model_and_says_what_it_can_do ... ok
+test priced_real_http_960_requests_settle_financial_and_diagnostic_ledgers ... ok
+test the_envelope_is_unwrapped_only_when_the_channel_says_so ... ok
+test the_model_kind_is_learned_from_real_traffic_and_then_frozen_by_a_human_choice ... ok
+test the_model_list_says_which_names_can_see_images ... ok
+test the_panel_can_mark_a_model_as_seeing_and_reads_it_back ... ok
+test the_panel_can_pull_the_upstream_model_list ... ok
+test the_panel_probe_really_calls_the_channel ... ok
+test the_panel_switch_disables_a_channel_and_traffic_moves_off_it ... ok
+test the_prober_switches_back_once_the_primary_recovers ... ok
+test the_request_log_says_whether_an_image_came_in ... ok
+test the_reserved_auto_picks_among_the_checked_models ... ok
+test the_session_header_is_stable_within_one_conversation_and_new_for_another ... ok
+test unknown_model_refusal_has_explicit_code_and_never_calls_upstream ... ok
+test upstream_5xx_is_a_channel_fault_and_triggers_a_switch ... ok
+test the_channel_order_can_be_moved_and_the_route_follows ... ok
+test usage_stream_chunks_preserve_partial_on_cancel_and_failure ... ok
+test v1_needs_the_gateway_key ... ok
+test vision_test_gives_enough_room_and_retries_when_truncated ... ok
+test vision_test_says_what_the_model_actually_answered ... ok
+test without_a_cap_requests_are_not_gated ... ok
+test usage_zero_missing_partial_and_api_coverage ... ok
+test without_any_configured_key_everything_is_refused ... ok
+test nonstream_json_can_complete_after_thirty_seconds ... ok
+test stream_keeps_receiving_after_thirty_seconds ... ok
+
+failures:
+
+---- rerank_usage_cases::rerank_meter_cache_overflow_cannot_be_replaced_by_smaller_token_fallback stdout ----
+
+thread 'rerank_usage_cases::rerank_meter_cache_overflow_cannot_be_replaced_by_smaller_token_fallback' (3015057) panicked at crates/server/tests/support/rerank_usage_cases.rs:89:9:
+assertion `left == right` failed
+  left: Object {"channel_id": Number(1), "currency": String("CNY"), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+ right: Object {"channel_id": Number(1), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- rerank_usage_cases::rerank_meter_does_not_treat_other_endpoint_tokens_as_usage stdout ----
+
+thread 'rerank_usage_cases::rerank_meter_does_not_treat_other_endpoint_tokens_as_usage' (3015058) panicked at crates/server/tests/support/rerank_usage_cases.rs:89:9:
+assertion `left == right` failed
+  left: Object {"channel_id": Number(1), "currency": String("CNY"), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+ right: Object {"channel_id": Number(1), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+
+---- rerank_usage_cases::rerank_meter_invalid_or_absent_values_stay_unknown stdout ----
+
+thread 'rerank_usage_cases::rerank_meter_invalid_or_absent_values_stay_unknown' (3015060) panicked at crates/server/tests/support/rerank_usage_cases.rs:89:9:
+assertion `left == right` failed
+  left: Object {"channel_id": Number(1), "currency": String("CNY"), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+ right: Object {"channel_id": Number(1), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+
+---- rerank_usage_cases::rerank_meter_preserves_wrapped_usage_and_anthropic_cache_counts stdout ----
+
+thread 'rerank_usage_cases::rerank_meter_preserves_wrapped_usage_and_anthropic_cache_counts' (3015061) panicked at crates/server/tests/support/rerank_usage_cases.rs:89:9:
+assertion `left == right` failed
+  left: Object {"channel_id": Number(1), "currency": String("CNY"), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+ right: Object {"channel_id": Number(1), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+
+---- rerank_usage_cases::rerank_meter_usage_zero_and_per_field_precedence stdout ----
+
+thread 'rerank_usage_cases::rerank_meter_usage_zero_and_per_field_precedence' (3015065) panicked at crates/server/tests/support/rerank_usage_cases.rs:89:9:
+assertion `left == right` failed
+  left: Object {"channel_id": Number(1), "currency": String("CNY"), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+ right: Object {"channel_id": Number(1), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+
+---- rerank_usage_cases::rerank_meter_tokens_and_meta_reach_diagnostics_and_priced_or_unpriced_ledger stdout ----
+
+thread 'rerank_usage_cases::rerank_meter_tokens_and_meta_reach_diagnostics_and_priced_or_unpriced_ledger' (3015063) panicked at crates/server/tests/support/rerank_usage_cases.rs:89:9:
+assertion `left == right` failed
+  left: Object {"channel_id": Number(1), "currency": String("CNY"), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+ right: Object {"channel_id": Number(1), "id": Number(1), "input_micro_per_million": Number(1000000), "max_input_tokens": Number(4096), "max_output_tokens": Number(128), "model": String("mock chat"), "output_micro_per_million": Number(1000000)}
+
+
+failures:
+    rerank_usage_cases::rerank_meter_cache_overflow_cannot_be_replaced_by_smaller_token_fallback
+    rerank_usage_cases::rerank_meter_does_not_treat_other_endpoint_tokens_as_usage
+    rerank_usage_cases::rerank_meter_invalid_or_absent_values_stay_unknown
+    rerank_usage_cases::rerank_meter_preserves_wrapped_usage_and_anthropic_cache_counts
+    rerank_usage_cases::rerank_meter_tokens_and_meta_reach_diagnostics_and_priced_or_unpriced_ledger
+    rerank_usage_cases::rerank_meter_usage_zero_and_per_field_precedence
+
+test result: FAILED. 129 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 63.53s
+
+error: test failed, to rerun pass `-p tokengo-server --test proxy`

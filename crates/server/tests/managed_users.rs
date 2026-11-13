@@ -40,8 +40,8 @@ async fn admin_key_list_includes_exact_owner_budgets_without_extra_requests() {
         assert!(key.get("budget").is_some());
     }
     let budget = |id| &keys.iter().find(|key| key["id"] == id).unwrap()["budget"];
-    assert_eq!(budget(ids[0]), &json!({"scope":"key","scope_id":ids[0],"limit_micro":0,"spent_micro":17,"reserved_micro":3,"frozen":true}));
-    assert_eq!(budget(ids[1]), &json!({"scope":"key","scope_id":ids[1],"limit_micro":null,"spent_micro":23,"reserved_micro":5,"frozen":false}));
+    assert_eq!(budget(ids[0]), &json!({"currency":"CNY","scope":"key","scope_id":ids[0],"limit_micro":0,"spent_micro":17,"reserved_micro":3,"frozen":true}));
+    assert_eq!(budget(ids[1]), &json!({"currency":"CNY","scope":"key","scope_id":ids[1],"limit_micro":null,"spent_micro":23,"reserved_micro":5,"frozen":false}));
     assert_eq!(keys.iter().find(|key|key["id"]==ids[1]).unwrap()["enabled"],false);
     assert!(budget(ids[2]).is_null());
     assert_eq!(db::billing::budgets(&f.state.conn(), Some("key"), Some(ids[0])).unwrap()[0].spent_micro, 17);
@@ -952,7 +952,7 @@ async fn passthrough_owner_directory_and_user_grants_are_explicit_and_scoped() {
         let(s,v,h)=f.req("GET",path,Some(&cookie),None,false,None,json!({})).await;
         assert_eq!(s,StatusCode::OK,"{v}");assert_eq!(h["cache-control"],"no-store");
         assert_eq!(v["services"].as_array().unwrap().len(),1);assert_eq!(v["services"][0]["id"],route.id);
-        assert_eq!(v["services"][0].as_object().unwrap().len(),6);
+        assert_eq!(v["services"][0].as_object().unwrap().len(),7);
         assert!(!v.to_string().contains("synthetic-hidden-header"));assert!(v["services"][0].get("upstream").is_none());
     }
     let(s,key,_)=f.req("POST","/api/account/keys",Some(&cookie),None,true,None,json!({"name":"inherited","policy":{"allowed_services":null}})).await;

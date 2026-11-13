@@ -165,7 +165,7 @@ mod tests {
         let before=rows(&c);
         migrate(&c).unwrap();migrate(&c).unwrap();
         // Current migration also adds the owner-history index after the path columns.
-        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),46);
+        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),47);
         assert_eq!(rows(&c),before,"all preexisting request columns remain byte/value-equivalent");
         assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=42 AND applied_at='preserved-v42'",[],|r|r.get::<_,i64>(0)).unwrap(),42);
         assert_eq!(c.query_row("SELECT request_path IS NULL AND upstream_path IS NULL FROM requests",[],|r|r.get::<_,bool>(0)).unwrap(),true);
@@ -228,6 +228,7 @@ mod tests {
             "audit_events",
             "billing_prices",
             "billing_request_prices",
+            "billing_unit_prices",
             "billing_budgets",
             "billing_ledger",
             "billing_audit",

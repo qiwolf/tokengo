@@ -49,7 +49,7 @@ impl Fixture {
             db::channels::set_models(&c,channel,&[db::channels::ModelMapping::new("gpt-6-luna",Some("native-luna".into()),false)]).unwrap();
             tokengo_server::protocol_config::save(&c,channel.0,&tokengo_server::protocol_config::Capabilities { native:vec![Protocol::Responses],allow_conversion:true,..Default::default() }).unwrap();
             tokengo_server::reasoning_capabilities::configure(&c,channel.0,"gpt-6-luna",Some(&["low".into(),"medium".into(),"high".into()]),Some("medium")).unwrap();
-            db::billing::create_price(&c,&db::billing::Price { id:0,channel_id:channel.0,model:"gpt-6-luna".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:8192,max_output_tokens:64 },"alias-test").unwrap();
+            db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(), id:0,channel_id:channel.0,model:"gpt-6-luna".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:8192,max_output_tokens:64 },"alias-test").unwrap();
             db::route_policy::save(&c,"gpt-6-luna",&db::route_policy::RoutePolicy { retry_times:Some(0),probe_enabled:Some(false),include_in_auto:Some(false),..Default::default() }).unwrap();
             (key,row.id,user.id,channel)
         };

@@ -333,7 +333,7 @@ async fn oauth_caps_reject_below_minimum_above_model_ceiling_and_bad_types_befor
 #[tokio::test]
 async fn oauth_cap_stream_keeps_length_usage_and_priced_settlement() {
     let f = Fixture::new().await;
-    crate::db::billing::create_price(&f.state.conn(),&crate::db::billing::Price{id:0,channel_id:f.channel,model:"gpt-test".into(),input_micro_per_million:0,output_micro_per_million:1_000_000,max_input_tokens:16384,max_output_tokens:32768},"cap fixture").unwrap();
+    crate::db::billing::create_price(&f.state.conn(),&crate::db::billing::Price{currency:"CNY".into(),id:0,channel_id:f.channel,model:"gpt-test".into(),input_micro_per_million:0,output_micro_per_million:1_000_000,max_input_tokens:16384,max_output_tokens:32768},"cap fixture").unwrap();
     let response=f.send("chat/completions",json!({"model":"gpt-test","messages":[{"role":"user","content":"Count numbers"}],"max_completion_tokens":16,"stream":true,"stream_options":{"include_usage":true}})).await;
     assert_eq!(response.status(),StatusCode::OK);
     let wire=response.text().await.unwrap();

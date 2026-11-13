@@ -5195,7 +5195,7 @@ mod tests {
         body["max_output_tokens"]=json!(16);
         body["input"]=json!([{"type":"reasoning","encrypted_content":"opaque"}]);
         assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap(),(131072,16));
-        let price=crate::db::billing::Price{id:1,channel_id:1,model:"m".into(),input_micro_per_million:0,output_micro_per_million:1,max_input_tokens:131072,max_output_tokens:15};
+        let price=crate::db::billing::Price{currency:"CNY".into(),id:1,channel_id:1,model:"m".into(),input_micro_per_million:0,output_micro_per_million:1,max_input_tokens:131072,max_output_tokens:15};
         assert!(subscription_bound(&body,Some(&price),Some((131072,32768))).is_err());
         assert!(subscription_bound(&body,None,None).is_err());
     }
@@ -5209,7 +5209,7 @@ mod tests {
     }
     #[test]
     fn declared_source_context_cannot_be_underreserved_by_smaller_price_cap() {
-        let price=crate::db::billing::Price{id:1,channel_id:1,model:"m".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:512,max_output_tokens:4096};
+        let price=crate::db::billing::Price{currency:"CNY".into(),id:1,channel_id:1,model:"m".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:512,max_output_tokens:4096};
         let mut body=json!({"model":"m","input":[{"type":"reasoning","encrypted_content":"opaque"}],"max_output_tokens":16});
         assert!(billing_bound_with_context(&mut body,EndpointKind::Responses,Some(&price),Some((4096,4096))).is_err(),"fullsource context4096 must not be replaced by price cap512");
     }

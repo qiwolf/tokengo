@@ -64,7 +64,7 @@ async fn free_flat_price_cannot_override_paid_token_permission_and_paid_flat_can
             .unwrap();
             db::billing::create_price(
                 &c,
-                &db::billing::Price {
+                &db::billing::Price{currency:"CNY".into(),
                     id: 0,
                     channel_id: channel.0,
                     model: "mixed-unit".into(),
@@ -78,7 +78,7 @@ async fn free_flat_price_cannot_override_paid_token_permission_and_paid_flat_can
             .unwrap();
             db::billing::create_request_price(
                 &c,
-                &db::billing::RequestPrice {
+                &db::billing::RequestPrice{currency:"CNY".into(),
                     id: 0,
                     channel_id: channel.0,
                     model: "mixed-unit".into(),
@@ -180,7 +180,7 @@ async fn standalone_tools_respect_ancestor_rpm_and_budget_without_spending_token
         .unwrap();
         db::billing::create_request_price(
             &c,
-            &db::billing::RequestPrice {
+            &db::billing::RequestPrice{currency:"CNY".into(),
                 id: 0,
                 channel_id: channel.0,
                 model: "deepseek-search".into(),

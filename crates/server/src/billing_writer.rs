@@ -23,6 +23,7 @@ enum SettlementKind {
     #[default]
     Token,
     Request,
+    Units,
     DiagnosticToken,
     DiagnosticRequest,
 }
@@ -155,6 +156,7 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
         || (matches!(intent.kind,SettlementKind::Token|SettlementKind::DiagnosticToken) && intent.request_units.is_some())
         || (matches!(intent.kind,SettlementKind::Request|SettlementKind::DiagnosticRequest)
             && (intent.input.is_some() || intent.output.is_some()))
+        || (intent.kind==SettlementKind::Units && (intent.output.is_some()||intent.request_units.is_some()))
         || intent.input.is_some_and(|n| n < 0)
         || intent.output.is_some_and(|n| n < 0)
         || intent.status == "reserved"
@@ -172,7 +174,7 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
     }
     let attempt: Option<(String, String)> = conn
         .query_row(
-            "SELECT attempt_id,billing_unit FROM billing_ledger WHERE id=?1",
+            "SELECT attempt_id,COALESCE(pricing_unit,billing_unit) FROM billing_ledger WHERE id=?1",
             [intent.id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -184,7 +186,7 @@ fn validate(conn: &Connection, path: &Path, intent: &Settlement, database_id: &s
     };
     if attempt
         .as_ref()
-        .is_none_or(|(id, unit)| id != &intent.attempt_id || unit != expected_unit)
+        .is_none_or(|(id, unit)| id != &intent.attempt_id || if intent.kind==SettlementKind::Units {!matches!(unit.as_str(),"second"|"minute"|"hour"|"character"|"byte"|"image"|"video")}else{unit != expected_unit})
     {
         return Err(bad("billing intent reservation does not match database"));
     }
@@ -218,6 +220,7 @@ fn deliver(conn: &Connection, dir: &Path, path: &Path, intent: &mut Settlement) 
         SettlementKind::Token => {
             db::billing::settle(conn, intent.id, intent.input, intent.output, &intent.status)
         }
+        SettlementKind::Units => db::billing::settle_units(conn,intent.id,intent.input,&intent.status),
         SettlementKind::Request => {
             db::billing::settle_request(conn, intent.id, intent.request_units, &intent.status)
         }
@@ -270,6 +273,11 @@ pub fn settle_request(
         SettlementKind::Request,
         outcome,
     )
+}
+/// Measured quantities are fsynced with their kind before database settlement.
+/// For Units intents `input` carries audio milliseconds or scalar milli-units.
+pub fn settle_units(state:&SharedState,id:i64,quantity_milli:Option<i64>,outcome:&str)->Result<()> {
+    settle_intent(state,id,quantity_milli,None,None,SettlementKind::Units,outcome)
 }
 /// System diagnostics use the same fsynced intent/replay discipline as user billing.
 pub fn settle_diagnostic(state:&SharedState,id:i64,input:Option<i64>,output:Option<i64>,units:Option<i64>,request_based:bool,outcome:&str)->Result<()> {
@@ -431,4 +439,20 @@ pub fn spawn_retry(state: Weak<AppState>) -> tokio::task::JoinHandle<()> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod measured_intent_tests {
+    use super::*;
+    #[test]
+    fn measured_quantity_is_fsynced_and_replayed_before_unknown_recovery() {
+        let dir=std::env::temp_dir().join(format!("billing-measured-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let state=AppState::init(crate::Config{db_path:dir.join("db"),master_key_path:dir.join("master").to_string_lossy().into_owned(),..Default::default()}).unwrap();
+        let id={let c=state.conn();let(key,_)=db::identity::create_key(&c,1,"asr",&Default::default(),None,None).unwrap();let p=db::billing::create_unit_price(&c,&db::billing::UnitPrice{id:0,channel_id:1,model:"asr".into(),currency:"CNY".into(),unit:"minute".into(),micro_per_unit:120000,max_quantity_milli:60000},"test").unwrap();let id=db::billing::reserve_units(&c,1,key.id,1,"measured-replay",&p,2500).unwrap();c.execute_batch("CREATE TRIGGER fail_unit_settle BEFORE UPDATE OF quantity_milli ON billing_ledger BEGIN SELECT RAISE(ABORT,'temporary failure'); END;").unwrap();id};
+        assert!(settle_units(&state,id,Some(1000),"ok").is_err());
+        let pending=outbox(&state.cfg.db_path).unwrap().join(format!("{id}.json"));let raw=load(&pending).unwrap();assert_eq!(raw.kind,SettlementKind::Units);assert_eq!(raw.input,Some(1000));
+        {let c=state.conn();c.execute_batch("DROP TRIGGER fail_unit_settle").unwrap();assert_eq!(replay(&c,&state.cfg.db_path).unwrap(),1);db::billing::recover(&c).unwrap();let row=db::billing::usage(&c,&Default::default()).unwrap().remove(0);assert_eq!((row.quantity_milli,row.debit_micro,row.observed_cost_micro),(Some(1000),Some(2000),Some(2000)));}
+        assert!(!pending.exists());drop(state);fs::remove_dir_all(dir).unwrap();
+    }
 }

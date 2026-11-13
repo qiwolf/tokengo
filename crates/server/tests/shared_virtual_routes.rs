@@ -215,7 +215,7 @@ impl Fixture {
             db::kinds::set(&c,&name,kind).unwrap();
             db::provider_pool::backfill(&c,&state.secrets).unwrap();
             let provider=db::provider_pool::source_credential(&c,source.0).unwrap().unwrap().provider_id;
-            db::billing::create_price(&c,&db::billing::Price{id:0,channel_id:source.0,model:name.clone(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:if matches!(kind,ModelKind::Embeddings|ModelKind::Rerank){8_000_000}else{50000},max_output_tokens:1024},"fixture").unwrap();
+            db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:source.0,model:name.clone(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:if matches!(kind,ModelKind::Embeddings|ModelKind::Rerank){8_000_000}else{50000},max_output_tokens:1024},"fixture").unwrap();
             targets.push(vr::Target{provider_id:provider,logical_model:name,switch_on_429:true,switch_on_400:false});
             sources.push(source);upstreams.push(upstream);
         }
@@ -725,7 +725,7 @@ async fn shared_standalone_tools_require_explicit_capabilities_and_preserve_requ
                     if declared {tokengo_server::search_tools::save(&c,source.0,&tokengo_server::search_tools::ToolCapabilities {
                         search:true,fetch:true,account_scope:format!("shared-tool-source-{}",source.0),qps:100,
                     }).unwrap();}
-                    db::billing::create_request_price(&c,&db::billing::RequestPrice{id:0,channel_id:source.0,model:"bottom-0".into(),micro_per_call:7},"fixture").unwrap();
+                    db::billing::create_request_price(&c,&db::billing::RequestPrice{currency:"CNY".into(),id:0,channel_id:source.0,model:"bottom-0".into(),micro_per_call:7},"fixture").unwrap();
                 }
             }
             f.set_internal("bottom-0").await;f.publish().await;f.allow_alias_only();f.clear();

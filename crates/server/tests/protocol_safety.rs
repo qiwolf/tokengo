@@ -203,7 +203,7 @@ impl Fixture {
             if priced {
                 db::billing::create_price(
                     &c,
-                    &db::billing::Price {
+                    &db::billing::Price{currency:"CNY".into(),
                         id: 0,
                         channel_id: id.0,
                         model: MODEL.into(),
@@ -538,7 +538,7 @@ async fn local_artifact_storage_failure_never_falls_back_or_cools_sources() {
             .unwrap();
             db::billing::create_price(
                 &c,
-                &db::billing::Price {
+                &db::billing::Price{currency:"CNY".into(),
                     id: 0,
                     channel_id: id.0,
                     model: MODEL.into(),

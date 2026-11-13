@@ -42,7 +42,7 @@ impl Fixture {
         }
     }
     fn route(&self, upstream: &str, prefix: &str, extra: serde_json::Value) -> passthrough::Route {
-        let mut v = serde_json::json!({"name":"photos","prefix":prefix,"upstream":upstream,"strip_prefix":true,"enabled":true,"price_micro_usd_per_request":50,"timeout_secs":5,"max_concurrent":2,"max_body_bytes":20971520,"allowed_key_ids":[self.key_id],"headers":[{"name":"api-key","value":"backend-secret"}],"allowed_paths":null});
+        let mut v = serde_json::json!({"name":"photos","prefix":prefix,"upstream":upstream,"strip_prefix":true,"enabled":true,"price_micro_cny_per_request":50,"timeout_secs":5,"max_concurrent":2,"max_body_bytes":20971520,"allowed_key_ids":[self.key_id],"headers":[{"name":"api-key","value":"backend-secret"}],"allowed_paths":null});
         for (k, val) in extra.as_object().unwrap() {
             v[k] = val.clone();
         }
@@ -389,7 +389,7 @@ async fn queued_service_request_rechecks_user_grant_before_upstream_bytes() {
     let entered=Arc::new(tokio::sync::Notify::new());let release=Arc::new(tokio::sync::Notify::new());let calls=Arc::new(AtomicUsize::new(0));
     let(e,r,n)=(entered.clone(),release.clone(),calls.clone());
     let(url,task)=mock(Router::new().fallback(move||{let(e,r,n)=(e.clone(),r.clone(),n.clone());async move{n.fetch_add(1,Ordering::SeqCst);e.notify_one();r.notified().await;"ok"}})).await;
-    let route=f.route(&url,"/queued-service/",serde_json::json!({"max_concurrent":1,"price_micro_usd_per_request":0,"allowed_key_ids":[]}));
+    let route=f.route(&url,"/queued-service/",serde_json::json!({"max_concurrent":1,"price_micro_cny_per_request":0,"allowed_key_ids":[]}));
     {let c=f.state.conn();let mut user=identity::user(&c,1).unwrap().unwrap();user.policy.allowed_services=Some(vec![route.id]);identity::update_user(&c,&user).unwrap();}
     let request=|state:SharedState,key:String|async move{app(state).oneshot(Request::builder().method("POST").uri("/queued-service/check").header("authorization",format!("Bearer {key}")).body(Body::empty()).unwrap()).await.unwrap()};
     let first=tokio::spawn(request(f.state.clone(),f.key.clone()));

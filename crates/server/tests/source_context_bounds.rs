@@ -109,7 +109,7 @@ impl Fixture {
             if let Some(input) = price_input {
                 db::billing::create_price(
                     &c,
-                    &db::billing::Price {
+                    &db::billing::Price{currency:"CNY".into(),
                         id: 0,
                         channel_id: id,
                         model: "logical".into(),
@@ -261,7 +261,7 @@ async fn queued_opaque_price_context_growth_cannot_exceed_admitted_input() {
     let price = |input| {
         db::billing::create_price(
             &f.state.conn(),
-            &db::billing::Price {
+            &db::billing::Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: f.id,
                 model: "logical".into(),

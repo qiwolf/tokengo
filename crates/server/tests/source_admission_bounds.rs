@@ -163,7 +163,7 @@ impl Fixture {
     fn price(c: &rusqlite::Connection, id: i64, input: i64) {
         db::billing::create_price(
             c,
-            &db::billing::Price {
+            &db::billing::Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: id,
                 model: "logical".into(),

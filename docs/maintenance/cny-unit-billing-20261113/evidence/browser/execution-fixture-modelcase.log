@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/srv/build/tokengo-cny-unit-billing-20261113/evidence/browser-qa.py", line 183, in <module>
+    for theme in ['light','dark']:run_case(browser,origin,role,width,theme)
+                                  ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/build/tokengo-cny-unit-billing-20261113/evidence/browser-qa.py", line 137, in run_case
+    assert page.locator('#price-model option').evaluate_all('(els)=>els.map(e=>e.value)')==['','asr-local','chat-local','tts-local']
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

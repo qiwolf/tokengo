@@ -121,7 +121,7 @@ impl Fixture {
             if priced {
                 db::billing::create_price(
                     &c,
-                    &db::billing::Price {
+                    &db::billing::Price{currency:"CNY".into(),
                         id: 0,
                         channel_id: id.0,
                         model: "asr".into(),
@@ -251,7 +251,7 @@ async fn audio_skips_an_undeclared_primary_without_spending_an_attempt() {
         .unwrap();
         db::billing::create_price(
             &c,
-            &db::billing::Price {
+            &db::billing::Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: id.0,
                 model: "asr".into(),

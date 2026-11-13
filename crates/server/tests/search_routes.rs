@@ -163,7 +163,7 @@ impl Fixture {
             for model in ["deepseek-search", "deepseek-fetch"] {
                 db::billing::create_request_price(
                     &c,
-                    &db::billing::RequestPrice {
+                    &db::billing::RequestPrice{currency:"CNY".into(),
                         id: 0,
                         channel_id: id.0,
                         model: model.into(),
@@ -332,7 +332,7 @@ async fn free_request_price_cannot_authorize_paid_token_inference() {
     f.key = key;
     db::billing::create_request_price(
         &f.state.conn(),
-        &db::billing::RequestPrice {
+        &db::billing::RequestPrice{currency:"CNY".into(),
             id: 0,
             channel_id: f.channel,
             model: "deepseek-search".into(),
@@ -343,7 +343,7 @@ async fn free_request_price_cannot_authorize_paid_token_inference() {
     .unwrap();
     db::billing::create_price(
         &f.state.conn(),
-        &db::billing::Price {
+        &db::billing::Price{currency:"CNY".into(),
             id: 0,
             channel_id: f.channel,
             model: "deepseek-search".into(),

@@ -194,3 +194,23 @@ mod tests {
 
 /// Exact decimal USD projection from integer microUSD, without floating-point loss.
 pub fn usd_input(n:i64)->String {let n=i128::from(n);let sign=if n<0{"-"}else{""};let n=n.abs();let mut s=format!("{sign}{}.{:06}",n/1_000_000,n%1_000_000);while s.ends_with('0'){s.pop();}if s.ends_with('.') {s.pop();}s}
+
+/// Missing currency identifies pre-currency snapshots, which were USD.
+pub fn legacy_currency() -> String {"USD".into()}
+pub fn currency_symbol(currency:&str)->&str {match currency {"CNY"=>"¥","USD"=>"$",_=>""}}
+pub fn currency_of(row:&serde_json::Value)->&str {row["currency"].as_str().unwrap_or("USD")}
+pub fn money(micro:Option<i64>,currency:&str)->String {
+    micro.map(|n|format!("{} {}",usd_input(n),currency)).unwrap_or_else(||"未知".into())
+}
+pub fn unit_label(unit:&str)->&'static str {match unit {"token"=>"Token","request"=>"按次","second"=>"按秒","minute"=>"按分钟","hour"=>"按小时","character"=>"按字符","byte"=>"按字节","image"=>"按张","video"=>"按视频",_=>"未知单位"}}
+pub fn quantity(unit:&str,quantity_milli:Option<i64>)->String {
+    let Some(q)=quantity_milli else{return "用量未知".into()};
+    let mut amount=format!("{}.{:03}",q/1000,q%1000);while amount.ends_with('0'){amount.pop();}if amount.ends_with('.') {amount.pop();}
+    let label=match unit {"second"|"minute"|"hour"=>"秒音频","character"=>"字符","byte"=>"字节","image"=>"张","video"=>"个视频",_=>"单位"};
+    format!("{amount} {label}")
+}
+#[cfg(test)] mod currency_quantity_tests {
+ use super::*;
+ #[test] fn money_does_not_change_historical_currency(){assert_eq!(money(Some(1234567),"CNY"),"1.234567 CNY");assert_eq!(money(Some(1234567),"USD"),"1.234567 USD");assert_eq!(currency_of(&serde_json::json!({})),"USD");}
+ #[test] fn duration_quantity_is_audio_time_even_when_rate_is_per_hour(){assert_eq!(quantity("hour",Some(1500)),"1.5 秒音频");assert_eq!(quantity("character",Some(3000)),"3 字符");assert_eq!(quantity("second",None),"用量未知");}
+}

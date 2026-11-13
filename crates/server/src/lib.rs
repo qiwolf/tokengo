@@ -5,6 +5,7 @@ pub mod oauth;
 pub mod oauth_external;
 pub mod egress;
 pub mod passthrough;
+pub mod audio_meter;
 pub mod reasoning_capabilities;
 pub mod search_tools;
 pub mod source_rates;
@@ -80,6 +81,7 @@ pub fn app(state: SharedState) -> Router {
         .merge(routes::network::router())
         .merge(search_tools::router())
         .merge(routes::billing::router())
+        .merge(routes::audio::router())
         .merge(litellm_import::router())
         // 面板静态资源 + SPA 回退
         .merge(routes::web::router())

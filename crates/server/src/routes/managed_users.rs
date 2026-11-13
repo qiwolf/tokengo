@@ -114,7 +114,7 @@ fn set_budget(
     if limit.is_some_and(|n| n < 0) {
         return Err(dbbad("费用上限不能为负数"));
     }
-    c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES(?1,?2,?3) ON CONFLICT(scope,scope_id) DO UPDATE SET limit_micro=excluded.limit_micro", params![scope,id,limit])?;
+    c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES(?1,?2,?3) ON CONFLICT(scope,scope_id,currency) DO UPDATE SET limit_micro=excluded.limit_micro", params![scope,id,limit])?;
     c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('budget_updated',?1,?2,?3,?4)",params![actor,format!("{scope}:{id}"),json!({"limit_micro":limit}).to_string(),db::now_ms()])?;
     Ok(())
 }

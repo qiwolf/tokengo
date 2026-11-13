@@ -12,7 +12,7 @@ fn key(c: &rusqlite::Connection, name: &str, parent: Option<i64>) -> i64 {
 fn price(c: &rusqlite::Connection) -> RequestPrice {
     billing::create_request_price(
         c,
-        &RequestPrice {
+        &RequestPrice{currency:"CNY".into(),
             id: 0,
             channel_id: 1,
             model: "deepseek-search".into(),
@@ -175,7 +175,7 @@ fn flat_budget_arithmetic_overflow_rolls_back() {
     let k = key(&c, "k", None);
     let p = billing::create_request_price(
         &c,
-        &RequestPrice {
+        &RequestPrice{currency:"CNY".into(),
             id: 0,
             channel_id: 1,
             model: "m".into(),

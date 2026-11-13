@@ -38,6 +38,7 @@ pub struct RouteInput {
     pub enabled: bool,
     #[serde(default)]
     pub price_micro_usd_per_request: i64,
+    #[serde(default)] pub price_micro_cny_per_request:Option<i64>,
     #[serde(default = "timeout")]
     pub timeout_secs: u32,
     #[serde(default = "concurrent")]
@@ -68,7 +69,8 @@ pub struct Route {
     pub upstream: String,
     pub strip_prefix: bool,
     pub enabled: bool,
-    pub price_micro_usd_per_request: i64,
+    pub price_micro_per_request:i64,
+    pub currency:String,
     pub timeout_secs: u32,
     pub max_concurrent: u32,
     pub max_body_bytes: u64,
@@ -153,7 +155,7 @@ pub fn validate(v: &RouteInput) -> Result<()> {
             "upstream must be an HTTP(S) URL without userinfo, query or fragment",
         ));
     }
-    if v.price_micro_usd_per_request < 0
+    if v.price_micro_usd_per_request < 0 || v.price_micro_cny_per_request.is_some_and(|n|n<0)
         || !(1..=3600).contains(&v.timeout_secs)
         || !(1..=1024).contains(&v.max_concurrent)
         || !(1..=100 * 1024 * 1024).contains(&v.max_body_bytes)
@@ -225,7 +227,7 @@ pub fn validate(v: &RouteInput) -> Result<()> {
     }
     Ok(())
 }
-const SELECT: &str = "SELECT r.id,r.revision,r.channel_id,r.name,r.prefix,r.upstream,r.strip_prefix,r.enabled,p.micro_per_call,r.timeout_secs,r.max_concurrent,r.max_body_bytes,r.allowed_paths_json FROM passthrough_routes r JOIN billing_request_prices p ON p.id=r.price_id";
+const SELECT: &str = "SELECT r.id,r.revision,r.channel_id,r.name,r.prefix,r.upstream,r.strip_prefix,r.enabled,p.micro_per_call,r.timeout_secs,r.max_concurrent,r.max_body_bytes,r.allowed_paths_json,p.currency FROM passthrough_routes r JOIN billing_request_prices p ON p.id=r.price_id";
 fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Route> {
     let paths: Option<String> = r.get(12)?;
     Ok(Route {
@@ -237,7 +239,8 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Route> {
         upstream: r.get(5)?,
         strip_prefix: r.get(6)?,
         enabled: r.get(7)?,
-        price_micro_usd_per_request: r.get(8)?,
+        price_micro_per_request:r.get(8)?,
+        currency:r.get(13)?,
         timeout_secs: r.get(9)?,
         max_concurrent: r.get(10)?,
         max_body_bytes: r.get::<_, i64>(11)? as u64,
@@ -335,9 +338,9 @@ fn save_children(c: &Connection, sb: &SecretBox, id: i64, v: &RouteInput) -> Res
     Ok(())
 }
 fn price(c: &Connection, channel: i64, model: &str, micro: i64) -> Result<i64> {
-    c.execute("INSERT INTO billing_request_prices(channel_id,model,micro_per_call,created_ms) VALUES(?1,?2,?3,?4)",params![channel,model,micro,super::now_ms()])?;
+    c.execute("INSERT INTO billing_request_prices(channel_id,model,micro_per_call,created_ms,currency) VALUES(?1,?2,?3,?4,'CNY')",params![channel,model,micro,super::now_ms()])?;
     let id = c.last_insert_rowid();
-    c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('request_price_created','root_panel',?1,?2,?3)",params![id.to_string(),serde_json::json!({"id":id,"channel_id":channel,"model":model,"micro_per_call":micro}).to_string(),super::now_ms()])?;
+    c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('request_price_created','root_panel',?1,?2,?3)",params![id.to_string(),serde_json::json!({"id":id,"channel_id":channel,"model":model,"micro_per_call":micro,"currency":"CNY"}).to_string(),super::now_ms()])?;
     Ok(id)
 }
 fn audit_metadata(c: &Connection, revision: i64) -> Result<serde_json::Value> {
@@ -348,6 +351,7 @@ fn audit_metadata(c: &Connection, revision: i64) -> Result<serde_json::Value> {
 }
 pub fn create(c: &Connection, sb: &SecretBox, v: &RouteInput) -> Result<Route> {
     validate(v)?;
+    if v.price_micro_cny_per_request.is_none() && v.price_micro_usd_per_request!=0 {return Err(bad("新价格请使用人民币 price_micro_cny_per_request；美元历史价格不能直接换单位"));}
     super::in_tx(c, |c| {
         c.execute("INSERT INTO channels(name,base_url,enabled,max_concurrent,transport_kind) VALUES(?1,?2,?3,?4,'passthrough')",params![v.name,v.upstream,v.enabled,v.max_concurrent])?;
         let channel = c.last_insert_rowid();
@@ -357,7 +361,7 @@ pub fn create(c: &Connection, sb: &SecretBox, v: &RouteInput) -> Result<Route> {
             c,
             channel,
             &format!("passthrough:{id}"),
-            v.price_micro_usd_per_request,
+            v.price_micro_cny_per_request.unwrap_or(0),
         )?;
         c.execute("INSERT INTO passthrough_routes(id,channel_id,name,prefix,upstream,strip_prefix,enabled,price_id,timeout_secs,max_concurrent,max_body_bytes,allowed_paths_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",params![id,channel,v.name.trim(),v.prefix,v.upstream,v.strip_prefix,v.enabled,pid,v.timeout_secs,v.max_concurrent,v.max_body_bytes as i64,v.allowed_paths.as_ref().map(|p|serde_json::to_string(p).unwrap())])?;
         save_children(c, sb, id, v)?;
@@ -385,12 +389,13 @@ pub fn update(
         if old.revision != revision {
             return Err(bad("route revision conflict"));
         }
-        let pid = if old.price_micro_usd_per_request != v.price_micro_usd_per_request {
+        if v.price_micro_cny_per_request.is_none() && v.price_micro_usd_per_request!=0 && (old.currency!="USD"||old.price_micro_per_request!=v.price_micro_usd_per_request) {return Err(bad("美元历史价格只读，请明确填写人民币价格"));}
+        let pid = if v.price_micro_cny_per_request.is_some_and(|n| old.currency!="CNY" || n!=old.price_micro_per_request) {
             price(
                 c,
                 old.channel_id,
                 &format!("passthrough:{id}"),
-                v.price_micro_usd_per_request,
+                v.price_micro_cny_per_request.unwrap(),
             )?
         } else {
             c.query_row(
@@ -456,7 +461,7 @@ pub fn match_route(c: &Connection, sb: &SecretBox, path: &str) -> Result<Option<
                 .map_err(|_| bad("header decryption failed"))?,
         ));
     }
-    let price=c.query_row("SELECT p.id,p.channel_id,p.model,p.micro_per_call FROM billing_request_prices p JOIN passthrough_routes r ON r.price_id=p.id WHERE r.id=?1",[r.id],|r|Ok(RequestPrice{id:r.get(0)?,channel_id:r.get(1)?,model:r.get(2)?,micro_per_call:r.get(3)?}))?;
+    let price=c.query_row("SELECT p.id,p.channel_id,p.model,p.micro_per_call,p.currency FROM billing_request_prices p JOIN passthrough_routes r ON r.price_id=p.id WHERE r.id=?1",[r.id],|r|Ok(RequestPrice{currency:r.get(4)?,id:r.get(0)?,channel_id:r.get(1)?,model:r.get(2)?,micro_per_call:r.get(3)?}))?;
     Ok(Some(RuntimeRoute {
         route: r,
         headers,
@@ -478,7 +483,7 @@ fn permits_route(route: &Route, auth: &AuthContext) -> bool {
     };
     route.enabled && user_granted
         && auth.key_policy.allowed_services.as_ref().is_none_or(|ids|ids.contains(&route.id))
-        && auth.permits_channel(route.channel_id, route.price_micro_usd_per_request > 0)
+        && auth.permits_channel(route.channel_id, route.price_micro_per_request > 0)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -488,7 +493,8 @@ pub struct ServiceSummary {
     pub prefix: String,
     pub enabled: bool,
     pub channel_id: i64,
-    pub price_micro_usd_per_request: i64,
+    pub price_micro_per_request:i64,
+    pub currency:String,
 }
 /// Owner metadata never exposes upstream addresses, secret headers or ACL key IDs.
 pub fn services_for_user(c: &Connection, user_id: i64) -> Result<Vec<ServiceSummary>> {
@@ -498,7 +504,7 @@ pub fn services_for_user(c: &Connection, user_id: i64) -> Result<Vec<ServiceSumm
         if let Some(auth) = identity::context(c,key.id)? { identities.push(auth); }
     }
     let user_auth = AuthContext {user_id,key_id:0,role:user.role.clone(),user_policy:user.policy.clone(),key_policy:identity::Policy::default(),ancestor_key_ids:vec![],expires_at:None,policy_version:String::new()};
-    Ok(list(c)?.into_iter().filter(|r|permits_route(r,&user_auth)||identities.iter().any(|a|permits_route(r,a))).map(|r|ServiceSummary{id:r.id,name:r.name,prefix:r.prefix,enabled:r.enabled,channel_id:r.channel_id,price_micro_usd_per_request:r.price_micro_usd_per_request}).collect())
+    Ok(list(c)?.into_iter().filter(|r|permits_route(r,&user_auth)||identities.iter().any(|a|permits_route(r,a))).map(|r|ServiceSummary{id:r.id,name:r.name,prefix:r.prefix,enabled:r.enabled,channel_id:r.channel_id,price_micro_per_request:r.price_micro_per_request,currency:r.currency}).collect())
 }
 /// Validate only additions; old references remain editable after a service is deleted.
 pub fn validate_service_grants(c:&Connection, previous:Option<&[i64]>, next:Option<&[i64]>) -> Result<()> {
@@ -702,7 +708,7 @@ mod tests {
         user.policy.allowed_services=Some(vec![a.id]);identity::update_user(&c,&user).unwrap();
         let directory=serde_json::to_value(services_for_user(&c,user.id).unwrap()).unwrap();
         assert_eq!(directory.as_array().unwrap().len(),1);assert_eq!(directory[0]["id"],a.id);
-        let keys=directory[0].as_object().unwrap();assert_eq!(keys.len(),6);
+        let keys=directory[0].as_object().unwrap();assert_eq!(keys.len(),7);assert_eq!(directory[0]["currency"],"CNY");
         for forbidden in ["upstream","headers","allowed_key_ids"] {assert!(!keys.contains_key(forbidden));}
         assert!(validate_service_grants(&c,None,Some(&[b.id])).is_ok());
         assert!(validate_service_grants(&c,None,Some(&[999999])).is_err());
@@ -727,7 +733,7 @@ mod tests {
         let (c, sb) = setup();
         let mut v = input("/face/");
         let r = create(&c, &sb, &v).unwrap();
-        v.price_micro_usd_per_request = 50;
+        v.price_micro_cny_per_request = Some(50);
         let updated = update(&c, &sb, r.id, 1, &v).unwrap();
         let n: i64 = c
             .query_row("SELECT count(*) FROM billing_request_prices", [], |r| {
@@ -756,7 +762,7 @@ mod tests {
         assert!(
             super::super::billing::create_request_price(
                 &c,
-                &RequestPrice {
+                &RequestPrice{currency:"CNY".into(),
                     id: 0,
                     channel_id: id.0,
                     model: format!("passthrough:{}", route.id),

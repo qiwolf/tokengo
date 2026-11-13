@@ -66,7 +66,7 @@ impl Fixture {
             let id = db::channels::create(&c, &db::channels::NewChannel { name: "DeepSeek fixture".into(), base_url: format!("{}/v1", upstream.url), enabled: true, unwrap_envelope: false, max_concurrent: 0 }).unwrap();
             db::channels::set_models(&c, id, &[db::channels::ModelMapping::new("DeepSeek-V4.1-Flash", Some(model.into()), true)]).unwrap();
             tokengo_server::protocol_config::save(&c, id.0, &Capabilities { parameter_profile: Some(profile.into()), native: vec![Protocol::Chat], allow_conversion, chat_reasoning_replay, max_input_tokens: Some(8192), max_output_tokens: Some(128), ..Default::default() }).unwrap();
-            db::billing::create_price(&c, &db::billing::Price { id: 0, channel_id: id.0, model: "DeepSeek-V4.1-Flash".into(), input_micro_per_million: 1, output_micro_per_million: 1, max_input_tokens: 8192, max_output_tokens: 128 }, "role fixture").unwrap();
+            db::billing::create_price(&c, &db::billing::Price{currency:"CNY".into(), id: 0, channel_id: id.0, model: "DeepSeek-V4.1-Flash".into(), input_micro_per_million: 1, output_micro_per_million: 1, max_input_tokens: 8192, max_output_tokens: 128 }, "role fixture").unwrap();
             (key, user.id)
         };
         let gateway = serve(app(state.clone())).await;

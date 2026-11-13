@@ -100,7 +100,7 @@ impl Drop for Fixture {
     }
 }
 fn route() -> Value {
-    json!({"name":"Face","prefix":"/face/","upstream":"http://127.0.0.1:8066","enabled":true,"price_micro_usd_per_request":50,"headers":[{"name":"api-key","value":"private-backend-marker"}],"allowed_paths":["/represent"],"allowed_key_ids":[]})
+    json!({"name":"Face","prefix":"/face/","upstream":"http://127.0.0.1:8066","enabled":true,"price_micro_cny_per_request":50,"headers":[{"name":"api-key","value":"private-backend-marker"}],"allowed_paths":["/represent"],"allowed_key_ids":[]})
 }
 #[tokio::test]
 async fn anonymous_and_nonroot_and_ops_cannot_manage_routes() {
@@ -180,7 +180,7 @@ async fn root_crud_secret_masking_revision_and_hidden_sources() {
         db::passthrough::get(&f.state.conn(), id)
             .unwrap()
             .unwrap()
-            .price_micro_usd_per_request,
+            .price_micro_per_request,
         50
     );
     let (s, v) = f

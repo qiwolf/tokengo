@@ -81,7 +81,7 @@ impl Fixture {
             db::kinds::set(&c, "public-rerank", tokengo_shared::ModelKind::Rerank).unwrap();
             db::billing::create_price(
                 &c,
-                &db::billing::Price {
+                &db::billing::Price{currency:"CNY".into(),
                     id: 0,
                     channel_id: id.0,
                     model: "public-rerank".into(),

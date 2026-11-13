@@ -25,7 +25,7 @@ impl Fixture{
             let id=db::channels::create(&c,&db::channels::NewChannel{name:"native estimate source".into(),base_url:format!("{}/v1",upstream.url),enabled:true,unwrap_envelope:false,max_concurrent:0}).unwrap();
             db::channels::set_models(&c,id,&[db::channels::ModelMapping::new("logical",Some("Hosted/New-Reasoner".into()),false)]).unwrap();
             tokengo_server::protocol_config::save(&c,id.0,&Capabilities{native:vec![Protocol::Chat],allow_conversion:true,parameter_profile:Some("siliconflow".into()),..Default::default()}).unwrap();
-            if price{db::billing::create_price(&c,&db::billing::Price{id:0,channel_id:id.0,model:"logical".into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:8192,max_output_tokens:2048},"synthetic").unwrap();}(key,user.id)};
+            if price{db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:id.0,model:"logical".into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:8192,max_output_tokens:2048},"synthetic").unwrap();}(key,user.id)};
         let gateway=serve(app(state.clone())).await;Self{state,gateway,_source:upstream,seen,key,user,dir}
     }
     async fn call(&self,stream:bool,cap:i64)->(u16,String){let mut body=json!({"model":"logical","messages":[{"role":"user","content":"hello"}],"stream":stream,"max_tokens":cap});if stream{body["stream_options"]=json!({"include_usage":true});}let response=reqwest::Client::new().post(format!("{}/v1/chat/completions",self.gateway.url)).bearer_auth(&self.key).json(&body).send().await.unwrap();(response.status().as_u16(),response.text().await.unwrap())}

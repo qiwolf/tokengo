@@ -768,7 +768,7 @@ async fn opaque_native_history_requires_its_key_binding_and_reserves_full_input_
     let f = Fixture::new().await;
     db::billing::create_price(
         &f.state.conn(),
-        &db::billing::Price {
+        &db::billing::Price{currency:"CNY".into(),
             id: 0,
             channel_id: f.channel.0,
             model: MODEL.into(),

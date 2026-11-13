@@ -292,14 +292,11 @@ async fn forward(
         _channel: channel,
     };
     guard.reservation = Some(
-        db::billing::reserve_request(
-            &state.conn(),
-            key.auth.user_id,
-            key.auth.key_id,
-            request_id,
-            &uuid::Uuid::new_v4().to_string(),
-            &route.price,
-        )
+        (if route.price.currency=="CNY" {db::billing::reserve_request(
+            &state.conn(),key.auth.user_id,key.auth.key_id,request_id,&uuid::Uuid::new_v4().to_string(),&route.price,
+        )} else {db::billing::reserve_unpriced_request(
+            &state.conn(),key.auth.user_id,key.auth.key_id,request_id,&uuid::Uuid::new_v4().to_string(),route.route.channel_id,&route.price.model,
+        )})
         .map_err(|e| {
             if e.to_string().contains("budget") {
                 ApiError::new(
@@ -312,7 +309,7 @@ async fn forward(
             }
         })?,
     );
-    state.conn().execute("UPDATE billing_ledger SET source_snapshot=?2 WHERE id=?1",rusqlite::params![guard.reservation,serde_json::json!({"kind":"passthrough","route_id":route.route.id,"revision":route.route.revision,"prefix":route.route.prefix,"upstream":route.route.upstream}).to_string()]).map_err(db::DbError::from)?;
+    state.conn().execute("UPDATE billing_ledger SET source_snapshot=?2 WHERE id=?1",rusqlite::params![guard.reservation,serde_json::json!({"kind":"passthrough","route_id":route.route.id,"revision":route.route.revision,"prefix":route.route.prefix,"upstream":route.route.upstream,"price_currency":route.price.currency,"configured_micro_per_call":route.price.micro_per_call}).to_string()]).map_err(db::DbError::from)?;
     let upload_exceeded = Arc::new(AtomicBool::new(false));
     let upload_failed = upload_exceeded.clone();
     let upload = stream::try_unfold(

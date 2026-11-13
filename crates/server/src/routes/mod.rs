@@ -15,6 +15,7 @@ pub mod oauth;
 pub mod network;
 pub mod identity;
 pub mod billing;
+pub mod audio;
 pub mod admin;
 pub mod model_routing;
 pub mod proxy;

@@ -121,7 +121,7 @@ async fn anonymous_responses_replay_keeps_later_private_target_after_status_swit
             let source = f.add_channel(&name, &format!("{base}/{label}/v1"), ChannelSpec::default());
             f.serve(&name, &[source]);
             db::kinds::set(&f.state.conn(), &name, tokengo_shared::ModelKind::Chat).unwrap();
-            db::billing::create_price(&f.state.conn(), &db::billing::Price {
+            db::billing::create_price(&f.state.conn(), &db::billing::Price{currency:"CNY".into(),
                 id: 0, channel_id: source.0, model: name.clone(),
                 input_micro_per_million: 1_000_000, output_micro_per_million: 1_000_000,
                 max_input_tokens: 10000, max_output_tokens: 100,
@@ -285,7 +285,7 @@ async fn target_chain(
         db::kinds::set(&f.state.conn(), &name, tokengo_shared::ModelKind::Chat).unwrap();
         db::billing::create_price(
             &f.state.conn(),
-            &db::billing::Price {
+            &db::billing::Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: source.0,
                 model: name.clone(),

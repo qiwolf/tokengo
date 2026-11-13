@@ -507,7 +507,7 @@ fn paid_permission_follows_real_target_price_not_the_alias() {
             .code,
         "virtual_target_forbidden"
     );
-    let mut price = db::billing::Price {
+    let mut price = db::billing::Price{currency:"CNY".into(),
         id: 0,
         channel_id: f.source,
         model: "real-model".into(),

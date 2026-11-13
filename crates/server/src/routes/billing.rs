@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/api/pricing", get(prices).post(create))
+        .route("/api/unit-pricing",get(unit_prices).post(create_unit_price))
         .route(
             "/api/request-pricing",
             get(request_prices).post(create_request_price),
@@ -44,6 +45,7 @@ async fn prices(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewPrice {
+    #[serde(default="billing::cny_currency")] currency:String,
     channel_id: i64,
     model: String,
     input_micro_per_million: i64,
@@ -58,6 +60,7 @@ async fn create(
 ) -> Result<Json<Value>, ApiError> {
     let Json(p) = payload.map_err(|_| ApiError::bad_request("Invalid pricing body"))?;
     let p = Price {
+        currency:p.currency,
         id: 0,
         channel_id: p.channel_id,
         model: p.model,
@@ -81,6 +84,7 @@ async fn request_prices(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewRequestPrice {
+    #[serde(default="billing::cny_currency")] currency:String,
     channel_id: i64,
     model: String,
     micro_per_call: i64,
@@ -92,6 +96,7 @@ async fn create_request_price(
 ) -> Result<Json<Value>, ApiError> {
     let Json(p) = payload.map_err(|_| ApiError::bad_request("Invalid request pricing body"))?;
     let price = RequestPrice {
+        currency:p.currency,
         id: 0,
         channel_id: p.channel_id,
         model: p.model,
@@ -101,8 +106,24 @@ async fn create_request_price(
         .map_err(mutation_error)?;
     Ok(Json(json!({"request_price":result})))
 }
+async fn unit_prices(_auth:AdminAuth,State(state):State<SharedState>)->Result<Json<Value>,ApiError> {
+    Ok(Json(json!({"unit_prices":billing::list_unit_prices(&state.conn())?})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NewUnitPrice {
+    channel_id:i64,model:String,unit:String,micro_per_unit:i64,max_quantity_milli:i64,
+    #[serde(default="billing::cny_currency")] currency:String,
+}
+async fn create_unit_price(auth:AdminAuth,State(state):State<SharedState>,payload:Result<Json<NewUnitPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
+    let Json(p)=payload.map_err(|_|ApiError::bad_request("Invalid unit pricing body"))?;
+    let p=billing::UnitPrice{id:0,channel_id:p.channel_id,model:p.model,currency:p.currency,unit:p.unit,micro_per_unit:p.micro_per_unit,max_quantity_milli:p.max_quantity_milli};
+    let result=billing::create_unit_price(&state.conn(),&p,&auth.actor_label()).map_err(mutation_error)?;
+    Ok(Json(json!({"unit_price":result})))
+}
 #[derive(Deserialize)]
 struct BudgetQuery {
+    #[serde(default="billing::cny_currency")] currency:String,
     scope: Option<String>,
     scope_id: Option<i64>,
     state: Option<String>,
@@ -113,7 +134,7 @@ async fn budgets(
     Query(q): Query<BudgetQuery>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"budgets":db::billing_management::budgets(&state.conn(),q.scope.as_deref(),q.scope_id,q.state.as_deref()).map_err(mutation_error)?}),
+        json!({"budgets":db::billing_management::budgets_currency(&state.conn(),q.scope.as_deref(),q.scope_id,q.state.as_deref(),&q.currency).map_err(mutation_error)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -142,17 +163,18 @@ async fn update_budget(
     let id = q
         .scope_id
         .ok_or_else(|| ApiError::bad_request("scope_id is required"))?;
-    db::billing_management::update_budget(
+    db::billing_management::update_budget_currency(
         &state.conn(),
         scope,
         id,
         b.limit_micro,
         b.frozen,
         &_auth.actor_label(),
+        &q.currency,
     )
     .map_err(mutation_error)?;
     Ok(Json(
-        json!({"budgets":db::billing_management::budgets(&state.conn(),Some(scope),Some(id),Some("all"))?}),
+        json!({"budgets":db::billing_management::budgets_currency(&state.conn(),Some(scope),Some(id),Some("all"),&q.currency)?}),
     ))
 }
 async fn admin_usage(
@@ -180,8 +202,8 @@ async fn self_usage(
     let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
     let summary=billing::usage_summary(&conn,&q).map_err(mutation_error)?;
     let analytics=billing::usage_analytics(&conn,&q,&summary).map_err(mutation_error)?;
-    let mut budgets = billing::budgets(&conn, Some("user"), Some(key.auth.user_id))?;
-    budgets.extend(billing::budgets(&conn, Some("key"), Some(key.auth.key_id))?);
+    let mut budgets = billing::budgets_currency(&conn, Some("user"), Some(key.auth.user_id),q.currency.as_deref().unwrap_or("CNY"))?;
+    budgets.extend(billing::budgets_currency(&conn, Some("key"), Some(key.auth.key_id),q.currency.as_deref().unwrap_or("CNY"))?);
     Ok(Json(
         json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics}),
     ))
@@ -312,7 +334,7 @@ mod request_pricing_tests {
         state.conn().execute("UPDATE billing_ledger SET created_ms=15000",[]).unwrap();
         let (status,window)=call(&state,"GET","/api/usage?start_at=10&end_at=20&limit=1",&admin,Value::Null).await;
         assert_eq!(status,StatusCode::OK);assert_eq!(window["entries"].as_array().unwrap().len(),1);
-        assert_eq!(window["summary"]["ledger_count"],3);assert_eq!(window["summary"]["unknown_input_entries"],3);
+        assert_eq!(window["summary"]["ledger_count"],3);assert_eq!(window["summary"]["unknown_input_entries"],0); // Request billing has no token quantity.
         assert_eq!(window["analytics"]["buckets"][0]["total_tokens"],window["summary"]["total_tokens"]);
         assert_eq!(window["analytics"]["start_at"],10);assert_eq!(window["analytics"]["end_at"],20);
         let (status,own)=call(&state,"GET","/v1/usage?start_at=10&end_at=20&user_id=999&key_id=999&limit=1",&secret,Value::Null).await;

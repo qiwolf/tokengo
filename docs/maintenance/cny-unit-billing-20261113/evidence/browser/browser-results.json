@@ -1,0 +1,2054 @@
+{
+  "host": "build-test",
+  "cases": [
+    {
+      "role": "root",
+      "width": 1440,
+      "theme": "light",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "USD",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "synthetic_mutations": [
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "root",
+      "width": 1440,
+      "theme": "dark",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "USD",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "synthetic_mutations": [
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "theme": "light",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "USD",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "synthetic_mutations": [
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "theme": "dark",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "USD",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "query": {
+            "limit": "50",
+            "state": "active",
+            "currency": "CNY",
+            "start_at": "1794499200",
+            "end_at": "1794585600"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "method": "PUT",
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "state": "active",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "synthetic_mutations": [
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "CNY"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 12345678
+          }
+        },
+        {
+          "path": "/api/budgets",
+          "query": {
+            "scope": "user",
+            "scope_id": "1",
+            "currency": "USD"
+          },
+          "body": {
+            "frozen": false,
+            "limit_micro": 10000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "input_micro_per_million": 1234567,
+            "max_input_tokens": 12345,
+            "max_output_tokens": 678,
+            "model": "chat local",
+            "output_micro_per_million": 2000001
+          }
+        },
+        {
+          "path": "/api/request-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "micro_per_call": 12345,
+            "model": "chat local"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 540000,
+            "model": "asr local",
+            "unit": "hour"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 60000,
+            "model": "asr local",
+            "unit": "minute"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 61234,
+            "micro_per_unit": 1000,
+            "model": "asr local",
+            "unit": "second"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 10500,
+            "micro_per_unit": 123,
+            "model": "tts local",
+            "unit": "character"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "max_quantity_milli": 1024000,
+            "micro_per_unit": 1,
+            "model": "tts local",
+            "unit": "byte"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 3000,
+            "micro_per_unit": 1250000,
+            "model": "chat local",
+            "unit": "image"
+          }
+        },
+        {
+          "path": "/api/unit-pricing",
+          "query": {},
+          "body": {
+            "channel_id": 101,
+            "currency": "CNY",
+            "max_quantity_milli": 2000,
+            "micro_per_unit": 2500000,
+            "model": "chat local",
+            "unit": "video"
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "theme": "light",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "synthetic_mutations": [],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "theme": "dark",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "synthetic_mutations": [],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "theme": "light",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "synthetic_mutations": [],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "theme": "dark",
+      "status": "passed",
+      "api_calls": [
+        {
+          "path": "/api/auth/status",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "USD"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "query": {
+            "limit": "25",
+            "start_at": "1794499200",
+            "end_at": "1794585600",
+            "currency": "CNY"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "synthetic_mutations": [],
+      "page_errors": [],
+      "authority": "Actual built WASM + synthetic HTTP; form payloads only, no real payment or settlement"
+    }
+  ],
+  "limitations": "Synthetic API fixtures validate actual WASM display/forms. Real CNY accounting, ASR media metering, authorization and settlement require separate server tests; no production access."
+}

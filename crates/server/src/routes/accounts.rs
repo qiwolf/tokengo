@@ -695,6 +695,7 @@ async fn update(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PortalQuery {
+    currency:Option<String>,
     before_id: Option<i64>,
     limit: Option<u32>,
     start_at: Option<i64>,
@@ -749,10 +750,10 @@ async fn portal(
     let keys:Vec<_>=db::identity::keys(&c,user)?.into_iter().map(|k|json!({"id":k.id,"name":k.name,"hint":k.hint,"enabled":k.enabled,"revoked_at":k.revoked_at,"expires_at":k.expires_at,"parent_key_id":k.parent_key_id,"created_at_ms":k.created_at_ms})).collect();
     let query=db::billing::UsageQuery {
         user_id:Some(user),before_id:q.before_id,limit:Some(q.limit.unwrap_or(50)),
-        start_at:q.start_at,end_at:q.end_at,..Default::default()
+        start_at:q.start_at,end_at:q.end_at,currency:q.currency,..Default::default()
     };
     let (rows,next)=db::billing::usage_page(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
-    let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
+    let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"currency":r.currency,"quantity_milli":r.quantity_milli,"bound_quantity_milli":r.bound_quantity_milli,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
     let summary=db::billing::usage_summary(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     let analytics=db::billing::usage_analytics(&c,&query,&summary).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     Ok(Json(

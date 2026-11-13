@@ -926,7 +926,7 @@ async fn managed_non_auth_headers_sync_all_key_sources_and_preserve_models_and_h
     {let c=f.state.conn();
         c.execute("INSERT INTO billing_prices(channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,created_ms) VALUES(?1,'m',11,22,128,64,1)",[a]).unwrap();
         c.execute("INSERT INTO billing_request_prices(channel_id,model,micro_per_call,created_ms) VALUES(?1,'m',17,1)",[a]).unwrap();
-        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,spent_micro) VALUES('user',1,1000,7) ON CONFLICT(scope,scope_id) DO UPDATE SET limit_micro=1000,spent_micro=7",[]).unwrap();
+        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,spent_micro) VALUES('user',1,1000,7) ON CONFLICT(scope,scope_id,currency) DO UPDATE SET limit_micro=1000,spent_micro=7",[]).unwrap();
         c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,debit_micro,status,created_ms,settled_ms) VALUES('header-history',1,1,(SELECT MAX(id) FROM requests),?1,'m',1,1,0,7,'settled',1,1)",[a]).unwrap();
     }
     let before_history:i64=f.state.conn().query_row("SELECT COUNT(*) FROM requests WHERE channel_id=?1 AND status='ok'",[a],|r|r.get(0)).unwrap();

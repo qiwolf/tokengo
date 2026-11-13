@@ -66,7 +66,7 @@ fn key(c: &rusqlite::Connection, name: &str, parent: Option<i64>) -> i64 {
 fn price(c: &rusqlite::Connection) -> Price {
     billing::create_price(
         c,
-        &Price {
+        &Price{currency:"CNY".into(),
             id: 0,
             channel_id: 1,
             model: "Model-A".into(),

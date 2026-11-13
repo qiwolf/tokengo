@@ -311,7 +311,7 @@ impl Fixture {
                 .unwrap();
                 db::billing::create_price(
                     &c,
-                    &db::billing::Price {
+                    &db::billing::Price{currency:"CNY".into(),
                         id: 0,
                         channel_id: id.0,
                         model: "logical".into(),

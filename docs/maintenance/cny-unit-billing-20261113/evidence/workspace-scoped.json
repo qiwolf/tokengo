@@ -1,0 +1,17 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "--workspace",
+    "--",
+    "--skip",
+    "chat_opaque_replay_rejects_changed_source_generation"
+  ],
+  "cwd": "/srv/build/tokengo-cny-unit-billing-20261113/source",
+  "exit_code": 101,
+  "seconds": 576.992574930191
+}

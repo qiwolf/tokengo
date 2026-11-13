@@ -32,7 +32,7 @@ impl Fixture {
                 .id;
             let p = billing::create_price(
                 &conn,
-                &Price {
+                &Price{currency:"CNY".into(),
                     id: 0,
                     channel_id: 1,
                     model: "test".into(),

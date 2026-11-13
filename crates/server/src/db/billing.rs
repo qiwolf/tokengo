@@ -4,9 +4,14 @@ use super::{now_ms, DbError, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
+pub fn legacy_currency()->String {"USD".into()}
+pub fn cny_currency()->String {"CNY".into()}
+pub fn valid_currency(currency:&str)->Result<&str> {if matches!(currency,"CNY"|"USD"){Ok(currency)}else{Err(bad("currency must be CNY or USD"))}}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Price {
+    #[serde(default="legacy_currency")] pub currency:String,
     pub id: i64,
     pub channel_id: i64,
     pub model: String,
@@ -19,6 +24,7 @@ pub struct Price {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RequestPrice {
+    #[serde(default="legacy_currency")] pub currency:String,
     pub id: i64,
     pub channel_id: i64,
     pub model: String,
@@ -26,6 +32,7 @@ pub struct RequestPrice {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Budget {
+    pub currency:String,
     pub scope: String,
     pub scope_id: i64,
     pub limit_micro: Option<i64>,
@@ -35,6 +42,11 @@ pub struct Budget {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Ledger {
+    pub currency:String,
+    pub unit_price_id:Option<i64>,
+    pub unit_price_snapshot:Option<UnitPrice>,
+    pub quantity_milli:Option<i64>,
+    pub bound_quantity_milli:Option<i64>,
     pub billing_unit: String,
     pub request_units: Option<i64>,
     pub request_price_id: Option<i64>,
@@ -64,6 +76,8 @@ pub struct Ledger {
     pub created_ms: i64,
     pub settled_ms: Option<i64>,
 }
+include!("billing_units.rs");
+
 fn bad(message: &str) -> DbError {
     DbError::Other(message.into())
 }
@@ -90,7 +104,7 @@ fn audit(conn: &Connection, event: &str, actor: &str, object: &str, detail: &str
     Ok(())
 }
 fn price_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Price> {
-    Ok(Price {
+    Ok(Price{
         id: r.get(0)?,
         channel_id: r.get(1)?,
         model: r.get(2)?,
@@ -98,19 +112,23 @@ fn price_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Price> {
         output_micro_per_million: r.get(4)?,
         max_input_tokens: r.get(5)?,
         max_output_tokens: r.get(6)?,
+        currency:r.get(7)?,
     })
 }
-pub fn price(conn: &Connection, model: &str, channel_id: i64) -> Result<Option<Price>> {
-    Ok(conn.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens FROM billing_prices WHERE channel_id=?1 AND model=?2 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model)],price_row).optional()?)
+pub fn price(conn:&Connection,model:&str,channel_id:i64)->Result<Option<Price>> {price_currency(conn,model,channel_id,"CNY")}
+fn price_currency(conn:&Connection,model:&str,channel_id:i64,currency:&str)->Result<Option<Price>> {
+    valid_currency(currency)?;
+    Ok(conn.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model),currency],price_row).optional()?)
 }
 pub fn list_prices(conn: &Connection) -> Result<Vec<Price>> {
-    let mut s=conn.prepare("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens FROM billing_prices ORDER BY id DESC LIMIT 1000")?;
+    let mut s=conn.prepare("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices ORDER BY id DESC LIMIT 1000")?;
     let rows = s
         .query_map([], price_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 pub fn create_price(conn: &Connection, p: &Price, actor: &str) -> Result<Price> {
+    if p.currency!="CNY" {return Err(bad("new prices must use CNY"));}
     super::channels::require_llm_transport(conn,tokengo_shared::ChannelId(p.channel_id))?;
     if p.channel_id <= 0
         || p.model.trim().is_empty()
@@ -129,8 +147,8 @@ pub fn create_price(conn: &Connection, p: &Price, actor: &str) -> Result<Price> 
     // Validate even the maximum reservation before publishing a version.
     cost(p, p.max_input_tokens, p.max_output_tokens)?;
     let c = tx(conn)?;
-    c.execute("INSERT INTO billing_prices(channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,created_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![p.channel_id,tokengo_shared::normalize_model_name(&p.model),p.input_micro_per_million,p.output_micro_per_million,p.max_input_tokens,p.max_output_tokens,now_ms()])?;
-    let out = Price {
+    c.execute("INSERT INTO billing_prices(channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,created_ms,currency) VALUES(?1,?2,?3,?4,?5,?6,?7,'CNY')",params![p.channel_id,tokengo_shared::normalize_model_name(&p.model),p.input_micro_per_million,p.output_micro_per_million,p.max_input_tokens,p.max_output_tokens,now_ms()])?;
+    let out = Price{currency:"CNY".into(),
         id: c.last_insert_rowid(),
         model: tokengo_shared::normalize_model_name(&p.model),
         ..p.clone()
@@ -153,16 +171,19 @@ pub(super) fn budget_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Budget> {
         spent_micro: r.get(3)?,
         reserved_micro: r.get(4)?,
         frozen: r.get(5)?,
+        currency:r.get(6)?,
     })
 }
-pub fn budgets(conn: &Connection, scope: Option<&str>, id: Option<i64>) -> Result<Vec<Budget>> {
+pub fn budgets(conn: &Connection, scope: Option<&str>, id: Option<i64>) -> Result<Vec<Budget>> {budgets_currency(conn,scope,id,"CNY")}
+pub fn budgets_currency(conn:&Connection,scope:Option<&str>,id:Option<i64>,currency:&str)->Result<Vec<Budget>> {
+    valid_currency(currency)?;
     if let Some(s) = scope {
         if !matches!(s, "user" | "key") {
             return Err(bad("invalid budget scope"));
         }
     }
-    let mut sql="SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE 1=1".to_string();
-    let mut args=Vec::<rusqlite::types::Value>::new();
+    let mut sql="SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE currency=?".to_string();
+    let mut args=vec![rusqlite::types::Value::Text(currency.into())];
     if let Some(scope)=scope {sql.push_str(" AND scope=?");args.push(scope.to_string().into());}
     if let Some(id)=id {sql.push_str(" AND scope_id=?");args.push(id.into());}
     sql.push_str(" ORDER BY scope,scope_id LIMIT 1000");
@@ -176,8 +197,8 @@ pub fn budgets(conn: &Connection, scope: Option<&str>, id: Option<i64>) -> Resul
 /// Key-list responses must not turn every row into another HTTP round trip.
 pub fn key_budgets_for_user(conn: &Connection, user_id: i64) -> Result<Vec<Budget>> {
     let mut query = conn.prepare(
-        "SELECT b.scope,b.scope_id,b.limit_micro,b.spent_micro,b.reserved_micro,b.frozen
-         FROM gateway_keys g JOIN billing_budgets b ON b.scope='key' AND b.scope_id=g.id
+        "SELECT b.scope,b.scope_id,b.limit_micro,b.spent_micro,b.reserved_micro,b.frozen,b.currency
+         FROM gateway_keys g JOIN billing_budgets b ON b.scope='key' AND b.scope_id=g.id AND b.currency='CNY'
          WHERE g.user_id=?1 ORDER BY g.id",
     )?;
     let rows = query.query_map([user_id], budget_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -196,7 +217,7 @@ pub fn set_budget(
         return Err(bad("negative budget"));
     }
     let c = tx(conn)?;
-    c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES(?1,?2,?3) ON CONFLICT(scope,scope_id) DO UPDATE SET limit_micro=excluded.limit_micro",params![scope,id,limit])?;
+    c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES(?1,?2,?3) ON CONFLICT(scope,scope_id,currency) DO UPDATE SET limit_micro=excluded.limit_micro",params![scope,id,limit])?;
     audit(
         &c,
         "budget_updated",
@@ -221,6 +242,10 @@ pub fn cost(p: &Price, input: i64, output: i64) -> Result<i64> {
         .ok_or_else(|| bad("billing cost overflow"))?
         / 1_000_000;
     i64::try_from(sum).map_err(|_| bad("billing cost overflow"))
+}
+fn reject_frozen_scope(c:&Connection,scope:&str,id:i64)->Result<()> {
+    let frozen:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND frozen<>0)",params![scope,id],|r|r.get(0))?;
+    if frozen {return Err(bad("billing budget frozen"));} Ok(())
 }
 fn allocation_scopes(
     c: &Connection,
@@ -281,17 +306,19 @@ pub fn reserve(
         c.commit()?;
         return Ok(id);
     }
-    let stored=c.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens FROM billing_prices WHERE id=?1",[p.id],price_row).optional()?.ok_or_else(||bad("unknown pricing version"))?;
+    if p.currency!="CNY" {return Err(bad("new reservations require CNY price"));}
+    let stored=c.query_row("SELECT id,channel_id,model,input_micro_per_million,output_micro_per_million,max_input_tokens,max_output_tokens,currency FROM billing_prices WHERE id=?1",[p.id],price_row).optional()?.ok_or_else(||bad("unknown pricing version"))?;
     if stored != *p {
         return Err(bad("pricing snapshot mismatch"));
     }
     let allocations = allocation_scopes(&c, user_id, key_id)?;
     for (scope, id) in &allocations {
+        reject_frozen_scope(&c,scope,*id)?;
         c.execute(
             "INSERT OR IGNORE INTO billing_budgets(scope,scope_id) VALUES(?1,?2)",
             params![scope, id],
         )?;
-        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope=?1 AND scope_id=?2",params![scope,id],budget_row)?;
+        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",params![scope,id],budget_row)?;
         // A reconciliation freeze is independent of the current spending cap.
         if b.frozen {
             return Err(bad("billing budget frozen"));
@@ -308,7 +335,7 @@ pub fn reserve(
             return Err(bad("billing budget exhausted"));
         }
         c.execute(
-            "UPDATE billing_budgets SET reserved_micro=?3 WHERE scope=?1 AND scope_id=?2",
+            "UPDATE billing_budgets SET reserved_micro=?3 WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",
             params![scope, id, reserved],
         )?;
     }
@@ -327,7 +354,7 @@ pub fn reserve(
     c.commit()?;
     Ok(id)
 }
-const LEDGER_SELECT:&str="SELECT id,attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,debit_micro,observed_cost_micro,input_tokens,output_tokens,usage_certainty,status,overrun,created_ms,settled_ms,outcome,auth_snapshot,source_snapshot,billing_unit,request_units,request_price_id,request_price_snapshot FROM billing_ledger";
+const LEDGER_SELECT:&str="SELECT id,attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,debit_micro,observed_cost_micro,input_tokens,output_tokens,usage_certainty,status,overrun,created_ms,settled_ms,outcome,auth_snapshot,source_snapshot,COALESCE(pricing_unit,billing_unit),request_units,request_price_id,request_price_snapshot,currency,unit_price_id,unit_price_snapshot,quantity_milli,bound_quantity_milli FROM billing_ledger";
 fn ledger_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Ledger> {
     let raw: Option<String> = r.get(8)?;
     let p = raw
@@ -344,6 +371,9 @@ fn ledger_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Ledger> {
             rusqlite::Error::FromSqlConversionFailure(27, rusqlite::types::Type::Text, Box::new(e))
         })?;
     Ok(Ledger {
+        currency:r.get(28)?,unit_price_id:r.get(29)?,
+        unit_price_snapshot:r.get::<_,Option<String>>(30)?.map(|raw|serde_json::from_str(&raw)).transpose().map_err(|e|rusqlite::Error::FromSqlConversionFailure(30,rusqlite::types::Type::Text,Box::new(e)))?,
+        quantity_milli:r.get(31)?,bound_quantity_milli:r.get(32)?,
         billing_unit: r.get(24)?,
         request_units: r.get(25)?,
         request_price_id: r.get(26)?,
@@ -397,14 +427,15 @@ pub fn reserve_user_diagnostic(conn:&Connection,user_id:i64,attempt:&str,source:
         if row.user_id!=user_id||row.key_id!=0||row.request_id!=0||row.channel_id!=source||row.model!=model||row.input_bound!=input||row.output_bound!=0||row.price_id!=p.as_ref().map(|p|p.id)||row.source_snapshot!=*source_snapshot||row.auth_snapshot["kind"]!="user_compatibility" {return Err(bad("user diagnostic attempt identity conflict"));}
         c.commit()?;return Ok(row.id);
     }
+    reject_frozen_scope(&c,"user",user_id)?;
     c.execute("INSERT OR IGNORE INTO billing_budgets(scope,scope_id) VALUES('user',?1)",[user_id])?;
-    let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope='user' AND scope_id=?1",[user_id],budget_row)?;
+    let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope='user' AND scope_id=?1 AND currency='CNY'",[user_id],budget_row)?;
     if b.frozen {return Err(bad("billing budget frozen"));}
     if p.is_none()&&b.limit_micro.is_some() {return Err(bad("config_required: budgeted diagnostics require explicit pricing"));}
     let reserved=b.reserved_micro.checked_add(amount).ok_or_else(||bad("diagnostic budget overflow"))?;
     let total=b.spent_micro.checked_add(reserved).ok_or_else(||bad("diagnostic budget overflow"))?;
     if b.limit_micro.is_some_and(|limit|total>limit) {return Err(bad("billing budget exhausted"));}
-    c.execute("UPDATE billing_budgets SET reserved_micro=?2 WHERE scope='user' AND scope_id=?1",params![user_id,reserved])?;
+    c.execute("UPDATE billing_budgets SET reserved_micro=?2 WHERE scope='user' AND scope_id=?1 AND currency='CNY'",params![user_id,reserved])?;
     let auth=serde_json::json!({"kind":"user_compatibility","user_id":user_id,"user_policy":auth.user_policy});
     c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,price_id,price_snapshot,input_bound,output_bound,reserved_micro,created_ms,auth_snapshot,source_snapshot) VALUES(?1,?2,0,0,?3,?4,?5,?6,?7,0,?8,?9,?10,?11)",params![attempt,user_id,source,model,p.as_ref().map(|p|p.id),p.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("diagnostic pricing serialization"))?,input,amount,now_ms(),auth.to_string(),source_snapshot.to_string()])?;
     let id=c.last_insert_rowid();
@@ -422,6 +453,8 @@ pub fn settle(
     finish(conn, id, input, output, status, false, None, false)
 }
 pub fn release(conn: &Connection, id: i64, status: &str) -> Result<()> {
+    let unit:bool=conn.query_row("SELECT pricing_unit IS NOT NULL FROM billing_ledger WHERE id=?1",[id],|r|r.get(0)).optional()?.ok_or_else(||bad("unknown reservation"))?;
+    if unit {return finish_units(conn,id,Some(0),status,true);}
     finish(conn, id, None, None, status, true, Some(0), false)
 }
 fn finish(
@@ -496,7 +529,7 @@ fn finish(
         rows
     };
     for (scope, scope_id) in allocations {
-        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope=?1 AND scope_id=?2",params![scope,scope_id],budget_row)?;
+        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency=?3",params![scope,scope_id,row.currency],budget_row)?;
         let reserved = b
             .reserved_micro
             .checked_sub(row.reserved_micro)
@@ -506,7 +539,7 @@ fn finish(
             .spent_micro
             .checked_add(debit)
             .ok_or_else(|| bad("billing spend overflow"))?;
-        c.execute("UPDATE billing_budgets SET reserved_micro=?3,spent_micro=?4,frozen=MAX(frozen,?5) WHERE scope=?1 AND scope_id=?2",params![scope,scope_id,reserved,spent,overrun])?;
+        c.execute("UPDATE billing_budgets SET reserved_micro=?3,spent_micro=?4,frozen=MAX(frozen,?5) WHERE scope=?1 AND scope_id=?2 AND currency=?6",params![scope,scope_id,reserved,spent,overrun,row.currency])?;
     }
     let unpriced = (if row.billing_unit == "request" {
         row.request_price_snapshot.is_none()
@@ -545,8 +578,8 @@ pub fn reserve_diagnostic(conn:&Connection,attempt:&str,source:i64,model:&str,re
 pub fn prepare_diagnostic_dispatch(conn:&Connection,id:i64,snapshot:&serde_json::Value)->Result<()> {
     let c=tx(conn)?;let row=c.query_row(&format!("{LEDGER_SELECT} WHERE id=?1"),[id],ledger_row)?;
     if row.user_id!=0||row.key_id!=0||row.request_id!=0||row.auth_snapshot["kind"]!="admin_diagnostic"||row.status!="reserved" {return Err(bad("invalid diagnostic dispatch"));}
-    let token=if row.billing_unit=="token"&&row.auth_snapshot["subscription"]!=true {price(&c,&row.model,row.channel_id)?}else{None};
-    let request=if row.billing_unit=="request" {request_price(&c,&row.model,row.channel_id)?}else{None};
+    let token=if row.billing_unit=="token"&&row.auth_snapshot["subscription"]!=true {price_currency(&c,&row.model,row.channel_id,&row.currency)?}else{None};
+    let request=if row.billing_unit=="request" {request_price_currency(&c,&row.model,row.channel_id,&row.currency)?}else{None};
     c.execute("UPDATE billing_ledger SET source_snapshot=?2,price_id=?3,price_snapshot=?4,request_price_id=?5,request_price_snapshot=?6 WHERE id=?1",params![id,snapshot.to_string(),token.as_ref().map(|p|p.id),token.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("diagnostic price serialization"))?,request.as_ref().map(|p|p.id),request.as_ref().map(serde_json::to_string).transpose().map_err(|_|bad("diagnostic price serialization"))?])?;
     c.commit()?;Ok(())
 }
@@ -588,7 +621,9 @@ pub fn recover(conn: &Connection) -> Result<usize> {
         )?;
         let diagnostic:bool=conn.query_row("SELECT user_id=0 AND key_id=0 AND request_id=0 AND json_extract(auth_snapshot,'$.kind')='admin_diagnostic' FROM billing_ledger WHERE id=?1",[id],|r|r.get(0))?;
         if diagnostic {settle_diagnostic(conn,id,None,None,None,"restart_unknown")?;}
-        else if unit == "request" {
+        else if conn.query_row("SELECT pricing_unit IS NOT NULL FROM billing_ledger WHERE id=?1",[id],|r|r.get::<_,bool>(0))? {
+            settle_units(conn,id,None,"restart_unknown")?;
+        } else if unit == "request" {
             settle_request(conn, id, None, "restart_unknown")?;
         } else {
             settle(conn, id, None, None, "restart_unknown")?;
@@ -598,6 +633,7 @@ pub fn recover(conn: &Connection) -> Result<usize> {
 }
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageQuery {
+    pub currency:Option<String>,
     pub user_id: Option<i64>,
     pub key_id: Option<i64>,
     pub channel_id: Option<i64>,
@@ -611,6 +647,7 @@ pub struct UsageQuery {
 }
 /// Validate before fast empty-result paths as well as before SQL execution.
 pub fn validate_usage_time(q:&UsageQuery)->Result<()> {
+    valid_currency(q.currency.as_deref().unwrap_or("CNY"))?;
     if [q.start_at,q.end_at].into_iter().flatten().any(|v|v<0||v.checked_mul(1000).is_none()) {
         return Err(bad("时间必须为有效的 Unix 秒时间戳"));
     }
@@ -622,8 +659,9 @@ pub fn validate_usage_time(q:&UsageQuery)->Result<()> {
 fn usage_predicates(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,include_cursor:bool)->Result<(String,Vec<rusqlite::types::Value>)> {
     use rusqlite::types::Value;
     validate_usage_time(q)?;
-    let mut sql=String::new();
-    let mut args=Vec::<Value>::new();
+    let currency=valid_currency(q.currency.as_deref().unwrap_or("CNY"))?;
+    let mut sql=" AND currency=?".to_string();
+    let mut args=vec![Value::Text(currency.into())];
     for (column,value) in [("user_id",q.user_id),("key_id",q.key_id),("channel_id",q.channel_id)] {
         if let Some(value)=value {sql.push_str(&format!(" AND {column}=?"));args.push(value.into());}
     }
@@ -644,6 +682,7 @@ fn usage_predicates(q:&UsageQuery,state:&str,catalog:Option<&serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageSummary {
+    pub currency:String,
     pub request_count:i64,
     pub ledger_count:i64,
     pub input_tokens:i64,
@@ -665,12 +704,12 @@ pub fn usage_summary_with_catalog(conn:&Connection,q:&UsageQuery,catalog:Option<
     // Separate grouped request count preserves the covering owner index plan
     // for lifetime queries rather than creating a COUNT(DISTINCT) temp tree.
     let table=usage_summary_table(q);
-    let sql=format!("SELECT (SELECT count(*) FROM (SELECT request_id FROM {table} WHERE request_id IS NOT NULL{predicate} GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL),0),coalesce(sum(debit_micro),0),coalesce(sum(debit_micro IS NULL),0) FROM {table} WHERE 1=1{predicate}");
+    let sql=format!("SELECT (SELECT count(*) FROM (SELECT request_id FROM {table} WHERE request_id IS NOT NULL{predicate} GROUP BY request_id)),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(billing_unit='token' AND input_tokens IS NULL),0),coalesce(sum(billing_unit='token' AND output_tokens IS NULL),0),coalesce(sum(price_id IS NULL AND request_price_id IS NULL AND unit_price_id IS NULL),0),coalesce(sum(debit_micro),0),coalesce(sum(debit_micro IS NULL),0) FROM {table} WHERE 1=1{predicate}");
     let bindings=args.iter().chain(args.iter());
     Ok(conn.query_row(&sql,rusqlite::params_from_iter(bindings),|r| {
         let input_tokens:i64=r.get(2)?;
         let output_tokens:i64=r.get(3)?;
-        Ok(UsageSummary {request_count:r.get(0)?,ledger_count:r.get(1)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),unknown_input_entries:r.get(4)?,unknown_output_entries:r.get(5)?,unpriced_entries:r.get(6)?,known_debit_micro:r.get(7)?,unknown_debit_entries:r.get(8)?})
+        Ok(UsageSummary {currency:q.currency.clone().unwrap_or_else(cny_currency),request_count:r.get(0)?,ledger_count:r.get(1)?,input_tokens,output_tokens,total_tokens:input_tokens.saturating_add(output_tokens),unknown_input_entries:r.get(4)?,unknown_output_entries:r.get(5)?,unpriced_entries:r.get(6)?,known_debit_micro:r.get(7)?,unknown_debit_entries:r.get(8)?})
     })?)
 }
 pub fn usage_summary(conn:&Connection,q:&UsageQuery)->Result<UsageSummary> {
@@ -726,6 +765,7 @@ pub struct UsageModelSeries {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageAnalytics {
+    pub currency:String,
     pub start_at:i64,
     pub end_at:i64,
     pub effective_end_at:i64,
@@ -770,13 +810,13 @@ fn usage_analytics_at(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json:
     let bucket_seconds=usage_bucket_seconds(span);
     let effective_end_at=end.min(now);
     let elapsed=effective_end_at.saturating_sub(start);
-    let mut analytics=UsageAnalytics {start_at:start,end_at:end,effective_end_at,bucket_seconds,buckets:Vec::new(),models:Vec::new(),model_series:Vec::new(),average_rpm:if elapsed>0 {summary.request_count as f64*60.0/elapsed as f64}else{0.0},average_tpm:if elapsed>0 {summary.total_tokens as f64*60.0/elapsed as f64}else{0.0}};
+    let mut analytics=UsageAnalytics {currency:q.currency.clone().unwrap_or_else(cny_currency),start_at:start,end_at:end,effective_end_at,bucket_seconds,buckets:Vec::new(),models:Vec::new(),model_series:Vec::new(),average_rpm:if elapsed>0 {summary.request_count as f64*60.0/elapsed as f64}else{0.0},average_tpm:if elapsed>0 {summary.total_tokens as f64*60.0/elapsed as f64}else{0.0}};
     if span==0 {return Ok(analytics);}
     let count=span/bucket_seconds+i64::from(span%bucket_seconds>0);
     analytics.buckets=(0..count).map(|i|UsageBucket{start_at:start+i*bucket_seconds,..Default::default()}).collect();
     let mut bindings=vec![rusqlite::types::Value::Integer(start*1000),rusqlite::types::Value::Integer(bucket_seconds*1000)];
     bindings.extend(args.iter().cloned());
-    let sql=format!("SELECT (created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0),coalesce(sum(input_tokens IS NULL),0),coalesce(sum(output_tokens IS NULL),0) FROM {table} WHERE 1=1{predicate} GROUP BY bucket ORDER BY bucket");
+    let sql=format!("SELECT (created_ms-?)/? AS bucket,count(DISTINCT request_id),count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),coalesce(sum(debit_micro),0),coalesce(sum(billing_unit='token' AND input_tokens IS NULL),0),coalesce(sum(billing_unit='token' AND output_tokens IS NULL),0) FROM {table} WHERE 1=1{predicate} GROUP BY bucket ORDER BY bucket");
     let mut statement=conn.prepare(&sql)?;
     let buckets=statement.query_map(rusqlite::params_from_iter(bindings),|r|{
         let input_tokens:i64=r.get(3)?;let output_tokens:i64=r.get(4)?;
@@ -896,7 +936,19 @@ pub fn reserve_unpriced(
     attempt_id: &str,
     channel_id: i64,
     model: &str,
+) -> Result<i64> {reserve_unpriced_kind(conn,user_id,key_id,request_id,attempt_id,channel_id,model,"token")}
+pub fn reserve_unpriced_request(conn:&Connection,user_id:i64,key_id:i64,request_id:i64,attempt_id:&str,channel_id:i64,model:&str)->Result<i64> {reserve_unpriced_kind(conn,user_id,key_id,request_id,attempt_id,channel_id,model,"request")}
+fn reserve_unpriced_kind(
+    conn: &Connection,
+    user_id: i64,
+    key_id: i64,
+    request_id: i64,
+    attempt_id: &str,
+    channel_id: i64,
+    model: &str,
+    unit:&str,
 ) -> Result<i64> {
+    if !matches!(unit,"token"|"request") {return Err(bad("invalid unpriced billing unit"));}
     if user_id <= 0
         || key_id <= 0
         || channel_id <= 0
@@ -914,14 +966,19 @@ pub fn reserve_unpriced(
         if (u, k, r, ch, m, p) != (user_id, key_id, request_id, channel_id, model, None) {
             return Err(bad("attempt id conflicts with existing reservation"));
         }
+        let (stored_unit,currency,request_price,unit_price,pricing_unit):(String,String,Option<i64>,Option<i64>,Option<String>)=c.query_row("SELECT billing_unit,currency,request_price_id,unit_price_id,pricing_unit FROM billing_ledger WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+        if stored_unit!=unit||currency!="CNY"||request_price.is_some()||unit_price.is_some()||pricing_unit.is_some(){return Err(bad("unpriced billing unit or price identity conflict"));}
         c.commit()?;
         return Ok(id);
     }
+    let existing_unit:Option<String>=c.query_row("SELECT billing_unit FROM billing_ledger WHERE attempt_id=?1",[attempt_id],|r|r.get(0)).optional()?;
+    if existing_unit.as_deref().is_some_and(|existing|existing!=unit){return Err(bad("unpriced billing unit conflict"));}
     let allocations = allocation_scopes(&c, user_id, key_id)?;
     for (scope, id) in &allocations {
+        reject_frozen_scope(&c,scope,*id)?;
         let budget = c
             .query_row(
-                "SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope=?1 AND scope_id=?2",
+                "SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",
                 params![scope, id],
                 budget_row,
             )
@@ -953,27 +1010,32 @@ pub fn reserve_unpriced(
     for (scope, scope_id) in allocations {
         c.execute("INSERT INTO billing_allocations(reservation_id,scope,scope_id,reserved_micro) VALUES(?1,?2,?3,0)",params![id,scope,scope_id])?;
     }
+    c.execute("UPDATE billing_ledger SET billing_unit=?2 WHERE id=?1",params![id,unit])?;
     c.commit()?;
     Ok(id)
 }
 
 fn request_price_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RequestPrice> {
-    Ok(RequestPrice {
+    Ok(RequestPrice{
         id: r.get(0)?,
         channel_id: r.get(1)?,
         model: r.get(2)?,
         micro_per_call: r.get(3)?,
+        currency:r.get(4)?,
     })
 }
 pub fn request_price(
     conn: &Connection,
     model: &str,
     channel_id: i64,
-) -> Result<Option<RequestPrice>> {
-    Ok(conn.query_row("SELECT id,channel_id,model,micro_per_call FROM billing_request_prices WHERE channel_id=?1 AND model=?2 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model)],request_price_row).optional()?)
+) -> Result<Option<RequestPrice>> {request_price_currency(conn,model,channel_id,"CNY")}
+fn request_price_currency(conn:&Connection,model:&str,channel_id:i64,currency:&str)->Result<Option<RequestPrice>> {
+    valid_currency(currency)?;
+
+    Ok(conn.query_row("SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",params![channel_id,tokengo_shared::normalize_model_name(model),currency],request_price_row).optional()?)
 }
 pub fn list_request_prices(conn: &Connection) -> Result<Vec<RequestPrice>> {
-    let mut s=conn.prepare("SELECT id,channel_id,model,micro_per_call FROM billing_request_prices ORDER BY id DESC LIMIT 1000")?;
+    let mut s=conn.prepare("SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices ORDER BY id DESC LIMIT 1000")?;
     let rows = s
         .query_map([], request_price_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -984,6 +1046,7 @@ pub fn create_request_price(
     p: &RequestPrice,
     actor: &str,
 ) -> Result<RequestPrice> {
+    if p.currency!="CNY" {return Err(bad("new prices must use CNY"));}
     super::channels::require_llm_transport(conn,tokengo_shared::ChannelId(p.channel_id))?;
     if p.channel_id <= 0 || p.model.trim().is_empty() || p.model.len() > 256 || p.micro_per_call < 0
     {
@@ -992,7 +1055,7 @@ pub fn create_request_price(
     let c = tx(conn)?;
     let model = tokengo_shared::normalize_model_name(&p.model);
     c.execute("INSERT INTO billing_request_prices(channel_id,model,micro_per_call,created_ms) VALUES(?1,?2,?3,?4)",params![p.channel_id,model,p.micro_per_call,now_ms()])?;
-    let out = RequestPrice {
+    let out = RequestPrice{currency:"CNY".into(),
         id: c.last_insert_rowid(),
         channel_id: p.channel_id,
         model,
@@ -1038,9 +1101,10 @@ pub fn reserve_request(
         c.commit()?;
         return Ok(id);
     }
+    if p.currency!="CNY" {return Err(bad("new reservations require CNY price"));}
     let stored = c
         .query_row(
-            "SELECT id,channel_id,model,micro_per_call FROM billing_request_prices WHERE id=?1",
+            "SELECT id,channel_id,model,micro_per_call,currency FROM billing_request_prices WHERE id=?1",
             [p.id],
             request_price_row,
         )
@@ -1051,11 +1115,12 @@ pub fn reserve_request(
     }
     let allocations = allocation_scopes(&c, user_id, key_id)?;
     for (scope, id) in &allocations {
+        reject_frozen_scope(&c,scope,*id)?;
         c.execute(
             "INSERT OR IGNORE INTO billing_budgets(scope,scope_id) VALUES(?1,?2)",
             params![scope, id],
         )?;
-        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE scope=?1 AND scope_id=?2",params![scope,id],budget_row)?;
+        let b=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",params![scope,id],budget_row)?;
         if b.frozen {
             return Err(bad("billing budget frozen"));
         }
@@ -1071,7 +1136,7 @@ pub fn reserve_request(
             return Err(bad("billing budget exhausted"));
         }
         c.execute(
-            "UPDATE billing_budgets SET reserved_micro=?3 WHERE scope=?1 AND scope_id=?2",
+            "UPDATE billing_budgets SET reserved_micro=?3 WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",
             params![scope, id, reserved],
         )?;
     }
@@ -1128,7 +1193,7 @@ mod query_performance_tests {
         ] {
             let p=plan(&c,sql,vec![1.into()]);assert!(p.contains(index),"{p}");
         }
-        let p=plan(&c,"SELECT id FROM billing_request_prices WHERE channel_id=?1 AND model=?2 ORDER BY id DESC LIMIT 1",vec![1.into(),"synthetic".to_string().into()]);
+        let p=plan(&c,"SELECT id FROM billing_request_prices WHERE channel_id=?1 AND model=?2 AND currency='CNY' ORDER BY id DESC LIMIT 1",vec![1.into(),"synthetic".to_string().into()]);
         assert!(p.contains("billing_request_prices_latest"),"{p}");
     }
     #[test]
@@ -1213,14 +1278,14 @@ mod query_performance_tests {
 #[cfg(test)]
 mod user_diagnostic_tests {
     use super::*;
-    fn fixture()->(Connection,i64){let c=crate::db::open_in_memory().unwrap();let user=crate::db::identity::create_user(&c,"diagnostic-budget-user","user",&Default::default()).unwrap().id;create_price(&c,&Price{id:0,channel_id:1,model:"synthetic-vector".into(),input_micro_per_million:1_000_000,output_micro_per_million:0,max_input_tokens:1000,max_output_tokens:0},"test").unwrap();(c,user)}
+    fn fixture()->(Connection,i64){let c=crate::db::open_in_memory().unwrap();let user=crate::db::identity::create_user(&c,"diagnostic-budget-user","user",&Default::default()).unwrap().id;create_price(&c,&Price{currency:"CNY".into(),id:0,channel_id:1,model:"synthetic-vector".into(),input_micro_per_million:1_000_000,output_micro_per_million:0,max_input_tokens:1000,max_output_tokens:0},"test").unwrap();(c,user)}
     fn reserve(c:&Connection,user:i64,attempt:&str,input:i64)->Result<i64>{reserve_user_diagnostic(c,user,attempt,1,"synthetic-vector",input,&serde_json::json!({"source_id":1,"compatibility_fingerprint":"test"}))}
     fn budget(c:&Connection,user:i64)->Budget {budgets(c,Some("user"),Some(user)).unwrap().remove(0)}
     #[test] fn user_diagnostic_budget_is_atomic_user_only_and_freeze_blocks_send(){
         let(c,user)=fixture();set_budget(&c,"user",user,Some(50),"test").unwrap();let id=reserve(&c,user,"one",40).unwrap();assert!(reserve(&c,user,"two",11).is_err());assert_eq!(budget(&c,user).reserved_micro,40);
         let keys:i64=c.query_row("SELECT COUNT(*) FROM billing_allocations WHERE scope='key'",[],|r|r.get(0)).unwrap();assert_eq!(keys,0);
         settle(&c,id,Some(7),Some(0),"compatibility_response").unwrap();assert_eq!(budget(&c,user).spent_micro,7);assert_eq!(budget(&c,user).reserved_micro,0);
-        c.execute("UPDATE billing_budgets SET frozen=1 WHERE scope='user' AND scope_id=?1",[user]).unwrap();assert!(reserve(&c,user,"frozen",1).is_err());
+        c.execute("UPDATE billing_budgets SET frozen=1 WHERE scope='user' AND scope_id=?1 AND currency='CNY'",[user]).unwrap();assert!(reserve(&c,user,"frozen",1).is_err());
         let requests:i64=c.query_row("SELECT COUNT(*) FROM requests",[],|r|r.get(0)).unwrap();assert_eq!(requests,0);
     }
     #[test] fn user_diagnostic_unknown_usage_retains_hold_and_restart_recovers(){

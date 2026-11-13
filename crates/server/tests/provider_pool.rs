@@ -721,7 +721,7 @@ async fn credential_mapping_remove_readd_preserves_bge_aliases_and_financial_his
         let request=db::requests::start(&c,"/v1/chat/completions",alias,None,false).unwrap();
         c.execute("UPDATE requests SET status='ok',channel_id=?2 WHERE id=?1",rusqlite::params![request,source]).unwrap();
         let ledger=db::billing::reserve_unpriced(&c,user.id,key.id,request,"mapping-history-attempt",source,alias).unwrap();db::billing::settle(&c,ledger,Some(4),Some(1),"ok").unwrap();
-        db::billing::create_price(&c,&db::billing::Price{id:0,channel_id:source,model:alias.into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:4096,max_output_tokens:8},"synthetic mapping fixture").unwrap();
+        db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:source,model:alias.into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:4096,max_output_tokens:8},"synthetic mapping fixture").unwrap();
         (serde_json::to_value(db::billing::usage(&c,&Default::default()).unwrap()).unwrap(),serde_json::to_value(db::billing::list_prices(&c).unwrap()).unwrap(),request)
     };
     let(s,v)=f.req("PATCH",&path,json!({"models":[{"model":alias,"enabled":false}]})).await;assert_eq!(s,200,"{v}");

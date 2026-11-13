@@ -1,0 +1,11 @@
+{
+  "host": "build-test",
+  "command": [
+    "trunk",
+    "build",
+    "--release"
+  ],
+  "cwd": "/srv/build/tokengo-cny-unit-billing-20261113/source/crates/web",
+  "exit_code": 0,
+  "seconds": 140.64435839653015
+}

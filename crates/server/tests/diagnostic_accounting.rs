@@ -5,10 +5,10 @@ use tokengo_server::db::{self, billing::{self, Ledger, Price, RequestPrice, Usag
 
 const SOURCE: i64 = 7;
 fn token_price(c: &Connection, model: &str) -> Price {
-    billing::create_price(c, &Price {id:0,channel_id:SOURCE,model:model.into(),input_micro_per_million:1_000_000,output_micro_per_million:2_000_000,max_input_tokens:100,max_output_tokens:100}, "fixture").unwrap()
+    billing::create_price(c, &Price{currency:"CNY".into(),id:0,channel_id:SOURCE,model:model.into(),input_micro_per_million:1_000_000,output_micro_per_million:2_000_000,max_input_tokens:100,max_output_tokens:100}, "fixture").unwrap()
 }
 fn request_price(c: &Connection, model: &str) -> RequestPrice {
-    billing::create_request_price(c, &RequestPrice{id:0,channel_id:SOURCE,model:model.into(),micro_per_call:77}, "fixture").unwrap()
+    billing::create_request_price(c, &RequestPrice{currency:"CNY".into(),id:0,channel_id:SOURCE,model:model.into(),micro_per_call:77}, "fixture").unwrap()
 }
 fn auth(subscription: bool) -> Value { json!({"kind":"admin_diagnostic","subscription":subscription,"probe_id":"synthetic-probe"}) }
 fn source() -> Value { json!({"source_id":SOURCE,"provider_name":"synthetic supplier"}) }

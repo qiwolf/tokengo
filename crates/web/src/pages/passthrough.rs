@@ -14,7 +14,8 @@ struct Route {
     upstream: String,
     strip_prefix: bool,
     enabled: bool,
-    price_micro_usd_per_request: i64,
+    price_micro_per_request:i64,
+    #[serde(default="crate::fmt::legacy_currency")] currency:String,
     timeout_secs: u64,
     max_concurrent: u64,
     max_body_bytes: u64,
@@ -41,10 +42,10 @@ struct HeaderWrite {
 }
 
 fn initial() -> Value {
-    json!({"name":"","prefix":"","upstream":"","strip_prefix":true,"enabled":false,"price_micro_usd_per_request":"0","timeout_secs":"60","max_concurrent":"16","max_body_bytes":"20971520","allowed_key_ids":"","allow_all_paths":false,"allowed_paths":""})
+    json!({"name":"","prefix":"","upstream":"","strip_prefix":true,"enabled":false,"price_micro_cny_per_request":"0","timeout_secs":"60","max_concurrent":"16","max_body_bytes":"20971520","allowed_key_ids":"","allow_all_paths":false,"allowed_paths":""})
 }
 fn draft_for(r: &Route) -> Value {
-    json!({"id":r.id,"revision":r.revision,"name":r.name,"prefix":r.prefix,"upstream":r.upstream,"strip_prefix":r.strip_prefix,"enabled":r.enabled,"price_micro_usd_per_request":r.price_micro_usd_per_request.to_string(),"timeout_secs":r.timeout_secs.to_string(),"max_concurrent":r.max_concurrent.to_string(),"max_body_bytes":r.max_body_bytes.to_string(),"allowed_key_ids":r.allowed_key_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(", "),"allow_all_paths":r.allowed_paths.is_none(),"allowed_paths":r.allowed_paths.clone().unwrap_or_default().join("\n")})
+    json!({"id":r.id,"revision":r.revision,"name":r.name,"prefix":r.prefix,"upstream":r.upstream,"strip_prefix":r.strip_prefix,"enabled":r.enabled,"price_micro_cny_per_request":if r.currency=="CNY"{r.price_micro_per_request.to_string()}else{String::new()},"timeout_secs":r.timeout_secs.to_string(),"max_concurrent":r.max_concurrent.to_string(),"max_body_bytes":r.max_body_bytes.to_string(),"allowed_key_ids":r.allowed_key_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(", "),"allow_all_paths":r.allowed_paths.is_none(),"allowed_paths":r.allowed_paths.clone().unwrap_or_default().join("\n")})
 }
 fn key_ids(raw: &str) -> Result<Vec<i64>, String> {
     let mut ids = Vec::new();
@@ -80,7 +81,7 @@ fn payload(d: &Value, headers: &[HeaderDraft]) -> Result<Value, String> {
         return Err("路径前缀须以 / 开头，如 /face/".into());
     }
     for (field, label, min) in [
-        ("price_micro_usd_per_request", "每次价格", 0),
+
         ("timeout_secs", "超时秒数", 1),
         ("max_concurrent", "并发上限", 1),
         ("max_body_bytes", "请求体大小上限", 1),
@@ -95,6 +96,8 @@ fn payload(d: &Value, headers: &[HeaderDraft]) -> Result<Value, String> {
             .ok_or_else(|| format!("{label}须为不小于 {min} 的整数"))?;
         out[field] = json!(n);
     }
+    let raw=d["price_micro_cny_per_request"].as_str().unwrap_or("").trim();
+    if !raw.is_empty() {let price=raw.parse::<i64>().ok().filter(|n|*n>=0).ok_or("人民币价格须为非负整数微元".to_string())?;out["price_micro_cny_per_request"]=json!(price);}
     out["allowed_key_ids"] = json!(key_ids(d["allowed_key_ids"].as_str().unwrap_or(""))?);
     out["allowed_paths"] = if d["allow_all_paths"] == true {
         Value::Null
@@ -347,7 +350,7 @@ pub fn PassthroughRoutes(ctx: Ctx) -> impl IntoView {
                 <Show when=move||loaded.get()&&rows.get().is_empty()><p class="muted">"尚无透传服务。点击“新建透传服务”配置上游；新服务默认停用；启用后请在用户或 API Key 中分配权限。"</p></Show>
                 <For each=move||rows.get() key=|r|(r.id,r.revision) children=move|r|{
                     let edit=r.clone();let delete=r.clone();let check=r.clone();
-                    view!{<div class="panel"><h3>{r.name.clone()}</h3><p class="muted small">{format!("路由 ID：{} · 计费接入 ID：{}",r.id,r.channel_id)}</p><p><code>{r.prefix.clone()}</code>" → "<code>{r.upstream.clone()}</code></p><p class="muted small">{format!("{} · {}前缀 · {} microUSD / 次 · {} 秒 · {} 个授权 VKey",if r.enabled{"已启用"}else{"已停用"},if r.strip_prefix{"剥离"}else{"保留"},r.price_micro_usd_per_request,r.timeout_secs,r.allowed_key_ids.len())}</p><p class="muted small">{format!("授权 VKey ID：{}",if r.allowed_key_ids.is_empty(){"无（可由用户服务授权授予）".into()}else{r.allowed_key_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(", ")})}</p><p class="muted small">{format!("允许的上游路径：{}",r.allowed_paths.as_ref().map(|p|if p.is_empty(){"无（全部拒绝）".into()}else{p.join(", ")}).unwrap_or_else(||"全部子路径".into()))}</p><div class="toolbar"><button type="button" class="ghost" disabled=move||busy.get() aria-label=format!("编辑透传路由 {}",r.name) on:click=move |_|{draft.set(draft_for(&edit));headers.set(edit.headers.iter().enumerate().map(|(i,h)|HeaderDraft{id:i as u64+1,name:h.name.clone(),value:String::new(),has_value:h.has_value}).collect());next_header.set(edit.headers.len() as u64+1);error.set(String::new());open.set(true);}>"编辑"</button><button type="button" class="ghost" disabled=move||busy.get() aria-label=format!("检查透传路由 {}",r.name) on:click=move |_|{selected.set(Some(check.clone()));probe_path.set("/check".into());probe_method.set("POST".into());probe_status.set("200".into());error.set(String::new());probe_result.set(String::new());probing.set(true);}>"检查"</button><button type="button" class="ghost danger" disabled=move||busy.get() aria-label=format!("删除透传路由 {}",r.name) on:click=move |_|{selected.set(Some(delete.clone()));error.set(String::new());deleting.set(true);}>"删除"</button></div></div>}
+                    view!{<div class="panel"><h3>{r.name.clone()}</h3><p class="muted small">{format!("路由 ID：{} · 计费接入 ID：{}",r.id,r.channel_id)}</p><p><code>{r.prefix.clone()}</code>" → "<code>{r.upstream.clone()}</code></p><p class="muted small">{format!("{} · {}前缀 · {} {} / 次 · {} 秒 · {} 个授权 VKey",if r.enabled{"已启用"}else{"已停用"},if r.strip_prefix{"剥离"}else{"保留"},crate::fmt::usd_input(r.price_micro_per_request),r.currency,r.timeout_secs,r.allowed_key_ids.len())}</p><p class="muted small">{format!("授权 VKey ID：{}",if r.allowed_key_ids.is_empty(){"无（可由用户服务授权授予）".into()}else{r.allowed_key_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(", ")})}</p><p class="muted small">{format!("允许的上游路径：{}",r.allowed_paths.as_ref().map(|p|if p.is_empty(){"无（全部拒绝）".into()}else{p.join(", ")}).unwrap_or_else(||"全部子路径".into()))}</p><div class="toolbar"><button type="button" class="ghost" disabled=move||busy.get() aria-label=format!("编辑透传路由 {}",r.name) on:click=move |_|{draft.set(draft_for(&edit));headers.set(edit.headers.iter().enumerate().map(|(i,h)|HeaderDraft{id:i as u64+1,name:h.name.clone(),value:String::new(),has_value:h.has_value}).collect());next_header.set(edit.headers.len() as u64+1);error.set(String::new());open.set(true);}>"编辑"</button><button type="button" class="ghost" disabled=move||busy.get() aria-label=format!("检查透传路由 {}",r.name) on:click=move |_|{selected.set(Some(check.clone()));probe_path.set("/check".into());probe_method.set("POST".into());probe_status.set("200".into());error.set(String::new());probe_result.set(String::new());probing.set(true);}>"检查"</button><button type="button" class="ghost danger" disabled=move||busy.get() aria-label=format!("删除透传路由 {}",r.name) on:click=move |_|{selected.set(Some(delete.clone()));error.set(String::new());deleting.set(true);}>"删除"</button></div></div>}
                 }/>
             </div>
             <super::ModuleDialog open=open busy=busy title="配置透传路由".to_string()>
@@ -360,7 +363,7 @@ pub fn PassthroughRoutes(ctx: Ctx) -> impl IntoView {
                         <Field draft=draft field="allowed_key_ids" label="旧模式：允许调用的 VKey ID" hint="可在用户授权中直接分配此服务；此项保留逐 Key 白名单。逗号或空格分隔，填写 VKey 的数字 ID，不是密钥明文。"/>
                         <label class="account-check"><input type="checkbox" prop:checked=move||draft.get()["allow_all_paths"]==true on:change=move|ev|draft.update(|d|d["allow_all_paths"]=json!(event_target_checked(&ev)))/>"允许前缀下全部上游路径（包括维护接口）"</label>
                         <Show when=move||draft.get()["allow_all_paths"]!=true><label class="account-field"><span>"允许的上游路径（每行一个）"</span><textarea rows="4" aria-describedby="passthrough-path-hint passthrough-form-error" prop:value=move||draft.get()["allowed_paths"].as_str().unwrap_or("").to_string() on:input=move|ev|draft.update(|d|d["allowed_paths"]=json!(event_target_value(&ev)))/><span id="passthrough-path-hint" class="muted small">"填写最终上游的精确路径，不含查询。如 /represent 或 /clip/img；留空拒绝全部路径。建议只开放业务接口，避免开放 /restart 等维护接口。"</span></label></Show>
-                        <Field draft=draft field="price_micro_usd_per_request" label="每次价格（microUSD）" kind="number" hint="0 表示免费；1 USD = 1,000,000 microUSD"/><Field draft=draft field="timeout_secs" label="总超时（秒）" kind="number"/><Field draft=draft field="max_concurrent" label="同时转发上限" kind="number"/><Field draft=draft field="max_body_bytes" label="请求体大小上限（字节）" kind="number" hint="默认 20971520 字节，即 20 MiB"/>
+                        <Field draft=draft field="price_micro_cny_per_request" label="每次价格（人民币微元）" kind="number" hint="0 表示免费；1元 = 1,000,000微元。历史美元价格留空保留，填写人民币价格会新建版本。"/><Field draft=draft field="timeout_secs" label="总超时（秒）" kind="number"/><Field draft=draft field="max_concurrent" label="同时转发上限" kind="number"/><Field draft=draft field="max_body_bytes" label="请求体大小上限（字节）" kind="number" hint="默认 20971520 字节，即 20 MiB"/>
                     </div><p class="muted small">"已有渠道授权和付费开关仍生效；仅填写 VKey ID 不会扩大原权限。建议为照片服务创建独立密钥，禁用 LLM 模型授权，单独设置预算、RPM 与并发。不自动重试。已转发到上游的请求按次计量，包括上游返回的 4xx / 5xx；中断且结果未知时保守扣除预留金额，用量记为未知。VKey 的预算、RPM 和并发限制仍有效；带 TPM 限制的密钥暂不支持透传。"</p></fieldset>
                     <fieldset disabled=move||busy.get()><legend>"上游 Header"</legend><p class="muted small">"客户端 Authorization、Proxy-Authorization、x-api-key 和 api-key 会被剥离。后端凭据只存服务端，不会回显；已有值留空保留，移除该行会删除。"</p>
                         <For each=move||headers.get() key=|h|h.id children=move|h|{let id=h.id;let existing=h.has_value;view!{<div class="panel"><label class="account-field"><span>"Header 名称"</span><input readonly=existing aria-describedby="passthrough-form-error" prop:value=move||headers.get().iter().find(|h|h.id==id).map(|h|h.name.clone()).unwrap_or_default() on:input=move|ev|headers.update(|hs|{if let Some(h)=hs.iter_mut().find(|h|h.id==id){h.name=event_target_value(&ev);}})/></label><label class="account-field"><span>{if existing{"Header 值（已保存，留空保留）"}else{"Header 值"}}</span><input type="password" autocomplete="new-password" aria-describedby="passthrough-form-error" prop:value=move||headers.get().iter().find(|h|h.id==id).map(|h|h.value.clone()).unwrap_or_default() on:input=move|ev|headers.update(|hs|{if let Some(h)=hs.iter_mut().find(|h|h.id==id){h.value=event_target_value(&ev);}})/></label><button type="button" class="ghost danger" aria-label=format!("移除 Header {}",h.name) on:click=move |_|headers.update(|hs|hs.retain(|h|h.id!=id))>"移除此 Header"</button></div>}}/>

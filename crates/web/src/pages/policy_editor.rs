@@ -161,7 +161,7 @@ pub fn expiry_input(ms: Option<i64>) -> String {
     })
     .unwrap_or_default()
 }
-pub fn budget_label(b:&Value)->String{if b.is_null(){return "未设累计消费上限".into()}format!("上限 {} · 已用 {} · 预占 {} USD{}",b["limit_micro"].as_i64().map(money_input).unwrap_or_else(||"不限".into()),b["spent_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),b["reserved_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),if b["frozen"]==true{" · 已冻结"}else{""})}
+pub fn budget_label(b:&Value)->String{if b.is_null(){return "未设累计消费上限".into()}format!("上限 {} · 已用 {} · 预占 {} {}{}",b["limit_micro"].as_i64().map(money_input).unwrap_or_else(||"不限".into()),b["spent_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),b["reserved_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),crate::fmt::currency_of(b),if b["frozen"]==true{" · 已冻结"}else{""})}
 /// Read-only amounts from the selected object's saved budget, never from its limit draft.
 #[component]
 pub fn BudgetUsage(budget: Signal<Value>) -> impl IntoView {
@@ -169,8 +169,8 @@ pub fn BudgetUsage(budget: Signal<Value>) -> impl IntoView {
         <div class="workspace-budget-usage" aria-label="已保存的消费用量">
             <span class="workspace-budget-label">"消费用量"</span>
             <div class="workspace-budget-tags">
-                <span class="workspace-budget-tag"><span>"已使用"</span><strong>{move||budget.get()["spent_micro"].as_i64().map(|n|format!("{} USD",money_input(n))).unwrap_or_else(||"未知".into())}</strong></span>
-                <span class="workspace-budget-tag"><span>"在途预占"</span><strong>{move||budget.get()["reserved_micro"].as_i64().map(|n|format!("{} USD",money_input(n))).unwrap_or_else(||"未知".into())}</strong></span>
+                <span class="workspace-budget-tag"><span>"已使用"</span><strong>{move||budget.get()["spent_micro"].as_i64().map(|n|format!("{} {}",money_input(n),crate::fmt::currency_of(&budget.get()))).unwrap_or_else(||"未知".into())}</strong></span>
+                <span class="workspace-budget-tag"><span>"在途预占"</span><strong>{move||budget.get()["reserved_micro"].as_i64().map(|n|format!("{} {}",money_input(n),crate::fmt::currency_of(&budget.get()))).unwrap_or_else(||"未知".into())}</strong></span>
             </div>
         </div>
     }

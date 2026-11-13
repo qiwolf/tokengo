@@ -367,6 +367,7 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "models": l.models.iter().map(|m| serde_json::json!({
             "model": m.model,
             "enabled":m.enabled,
+            "pricing_enabled":m.enabled && model_routes::enabled(c,&m.model).unwrap_or(false),
             "reasoning":crate::reasoning_capabilities::for_loaded_mapping(c,l.id.0,m).ok(),
             "parameter_contract": ({
                 let protocol=protocol_config.native.first().copied().unwrap_or(crate::protocol::Protocol::Chat);

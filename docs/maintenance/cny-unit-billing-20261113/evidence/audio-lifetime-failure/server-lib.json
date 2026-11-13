@@ -1,0 +1,16 @@
+{
+  "host": "build-test",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server",
+    "--lib"
+  ],
+  "cwd": "/srv/build/tokengo-cny-unit-billing-20261113/source",
+  "exit_code": 101,
+  "seconds": 19.862079620361328
+}

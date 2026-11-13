@@ -10,7 +10,7 @@ async fn meter_case(path: &str, response: &'static str, priced: bool, expected: 
     f.serve("mock-chat", &[id]);
     if priced {
         use tokengo_server::db::billing::{self, Price};
-        billing::create_price(&f.state.conn(), &Price {
+        billing::create_price(&f.state.conn(), &Price{currency:"CNY".into(),
             id: 0, channel_id: id.0, model: "mock-chat".into(),
             input_micro_per_million: 1_000_000, output_micro_per_million: 1_000_000,
             max_input_tokens: 4096, max_output_tokens: 128,
@@ -86,7 +86,7 @@ async fn meter_case(path: &str, response: &'static str, priced: bool, expected: 
         assert_eq!(observed, complete.map(|(a,b)|a+b));
         let price_id = price_id.expect("priced request must retain its price identity");
         let snapshot: Value = serde_json::from_str(snapshot.as_deref().expect("priced snapshot must exist")).unwrap();
-        assert_eq!(snapshot, json!({"id":price_id,"channel_id":id.0,"model":"mock chat",
+        assert_eq!(snapshot, json!({"currency":"CNY","id":price_id,"channel_id":id.0,"model":"mock chat",
             "input_micro_per_million":1_000_000,"output_micro_per_million":1_000_000,
             "max_input_tokens":4096,"max_output_tokens":128}));
         let expected_debit = complete.map(|(a,b)|a+b).unwrap_or(reserved).min(reserved);

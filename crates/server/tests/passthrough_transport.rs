@@ -71,7 +71,7 @@ impl Fixture {
         }
     }
     fn route(&self, url: &str, timeout: u32) {
-        let input=serde_json::from_value(serde_json::json!({"name":"photos","prefix":"/face/","upstream":url,"strip_prefix":true,"enabled":true,"price_micro_usd_per_request":50,"timeout_secs":timeout,"max_concurrent":1,"max_body_bytes":20971520,"allowed_key_ids":[self.key_id],"headers":[{"name":"api-key","value":"backend-secret"}]})).unwrap();
+        let input=serde_json::from_value(serde_json::json!({"name":"photos","prefix":"/face/","upstream":url,"strip_prefix":true,"enabled":true,"price_micro_cny_per_request":50,"timeout_secs":timeout,"max_concurrent":1,"max_body_bytes":20971520,"allowed_key_ids":[self.key_id],"headers":[{"name":"api-key","value":"backend-secret"}]})).unwrap();
         passthrough::create(&self.state.conn(), &self.state.secrets, &input).unwrap();
     }
     async fn settled(&self, count: usize) -> Vec<Ledger> {

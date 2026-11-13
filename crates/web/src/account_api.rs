@@ -138,6 +138,7 @@ pub struct PortalKey {
 }
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct UsageSummary {
+    #[serde(default="crate::fmt::legacy_currency")] pub currency:String,
     pub request_count: i64,
     pub ledger_count: i64,
     pub input_tokens: i64,
@@ -150,6 +151,8 @@ pub struct UsageSummary {
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct Entry {
+    #[serde(default="crate::fmt::legacy_currency")] pub currency:String,
+    #[serde(default)] pub quantity_milli:Option<i64>,
     pub id: i64,
     pub request_id: i64,
     pub key_id: i64,
@@ -183,7 +186,9 @@ pub async fn portal(before: Option<i64>, query: &str, limit: u32) -> Result<Port
     typed("GET", &path, None).await
 }
 pub fn entry_tokens(e: &Entry) -> String {
-    if e.billing_unit == "request" {
+    if !matches!(e.billing_unit.as_str(),"token"|"request") {
+        crate::fmt::quantity(&e.billing_unit,e.quantity_milli)
+    } else if e.billing_unit == "request" {
         "不适用（按次）".into()
     } else {
         format!(
@@ -197,6 +202,7 @@ pub fn entry_tokens(e: &Entry) -> String {
         )
     }
 }
+pub fn debit_with_currency(v:Option<i64>,currency:&str)->String {v.map(|n|format!("{} {}",crate::fmt::usd_input(n),currency)).unwrap_or_else(||"未知 / 未定价".into())}
 pub fn debit(v: Option<i64>) -> String {
     v.map(|n| format!("{} USD", crate::fmt::usd_input(n)))
         .unwrap_or_else(|| "未知 / 未定价".into())

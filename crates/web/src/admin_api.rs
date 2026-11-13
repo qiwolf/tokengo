@@ -24,6 +24,8 @@ pub async fn request(method: &str, path: &str, body: Option<Value>) -> Result<Va
             },
             method == "GET",
         ))
+    } else if base == "/api/unit-pricing" {
+        Some((if method == "GET" {"unit_prices"} else {"unit_price"},method == "GET"))
     } else if base == "/api/budgets" {
         Some(("budgets", true))
     } else if base == "/api/model-routing" {
@@ -102,6 +104,14 @@ pub fn billing_unit(row: &Value) -> &'static str {
     match row.get("billing_unit") {
         Some(Value::String(s)) if s == "request" => "request",
         Some(Value::String(s)) if s == "token" => "token",
+        Some(Value::String(s)) if s == "second" => "second",
+        Some(Value::String(s)) if s == "minute" => "minute",
+        Some(Value::String(s)) if s == "hour" => "hour",
+        Some(Value::String(s)) if s == "character" => "character",
+        Some(Value::String(s)) if s == "byte" => "byte",
+        Some(Value::String(s)) if s == "image" => "image",
+        Some(Value::String(s)) if s == "video" => "video",
+
         None => "token",
         _ => "unknown",
     }
@@ -109,6 +119,7 @@ pub fn billing_unit(row: &Value) -> &'static str {
 pub fn billing_unit_label(row: &Value) -> &'static str {
     match billing_unit(row) {
         "request" => "request（按次）",
+        "second"=>"按秒","minute"=>"按分钟","hour"=>"按小时","character"=>"按字符","byte"=>"按字节","image"=>"按张","video"=>"按视频",
         "token" => "token",
         _ => "未知单位",
     }
@@ -150,30 +161,14 @@ fn partial_sum(rows: &[&Value], field: &str) -> String {
     }
 }
 /// Page-local totals only: unknown counts and money are never silently zero-filled.
-pub fn billing_page_summary(rows: &[Value]) -> Vec<String> {
-    let mut out = Vec::new();
-    for unit in ["token", "request", "unknown"] {
-        let group: Vec<_> = rows.iter().filter(|r| billing_unit(r) == unit).collect();
-        if group.is_empty() {
-            continue;
-        }
-        let quantity = match unit {
-            "token" => format!(
-                "输入 / 输出 token：{} / {}",
-                partial_sum(&group, "input_tokens"),
-                partial_sum(&group, "output_tokens")
-            ),
-            "request" => format!("收费次数：{}", partial_sum(&group, "request_units")),
-            _ => "用量单位未知".into(),
-        };
-        out.push(format!(
-            "当前页 {unit} 计费 {} 笔；{quantity}；扣款 / 成本 microUSD：{} / {}",
-            group.len(),
-            partial_sum(&group, "debit_micro"),
-            partial_sum(&group, "observed_cost_micro")
-        ));
-    }
-    out
+pub fn billing_page_summary(rows:&[Value])->Vec<String> {
+ let mut out=Vec::new();
+ let currencies=rows.iter().map(crate::fmt::currency_of).collect::<std::collections::BTreeSet<_>>();
+ for currency in currencies {for unit in ["token","request","second","minute","hour","character","byte","image","video","unknown"] {
+  let group=rows.iter().filter(|r|crate::fmt::currency_of(r)==currency && billing_unit(r)==unit).collect::<Vec<_>>();if group.is_empty(){continue;}
+  let quantity=match unit {"token"=>format!("输入 / 输出 token：{} / {}",partial_sum(&group,"input_tokens"),partial_sum(&group,"output_tokens")),"request"=>format!("收费次数：{}",partial_sum(&group,"request_units")),"unknown"=>"用量单位未知".into(),_=>format!("计量数量（千分量单位，时长为毫秒）：{}",partial_sum(&group,"quantity_milli"))};
+  out.push(format!("当前页 {unit} 计费 {} 笔；{quantity}；扣款 / 成本 micro{currency}：{} / {}",group.len(),partial_sum(&group,"debit_micro"),partial_sum(&group,"observed_cost_micro")));
+ }}out
 }
 
 pub const POLICY: &str = r#"{

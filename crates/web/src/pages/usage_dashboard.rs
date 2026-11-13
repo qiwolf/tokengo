@@ -10,14 +10,13 @@ fn count(row: &Value, name: &str) -> String {
 fn compact(row: &Value, name: &str) -> String {
     row[name].as_i64().map(fmt::compact_tokens).unwrap_or_else(|| "—".into())
 }
-fn money(row: &Value, name: &str) -> String {
-    row[name].as_i64().map(|n|format!("${}",fmt::usd_input(n))).unwrap_or_else(||"—".into())
-}
+fn money_for(row:&Value,name:&str,currency:&str)->String {row[name].as_i64().map(|n|format!("{}{}",fmt::currency_symbol(currency),fmt::usd_input(n))).unwrap_or_else(||"—".into())}
+fn money(row:&Value,name:&str)->String {money_for(row,name,fmt::currency_of(row))}
 fn headline_money(row: &Value, name: &str) -> String {
     let Some(micro)=row[name].as_i64() else {return "—".into();};
     let dollars=micro as f64/1_000_000.0;
-    if dollars.abs()>=1_000_000.0 {format!("${:.2}M",dollars/1_000_000.0)}
-    else if dollars.abs()>=1000.0 {format!("${:.2}K",dollars/1000.0)}
+    if dollars.abs()>=1_000_000.0 {format!("{}{:.2}M",fmt::currency_symbol(fmt::currency_of(row)),dollars/1_000_000.0)}
+    else if dollars.abs()>=1000.0 {format!("{}{:.2}K",fmt::currency_symbol(fmt::currency_of(row)),dollars/1000.0)}
     else {money(row,name)}
 }
 fn rate(row: &Value, name: &str) -> String {
@@ -43,13 +42,13 @@ fn bucket_label(bucket: &Value, analytics: &Value) -> String {
 fn selected_value(row: &Value, metric: &str) -> f64 {
     match metric {"requests"=>value(row,"ledger_count") as f64,"debit"=>value(row,"known_debit_micro") as f64/1_000_000.0,_=>value(row,"total_tokens") as f64}
 }
-fn axis_label(n: f64, metric: &str) -> String {
-    if metric=="debit" {format!("${}",fmt::usd_input((n*1_000_000.0).round() as i64))}
+fn axis_label_for(n: f64, metric: &str, currency:&str) -> String {
+    if metric=="debit" {format!("{}{}",fmt::currency_symbol(currency),fmt::usd_input((n*1_000_000.0).round() as i64))}
     else {fmt::compact_tokens(n.round() as i64)}
 }
 fn interval_detail(bucket: &Value, analytics: &Value) -> String {
     format!("{} · {} 次调用（含重试） · 已知输入 {} / 输出 {} tokens · 已知扣款 {}{}",
-        bucket_label(bucket,analytics),count(bucket,"ledger_count"),count(bucket,"input_tokens"),count(bucket,"output_tokens"),money(bucket,"known_debit_micro"),
+        bucket_label(bucket,analytics),count(bucket,"ledger_count"),count(bucket,"input_tokens"),count(bucket,"output_tokens"),money_for(bucket,"known_debit_micro",fmt::currency_of(analytics)),
         if value(bucket,"unknown_input_entries")+value(bucket,"unknown_output_entries")>0 {" · 含未知用量"}else{""})
 }
 fn granularity(seconds: i64) -> String {
@@ -65,7 +64,7 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
     <section class="usage-dashboard" aria-label="所选区间用量看板">
         <div class="usage-kpis">
             <section class="usage-kpi"><span>"去重请求"</span><strong>{move||count(&summary.get(),"request_count")}</strong><small>{move||format!("{} 笔调用尝试",count(&summary.get(),"ledger_count"))}</small></section>
-            <section class="usage-kpi"><span>"已知扣款"</span><strong title=move||money(&summary.get(),"known_debit_micro")>{move||headline_money(&summary.get(),"known_debit_micro")}</strong><small>"USD · 用户额度扣减"</small></section>
+            <section class="usage-kpi"><span>"已知扣款"</span><strong title=move||money(&summary.get(),"known_debit_micro")>{move||headline_money(&summary.get(),"known_debit_micro")}</strong><small>{move||format!("{} · 用户额度扣减",fmt::currency_of(&summary.get()))}</small></section>
             <section class="usage-kpi"><span>"总 tokens"</span><strong title=move||count(&summary.get(),"total_tokens")>{move||compact(&summary.get(),"total_tokens")}</strong><small>"已知输入 + 输出"</small></section>
             <section class="usage-kpi"><span>"输入 tokens"</span><strong title=move||count(&summary.get(),"input_tokens")>{move||compact(&summary.get(),"input_tokens")}</strong><small>{move||format!("{} 笔输入未知",count(&summary.get(),"unknown_input_entries"))}</small></section>
             <section class="usage-kpi"><span>"输出 tokens"</span><strong title=move||count(&summary.get(),"output_tokens")>{move||compact(&summary.get(),"output_tokens")}</strong><small>{move||format!("{} 笔输出未知",count(&summary.get(),"unknown_output_entries"))}</small></section>
@@ -91,7 +90,7 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
                     let chart_label=format!("{}：{}个时间段。可聚焦柱形或使用下方时间段选择查看明细。",if m=="tokens"{"输入与输出 tokens"}else if m=="debit"{"已知扣款"}else{"调用次数"},n);
                     view! {
                         <div class="usage-chart-layout">
-                            <div class="usage-y-axis" aria-hidden="true"><span>{axis_label(max,m)}</span><span>{axis_label(max/2.0,m)}</span><span>{axis_label(0.0,m)}</span></div>
+                            <div class="usage-y-axis" aria-hidden="true"><span>{axis_label_for(max,m,fmt::currency_of(&data))}</span><span>{axis_label_for(max/2.0,m,fmt::currency_of(&data))}</span><span>{axis_label_for(0.0,m,fmt::currency_of(&data))}</span></div>
                             <div class="usage-plot"><svg class="usage-chart" viewBox="0 0 960 240" preserveAspectRatio="none" role="group" aria-label=chart_label>
                                 <line x1="0" y1="1" x2="960" y2="1" class="usage-grid-line"/><line x1="0" y1="120" x2="960" y2="120" class="usage-grid-line"/><line x1="0" y1="239" x2="960" y2="239" class="usage-grid-line"/>
                                 {buckets.iter().enumerate().map(|(i,b)|{
@@ -118,7 +117,7 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
                     let all=rows(&analytics.get(),"models");let max=all.iter().map(|r|value(r,"total_tokens")).max().unwrap_or(0).max(1) as f64;
                     if all.is_empty(){return view!{<p class="muted small">"所选区间暂无模型用量。"</p>}.into_any();}
                     all.into_iter().map(|row|{
-                        let name=row["model"].as_str().unwrap_or("未记录模型").to_string();let tokens=count(&row,"total_tokens");let requests=count(&row,"ledger_count");let cost=money(&row,"known_debit_micro");let width=(value(&row,"total_tokens") as f64/max*100.0).clamp(0.0,100.0);
+                        let name=row["model"].as_str().unwrap_or("未记录模型").to_string();let tokens=count(&row,"total_tokens");let requests=count(&row,"ledger_count");let cost=money_for(&row,"known_debit_micro",fmt::currency_of(&analytics.get()));let width=(value(&row,"total_tokens") as f64/max*100.0).clamp(0.0,100.0);
                         view!{<div class="usage-model-row"><div><strong title=name.clone()>{name.clone()}</strong><span>{tokens}" tokens"</span></div><div class="usage-model-track" aria-hidden="true"><span style=format!("width:{width:.3}%")></span></div><small>{requests}" 次调用 · "{cost}</small></div>}
                     }).collect_view().into_any()
                 }}</div>
@@ -128,6 +127,8 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
     </section>
     }
 }
+
+#[cfg(test)] fn axis_label(n:f64,metric:&str)->String{axis_label_for(n,metric,"USD")}
 
 #[cfg(test)]
 mod tests {
@@ -215,7 +216,7 @@ fn ModelCallAnalysis(analytics: RwSignal<Value>) -> impl IntoView {
                         let last=local_time(value(&buckets[n-1],"start_at"),value(&data,"bucket_seconds")<86400);
                         let focus=focused.get();
                         view!{<div class="usage-model-trend">
-                            <div class="usage-chart-layout"><div class="usage-y-axis" aria-hidden="true"><span>{axis_label(top,"requests")}</span><span>{axis_label(top/2.0,"requests")}</span><span>"0"</span></div>
+                            <div class="usage-chart-layout"><div class="usage-y-axis" aria-hidden="true"><span>{axis_label_for(top,"requests","CNY")}</span><span>{axis_label_for(top/2.0,"requests","CNY")}</span><span>"0"</span></div>
                                 <div class="usage-plot"><svg class="usage-chart usage-model-chart" viewBox="0 0 960 240" preserveAspectRatio="none" role="group" aria-label="各模型调用次数趋势。聚焦时间段可查看每个模型的调用次数。">
                                     <line x1="0" y1="1" x2="960" y2="1" class="usage-grid-line"/><line x1="0" y1="120" x2="960" y2="120" class="usage-grid-line"/><line x1="0" y1="239" x2="960" y2="239" class="usage-grid-line"/>
                                     {series.iter().enumerate().map(|(i,s)|{

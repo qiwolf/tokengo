@@ -1,6 +1,6 @@
 //! Administration labels and lifecycle state. Historical ledger rows remain intact.
 use super::{billing, identity, lifecycle, now_ms, DbError, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
 fn bad(message: &str) -> DbError { DbError::Other(message.into()) }
@@ -63,13 +63,15 @@ pub fn require_active_object(c: &Connection, scope: &str, id: i64) -> Result<()>
     if id<=0 || !active { return Err(bad("请选择当前有效的用户或 API Key；历史对象不能设置预算")); }
     Ok(())
 }
-pub fn budgets(c: &Connection, scope: Option<&str>, id: Option<i64>, state: Option<&str>) -> Result<Vec<Value>> {
+pub fn budgets(c:&Connection,scope:Option<&str>,id:Option<i64>,state:Option<&str>)->Result<Vec<Value>> {budgets_currency(c,scope,id,state,"CNY")}
+pub fn budgets_currency(c:&Connection,scope:Option<&str>,id:Option<i64>,state:Option<&str>,currency:&str)->Result<Vec<Value>> {
+    billing::valid_currency(currency)?;
     let state=validated_state(state,"active")?;
     let catalog=current_objects(c)?;
     // Filter before applying the list limit: historical rows cannot hide active records.
     if scope.is_some_and(|v|v!="user"&&v!="key") {return Err(bad("invalid budget scope"));}
-    let mut sql="SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen FROM billing_budgets WHERE 1=1".to_string();
-    let mut args=Vec::<rusqlite::types::Value>::new();
+    let mut sql="SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE currency=?".to_string();
+    let mut args=vec![rusqlite::types::Value::Text(currency.into())];
     if let Some(scope)=scope {sql.push_str(" AND scope=?");args.push(scope.to_string().into());}
     if let Some(id)=id {sql.push_str(" AND scope_id=?");args.push(id.into());}
     sql.push_str(" ORDER BY scope,scope_id");
@@ -121,15 +123,27 @@ pub fn enrich_entries_with_catalog(entries:Vec<billing::Ledger>,catalog:&Value)-
         Ok(row)
     }).collect()
 }
-pub fn update_budget(c:&Connection,scope:&str,id:i64,limit:Option<i64>,frozen:Option<bool>,actor:&str)->Result<()> {
+pub fn update_budget(c:&Connection,scope:&str,id:i64,limit:Option<i64>,frozen:Option<bool>,actor:&str)->Result<()> {update_budget_currency(c,scope,id,limit,frozen,actor,"CNY")}
+pub fn update_budget_currency(c:&Connection,scope:&str,id:i64,limit:Option<i64>,frozen:Option<bool>,actor:&str,currency:&str)->Result<()> {
+    billing::valid_currency(currency)?;
+    if currency=="USD" {
+        return super::in_tx(c,|c|{
+            require_active_object(c,scope,id)?;
+            let old:Option<Option<i64>>=c.query_row("SELECT limit_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='USD'",params![scope,id],|r|r.get(0)).optional()?;
+            if old!=Some(limit)||frozen.is_none(){return Err(bad("历史美元预算只允许明确冻结或解冻，限额不可重写"));}
+            c.execute("UPDATE billing_budgets SET frozen=?3 WHERE scope=?1 AND scope_id=?2 AND currency='USD'",params![scope,id,frozen])?;
+            c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('legacy_budget_freeze',?1,?2,?3,?4)",params![actor,format!("{scope}:{id}:USD"),json!({"frozen":frozen}).to_string(),now_ms()])?;
+            Ok(())
+        });
+    }
     super::in_tx(c,|c|{
         require_active_object(c,scope,id)?;
         if limit.is_some_and(|v|v<0){return Err(bad("预算不能为负数"));}
         if frozen==Some(false){
-            let (spent,reserved):(i64,i64)=c.query_row("SELECT COALESCE((SELECT spent_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2),0),COALESCE((SELECT reserved_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2),0)",params![scope,id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            let (spent,reserved):(i64,i64)=c.query_row("SELECT COALESCE((SELECT spent_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'),0),COALESCE((SELECT reserved_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'),0)",params![scope,id],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if limit.is_some_and(|limit|i128::from(limit)<i128::from(spent)+i128::from(reserved)){return Err(bad("解冻前请提高限额或解除限额，以覆盖已扣和预占金额"));}
         }
-        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,frozen) VALUES(?1,?2,?3,COALESCE(?4,0)) ON CONFLICT(scope,scope_id) DO UPDATE SET limit_micro=excluded.limit_micro,frozen=COALESCE(?4,billing_budgets.frozen)",params![scope,id,limit,frozen])?;
+        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,frozen) VALUES(?1,?2,?3,COALESCE(?4,0)) ON CONFLICT(scope,scope_id,currency) DO UPDATE SET limit_micro=excluded.limit_micro,frozen=COALESCE(?4,billing_budgets.frozen)",params![scope,id,limit,frozen])?;
         c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('budget_updated',?1,?2,?3,?4)",params![actor,format!("{scope}:{id}"),json!({"limit_micro":limit,"frozen":frozen}).to_string(),now_ms()])?;
         Ok(())
     })

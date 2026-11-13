@@ -31,7 +31,7 @@ impl Fixture {
             let id=db::channels::create(&c,&db::channels::NewChannel {name:"budget-source".into(),base_url:format!("{}/v1",source.url),enabled:true,unwrap_envelope:false,max_concurrent:0}).unwrap();
             db::channels::set_models(&c,id,&[db::channels::ModelMapping::new("logical",Some(model.into()),false)]).unwrap();
             tokengo_server::protocol_config::save(&c,id.0,&Capabilities {parameter_profile:Some("dashscope".into()),native:vec![Protocol::Responses],allow_conversion:true,max_input_tokens:bounded.then_some(4096),max_output_tokens:bounded.then_some(1024),..Default::default()}).unwrap();
-            db::billing::create_price(&c,&db::billing::Price {id:0,channel_id:id.0,model:"logical".into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:4096,max_output_tokens:2048},"synthetic").unwrap();key};
+            db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:id.0,model:"logical".into(),input_micro_per_million:1_000_000,output_micro_per_million:1_000_000,max_input_tokens:4096,max_output_tokens:2048},"synthetic").unwrap();key};
         let gateway=serve(app(state.clone())).await;Self {state,gateway,_source:source,seen,key,dir}
     }
     async fn call(&self,path:&str,body:Value)->(u16,String) {

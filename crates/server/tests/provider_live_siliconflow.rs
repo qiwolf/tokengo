@@ -51,7 +51,7 @@ impl Fixture {
             db::channels::set_models(&c,channel,&[db::channels::ModelMapping::new("sf-live-qwen",Some(source_model.clone()),false)]).unwrap();
             tokengo_server::protocol_config::save(&c,channel.0,&Capabilities { parameter_profile:Some("siliconflow".into()),native:vec![Protocol::Chat],allow_conversion:true,chat_reasoning_replay:source_model=="Qwen/Qwen3.8-27B",..Default::default() }).unwrap();
             // Fixture admission prices are synthetic; this does not verify provider pricing.
-            db::billing::create_price(&c,&db::billing::Price { id:0,channel_id:channel.0,model:"sf-live-qwen".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:16384,max_output_tokens:1024 },"synthetic acceptance").unwrap();
+            db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(), id:0,channel_id:channel.0,model:"sf-live-qwen".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:16384,max_output_tokens:1024 },"synthetic acceptance").unwrap();
             key
         };
         #[cfg(unix)] {

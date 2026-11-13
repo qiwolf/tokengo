@@ -3771,7 +3771,7 @@ async fn concurrent_http_accounting(priced: bool) {
         use tokengo_server::db::billing::{self, Price};
         billing::create_price(
             &f.state.conn(),
-            &Price {
+            &Price{currency:"CNY".into(),
                 id: 0,
                 channel_id: id.0,
                 model: "mock-chat".into(),
