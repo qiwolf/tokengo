@@ -1,0 +1,19 @@
+{
+  "verified": true,
+  "current": "/opt/tokengo/releases/billing-reservation-fallback-30b83f4f9c4d-e147c655",
+  "running_binary_sha256": "e147c655d7cee3290f858de78653fde58c36496629a11530b5e1cffbf26fc3ff",
+  "source_commit": "30b83f4f9c4d0cf4f4b73f672be6404012356bec",
+  "source_manifest_sha256": "921ac5714e5ebb332f0b0765a5d962443a56cf9c3a638a5a989444d99448f916",
+  "web_unchanged": true,
+  "public_assets": {
+    "provider-workspace-ea99438577ec8a95.css": "687e1bed56fc2bde2beb6c6b67bdd7e689889411903c8ca700803848ee066160",
+    "index.html": "c49c5932907ff95339593244fc791d9960929090b36035d82a207c072a6bb8e0",
+    "console-design-8f60f8b8f6cbf2e7.css": "55369df063a46deac3180bc0d1723f58889a549602a59ea191d5dc1c6a90b974",
+    "tokengo-web-e38f8aac211a70ea_bg.wasm": "4baba3c7fb10b830b60930214c0b9a1b4c70f22edd13851a7c4e2cb97568dc78",
+    "tokengo-web-e38f8aac211a70ea.js": "3eb1fe421ffef2f91132478c41f6d1cd2b1b5e513884a13f9d6dc1cb052f4da1",
+    "account-workspace-4df435622eca3d70.css": "58dcb5237803521838d9b3c0d7566a002955f217942ede4bd272f229e303f9c4",
+    "usage-dashboard-51bdda854fa112d9.css": "bf65ffbad2587c448fecd08db365f55ba73c1138ca0a812e7c039b7c7a234ab6",
+    "style-c41c1323e5e09396.css": "1f20503f5f444fd8662b8cc5aa96dc688672393fce432f4ce6d1f340100a8414"
+  },
+  "snapshot_timer": "active"
+}

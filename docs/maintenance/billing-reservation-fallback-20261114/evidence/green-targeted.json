@@ -1,0 +1,32 @@
+{
+  "host": "build-test",
+  "source_phase": "green",
+  "source_manifest_sha256": "58102a2cd65a687a60b4fd3830c41bfff3549dd292cc167ebca49016fa9370f1",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server",
+    "--lib",
+    "--test",
+    "billing_fallback",
+    "--test",
+    "billing",
+    "--test",
+    "request_billing",
+    "--test",
+    "shared_virtual_routes",
+    "--test",
+    "provider_pool",
+    "--test",
+    "protocol_safety",
+    "--test",
+    "channel_protocol_patch"
+  ],
+  "cwd": "/srv/build/tokengo-billing-reservation-fallback-20261113/source",
+  "exit_code": 101,
+  "seconds": 254.93704557418823
+}

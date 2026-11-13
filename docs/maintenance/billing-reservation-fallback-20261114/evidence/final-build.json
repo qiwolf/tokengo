@@ -1,0 +1,17 @@
+{
+  "host": "build-test",
+  "source_phase": "final",
+  "source_manifest_sha256": "8ff9124d50183e69dce9d2ea6008e022da0a07f1c7c49781b2082ebad2c8e1ed",
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-server"
+  ],
+  "cwd": "/srv/build/tokengo-billing-reservation-fallback-20261113/source",
+  "exit_code": 0,
+  "seconds": 70.9841001033783
+}

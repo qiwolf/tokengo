@@ -1,0 +1,183 @@
+{
+  "source_commit": "30b83f4f9c4d0cf4f4b73f672be6404012356bec",
+  "source_manifest_sha256": "921ac5714e5ebb332f0b0765a5d962443a56cf9c3a638a5a989444d99448f916",
+  "binary_sha256": "e147c655d7cee3290f858de78653fde58c36496629a11530b5e1cffbf26fc3ff",
+  "deployment": {
+    "business_database_restored": false,
+    "configuration_preserved": true,
+    "executed": true,
+    "gate": "/var/backups/tokengo/billing-reservation-fallback-20261113T160707Z",
+    "maintenance_finished_at": "2026-11-13T16:07:23.470977+00:00",
+    "maintenance_started_at": "2026-11-13T16:07:09.050843+00:00",
+    "phase": "complete",
+    "previous": "/opt/tokengo/releases/model-pricing-auto-0d499081d8ca-6fcb381a",
+    "rollback_policy": "same-schema binary/Web rollback after closing ingress and draining; never restore business database",
+    "rollback_release": "/opt/tokengo/releases/model-pricing-auto-0d499081d8ca-6fcb381a",
+    "runtime_configuration_preserved": true,
+    "schema_from": 47,
+    "schema_to": 47,
+    "server_sha256": "e147c655d7cee3290f858de78653fde58c36496629a11530b5e1cffbf26fc3ff",
+    "snapshot_writers": {
+      "original_timer_active": true,
+      "service": "tokengo-dash-export.service",
+      "timer": "tokengo-dash-export.timer",
+      "timer_state_restored": true,
+      "writer_complete_state": "inactive/dead"
+    },
+    "source_commit": "30b83f4f9c4d0cf4f4b73f672be6404012356bec",
+    "target": "/opt/tokengo/releases/billing-reservation-fallback-30b83f4f9c4d-e147c655",
+    "web_sha256": "673ae51f985d3d5f2c978a5e0984efd9e51e65f40237fe5ea5cfe9e78767720e"
+  },
+  "verification": {
+    "host": "build-test",
+    "passed": 729,
+    "ignored": 4,
+    "unresolved_failures": 0,
+    "deployment_contract_passed": 4,
+    "scope": "server lib + billing + fallback + channel protocol + protocol safety + provider pool + request billing + shared routes; no unrelated full workspace/UI tests"
+  },
+  "production": {
+    "requests": [
+      {
+        "id": 633434,
+        "ts_ms": 1794585612833,
+        "model": "gpt-6.1-sol",
+        "status": "client_error",
+        "http_status": 400,
+        "channel_id": null,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "input_tokens_known": 0,
+        "output_tokens_known": 0,
+        "usage_source": "unreported",
+        "error": "Request exceeds configured billing token bounds",
+        "error_code": "billing_token_limit",
+        "user_agent": "tokengo-billing-recovery-20261113-before-sol"
+      },
+      {
+        "id": 633435,
+        "ts_ms": 1794585612916,
+        "model": "Deepseek-v4.1-flash-fallback",
+        "status": "client_error",
+        "http_status": 400,
+        "channel_id": null,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "input_tokens_known": 0,
+        "output_tokens_known": 0,
+        "usage_source": "unreported",
+        "error": "Request exceeds configured billing token bounds",
+        "error_code": "billing_token_limit",
+        "user_agent": "tokengo-billing-recovery-20261113-before-deepseek"
+      },
+      {
+        "id": 633615,
+        "ts_ms": 1794586051831,
+        "model": "gpt-6.1-sol",
+        "status": "ok",
+        "http_status": null,
+        "channel_id": 64,
+        "input_tokens": 60414,
+        "output_tokens": 20,
+        "input_tokens_known": 1,
+        "output_tokens_known": 1,
+        "usage_source": "upstream",
+        "error": null,
+        "error_code": null,
+        "user_agent": "tokengo-billing-recovery-20261113-after-sol"
+      },
+      {
+        "id": 633616,
+        "ts_ms": 1794586051874,
+        "model": "Deepseek-v4.1-flash-fallback",
+        "status": "ok",
+        "http_status": null,
+        "channel_id": 56,
+        "input_tokens": 192036,
+        "output_tokens": 8,
+        "input_tokens_known": 1,
+        "output_tokens_known": 1,
+        "usage_source": "upstream",
+        "error": null,
+        "error_code": null,
+        "user_agent": "tokengo-billing-recovery-20261113-after-deepseek"
+      }
+    ],
+    "attempts": [
+      {
+        "request_id": 633615,
+        "ordinal": 0,
+        "channel_id": 64,
+        "outcome": "success",
+        "http_status": null,
+        "duration_ms": 19715,
+        "error": null,
+        "model_name": "gpt-6.1-sol",
+        "upstream_model": "gpt-6.1-sol"
+      },
+      {
+        "request_id": 633616,
+        "ordinal": 0,
+        "channel_id": 56,
+        "outcome": "success",
+        "http_status": null,
+        "duration_ms": 3064,
+        "error": null,
+        "model_name": "DeepSeek-V4.1-Flash",
+        "upstream_model": "deepseek-flash"
+      }
+    ],
+    "ledgers": [
+      {
+        "request_id": 633615,
+        "channel_id": 64,
+        "model": "gpt 6.1 sol",
+        "price_id": 34,
+        "input_bound": 272000,
+        "output_bound": 512,
+        "input_tokens": 60414,
+        "output_tokens": 20,
+        "usage_certainty": "reported",
+        "status": "ok",
+        "outcome": "ok",
+        "overrun": 0,
+        "reserved_micro": 274663,
+        "debit_micro": 60518,
+        "observed_cost_micro": 60518
+      },
+      {
+        "request_id": 633616,
+        "channel_id": 56,
+        "model": "deepseek v4.1 flash",
+        "price_id": null,
+        "input_bound": 1200560,
+        "output_bound": 512,
+        "input_tokens": 192036,
+        "output_tokens": 8,
+        "usage_certainty": "unpriced",
+        "status": "unpriced",
+        "outcome": "ok",
+        "overrun": 0,
+        "reserved_micro": 0,
+        "debit_micro": null,
+        "observed_cost_micro": null
+      }
+    ],
+    "health": {
+      "http://127.0.0.1:3160/readyz": 200,
+      "http://127.0.0.1/readyz": 200,
+      "https://api.qlf.net.cn/readyz": 200
+    },
+    "prices_unchanged": true,
+    "same_request_sha256_before_after": true
+  },
+  "raw_evidence_sha256": {
+    "before-live.json": "8dbe5680b7d0192f277da244f4c34e97bea9e55c7b8a2750278d5941dcf43f47",
+    "after-live.json": "2a41cb218fd7434a19a28d4c32ccbe8d08dc27ce2dd0af10f8bee68b316ceee8",
+    "live-readback.json": "dac1af7162fb351137beb36cd519449e326d47ebae34f932ed4329cfef16e621",
+    "source-final.json": "8ff9124d50183e69dce9d2ea6008e022da0a07f1c7c49781b2082ebad2c8e1ed",
+    "deployment-source.json": "921ac5714e5ebb332f0b0765a5d962443a56cf9c3a638a5a989444d99448f916",
+    "deployment.json": "83b732579656c40cec7c6f1104d9f2342ca4983f2d4442a9991cc5fe9cd32674",
+    "post-verification.json": "177a273954d8679706794879d52292f796a9bce05e540da487ee039c0826cde6"
+  }
+}

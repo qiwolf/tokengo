@@ -2,7 +2,7 @@
 
 ## 2026-11-14 修正：计费预占与来源切换
 
-build-test必要回归729通过/4既有忽略，部署流程4通过；真实模型与部署收据按实际完成状态后补。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。
+build-test必要回归729通过/4既有忽略，部署流程4通过；00:07完成生产更新，两模型相同长请求由400恢复为200且完整流式输出，来源与账本已读回。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。
 
 ## 2026-11-13 后续修正：模型价格表单
 

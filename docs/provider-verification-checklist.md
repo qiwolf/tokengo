@@ -2,7 +2,7 @@
 
 ## 2026-11-14 修正：计费预占与来源切换
 
-输入字节预占、来源token窗口、实际usage分别处理，未新增模型能力声明。真实调用对照和来源/账本证据见收据，不把配置窗口当原厂硬限制新证据。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。
+输入字节预占、来源token窗口、实际usage分别处理。生产相同长请求DeepSeek fallback及Sol均完整输出；DeepSeek实际落主帐号56，Sol落64。没有据此宣称所有前置候选均完成上游调用；DeepSeek主帐号未定价仍如实为unpriced。见[收据](maintenance/billing-reservation-fallback-20261114/README.md)。
 
 ## 2026-11-13 后续修正：模型计价类型与参数
 
