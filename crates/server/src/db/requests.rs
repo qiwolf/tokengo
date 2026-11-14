@@ -530,6 +530,33 @@ pub(super) fn add_stats_group(
     }
 }
 
+// Adjacent rows commonly share a model, endpoint and client. Keep their last
+// grouping slot inside this one scan so a run needs only a borrowed comparison,
+// not three String hashes per request. Nonadjacent keys use the same exact map;
+// every sample still enters its original accumulator in original row order.
+#[derive(Default)]
+struct RequestGroups {
+    indices: std::collections::HashMap<String, usize>,
+    rows: Vec<(String, RequestAggregate)>,
+    last: Option<usize>,
+}
+impl RequestGroups {
+    fn add(&mut self, key: &str, sample: &StatsSample<'_>) -> Result<()> {
+        let index = if let Some(index) = self.last.filter(|&index| self.rows[index].0 == key) {
+            index
+        } else if let Some(&index) = self.indices.get(key) {
+            index
+        } else {
+            let index = self.rows.len();
+            self.indices.insert(key.to_owned(), index);
+            self.rows.push((key.to_owned(), RequestAggregate::default()));
+            index
+        };
+        self.last = Some(index);
+        self.rows[index].1.add(sample)
+    }
+}
+
 pub(super) fn stats_text<'a>(row: &'a rusqlite::Row<'_>, index: usize) -> rusqlite::Result<&'a str> {
     match row.get_ref(index)? {
         rusqlite::types::ValueRef::Text(bytes) =>
@@ -633,14 +660,15 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     let mut by_channel = channel_stats_since(conn,since_ms)?;
     // Match the legacy output domain: final-channel SUM was evaluated only for
     // channels represented by attempts, not every channel found on a request.
-    let attempted_channels = by_channel.iter().map(|row| row.channel_id)
-        .collect::<std::collections::HashSet<_>>();
+    let attempted_channels = by_channel.iter().enumerate().map(|(index,row)| (row.channel_id,index))
+        .collect::<std::collections::HashMap<_,_>>();
     let mut total = RequestAggregate::default();
-    let mut channel_usage = std::collections::HashMap::<i64, RequestAggregate>::new();
-    let mut models = std::collections::HashMap::new();
-    let mut clients = std::collections::HashMap::new();
+    let mut channel_usage = (0..by_channel.len()).map(|_|RequestAggregate::default()).collect::<Vec<_>>();
+    let mut last_channel = None;
+    let mut models = RequestGroups::default();
+    let mut clients = RequestGroups::default();
     let mut missing_client = RequestAggregate::default();
-    let mut endpoints = std::collections::HashMap::new();
+    let mut endpoints = RequestGroups::default();
     let mut stmt = conn.prepare(REQUEST_STATS_SQL)?;
     let mut rows = stmt.query([since_ms])?;
     while let Some(row) = rows.next()? {
@@ -666,28 +694,32 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
         };
         total.add(&sample)?;
         if let Some(channel) = row.get::<_, Option<i64>>(2)? {
-            if attempted_channels.contains(&channel) {
-                channel_usage.entry(channel).or_default().add(&sample)?;
-            }
+            let index = match last_channel {
+                Some((previous,index)) if previous == channel => index,
+                _ => {
+                    let index = attempted_channels.get(&channel).copied();
+                    last_channel = Some((channel,index));
+                    index
+                }
+            };
+            if let Some(index) = index { channel_usage[index].add(&sample)?; }
         }
-        add_stats_group(&mut models, stats_text(row, 7)?, &sample)?;
-        add_stats_group(&mut endpoints, stats_text(row, 0)?, &sample)?;
+        models.add(stats_text(row, 7)?, &sample)?;
+        endpoints.add(stats_text(row, 0)?, &sample)?;
         if row.get_ref(6)? == rusqlite::types::ValueRef::Null {
             missing_client.add(&sample)?;
         } else {
-            add_stats_group(&mut clients, stats_text(row, 6)?, &sample)?;
+            clients.add(stats_text(row, 6)?, &sample)?;
         }
     }
 
-    for row in &mut by_channel {
-        if let Some(usage) = channel_usage.get(&row.channel_id) {
-            row.input_tokens = usage.input_tokens;
-            row.output_tokens = usage.output_tokens;
-            row.usage = usage.usage.clone();
-        }
+    for (row,usage) in by_channel.iter_mut().zip(channel_usage) {
+        row.input_tokens = usage.input_tokens;
+        row.output_tokens = usage.output_tokens;
+        row.usage = usage.usage;
     }
 
-    let mut by_model = models.into_iter().map(|(model, group)| ModelStat {
+    let mut by_model = models.rows.into_iter().map(|(model, group)| ModelStat {
         model, usage: group.usage, requests: group.requests, ok: group.ok,
         failed: group.failed, client_errors: group.client_errors,
         input_tokens: group.input_tokens, output_tokens: group.output_tokens,
@@ -697,7 +729,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     by_model.sort_unstable_by(|a, b| b.requests.cmp(&a.requests).then_with(|| b.model.cmp(&a.model)));
     by_model.truncate(50);
 
-    let mut client_groups = clients.into_iter().map(|(ip, group)| (Some(ip), group)).collect::<Vec<_>>();
+    let mut client_groups = clients.rows.into_iter().map(|(ip, group)| (Some(ip), group)).collect::<Vec<_>>();
     if missing_client.requests > 0 { client_groups.push((None, missing_client)); }
     let mut by_client = client_groups.into_iter().map(|(client_ip, group)| ClientStat {
         client_ip, usage: group.usage, requests: group.requests, ok: group.ok,
@@ -715,7 +747,7 @@ pub fn stats_since(conn: &Connection, since_ms: i64) -> Result<Stats> {
     let mut by_kind = vec![zero("chat", "对话"), zero("embeddings", "向量"), zero("rerank", "重排")];
     let mut other = None;
     let mut kind_usage = std::collections::HashMap::<&str, UsageCoverage>::new();
-    let mut endpoints = endpoints.into_iter().collect::<Vec<_>>();
+    let mut endpoints = endpoints.rows.into_iter().collect::<Vec<_>>();
     endpoints.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     for (endpoint, group) in endpoints {
         // Coverage's historical CASE does not trim, unlike display classification.
@@ -1080,6 +1112,26 @@ mod tests {
         // A different channel with an attempt must not make channel 1 reportable.
         conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome) VALUES(3,0,2,'success')", []).unwrap();
         assert_eq!(stats_since(&conn, 0).unwrap(), stats_since_legacy(&conn, 0).unwrap());
+    }
+
+    #[test]
+    fn stats_adjacent_and_revisited_groups_match_full_sql_oracle() {
+        let conn = open_in_memory().unwrap();
+        for i in 0..240i64 {
+            let run = ((i / 13) % 4) as usize;
+            conn.execute("INSERT INTO requests(ts_ms,endpoint,model,served_model,status,channel_id,latency_ms,input_tokens,output_tokens,input_tokens_known,output_tokens_known,usage_source,client_ip) VALUES(?1,?2,'auto',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",params![
+                i + 1, ["/v1/chat/completions"," /v1/chat/completions ","/v1/embeddings","/other"][run],
+                ["model-a","AUTO","model-a","model-b"][run],
+                ["ok","failed","client_error","canceled"][i as usize % 4],
+                if run==3 {None}else{Some(run as i64)}, i-50,
+                i%9-2,i%5, i%3!=0,i%5!=0,if i%11==0 {"legacy"}else{"upstream"},
+                [Some("client-a"),None,Some(""),Some("client-a")][run],
+            ]).unwrap();
+            if i%3==0 {conn.execute("INSERT INTO attempts(request_id,ordinal,channel_id,outcome,duration_ms) VALUES(?1,0,?2,?3,?4)",params![i+1,(run%2) as i64,if i%2==0 {"success"}else{"channel_fault"},i]).unwrap();}
+        }
+        for since in [0,23,105,225,241] {
+            assert_eq!(stats_since(&conn,since).unwrap(),stats_since_legacy(&conn,since).unwrap(),"since={since}");
+        }
     }
 
     #[test]

@@ -237,6 +237,7 @@ if __name__ == "__main__":
 | GET | `/api/budgets` |
 | PUT | `/api/budgets` |
 | GET | `/api/usage` |
+| GET | `/api/usage/analytics` |
 | GET | `/api/custom-probes` |
 | POST | `/api/custom-probes` |
 | PUT | `/api/custom-probes/{id}` |

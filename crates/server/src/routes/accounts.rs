@@ -88,6 +88,7 @@ pub fn router() -> Router<SharedState> {
         .route("/api/account/security-reset", post(security_reset))
         .route("/api/account/profile", put(profile))
         .route("/api/account/portal", get(portal))
+        .route("/api/account/usage/analytics", get(usage_analytics))
         .route("/api/accounts", get(list).post(create))
         .route("/api/accounts/{id}", put(update))
         .layer(DefaultBodyLimit::max(8192))
@@ -756,11 +757,24 @@ async fn portal(
     let (rows,next)=db::billing::usage_page(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
     let entries:Vec<_>=rows.into_iter().map(|r|json!({"id":r.id,"request_id":r.request_id,"key_id":r.key_id,"model":r.model,"billing_unit":r.billing_unit,"currency":r.currency,"quantity_milli":r.quantity_milli,"bound_quantity_milli":r.bound_quantity_milli,"status":r.status,"outcome":r.outcome,"input_tokens":r.input_tokens,"output_tokens":r.output_tokens,"usage_certainty":r.usage_certainty,"debit_micro":r.debit_micro,"created_ms":r.created_ms,"settled_ms":r.settled_ms})).collect();
     let summary=db::billing::usage_summary(&c,&query).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
-    let analytics=db::billing::usage_analytics(&c,&query,&summary).map_err(|e|match e {db::DbError::Other(message)=>bad(&message),e=>e.into()})?;
-    json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"analytics":analytics,"entries":entries,"next_before_id":next}})
+    json!({"account":browser.credential.account,"keys":keys,"usage":{"summary":summary,"entries":entries,"next_before_id":next}})
     };
     let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
     crate::reporting_currency::apply(&mut response,quote.as_ref());
+    Ok(Json(response))
+}
+
+
+async fn usage_analytics(
+    browser: Browser,
+    State(state): State<SharedState>,
+    Query(mut query): Query<db::billing::UsageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    if browser.credential.account.role!="user" {return Err(forbidden());}
+    let user=browser.credential.account.user_id.ok_or_else(forbidden)?;
+    query.user_id=Some(user);
+    let mut response=super::billing::read_usage_report(&state,query,super::billing::UsageReportAccess::Browser{session:browser.raw,user}).await?;
+    super::billing::apply_reporting(&state,&mut response).await;
     Ok(Json(response))
 }
 

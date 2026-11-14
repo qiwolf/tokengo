@@ -270,7 +270,7 @@ async fn chunked_upload_limit_returns_413_and_settles_unknown_without_holds() {
     let _ = response.bytes().await.unwrap();
     let rows = f.settled(1).await;
     assert_eq!(rows[0].request_units, None);
-    assert_eq!(rows[0].debit_micro, Some(50));
+    assert_eq!(rows[0].debit_micro, None, "an incomplete upload has unknown units, not an estimated charge");
     assert_eq!(rows[0].input_tokens, None);
     f.no_holds();
     let response = client()

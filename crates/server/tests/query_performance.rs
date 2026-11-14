@@ -94,6 +94,34 @@ async fn large_history_http_queries_and_concurrent_navigation() {
     let router=app(f.state.clone());
     let server=tokio::spawn(async move {axum::serve(listener,router).await.unwrap()});
     let client=reqwest::Client::new();
+    // Full reports are independent work, not a hidden cost of turning a page.
+    // Exercise a real in-flight report while the same server serves cursor reads.
+    let report_client=client.clone();let report_auth=f.token.clone();
+    let report_job=tokio::spawn(async move {
+        let started=Instant::now();
+        let response=report_client.get(format!("http://{address}/api/usage/analytics?state=all&limit=1&before_id=1")).bearer_auth(report_auth).send().await.unwrap();
+        assert_eq!(response.status(),StatusCode::OK);
+        let value:Value=response.json().await.unwrap();(value,started.elapsed().as_micros())
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let report_in_flight=!report_job.is_finished();
+    for _ in 0..3 {
+        let start=Instant::now();
+        let response=client.get(format!("http://{address}/api/usage?limit=50&state=active")).bearer_auth(&f.token).send().await.unwrap();
+        assert_eq!(response.status(),StatusCode::OK);let value:Value=response.json().await.unwrap();
+        assert_eq!(value["entries"].as_array().unwrap().len(),50);
+        assert!(value.get("analytics").is_none()&&value.get("summary").is_none());
+        let us=start.elapsed().as_micros();eprintln!("USAGE_PAGE_DURING_REPORT report_in_flight={report_in_flight} us={us} limit_us=300000");
+        if us>300_000 {failures.push(format!("page during full analytics: {us}us > 300000us"));}
+    }
+    let (report,us)=report_job.await.unwrap();let expected=expected_usage_matches("/api/usage?state=all") as i64;
+    assert_eq!(report["summary"]["ledger_count"],expected);
+    assert_eq!(report["summary"]["request_count"],expected);
+    assert_eq!(report["summary"]["total_tokens"],expected*12);
+    for field in ["buckets","models","model_series"] {
+        assert_eq!(report["analytics"][field].as_array().unwrap().iter().map(|v|v["ledger_count"].as_i64().unwrap()).sum::<i64>(),expected,"{field}");
+    }
+    eprintln!("USAGE_ANALYTICS_PERF rows={expected} actual_us={us} independent_report=true snapshot=true page_overlap={report_in_flight}");
     for round in 0..3 {
       let start_gate=std::sync::Arc::new(tokio::sync::Barrier::new(14));
       let mut pending=Vec::new();

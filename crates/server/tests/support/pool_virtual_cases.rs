@@ -79,7 +79,7 @@ async fn call(f: &Fixture, key: &str, name: &str) -> StatusCode {
 }
 
 #[tokio::test]
-async fn anonymous_responses_replay_keeps_later_private_target_after_status_switch() {
+async fn anonymous_responses_replay_restarts_current_target_order_after_status_switch() {
     use tokengo_server::{protocol::Protocol, protocol_config};
     for first_status in [400, 429] {
         let seen = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
@@ -155,14 +155,15 @@ async fn anonymous_responses_replay_keeps_later_private_target_after_status_swit
         })).await;
         assert_eq!(status, StatusCode::OK, "replay after {first_status}: {}", String::from_utf8_lossy(&bytes));
         let calls = seen.lock().unwrap();
-        assert_eq!(calls.iter().map(|(source, _)| source.as_str()).collect::<Vec<_>>(), ["a", "b", "b"]);
-        assert_eq!(calls[2].1["input"], replay_input, "replay must reach its original source unchanged");
+        assert_eq!(calls.iter().map(|(source, _)| source.as_str()).collect::<Vec<_>>(), ["a", "b", "a", "b"]);
+        assert_eq!(calls[2].1["input"], replay_input, "history reaches the current first source unchanged");
+        assert_eq!(calls[3].1["input"], replay_input, "explicit fallback preserves history");
         server.abort();
     }
 }
 
 #[tokio::test]
-async fn same_user_two_vkeys_keep_one_upstream_identity_and_switch_once() {
+async fn same_user_two_vkeys_each_use_current_order_and_request_local_switch() {
     let f = fixture();
     let m = start_mock(Reply::Ok).await;
     let (a, b) = two_keys(&f, &m);
@@ -187,19 +188,10 @@ async fn same_user_two_vkeys_keep_one_upstream_identity_and_switch_once() {
     let seen = m.seen();
     assert_eq!(seen[2].auth.as_deref(), Some("Bearer upstream-one"));
     assert_eq!(seen[3].auth.as_deref(), Some("Bearer upstream-two"));
-    assert_eq!(seen[4].auth, seen[3].auth);
+    assert_eq!(seen[4].auth, seen[0].auth,"next call starts from current order, not previous fallback");
     {
         let c = f.state.conn();
-        assert_eq!(
-            provider_pool::affinity_token(&c, user, provider)
-                .unwrap()
-                .unwrap()
-                .credential_id,
-            provider_pool::source_credential(&c, b.0)
-                .unwrap()
-                .unwrap()
-                .id
-        );
+        assert!(provider_pool::affinity_token(&c,user,provider).unwrap().is_none(),"gateway must not persist source affinity");
     }
     assert_eq!(
         f.state.credential_load(
@@ -222,7 +214,7 @@ async fn same_user_two_vkeys_keep_one_upstream_identity_and_switch_once() {
 }
 
 #[tokio::test]
-async fn concurrent_strategy_distributes_users_without_vkey_randomization() {
+async fn concurrent_strategy_uses_live_load_with_stable_order_for_idle_keys() {
     let f = fixture();
     let m = start_mock(Reply::Ok).await;
     let (a, _) = two_keys(&f, &m);
@@ -233,9 +225,16 @@ async fn concurrent_strategy_distributes_users_without_vkey_randomization() {
         assert_eq!(call(&f, key, "real-model").await, StatusCode::OK);
     }
     let seen = m.seen();
-    assert_ne!(seen[0].auth, seen[1].auth);
+    assert_eq!(seen[0].auth, seen[1].auth,"idle Keys tie by configured order, independent of user");
     assert_eq!(seen[0].auth, seen[2].auth);
     assert_eq!(seen[1].auth, seen[3].auth);
+    let first=provider_pool::source_credential(&f.state.conn(),a.0).unwrap().unwrap();
+    let held=f.state.credential_gate(first.id,1).unwrap().try_acquire_owned().unwrap();
+    assert_eq!(call(&f,&bob[0].1,"real-model").await,StatusCode::OK);
+    assert_eq!(m.seen().last().unwrap().auth.as_deref(),Some("Bearer upstream-two"),"concurrent selection follows live load rather than user affinity");
+    drop(held);
+    assert_eq!(call(&f,&alice[0].1,"real-model").await,StatusCode::OK);
+    assert_eq!(m.seen().last().unwrap().auth.as_deref(),Some("Bearer upstream-one"),"idle tie returns to configured first Key");
 }
 
 #[tokio::test]
@@ -394,17 +393,17 @@ async fn virtual_chains_one_two_three_four_preserve_alias_and_real_attempts() {
 }
 
 #[tokio::test]
-async fn virtual_chain_does_not_inherit_network_or_5xx_fallback() {
+async fn virtual_chain_uses_next_available_target_after_5xx() {
     let f = fixture();
     let (mocks, targets, _) = target_chain(&f, 2, 500).await;
     let (user, keys) = user_keys(&f, "no-implicit");
     alias(&f, user, targets);
     assert_eq!(
         call(&f, &keys[0].1, "my-private-model").await,
-        StatusCode::INTERNAL_SERVER_ERROR
+        StatusCode::OK
     );
     assert_eq!(mocks[0].count(), 1);
-    assert_eq!(mocks[1].count(), 0);
+    assert_eq!(mocks[1].count(), 1);
 }
 
 #[tokio::test]
@@ -636,7 +635,7 @@ async fn committed_sse_never_replays_on_another_credential_and_releases_gates() 
 }
 
 #[tokio::test]
-async fn native_pin_overrides_affinity_and_prevents_key_switch_replay() {
+async fn legacy_native_pin_and_affinity_do_not_override_current_switch_rules() {
     use tokengo_server::{
         gateway::{self, EndpointKind, ForwardRequest},
         protocol::Protocol,
@@ -645,11 +644,12 @@ async fn native_pin_overrides_affinity_and_prevents_key_switch_replay() {
     };
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = count.clone();
+    let auths=Arc::new(Mutex::new(Vec::<String>::new()));let seen_auths=auths.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
-    let upstream=Router::new().route("/v1/responses",route_post(move |headers:HeaderMap|{let counted=counted.clone();async move {
+    let upstream=Router::new().route("/v1/responses",route_post(move |headers:HeaderMap|{let counted=counted.clone();let auths=seen_auths.clone();async move {
         counted.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(headers.get("authorization").unwrap(),"Bearer upstream-one");
+        auths.lock().unwrap().push(headers.get("authorization").unwrap().to_str().unwrap().to_string());
         (StatusCode::TOO_MANY_REQUESTS,axum::Json(json!({"error":{"message":"rate limited"},"usage":{"input_tokens":0,"output_tokens":0}})))
     }}));
     let server = tokio::spawn(async move {
@@ -720,7 +720,8 @@ async fn native_pin_overrides_affinity_and_prevents_key_switch_replay() {
     };
     let response=gateway::forward(f.state.clone(),ForwardRequest{auth:Some(auth),session_namespace:"test-native-owner".into(),explicit_session:Some("native-session".into()),endpoint:EndpointKind::Responses,model:"native-model".into(),body:json!({"model":"native-model","input":[{"type":"reasoning","encrypted_content":"owned-native-reasoning","summary":[]},{"role":"user","content":"hi"}],"max_output_tokens":16,"store":false}),stream:false,client_ip:None,user_agent:None}).await.unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(*auths.lock().unwrap(),vec!["Bearer upstream-one","Bearer upstream-two"]);
     let c = f.state.conn();
     assert_eq!(
         provider_pool::affinity_token(&c, user, provider)
@@ -736,7 +737,7 @@ async fn native_pin_overrides_affinity_and_prevents_key_switch_replay() {
 }
 
 #[tokio::test]
-async fn concurrent_old_429_responses_cannot_push_affinity_twice() {
+async fn concurrent_429_responses_each_fallback_without_persistent_affinity() {
     let f = fixture();
     let m = start_mock(Reply::Ok).await;
     let (a, b) = two_keys(&f, &m);
@@ -785,20 +786,12 @@ async fn concurrent_old_429_responses_cannot_push_affinity_twice() {
     release_a.notify_one();
     assert_eq!(first.await.unwrap().status(), StatusCode::OK);
     release_b.notify_one();
-    assert_eq!(second.await.unwrap().status(), StatusCode::CONFLICT);
-    assert_eq!(m.count(), 3);
+    assert_eq!(second.await.unwrap().status(), StatusCode::OK);
+    assert_eq!(m.count(), 4);
+    assert_eq!(m.seen().iter().map(|s|s.auth.clone()).collect::<Vec<_>>(),vec![Some("Bearer upstream-one".into()),Some("Bearer upstream-one".into()),Some("Bearer upstream-two".into()),Some("Bearer upstream-two".into())]);
     let c = f.state.conn();
-    let token = provider_pool::affinity_token(&c, user, provider)
-        .unwrap()
-        .unwrap();
-    assert_eq!(token.generation, 2);
-    assert_eq!(
-        token.credential_id,
-        provider_pool::source_credential(&c, b.0)
-            .unwrap()
-            .unwrap()
-            .id
-    );
+    assert!(provider_pool::affinity_token(&c,user,provider).unwrap().is_none());
+    for source in [a,b] {let credential=provider_pool::source_credential(&c,source.0).unwrap().unwrap();assert_eq!(f.state.credential_load(credential.id),0);}
     assert_eq!(
         c.query_row(
             "SELECT COUNT(*) FROM billing_ledger WHERE settled_ms IS NULL",
@@ -988,7 +981,7 @@ async fn embedding_endpoint_rejects_unknown_kind_multi_target_alias() {
 }
 
 #[tokio::test]
-async fn virtual_chain_does_not_inherit_connection_failure_fallback() {
+async fn virtual_chain_immediately_uses_available_target_after_connection_failure() {
     let f = fixture();
     let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let unavailable = format!("http://{}/v1", closed.local_addr().unwrap());
@@ -1021,14 +1014,14 @@ async fn virtual_chain_does_not_inherit_connection_failure_fallback() {
     );
     assert_eq!(
         call(&f, &keys[0].1, "my-private-model").await,
-        StatusCode::BAD_GATEWAY
+        StatusCode::OK
     );
-    assert_eq!(good.count(), 0);
-    assert_eq!(f.attempts().len(), 1);
+    assert_eq!(good.count(), 1);
+    assert_eq!(f.attempts().len(), 2);
 }
 
 #[tokio::test]
-async fn pooled_standard_models_keep_global_provider_failover_preference() {
+async fn pooled_standard_models_recheck_current_order_after_provider_failover() {
     let f = fixture();
     let first = start_mock(Reply::Status(500, "provider down")).await;
     let second = start_mock(Reply::Ok).await;
@@ -1042,12 +1035,12 @@ async fn pooled_standard_models_keep_global_provider_failover_preference() {
     assert_eq!(first.count(), 1);
     assert_eq!(second.count(), 1);
     assert_eq!(call(&f, &keys[1].1, "real-model").await, StatusCode::OK);
-    assert_eq!(first.count(), 1);
+    assert_eq!(first.count(), 2);
     assert_eq!(second.count(), 2);
 }
 
 #[tokio::test]
-async fn affinity_switched_while_queued_prevents_sending_the_old_key() {
+async fn legacy_affinity_change_does_not_reject_request_using_live_capacity() {
     let f = fixture();
     let m = start_mock(Reply::Ok).await;
     let (a, b) = two_keys(&f, &m);
@@ -1106,14 +1099,17 @@ async fn affinity_switched_while_queued_prevents_sending_the_old_key() {
     .unwrap();
     assert!(provider_pool::switch_affinity(&f.state.conn(), user, provider, &old, next).unwrap());
     drop(held);
-    assert_eq!(request.await.unwrap().status(), StatusCode::CONFLICT);
-    assert_eq!(m.count(), 0);
+    let response=request.await.unwrap();assert_eq!(response.status(),StatusCode::OK);
+    let _=axum::body::to_bytes(response.into_body(),usize::MAX).await;
+    f.state.drain_writes();
+    assert_eq!(m.count(), 1);
+    assert_eq!(m.seen()[0].auth.as_deref(),Some("Bearer upstream-two"),"busy first source immediately uses the available second source");
     assert_eq!(
         f.state
             .conn()
             .query_row("SELECT COUNT(*) FROM billing_ledger", [], |row| row
                 .get::<_, i64>(0))
             .unwrap(),
-        0
+        1
     );
 }

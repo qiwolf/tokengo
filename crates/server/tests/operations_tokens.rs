@@ -1173,3 +1173,21 @@ async fn browser_token_list_without_write_csrf_header_and_mutation_csrf_enforcem
 
 #[path = "support/logging_permissions.rs"]
 mod logging_permissions;
+
+#[tokio::test]
+async fn usage_analytics_has_the_same_operations_read_authority_as_usage_pages() {
+    let f=Fixture::new();let cookie=f.login("admin",PASSWORD).await;
+    let minted=f.mint(&cookie,"usage-reader").await;let token=minted["secret"].as_str().unwrap();
+    let (status,caps,_)=f.req("GET","/api/ops/capabilities",None,Some(token),json!({})).await;
+    assert_eq!(status,StatusCode::OK);
+    assert!(caps["actions"].as_array().unwrap().iter().any(|a|a["method"]=="GET"&&a["path"]=="/api/usage/analytics"));
+    for path in ["/api/usage?start_at=10&end_at=20","/api/usage/analytics?start_at=10&end_at=20"] {
+        let (status,body,headers)=f.req("GET",path,None,Some(token),json!({})).await;
+        assert_eq!(status,StatusCode::OK,"{body}");assert_eq!(headers["cache-control"],"no-store");
+        if path.contains("analytics") {assert_eq!(body["summary"]["ledger_count"],0);assert!(body["analytics"]["buckets"].is_array());}
+    }
+    assert_eq!(f.req("POST","/api/usage/analytics",None,Some(token),json!({})).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(f.req("GET","/api/account/usage/analytics",None,Some(token),json!({})).await.0,StatusCode::FORBIDDEN);
+    f.state.conn().execute("UPDATE operations_tokens SET revoked_at_ms=?1 WHERE id=?2",rusqlite::params![db::now_ms(),minted["token"]["id"].as_i64().unwrap()]).unwrap();
+    assert_eq!(f.req("GET","/api/usage/analytics",None,Some(token),json!({})).await.0,StatusCode::UNAUTHORIZED);
+}

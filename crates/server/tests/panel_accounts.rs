@@ -725,12 +725,18 @@ async fn portal_time_range_summary_is_owner_scoped_and_independent_of_paging() {
     let (status,body,_)=f.req("GET",path,Some(&cookie),None,false,None,json!({})).await;
     assert_eq!(status,StatusCode::OK);assert_eq!(body["usage"]["entries"].as_array().unwrap().len(),1);
     assert_eq!(body["usage"]["summary"]["ledger_count"],2);assert_eq!(body["usage"]["summary"]["total_tokens"],32);
-    assert_eq!(body["usage"]["analytics"]["buckets"][0]["total_tokens"],32);assert_eq!(body["usage"]["analytics"]["models"].as_array().unwrap().len(),1);
-    assert_eq!(body["usage"]["analytics"]["model_series"][0]["ledger_count"],2);assert_eq!(body["usage"]["analytics"]["model_series"][0]["buckets"][0]["total_tokens"],32);
+    assert!(body["usage"].get("analytics").is_none());
+    let report_path="/api/account/usage/analytics?start_at=10&end_at=20&limit=1";
+    let (status,report,_)=f.req("GET",report_path,Some(&cookie),None,false,None,json!({})).await;
+    assert_eq!(status,StatusCode::OK);assert_eq!(report["summary"],body["usage"]["summary"]);
+    assert_eq!(report["analytics"]["buckets"][0]["total_tokens"],32);assert_eq!(report["analytics"]["models"].as_array().unwrap().len(),1);
+    assert_eq!(report["analytics"]["model_series"][0]["ledger_count"],2);assert_eq!(report["analytics"]["model_series"][0]["buckets"][0]["total_tokens"],32);
     let cursor=body["usage"]["next_before_id"].as_i64().unwrap();
     let (_,next,_)=f.req("GET",&format!("{path}&before_id={cursor}"),Some(&cookie),None,false,None,json!({})).await;
     assert_eq!(next["usage"]["summary"],body["usage"]["summary"]);assert!(next["usage"]["next_before_id"].is_null());
-    assert_eq!(next["usage"]["analytics"],body["usage"]["analytics"]);
+    assert!(next["usage"].get("analytics").is_none());
+    let (_,after,_)=f.req("GET",&format!("{report_path}&before_id={cursor}"),Some(&cookie),None,false,None,json!({})).await;
+    assert_eq!(after,report);
     assert_eq!(next["usage"]["entries"][0]["input_tokens"],10);
     for query in ["start_at=20&end_at=10","start_at=-1","end_at=9223372036854775807","start_at=10&end_at=10","start_at=10&user_id=1"] {
         assert_eq!(f.req("GET",&format!("/api/account/portal?{query}"),Some(&cookie),None,false,None,json!({})).await.0,StatusCode::BAD_REQUEST);

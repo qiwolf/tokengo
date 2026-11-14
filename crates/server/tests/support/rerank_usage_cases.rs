@@ -82,17 +82,19 @@ async fn meter_case(path: &str, response: &'static str, priced: bool, expected: 
     if priced {
         assert_eq!(status, "success");
         let complete = ledger_expected.0.zip(ledger_expected.1);
-        assert_eq!(certainty, if complete.is_some() { "reported" } else { "estimated" });
+        assert_eq!(certainty, if complete.is_some() { "reported" } else { "unknown" });
         assert_eq!(observed, complete.map(|(a,b)|a+b));
         let price_id = price_id.expect("priced request must retain its price identity");
         let snapshot: Value = serde_json::from_str(snapshot.as_deref().expect("priced snapshot must exist")).unwrap();
         assert_eq!(snapshot, json!({"currency":"CNY","id":price_id,"channel_id":id.0,"model":"mock chat",
             "input_micro_per_million":1_000_000,"output_micro_per_million":1_000_000,
             "max_input_tokens":4096,"max_output_tokens":128}));
-        let expected_debit = complete.map(|(a,b)|a+b).unwrap_or(reserved).min(reserved);
-        assert_eq!(debit, Some(expected_debit));
+        let expected_debit = complete.map(|(a,b)|a+b);
+        assert_eq!(debit, expected_debit,"missing upstream usage has unknown cost; full reported cost is not clamped to an estimate");
+        assert!(reserved>=0,"reservation is diagnostic only");
         let budget = tokengo_server::db::billing::budgets(&conn, Some("user"), Some(1)).unwrap().remove(0);
-        assert_eq!((budget.spent_micro, budget.reserved_micro), (expected_debit, 0));
+        assert_eq!((budget.spent_micro, budget.reserved_micro), (expected_debit.unwrap_or(0), 0),"known actual cost remains accounted without a monetary hold or admission limit");
+        assert!(!budget.frozen,"reported cost must not automatically freeze the historical budget");
     } else {
         assert_eq!((status.as_str(), certainty.as_str(), debit), ("unpriced", "unpriced", None));
         assert_eq!((price_id, observed), (None, None));

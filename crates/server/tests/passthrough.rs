@@ -244,18 +244,25 @@ async fn mtphotos_api_key_alias_all_methods_strip_false_and_encoded_paths() {
 }
 
 #[tokio::test]
-async fn rejects_budget_tpm_and_upload_bound_before_upstream() {
+async fn ignores_zero_money_budget_but_rejects_tpm_and_upload_bound_before_upstream() {
+    let hits=std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen=hits.clone();
+    let (url,task)=mock(Router::new().fallback(move || {
+        let seen=seen.clone();
+        async move {seen.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Response::new(Body::from("ok"))}
+    })).await;
     let f = Fixture::new();
     f.route(
-        "http://127.0.0.1:1",
+        &url,
         "/face/",
         serde_json::json!({"max_body_bytes":4}),
     );
     db::billing::set_budget(&f.state.conn(), "key", f.key_id, Some(0), "test").unwrap();
-    assert_eq!(f.call("/face/represent", vec![]).await.status(), 402);
-    assert!(db::billing::usage(&f.state.conn(), &Default::default())
-        .unwrap()
-        .is_empty());
+    let response=f.call("/face/represent", vec![]).await;
+    assert_eq!(response.status(),200,"legacy zero money limit must not gate passthrough");
+    assert_eq!(to_bytes(response.into_body(),1024).await.unwrap().as_ref(),b"ok");
+    f.state.drain_writes();
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst),1);
     db::billing::set_budget(&f.state.conn(), "key", f.key_id, Some(100), "test").unwrap();
     {
         let c = f.state.conn();
@@ -283,9 +290,15 @@ async fn rejects_budget_tpm_and_upload_bound_before_upstream() {
         .await
         .unwrap();
     assert_eq!(too_large.status(), 413);
-    assert!(db::billing::usage(&f.state.conn(), &Default::default())
-        .unwrap()
-        .is_empty());
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst),1,"TPM and upload validation must not invoke upstream");
+    f.state.drain_writes();
+    let usage=db::billing::usage(&f.state.conn(), &Default::default()).unwrap();
+    assert_eq!(usage.len(),1,"local rejections do not create billable attempts");
+    assert_eq!(usage[0].debit_micro,Some(50),"completed real request records the configured actual charge");
+    let c=f.state.conn();
+    let holds:i64=c.query_row("SELECT count(*) FROM billing_allocations WHERE reserved_micro<>0",[],|r|r.get(0)).unwrap();
+    assert_eq!(holds,0);
+    task.abort();
 }
 
 #[tokio::test]

@@ -561,7 +561,7 @@ async fn changed_source_identity_does_not_gate_runtime_but_private_acl_still_app
 }
 
 #[tokio::test]
-async fn queued_request_is_not_rerouted_by_diagnostic_quarantine() {
+async fn busy_primary_uses_live_capacity_and_diagnostic_quarantine_does_not_change_order() {
     for shared in [false, true] {
         for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
             let f = Fixture::new(kind, 2).await;
@@ -569,26 +569,18 @@ async fn queued_request_is_not_rerouted_by_diagnostic_quarantine() {
             f.publish(shared).await;
             f.age(19);
             let permit = f.state.channel_gate(f.sources[0].0, 1).unwrap().try_acquire_owned().unwrap();
-            let renew_while_waiting = async {
-                tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                    loop {
-                        let running: i64 = f.state.conn().query_row("SELECT count(*) FROM requests WHERE status='running'", [], |r| r.get(0)).unwrap();
-                        if running > 0 { break; }
-                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                    }
-                }).await.expect("user request must have loaded its old route snapshot and be waiting for cloud capacity");
-                // A busy source cannot complete its diagnostic; the healthy GPU can.
-                vector_renewal::tick(&f.state).await.unwrap();
-                assert_eq!(f.status(shared)["state"], "degraded");
-                f.clear();
-                drop(permit);
-            };
-            let ((code, body), ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                tokio::join!(f.call(), renew_while_waiting)
-            }).await.expect("diagnostic status must not leave a user request waiting indefinitely");
-            assert_eq!(code, StatusCode::OK, "diagnostic quarantine cannot reject a healthy queued request: {body}");
-            assert_eq!(f.upstreams[0].count(), 1, "diagnostic state must not skip the queued primary: {body}");
-            assert_eq!(f.upstreams[1].count(), 0, "a healthy primary must keep the configured route order");
+            // A busy source cannot complete its diagnostic; the healthy GPU can.
+            vector_renewal::tick(&f.state).await.unwrap();
+            assert_eq!(f.status(shared)["state"], "degraded");
+            f.clear();
+            let (code,body)=tokio::time::timeout(std::time::Duration::from_millis(700),f.call()).await.expect("busy primary must immediately use the next available configured source");
+            assert_eq!(code,StatusCode::OK,"{body}");
+            assert_eq!((f.upstreams[0].count(),f.upstreams[1].count()),(0,1));
+            drop(permit);
+            f.clear();
+            let (code,body)=f.call().await;
+            assert_eq!(code,StatusCode::OK,"{body}");
+            assert_eq!((f.upstreams[0].count(),f.upstreams[1].count()),(1,0),"released primary regains configured order despite degraded diagnostic state");
         }
     }
 }

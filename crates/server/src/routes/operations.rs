@@ -112,6 +112,7 @@ const ACTIONS: &[(&str, &str)] = &[
     ("GET", "/api/budgets"),
     ("PUT", "/api/budgets"),
     ("GET", "/api/usage"),
+    ("GET", "/api/usage/analytics"),
     ("GET", "/api/custom-probes"),
     ("POST", "/api/custom-probes"),
     ("PUT", "/api/custom-probes/{id}"),
@@ -617,6 +618,10 @@ fn project(path: &str, method: &str, v: &mut Value) {
     if path == "/api/managed-users" {
         v.as_object_mut().map(|m| m.remove("root_accounts"));
     }
+    if path == "/api/usage/analytics" {
+        pick(v,&["summary","analytics","reporting_fx"]);
+        usage_aggregate_projection(v);
+    }
     if path == "/api/usage" {
         if let Some(rows) = v["entries"].as_array_mut() {
             for row in rows {
@@ -649,6 +654,19 @@ fn project(path: &str, method: &str, v: &mut Value) {
         v,
         method == "POST" && (path == "/api/gateway-keys" || path.ends_with("/keys")),
     );
+}
+// Only aggregate dimensions/meters are exposed by the operations report.
+// Recurse through known report containers; snapshots and new arbitrary fields
+// must never gain machine visibility just because a handler adds them later.
+fn usage_aggregate_projection(v:&mut Value) {
+    match v {
+        Value::Array(rows)=>for row in rows {usage_aggregate_projection(row);},
+        Value::Object(_)=>{
+            pick(v,&["summary","analytics","reporting_fx","currency","request_count","ledger_count","input_tokens","output_tokens","total_tokens","unknown_input_entries","unknown_output_entries","unknown_debit_entries","unpriced_entries","known_debit_micro","known_debit_cny_micro","display_currency","amounts_by_currency","start_at","end_at","effective_end_at","bucket_seconds","buckets","models","model_series","average_rpm","average_tpm","model","is_other","rate_nano","date","source_url","fetched_at_ms","stale","status"]);
+            for value in v.as_object_mut().unwrap().values_mut() {usage_aggregate_projection(value);}
+        },
+        _=>{},
+    }
 }
 fn scrub(v: &mut Value, allow_new_secret: bool) {
     match v {
@@ -753,6 +771,14 @@ mod tests {
         assert_eq!(v["endpoint"], "chat");
         assert!(!v.to_string().contains("SECRET"));
         assert_eq!(v["url"], "");
+    }
+    #[test]
+    fn usage_reports_expose_only_aggregate_fields_for_operations() {
+        let mut value=json!({"summary":{"ledger_count":2,"source_snapshot":{"credential":"SECRET"}},"analytics":{"model_series":[{"model":"public-model","buckets":[{"start_at":10,"total_tokens":13,"request_snapshot":"SECRET"}]}]},"entries":[{"source_snapshot":"SECRET"}],"raw":"SECRET"});
+        project("/api/usage/analytics","GET",&mut value);
+        assert_eq!(value["summary"]["ledger_count"],2);
+        assert_eq!(value["analytics"]["model_series"][0]["buckets"][0]["total_tokens"],13);
+        assert!(!value.to_string().contains("SECRET"));assert!(value.get("entries").is_none());
     }
     #[test]
     fn exactly_registered_methods_are_allowed() {

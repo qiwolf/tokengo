@@ -116,7 +116,7 @@ async fn w09_policy_semantics_never_retry_or_switch_source_before_or_after_commi
     }
 }
 /// Reserve and settle update one unique ledger row per attempt (not one audit
-/// event). Unknown source usage may legitimately consume the priced hold.
+/// event). Unknown source usage keeps its cost unknown; estimates are not debits.
 fn assert_accounting(state:&Arc<AppState>,count:i64,known:Option<(i64,i64)>,outcomes:&[&str]) {
     state.drain_writes();let c=state.conn();
     let requests:i64=c.query_row("SELECT COUNT(*) FROM requests",[],|r|r.get(0)).unwrap();assert_eq!(requests,count);
@@ -127,11 +127,12 @@ fn assert_accounting(state:&Arc<AppState>,count:i64,known:Option<(i64,i64)>,outc
     let rows:Vec<(Option<i64>,Option<i64>,Option<i64>,i64,String,String,Option<i64>,i64,i64,bool,bool)>=stmt.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).unwrap().map(Result::unwrap).collect();assert_eq!(rows.len()as i64,count);
     assert_eq!(outcomes.len() as i64,count);
     for (row,outcome) in rows.into_iter().zip(outcomes) {
-        assert_ne!(row.4,"reserved");assert_eq!(row.5,*outcome);assert!(row.6.is_some());assert!(row.2.is_some_and(|debit|debit>=0&&debit<=row.3));
+        assert_ne!(row.4,"reserved");assert_eq!(row.5,*outcome);assert!(row.6.is_some());
         if let Some((input,output))=known {assert_eq!((row.0,row.1),(Some(input),Some(output)));assert_eq!((row.7,row.8,row.9,row.10),(input,output,true,true));assert_eq!(row.2,Some(input+output),"reported reasoning subset must not add to the source total output twice");}
-        else {assert_eq!((row.0,row.1),(None,None));assert!(!row.9&&!row.10,"missing usage stays unknown, not reported zero");assert_eq!(row.2,Some(row.3),"unknown usage consumes the single priced hold under the existing settlement rule");}
+        else {assert_eq!((row.0,row.1),(None,None));assert!(!row.9&&!row.10,"missing usage stays unknown, not reported zero");assert_eq!(row.2,None,"unknown usage must not debit the estimate");}
     }
     drop(stmt);
     let pending:i64=c.query_row("SELECT COUNT(*) FROM billing_budgets WHERE reserved_micro<>0",[],|r|r.get(0)).unwrap();assert_eq!(pending,0,"all holds released exactly once at terminal settlement");
+    let allocations:i64=c.query_row("SELECT COUNT(*) FROM billing_allocations WHERE reserved_micro<>0",[],|r|r.get(0)).unwrap();assert_eq!(allocations,0,"new attempts never occupy a local cash hold");
     let mismatched:i64=c.query_row("SELECT COUNT(*) FROM billing_budgets b WHERE b.spent_micro<>COALESCE((SELECT SUM(l.debit_micro) FROM billing_allocations a JOIN billing_ledger l ON l.id=a.reservation_id WHERE a.scope=b.scope AND a.scope_id=b.scope_id),0)",[],|r|r.get(0)).unwrap();assert_eq!(mismatched,0,"budget debit equals the unique settled allocations, without a second debit");
 }

@@ -30,7 +30,9 @@ pub fn router() -> Router<SharedState> {
         .route("/api/budgets", get(budgets).put(update_budget))
         .route("/api/billing/objects", get(objects))
         .route("/api/usage", get(admin_usage))
+        .route("/api/usage/analytics", get(admin_usage_analytics))
         .route("/v1/usage", get(self_usage))
+        .route("/v1/usage/analytics", get(self_usage_analytics))
 }
 fn mutation_error(e: db::DbError) -> ApiError {
     match e {
@@ -216,42 +218,99 @@ async fn admin_usage(
     Query(q): Query<UsageQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let mut response = {
-    let conn = state.conn();
-    let lifecycle_state=db::billing_management::validated_state(q.state.as_deref(),"all").map_err(mutation_error)?;
-    let catalog=if lifecycle_state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
-    let (entries,next)=billing::usage_page_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
-    let summary=billing::usage_summary_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
-    let analytics=billing::usage_analytics_with_catalog(&conn,&q,Some(&catalog),&summary).map_err(mutation_error)?;
-    let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
-    json!({"budget_enforcement":false,"entries":entries,"next_before_id":next,"summary":summary,"analytics":analytics})
+        let conn = state.conn();
+        let lifecycle_state=db::billing_management::validated_state(q.state.as_deref(),"all").map_err(mutation_error)?;
+        let catalog=if lifecycle_state=="active" {db::billing_management::current_objects(&conn)?}else{db::billing_management::objects(&conn)?};
+        let (entries,next)=billing::usage_page_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
+        let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
+        json!({"budget_enforcement":false,"entries":entries,"next_before_id":next})
     };
-    let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
-    crate::reporting_currency::apply(&mut response,quote.as_ref());
+    apply_reporting(&state,&mut response).await;
     Ok(Json(response))
+}
+// Full-range statistics have a separate request lifecycle from cursor paging.
+// Both functions still read the same filters/catalog and canonical ledger.
+async fn admin_usage_analytics(
+    _auth: AdminAuth,
+    State(state): State<SharedState>,
+    Query(q): Query<UsageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let mut response=read_usage_report(&state,q,UsageReportAccess::Admin).await?;
+    apply_reporting(&state,&mut response).await;
+    Ok(Json(response))
+}
+// Each report owns a read-only WAL snapshot. Slow groupings must not hold the
+// shared writer connection or a Tokio worker while a user turns a history page.
+pub(super) enum UsageReportAccess { Admin, Browser{session:String,user:i64}, Key{key:i64,user:i64} }
+pub(super) async fn read_usage_report(state:&SharedState,q:UsageQuery,access:UsageReportAccess)->Result<Value,ApiError> {
+    let state=state.clone();
+    tokio::task::spawn_blocking(move|| {
+        let report=|conn:&rusqlite::Connection|->Result<Value,ApiError>{
+            match &access {
+                UsageReportAccess::Browser{session,user}=>{
+                    let current=db::accounts::authenticate(conn,session)?;
+                    if !current.is_some_and(|a|a.account.role=="user"&&a.account.user_id==Some(*user)) {return Err(ApiError::unauthorized("账号不可用"));}
+                },
+                UsageReportAccess::Key{key,user}=>{
+                    if !db::identity::context(conn,*key)?.is_some_and(|a|a.user_id==*user) {return Err(ApiError::unauthorized("Virtual key is inactive or invalid"));}
+                },
+                UsageReportAccess::Admin=>{},
+            }
+            usage_report(conn,&q,None)
+        };
+        with_usage_read_snapshot(&state,report)
+    }).await.map_err(|_|ApiError::internal("用量统计处理失败"))?
+}
+fn with_usage_read_snapshot(state:&SharedState,report:impl FnOnce(&rusqlite::Connection)->Result<Value,ApiError>)->Result<Value,ApiError> {
+    // SQLite's private-memory database cannot be reopened. File-backed
+    // production reports use an independent read-only transaction.
+    if state.cfg.db_path==std::path::Path::new(":memory:") {return report(&state.conn());}
+    let conn=rusqlite::Connection::open_with_flags(&state.cfg.db_path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY|rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX).map_err(db::DbError::from)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(db::DbError::from)?;
+    conn.execute_batch("BEGIN DEFERRED").map_err(db::DbError::from)?;
+    let value=report(&conn)?;
+    conn.execute_batch("COMMIT").map_err(db::DbError::from)?;
+    Ok(value)
+}
+
+pub(super) fn usage_report(conn:&rusqlite::Connection,q:&UsageQuery,catalog:Option<&Value>)->Result<Value,ApiError> {
+    let summary=billing::usage_summary_with_catalog(conn,q,catalog).map_err(mutation_error)?;
+    let analytics=billing::usage_analytics_with_catalog(conn,q,catalog,&summary).map_err(mutation_error)?;
+    Ok(json!({"summary":summary,"analytics":analytics}))
+}
+pub(super) async fn apply_reporting(state:&SharedState,response:&mut Value) {
+    let quote=if crate::reporting_currency::needs_quote(response){crate::reporting_currency::quote(state).await}else{None};
+    crate::reporting_currency::apply(response,quote.as_ref());
 }
 async fn self_usage(
     key: GatewayKey,
     State(state): State<SharedState>,
     Query(mut q): Query<UsageQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    q.user_id = Some(key.auth.user_id);
-    q.key_id = Some(key.auth.key_id);
+    q.user_id=Some(key.auth.user_id);q.key_id=Some(key.auth.key_id);
     let mut response = {
-    let conn = state.conn();
-    let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
-    let summary=billing::usage_summary(&conn,&q).map_err(mutation_error)?;
-    let analytics=billing::usage_analytics(&conn,&q,&summary).map_err(mutation_error)?;
-    let currency=billing::usage_currency(&q).map_err(mutation_error)?;
-    let currencies=if currency=="all" {vec!["CNY","USD"]}else{vec![currency]};
-    let mut budgets=Vec::new();
-    for currency in currencies {
-        budgets.extend(billing::budgets_currency(&conn,Some("user"),Some(key.auth.user_id),currency)?);
-        budgets.extend(billing::budgets_currency(&conn,Some("key"),Some(key.auth.key_id),currency)?);
-    }
-    json!({"budget_enforcement":false,"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics})
+        let conn=state.conn();
+        let (entries,next)=billing::usage_page(&conn,&q).map_err(mutation_error)?;
+        let currency=billing::usage_currency(&q).map_err(mutation_error)?;
+        let currencies=if currency=="all" {vec!["CNY","USD"]}else{vec![currency]};
+        let mut budgets=Vec::new();
+        for currency in currencies {
+            budgets.extend(billing::budgets_currency(&conn,Some("user"),Some(key.auth.user_id),currency)?);
+            budgets.extend(billing::budgets_currency(&conn,Some("key"),Some(key.auth.key_id),currency)?);
+        }
+        json!({"budget_enforcement":false,"entries":entries,"next_before_id":next,"budgets":budgets})
     };
-    let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
-    crate::reporting_currency::apply(&mut response,quote.as_ref());
+    apply_reporting(&state,&mut response).await;
+    Ok(Json(response))
+}
+async fn self_usage_analytics(
+    key: GatewayKey,
+    State(state): State<SharedState>,
+    Query(mut q): Query<UsageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    q.user_id=Some(key.auth.user_id);q.key_id=Some(key.auth.key_id);
+    let mut response=read_usage_report(&state,q,UsageReportAccess::Key{key:key.auth.key_id,user:key.auth.user_id}).await?;
+    apply_reporting(&state,&mut response).await;
     Ok(Json(response))
 }
 
@@ -379,16 +438,18 @@ mod request_pricing_tests {
         // attempts, independently of the requested page size.
         state.conn().execute("UPDATE billing_ledger SET created_ms=15000",[]).unwrap();
         let (status,window)=call(&state,"GET","/api/usage?start_at=10&end_at=20&limit=1",&admin,Value::Null).await;
-        assert_eq!(status,StatusCode::OK);assert_eq!(window["entries"].as_array().unwrap().len(),1);
+        assert_eq!(status,StatusCode::OK);assert_eq!(window["entries"].as_array().unwrap().len(),1);assert!(window.get("summary").is_none());
+        let (status,window)=call(&state,"GET","/api/usage/analytics?start_at=10&end_at=20&limit=1",&admin,Value::Null).await;assert_eq!(status,StatusCode::OK);
         assert_eq!(window["summary"]["ledger_count"],3);assert_eq!(window["summary"]["unknown_input_entries"],0); // Request billing has no token quantity.
         assert_eq!(window["analytics"]["buckets"][0]["total_tokens"],window["summary"]["total_tokens"]);
         assert_eq!(window["analytics"]["start_at"],10);assert_eq!(window["analytics"]["end_at"],20);
-        let (status,own)=call(&state,"GET","/v1/usage?start_at=10&end_at=20&user_id=999&key_id=999&limit=1",&secret,Value::Null).await;
+        let (status,own)=call(&state,"GET","/v1/usage/analytics?start_at=10&end_at=20&user_id=999&key_id=999&limit=1",&secret,Value::Null).await;
         assert_eq!(status,StatusCode::OK);assert_eq!(own["summary"]["ledger_count"],3);
         assert_eq!(own["analytics"]["buckets"][0]["total_tokens"],own["summary"]["total_tokens"]);
         assert_eq!(own["analytics"]["models"].as_array().unwrap().len(),1);
         let (_,empty)=call(&state,"GET","/api/usage?start_at=20&end_at=30",&admin,Value::Null).await;
-        assert_eq!(empty["summary"]["ledger_count"],0);assert!(empty["entries"].as_array().unwrap().is_empty());
+        assert!(empty.get("summary").is_none());assert!(empty["entries"].as_array().unwrap().is_empty());
+        let (_,empty)=call(&state,"GET","/api/usage/analytics?start_at=20&end_at=30",&admin,Value::Null).await;assert_eq!(empty["summary"]["ledger_count"],0);
         for path in ["/api/usage?start_at=20&end_at=10","/v1/usage?start_at=10&end_at=10"] {
             let token=if path.starts_with("/api/"){&admin}else{&secret};
             assert_eq!(call(&state,"GET",path,token,Value::Null).await.0,StatusCode::BAD_REQUEST);
@@ -436,4 +497,26 @@ async fn request_price_state(auth:AdminAuth,State(state):State<SharedState>,Path
 }
 async fn delete_request_price(auth:AdminAuth,State(state):State<SharedState>,Path(id):Path<i64>)->Result<Json<Value>,ApiError> {
     lifecycle_response(&state,&auth,"request","request_price",id,None)
+}
+
+#[cfg(test)]
+mod usage_snapshot_tests {
+    use super::*;
+    #[tokio::test]
+    async fn read_only_report_snapshot_allows_writer_and_keeps_one_consistent_view() {
+        let dir=std::env::temp_dir().join(format!("usage-snapshot-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state=crate::AppState::init(crate::Config{db_path:dir.join("db"),master_key_path:dir.join("key").to_string_lossy().into(),..Default::default()}).unwrap();
+        let value=with_usage_read_snapshot(&state,|reader| {
+            let before:i64=reader.query_row("SELECT count(*) FROM requests",[],|r|r.get(0)).map_err(db::DbError::from)?;
+            assert!(reader.execute("INSERT INTO requests(ts_ms,endpoint,model,status) VALUES(1,'/v1/chat/completions','must-not-write','ok')",[]).is_err());
+            // This would deadlock if the reader still owned state.conn().
+            state.conn().execute("INSERT INTO requests(ts_ms,endpoint,model,status) VALUES(1,'/v1/chat/completions','concurrent-writer','ok')",[]).unwrap();
+            let after:i64=reader.query_row("SELECT count(*) FROM requests",[],|r|r.get(0)).map_err(db::DbError::from)?;
+            Ok(json!({"before":before,"after":after}))
+        }).unwrap();
+        assert_eq!(value,json!({"before":0,"after":0}));
+        assert_eq!(state.conn().query_row("SELECT count(*) FROM requests",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        drop(state);std::fs::remove_dir_all(dir).unwrap();
+    }
 }

@@ -728,6 +728,13 @@ fn usage_summary_table(q:&UsageQuery)->&'static str {
         else {"billing_ledger INDEXED BY billing_ledger_time_summary"}
     } else {"billing_ledger"}
 }
+// Analytics always need time/model and money fields, including undated
+// histories. Letting GROUP BY model choose the model lookup index would read
+// every wide source snapshot just to compute these narrow aggregates.
+fn usage_analytics_table(q:&UsageQuery)->&'static str {
+    if q.user_id.is_some() {"billing_ledger INDEXED BY billing_ledger_owner_time_summary"}
+    else {"billing_ledger INDEXED BY billing_ledger_time_summary"}
+}
 /// Compact time buckets and model totals use the same authorization/filter
 /// predicates as the full-range summary. Unknown usage is kept alongside sums.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -811,7 +818,7 @@ fn usage_analytics_at(conn:&Connection,q:&UsageQuery,catalog:Option<&serde_json:
     let owned;
     let catalog=if state!="all"&&catalog.is_none() {owned=super::billing_management::current_objects(conn)?;Some(&owned)}else{catalog};
     let (predicate,args)=usage_predicates(q,state,catalog,false)?;
-    let table=usage_summary_table(q);
+    let table=usage_analytics_table(q);
     let (first,last)=if q.start_at.is_none()||q.end_at.is_none() {
         conn.query_row(&format!("SELECT min(created_ms),max(created_ms) FROM {table} WHERE 1=1{predicate}"),rusqlite::params_from_iter(args.iter()),|r|Ok((r.get::<_,Option<i64>>(0)?,r.get::<_,Option<i64>>(1)?)))?
     } else {(None,None)};
@@ -1309,6 +1316,22 @@ mod usage_time_tests {
             let index=if owner.is_some(){"billing_ledger_owner_time_summary"}else{"billing_ledger_time_summary"};
             assert!(plan.contains(&format!("COVERING INDEX {index}")),"{plan}");
             assert!(plan.contains("created_ms>? AND created_ms<?"),"{plan}");
+        }
+    }
+    #[test]
+    fn undated_and_dated_analytics_read_covering_indexes_not_wide_model_rows() {
+        let c=fixture();
+        for owner in [None,Some(1)] {
+            for start in [None,Some(10)] {
+                let q=UsageQuery{user_id:owner,start_at:start,..Default::default()};
+                let (predicate,args)=usage_predicates(&q,"all",None,false).unwrap();
+                let table=usage_analytics_table(&q);
+                let sql=format!("SELECT model,count(DISTINCT request_id),count(*),sum(input_tokens),sum(output_tokens),sum(billing_unit='token' AND input_tokens IS NULL){USAGE_AMOUNT_COLUMNS} FROM {table} WHERE 1=1{predicate} GROUP BY model");
+                let plan=c.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap().query_map(rusqlite::params_from_iter(args),|r|r.get::<_,String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap().join("\n");
+                let expected=if owner.is_some(){"billing_ledger_owner_time_summary"}else{"billing_ledger_time_summary"};
+                assert!(plan.contains(&format!("COVERING INDEX {expected}")),"{plan}");
+                assert!(!plan.contains("USING INDEX billing_ledger_model"),"{plan}");
+            }
         }
     }
     #[test]

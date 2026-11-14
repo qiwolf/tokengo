@@ -45,26 +45,29 @@ async fn native_kimi_json_and_sse_complete_output_replays_anonymous_and_explicit
         let emitted=if stream {text.lines().filter_map(|l|l.strip_prefix("data: ")).filter_map(|s|serde_json::from_str::<Value>(s).ok()).find(|v|v["type"]=="response.completed").unwrap()["response"]["output"].clone()}else{serde_json::from_str::<Value>(&text).unwrap()["output"].clone()};assert_eq!(emitted,output());
         let mut history=emitted.as_array().unwrap().clone();history.push(json!({"role":"user","content":"continue"}));let history=json!(history);
         let(code,text)=f.send(&f.key,session,history.clone(),false).await;assert_eq!(code,200,"{stream}/{session:?}: {text}");assert_eq!(f.seen.lock().unwrap()[1]["input"],history);
-        let count=f.seen.lock().unwrap().len();let foreign={let c=f.state.conn();db::identity::create_key(&c,1,"foreign",&Default::default(),None,None).unwrap().1};
-        let(code,text)=f.send(&foreign,session,history.clone(),false).await;assert_eq!(code,400,"{text}");
-        for other in [Some("foreign-session"),if session.is_some(){None}else{Some("explicit-a")}] {let(code,text)=f.send(&f.key,other,history.clone(),false).await;assert_eq!(code,400,"{text}");}
-        for malformed in [json!([{ "type":"summary_text","text":"tampered"}]),json!([{ "type":"summary_text","text":7}]),json!([{ "type":"image","image_url":"x"}])] {let mut h=history.clone();h[0]["summary"]=malformed;let(code,text)=f.send(&f.key,session,h,false).await;assert_eq!(code,400,"{text}");}
-        for invalid in [json!(""),json!(7),json!({"opaque":"forged"})] {let mut h=history.clone();h[0]["encrypted_content"]=invalid;let(code,text)=f.send(&f.key,session,h,false).await;assert_eq!(code,400,"invalid ciphertext type borrowed empty proof: {text}");}
-        let mut mixed=history.clone();mixed.as_array_mut().unwrap().push(json!({"type":"reasoning","encrypted_content":"not-issued"}));let(code,text)=f.send(&f.key,session,mixed,false).await;assert_eq!(code,400,"{text}");
-        let mut cipher=summary();cipher["encrypted_content"]=json!(summary().to_string());cipher["summary"]=json!([]);let(code,text)=f.send(&f.key,session,json!([cipher]),false).await;assert_eq!(code,400,"{text}");
+        let foreign={let c=f.state.conn();db::identity::create_key(&c,1,"foreign",&Default::default(),None,None).unwrap().1};
+        let(code,text)=f.send(&foreign,session,history.clone(),false).await;assert_eq!(code,200,"independently authorized Key: {text}");
+        for other in [Some("foreign-session"),if session.is_some(){None}else{Some("explicit-a")}] {let(code,text)=f.send(&f.key,other,history.clone(),false).await;assert_eq!(code,200,"current native source accepts session-independent history: {text}");assert_eq!(f.seen.lock().unwrap().last().unwrap()["input"],history);}
+        // Native supplier fields are forwarded, not validated by the retired
+        // local artifact-proof codec. The actual supplier owns their semantics.
+        for changed in [json!([{ "type":"summary_text","text":"tampered"}]),json!([{ "type":"summary_text","text":7}]),json!([{ "type":"image","image_url":"x"}])] {let mut h=history.clone();h[0]["summary"]=changed;let(code,text)=f.send(&f.key,session,h.clone(),false).await;assert_eq!(code,200,"{text}");assert_eq!(f.seen.lock().unwrap().last().unwrap()["input"],h);}
+        for value in [json!(""),json!(7),json!({"opaque":"forged"})] {let mut h=history.clone();h[0]["encrypted_content"]=value;let(code,text)=f.send(&f.key,session,h.clone(),false).await;assert_eq!(code,200,"native fields must not acquire local issuance rules: {text}");assert_eq!(f.seen.lock().unwrap().last().unwrap()["input"],h);}
+        let mut mixed=history.clone();mixed.as_array_mut().unwrap().push(json!({"type":"reasoning","encrypted_content":"not-issued"}));let(code,text)=f.send(&f.key,session,mixed.clone(),false).await;assert_eq!(code,200,"{text}");assert_eq!(f.seen.lock().unwrap().last().unwrap()["input"],mixed);
+        let mut cipher=summary();cipher["encrypted_content"]=json!(summary().to_string());cipher["summary"]=json!([]);let(code,text)=f.send(&f.key,session,json!([cipher.clone()]),false).await;assert_eq!(code,200,"{text}");assert_eq!(f.seen.lock().unwrap().last().unwrap()["input"],json!([cipher]));
+        let count=f.seen.lock().unwrap().len();
         let r=reqwest::Client::new().post(format!("{}/v1/chat/completions",f.http.url)).bearer_auth(&f.key).json(&json!({"model":"logical","max_tokens":32,"messages":[{"role":"assistant","content":[summary()]}]})).send().await.unwrap();assert_eq!(r.status(),400);
         assert_eq!(f.seen.lock().unwrap().len(),count,"rejected history reached source");
     }}
 }
 #[tokio::test]
-async fn summary_replay_requires_exact_declared_source_and_current_generation() {
+async fn summary_replay_obeys_supplier_parameters_without_local_issuance_or_generation_lock() {
     for (profile,model) in [("moonshot","kimi-k3"),("moonshot","kimi-k3.1-pro"),("moonshot","kimi-k3.1-pro-highspeed"),("moonshot","kimi-future"),("deepseek","deepseek-flash"),("native","kimi-k3")] {
         let f=Fixture::new(profile,model).await;
-        let(code,text)=f.send(&f.key,None,json!([summary()]),false).await;assert_eq!(code,400,"unissued: {text}");
+        let supported=profile!="deepseek";
+        let(code,text)=f.send(&f.key,None,json!([summary()]),false).await;assert_eq!(code,if supported {200}else{400},"supplier profile {profile}: {text}");
         let(code,text)=f.send(&f.key,None,json!("hello"),false).await;assert_eq!(code,200,"{text}");
-        let supported=profile=="moonshot" && model!="kimi-future";
         let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,if supported {200}else{400},"{profile}/{model}: {text}");
-        if supported {let c=f.state.conn();let mut caps=tokengo_server::protocol_config::load(&c,f.channel).unwrap();caps.max_output_tokens=Some(63);tokengo_server::protocol_config::save(&c,f.channel,&caps).unwrap();drop(c);let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,400,"generation: {text}");}
+        if supported {let c=f.state.conn();let mut caps=tokengo_server::protocol_config::load(&c,f.channel).unwrap();caps.max_output_tokens=Some(63);tokengo_server::protocol_config::save(&c,f.channel,&caps).unwrap();drop(c);let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,200,"capacity-only edit must not invalidate native history: {text}");}
     }
 }
 
@@ -143,10 +146,10 @@ async fn valid_openai_explicit_summary_history_keeps_legacy_native_behavior() {
         let f=Fixture::new("openai","gpt-test").await;
         let(code,text)=f.send(&f.key,Some("legacy-openai"),json!("hello"),stream).await;assert_eq!(code,200,"{text}");
         let(code,text)=f.send(&f.key,Some("legacy-openai"),output(),false).await;assert_eq!(code,200,"legacy explicit history regressed: {text}");assert_eq!(f.seen.lock().unwrap()[1]["input"],output());
-        let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,400,"non-Kimi summary-only must not acquire anonymous ownership: {text}");
+        let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,200,"anonymous native history needs no local ownership: {text}");
         let(code,text)=f.send(&f.key,None,json!("hello"),false).await;assert_eq!(code,200,"{text}");
-        let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,400,"existing anonymous empty-digest owner must not lend summary ownership: {text}");
-        assert_eq!(f.seen.lock().unwrap().len(),3);
+        let(code,text)=f.send(&f.key,None,output(),false).await;assert_eq!(code,200,"native history stays independent of local issuance: {text}");
+        assert_eq!(f.seen.lock().unwrap().len(),5);
     }
 }
 

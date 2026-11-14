@@ -391,7 +391,7 @@ async fn shared_disable_and_global_bottom_disable_take_effect_without_deleting_r
 }
 
 #[tokio::test]
-async fn in_flight_shared_route_rechecks_caller_key_acl_budget_and_admin_version() {
+async fn in_flight_shared_route_rechecks_live_acl_and_version_but_ignores_legacy_money_freeze() {
     for change in ["user_disabled","key_revoked","channel_revoked","frozen","route_version","bottom_disabled"] {
         let f=Fixture::new(ModelKind::Chat).await;let saved=f.publish().await;f.allow_alias_only();f.clear();
         let entered=Arc::new(tokio::sync::Notify::new());let release=Arc::new(tokio::sync::Notify::new());
@@ -415,7 +415,7 @@ async fn in_flight_shared_route_rechecks_caller_key_acl_budget_and_admin_version
             release.notify_one();
         };
         let ((status,body),())=tokio::join!(f.call("shared-model"),mutate);
-        assert!(!status.is_success(),"{change}: {body}");assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),0,"{change} must be rechecked before backup");
+        assert_eq!(status.is_success(),change=="frozen","{change}: {body}");assert_eq!(f.upstreams[0].count(),1);assert_eq!(f.upstreams[1].count(),usize::from(change=="frozen"),"live permissions are rechecked, historical money flags do not block backup");
     }
 }
 
@@ -530,14 +530,17 @@ async fn shared_vectors_without_evidence_preserve_400_and_429_switches() {
 }
 
 #[tokio::test]
-async fn admin_compatibility_probe_does_not_borrow_callers_budget() {
+async fn admin_compatibility_probe_does_not_borrow_callers_identity_and_zero_money_limit_allows_calls() {
     for kind in [ModelKind::Embeddings,ModelKind::Rerank] {
         let f=Fixture::new(kind).await;f.allow_alias_only();
         db::billing::set_budget(&f.state.conn(),"user",f.user,Some(0),"test").unwrap();
         f.publish().await;assert!(f.count()>0);f.clear();
-        let (status,body)=f.call("shared-model").await;assert!(!status.is_success(),"{body}");assert_eq!(f.count(),0);
+        let (status,body)=f.call("shared-model").await;assert!(status.is_success(),"{body}");assert_eq!(f.count(),1);
         let c=f.state.conn();let budget=db::billing::budgets(&c,Some("user"),Some(f.user)).unwrap().remove(0);
-        assert_eq!((budget.spent_micro,budget.reserved_micro),(0,0));
+        let actual:i64=c.query_row("SELECT coalesce(sum(debit_micro),0) FROM billing_ledger WHERE user_id=?1 AND request_id<>0",[f.user],|r|r.get(0)).unwrap();
+        assert!(actual>0,"priced real user call records actual spending");
+        assert_eq!((budget.spent_micro,budget.reserved_micro),(actual,0));
+        assert!(!budget.frozen,"exceeding a legacy zero limit must not freeze the user");
         assert_eq!(c.query_row("SELECT count(*) FROM billing_ledger WHERE request_id=0 AND user_id!=0",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     }
 }

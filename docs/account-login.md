@@ -41,7 +41,9 @@ root改密码与旧global hash在同一事务同步，撤全部new root+legacy s
 {"account":{},"keys":[{"id":1,"name":"example","hint":"masked","enabled":true,"revoked_at":null,"expires_at":null,"parent_key_id":null,"created_at_ms":0}],"usage":{"summary":{"request_count":0,"ledger_count":0,"input_tokens":0,"output_tokens":0,"unknown_input_entries":0,"unknown_output_entries":0,"unpriced_entries":0,"known_debit_micro":0},"entries":[{"id":1,"request_id":1,"key_id":1,"model":"example","billing_unit":"token","status":"unpriced","outcome":"ok","input_tokens":null,"output_tokens":null,"usage_certainty":"unpriced","debit_micro":null,"created_ms":0,"settled_ms":0}],"next_before_id":null}}
 ```
 
-只允许role=user、绑定当前user_id；不接受user_id query覆盖。summary全本人历史，token/known_debit字段是已知项之和，unknown/unpriced计数必须一同显示，不能称缺失为已知0。记录显式白名单，不含source/auth/price snapshots、channel配置/headers、IP、原request/error或任何key明文/hash。用户通过下述浏览器自助Key接口管理本人密钥；portal仍是用量与安全元数据投影，不返回历史密钥明文。root门户403，应进入管理控制台。
+只允许role=user、绑定当前user_id；不接受user_id query覆盖。summary覆盖所选时间范围的全部本人记录，不受分页影响；不指定时间时覆盖全历史。token/known_debit字段是已知项之和，unknown/unpriced计数必须一同显示，不能称缺失为已知0。记录显式白名单，不含source/auth/price snapshots、channel配置/headers、IP、原request/error或任何key明文/hash。用户通过下述浏览器自助Key接口管理本人密钥；portal仍是用量与安全元数据投影，不返回历史密钥明文。root门户403，应进入管理控制台。
+
+图表独立使用 `GET /api/account/usage/analytics`，返回完整 `{summary,analytics}`，沿用普通用户角色、当前会话/账号启用复核及本人归属。统计使用相同时间和币种筛选，分页游标或每页条数不截断完整范围。页面先显示明细，再读取统计；翻页不重新统计，筛选或刷新会更新，失败和加载明确显示，旧范围慢响应不会覆盖当前图表。
 
 ## 脚本化运维
 

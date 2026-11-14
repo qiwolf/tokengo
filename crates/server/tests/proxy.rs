@@ -790,10 +790,10 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
     assert_eq!(att[3], (good.0, "success".to_string(), Some(200)));
     assert_eq!(m.count(), 1);
 
-    // 路由状态：切到第二条渠道、检查点 +10 分钟、切换次数 1
+    // 成功结果只更新诊断观察；首次成功不累计历史切换次数。
     let st = f.routing("mock-chat");
     assert_eq!(st.active, Some(good), "当前渠道应该是第二条");
-    assert_eq!(st.switch_count, 1);
+    assert_eq!(st.switch_count, 0,"first successful diagnostic observation is not a remembered source switch");
     let now = tokengo_server::db::now_ms();
     let probe = st.next_probe_at_ms.expect("要记下回切检查点");
     let delta = probe - now;
@@ -802,7 +802,7 @@ async fn a_dead_primary_is_retried_then_the_next_channel_takes_over() {
         "检查点该在 10 分钟后，实际差 {delta} ms"
     );
 
-    // 第二个请求应该直接用第二条渠道，不再去戳坏渠道
+    // 真失败触发的冷却仍有效；冷却期间不重复请求坏渠道。
     let (s, _, _) = post(&f, CHAT, Some(KEY), json!({"model": "mock-chat", "messages": []})).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(m.count(), 2);
@@ -927,7 +927,7 @@ async fn client_errors_are_returned_as_is_and_never_switch_channels() {
     );
 
     let st = f.routing("mock-chat");
-    assert_eq!(st.active, Some(a), "渠道必须原地不动");
+    assert_eq!(st.active, None, "client errors must not create active-source routing memory");
     assert_eq!(st.switch_count, 0);
     assert_eq!(st.next_probe_at_ms, None);
 
@@ -1348,7 +1348,7 @@ async fn the_prober_switches_back_once_the_primary_recovers() {
     let st = f.routing("mock-chat");
     assert_eq!(st.active, Some(first), "首选活了就该切回来");
     assert_eq!(st.next_probe_at_ms, None, "回切后清掉检查点");
-    assert_eq!(st.switch_count, 2, "切走一次、切回来一次");
+    assert_eq!(st.switch_count, 1, "only the explicit diagnostic probe changes its previous observed source");
     assert_eq!(f.request_rows().len(), 1, "探活不许写记账");
 }
 

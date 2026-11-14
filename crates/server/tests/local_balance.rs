@@ -78,7 +78,7 @@ async fn full_credential_or_channel_uses_other_local_node_without_waiting(){
 #[tokio::test]
 async fn local_strategy_is_validated_and_does_not_change_chat_identity(){
  let f=Fixture::new(ModelKind::Chat).await;let(s,_)=f.request("PUT","/api/model-routing?model=bge",&f.admin,json!({"local_strategy":"random"})).await;assert_eq!(s,StatusCode::BAD_REQUEST);
- f.policy(json!({"local_strategy":"round_robin","retry_times":0})).await;for _ in 0..4{assert_eq!(f.call().await.0,StatusCode::OK);}assert_eq!((f.nodes[0].count(),f.nodes[1].count()),(4,0));assert!(db::provider_pool::affinity_token(&f.state.conn(),f.user,f.provider).unwrap().is_some());
+ f.policy(json!({"local_strategy":"round_robin","retry_times":0})).await;for _ in 0..4{assert_eq!(f.call().await.0,StatusCode::OK);}assert_eq!((f.nodes[0].count(),f.nodes[1].count()),(4,0));f.no_affinity();
 }
 #[tokio::test]
 async fn local_400_and_429_follow_explicit_provider_switch_rules(){
@@ -93,9 +93,9 @@ async fn all_nodes_busy_waits_for_whichever_node_frees_capacity(){
  let(s,b)=tokio::time::timeout(std::time::Duration::from_millis(700),f.call()).await.expect("available second node should release the wait");assert_eq!(s,StatusCode::OK,"{b}");assert_eq!((f.nodes[0].count(),f.nodes[1].count()),(0,1));release.await.unwrap();
 }
 #[tokio::test]
-async fn single_endpoint_vector_provider_retains_key_affinity_despite_local_policy(){
+async fn single_endpoint_vector_provider_uses_current_key_order_despite_local_policy(){
  let f=Fixture::new(ModelKind::Embeddings).await;f.state.conn().execute("UPDATE provider_channels SET endpoint_mode='single',base_url=?2 WHERE id=?1",rusqlite::params![f.provider,f.nodes[0].base]).unwrap();
- f.policy(json!({"local_strategy":"round_robin","retry_times":0})).await;for _ in 0..4{assert_eq!(f.call().await.0,StatusCode::OK);}assert_eq!((f.nodes[0].count(),f.nodes[1].count()),(4,0));assert!(db::provider_pool::affinity_token(&f.state.conn(),f.user,f.provider).unwrap().is_some());
+ f.policy(json!({"local_strategy":"round_robin","retry_times":0})).await;for _ in 0..4{assert_eq!(f.call().await.0,StatusCode::OK);}assert_eq!((f.nodes[0].count(),f.nodes[1].count()),(4,0));f.no_affinity();
 }
 #[tokio::test]
 async fn shared_target_balances_the_target_model_not_the_public_alias(){
@@ -118,10 +118,12 @@ async fn balanced_and_ordinary_aliases_do_not_invert_channel_and_credential_gate
  let balanced={let f=f.clone();tokio::spawn(async move{f.call().await})};
  tokio::time::sleep(std::time::Duration::from_millis(50)).await;assert!(!balanced.is_finished());
  let legacy={let f=f.clone();tokio::spawn(async move{let mut body=f.body();body["model"]=json!("diagnostic");f.request("POST","/v1/embeddings",&f.key,body).await})};
- // The ordinary alias owns source 0's channel gate and is awaiting its credential.
- let gate=f.state.channel_gate(f.ids[0].0,1).unwrap();let mut channel_held=false;
- for _ in 0..100 {if gate.clone().try_acquire_owned().is_err(){channel_held=true;break;}tokio::task::yield_now().await;}
- assert!(channel_held,"legacy alias did not reach its channel gate");
+ // Both aliases wait without owning the channel gate while all Keys are
+ // full. Releasing a Key must unblock them without an inverted wait cycle.
+ tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+ assert!(!legacy.is_finished());
+ let gate=f.state.channel_gate(f.ids[0].0,1).unwrap();
+ assert!(gate.try_acquire_owned().is_ok(),"waiting must not monopolize the source gate");
  let first=held.remove(0);drop(first);
  let (balanced,legacy)=tokio::time::timeout(std::time::Duration::from_millis(900),async{tokio::join!(balanced,legacy)}).await.expect("mixed aliases must not form credential/channel wait cycle");
  assert_eq!(balanced.unwrap().0,StatusCode::OK);assert_eq!(legacy.unwrap().0,StatusCode::OK);

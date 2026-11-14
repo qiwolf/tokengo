@@ -42,9 +42,14 @@ AuthContext 包含 user/key/role、模型/来源/费用及限流策略、父链�
 | GET/POST `/api/pricing` | 列表/追加不可变价格版本 | 管理 |
 | GET/PUT `/api/budgets?scope=user\|key&scope_id=N` | GET 读取历史消费并返回 budget_enforcement=false；PUT 返回 410 budget_enforcement_disabled | 管理 |
 | GET `/api/usage` | 按 user_id/key_id/channel_id/model 筛选持久账 | 管理 |
+| GET `/api/usage/analytics` | 相同筛选范围的完整 summary 与 analytics，不受分页游标或条数截断 | 同账务读取管理权限 |
 | GET `/v1/usage` | 当前 key 持久账与历史统计（budget_enforcement=false） | 当前 key |
+| GET `/v1/usage/analytics` | 当前 user+key 的完整统计，忽略调用方伪造的他人 user/key | 当前 key |
+| GET `/api/account/usage/analytics` | 已登录普通用户自己的完整统计 | 当前普通用户门户 |
 
 变更拒绝未知字段；身份变更与审计在同事务，审计不含密钥。新 key 创建响应 `{"key":{...metadata},"secret":"tk-..."}`，列表和用量不返回 secret。账本倒序游标 `before_id`，`limit` 1–200，返回 `entries` 与 `next_before_id`。
+
+明细分页与完整图表分开读取：首次、筛选变化或显式刷新重新请求统计，翻页和调整每页条数不重新扫描历史。统计仍覆盖全部匹配记录，金额原币种、未知值、去重请求及模型分布口径不变。图表有独立加载和错误状态；旧筛选的慢响应不会覆盖新结果。文件数据库的统计使用独立只读事务快照，不占用明细与写账的主连接；全历史图表仍需实际扫描，不能将明细分页的耗时当作完整分析耗时。
 
 ## 价格版本与费用记录（2026-11-14 当前合同）
 

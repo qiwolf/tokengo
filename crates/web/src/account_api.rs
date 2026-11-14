@@ -275,3 +275,63 @@ pub fn reporting_debit(entry:&Entry)->String {
     if entry.currency=="CNY" {return format!("{} 元",crate::fmt::usd_input(entry.debit_micro.unwrap()));}
     "汇率暂不可用".into()
 }
+
+/// Pagination is not part of an interval statistic's identity.
+pub(crate) fn usage_statistics_filter(query: &str) -> String {
+    let mut parts = query.trim_start_matches('?').split('&')
+        .filter(|p| !p.is_empty() && !p.starts_with("limit=") && !p.starts_with("before_id="))
+        .collect::<Vec<_>>();
+    parts.sort_unstable();
+    parts.join("&")
+}
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UsageStatisticsRequest {
+    filter: Option<String>,
+    generation: u64,
+}
+impl UsageStatisticsRequest {
+    pub fn begin(&mut self, query: &str, refresh: bool) -> Option<(u64, String)> {
+        let filter = usage_statistics_filter(query);
+        if !refresh && self.filter.as_ref() == Some(&filter) { return None; }
+        self.generation += 1;
+        self.filter = Some(filter.clone());
+        Some((self.generation, filter))
+    }
+    pub fn accepts(&self, generation: u64) -> bool { self.generation == generation && self.filter.is_some() }
+    pub fn failed(&mut self, generation: u64) { if self.accepts(generation) { self.generation += 1; } }
+    pub fn not_started(&mut self, generation: u64) { if self.accepts(generation) { self.filter = None; } }
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct UsageStatistics {
+    pub summary: serde_json::Value,
+    pub analytics: serde_json::Value,
+}
+pub async fn usage_statistics(query: &str) -> Result<UsageStatistics, ApiErr> {
+    typed("GET", &format!("/api/account/usage/analytics?{}",usage_statistics_filter(query)), None).await
+}
+#[cfg(test)]
+mod usage_statistics_request_tests {
+    use super::*;
+    #[test]
+    fn paging_and_page_size_do_not_recalculate_full_statistics() {
+        let mut state=UsageStatisticsRequest::default();
+        let first=state.begin("limit=25&state=all&start_at=10",false).unwrap();
+        assert!(state.begin("start_at=10&before_id=90&limit=100&state=all",false).is_none());
+        assert!(state.accepts(first.0));
+        assert!(state.begin("state=all&start_at=10",true).is_some());
+        assert!(!state.accepts(first.0));
+    }
+    #[test]
+    fn changed_filters_reject_old_slow_results_and_errors() {
+        let mut state=UsageStatisticsRequest::default();
+        let old=state.begin("start_at=10&model=old",false).unwrap();
+        let current=state.begin("start_at=10&model=new",false).unwrap();
+        assert!(!state.accepts(old.0));
+        state.failed(old.0);
+        assert!(state.accepts(current.0));
+        state.failed(current.0);
+        assert!(!state.accepts(current.0));
+        assert!(state.begin("model=new&start_at=10&before_id=20",false).is_none(), "paging must not retry a failed full scan");
+        assert!(state.begin("model=new&start_at=10",true).is_some());
+    }
+}

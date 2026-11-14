@@ -806,7 +806,7 @@ async fn browser_forbidden_csrf_and_unknown_edit_never_dispatch_probe_requests()
 }
 
 #[tokio::test]
-async fn browser_verification_respects_owner_budget_before_network_and_rpm_between_probes() {
+async fn browser_verification_ignores_zero_money_limit_but_respects_rpm_between_probes() {
     for kind in [ModelKind::Embeddings, ModelKind::Rerank] {
         for budget_block in [true, false] {
             let f = Fixture::new(kind, 2).await;
@@ -832,23 +832,20 @@ async fn browser_verification_respects_owner_budget_before_network_and_rpm_betwe
                 .await;
             assert_eq!(status,StatusCode::OK,"configuration save does not consume diagnostic budget: {body}");
             assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),0);
-            assert!(vector_compat::verify(&f.state,f.user,&f.config).await.is_err());
-            assert_eq!(
-                f.upstreams.iter().map(Upstream::count).sum::<usize>(),
-                if budget_block { 0 } else { 1 }
-            );
-            if !budget_block {
-                f.assert_diagnostics();
-            }
+            let result=vector_compat::verify(&f.state,f.user,&f.config).await;
+            assert_eq!(result.is_ok(),budget_block,"zero money limit must allow verification; RPM must still reject: {result:?}");
+            if budget_block {assert!(f.upstreams.iter().all(|upstream|upstream.count()>0),"verification reaches every configured source despite zero money limit");}
+            else {assert_eq!(f.upstreams.iter().map(Upstream::count).sum::<usize>(),1,"RPM prevents the second probe");}
+            f.assert_diagnostics();
             let c = f.state.conn();
             assert_eq!(vr::list(&c, f.user).unwrap().len(),1,"failed verification must not discard saved configuration");
-            assert!(
+            if !budget_block {assert!(
                 db::settings::all(&c)
                     .unwrap()
                     .iter()
                     .all(|(k, _)| !k.starts_with("internal_vector_compat_v1:")),
                 "partial verification must not issue a certificate"
-            );
+            );}
         }
     }
 }
