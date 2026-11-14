@@ -1,8 +1,8 @@
 # 更新日志 / Changelog
 
-## v0.34.0-qiwolf.33 — 发布准备（2026-11-14）
+## v0.34.0-qiwolf.33 — 已正式发行（2026-11-14）
 
-普通用户 Key 独立入口及离页异步取消，程序版本同步更新。[版本说明](docs/releases/v0.34.0-qiwolf.33.md)、[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。本次功能验证沿用 Key 修复专项证据，版本构建和公开产物独立记录；未新增供应商真实模型测试。
+普通用户 Key 独立入口及离页异步取消，程序版本同步更新。[版本说明](docs/releases/v0.34.0-qiwolf.33.md)、[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。精确源码390c9ad的main CI通过Rust1779/0/15、Python13与WASM；九附件digest、828包内文档及原生/容器/公开WASM76项验收通过。历史专项回归分开引用，未新增供应商真实模型测试或生产部署。
 
 ## 2026-11-14 普通用户 Key 管理独立入口
 

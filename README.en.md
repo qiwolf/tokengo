@@ -2,13 +2,15 @@
 
 2026-11-14 follow-up: users can open **API Key** directly from navigation or the portal header. The independent `#keys` page and page-owned async cancellation are verified and live; see the [repair receipt](docs/maintenance/personal-key-entry-20261114/README.md). The qiwolf.32 tag and assets remain unchanged.
 
-**新版：v0.34.0-qiwolf.33（发布中）** — 普通用户 API Key 独立入口、用量失败隔离与离页任务取消，程序内版本号同步更新。见[版本说明](docs/releases/v0.34.0-qiwolf.33.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。
+**当前正式版：[v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33)** — 普通用户 API Key 独立入口、用量失败隔离与离页任务取消，程序内版本号同步更新。见[版本说明](docs/releases/v0.34.0-qiwolf.33.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。
 
-**Release v0.34.0-qiwolf.33 (publication in progress).** Direct personal API Key navigation and cancellation of page-owned requests. [Release notes](docs/releases/v0.34.0-qiwolf.33.md) · [Receipt](docs/acceptance/2026-11-14-qiwolf33-release/README.md).
+**Current stable release: [v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33).** Direct personal API Key navigation and cancellation of page-owned requests. [Release notes](docs/releases/v0.34.0-qiwolf.33.md) · [Receipt](docs/acceptance/2026-11-14-qiwolf33-release/README.md).
 
-发行源码 `4ab9085fcb758038d3a02c6de031dec4e659b612`，公开于 2026-11-14 04:50:41 UTC。标签和包内文档保留构建时准备快照，main 与 Release 正文补入最终收据，不移动标签。本次公开验收未访问生产、未调用真实模型、未重做浏览器交互；Compose 仅检查配置。此前同产物浏览器 168 项检查单列，不冒充公开资产新测。
+.33发行源码 `390c9ad52e17e95015062b06bf990b02d48421fb`，2026-11-14 12:47:08 UTC公开。精确 main CI与九项附件、828份包内文档、原生/容器及公开WASM浏览器76项验收通过，详见发行收据。
 
-Source `4ab9085fcb758038d3a02c6de031dec4e659b612`, published 2026-11-14 04:50:41 UTC. Tagged and bundled documents retain their preparation snapshot; main and the Release page contain the final receipt without moving the tag. Public QA did not deploy to production, call real models or rerun browser interactions; Compose was checked with config only. The earlier 168 browser checks remain separate evidence.
+**.32 历史发行资料：** 发行源码 `4ab9085fcb758038d3a02c6de031dec4e659b612`，公开于 2026-11-14 04:50:41 UTC。标签和包内文档保留构建时准备快照，main 与 Release 正文补入最终收据，不移动标签。本次公开验收未访问生产、未调用真实模型、未重做浏览器交互；Compose 仅检查配置。此前同产物浏览器 168 项检查单列，不冒充公开资产新测。
+
+**Historical .32 release:** Source `4ab9085fcb758038d3a02c6de031dec4e659b612`, published 2026-11-14 04:50:41 UTC. Tagged and bundled documents retain their preparation snapshot; main and the Release page contain the final receipt without moving the tag. Public QA did not deploy to production, call real models or rerun browser interactions; Compose was checked with config only. The earlier 168 browser checks remain separate evidence.
 
 2026-11-14模型价格管理：[修改、启停、删除与验收状态](docs/maintenance/price-lifecycle-20261114/README.md)。
 

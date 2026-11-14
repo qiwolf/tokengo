@@ -1,0 +1,94 @@
+{
+  "source_commit": "390c9ad52e17e95015062b06bf990b02d48421fb",
+  "version": "0.34.0-qiwolf.33",
+  "tag": "v0.34.0-qiwolf.33",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33",
+  "published_at": "2026-11-14T12:47:08Z",
+  "ci": {
+    "commit": "390c9ad52e17e95015062b06bf990b02d48421fb",
+    "ci_run": 43594017528,
+    "attempt": 2,
+    "conclusion": "success",
+    "native": {
+      "passed": 1779,
+      "failed": 0,
+      "ignored": 15,
+      "result_lines": 99
+    },
+    "python_ran": [
+      "13"
+    ],
+    "wasm_check": "success",
+    "explicit_history_tests_passed": 5,
+    "history_overlap_not_added": true,
+    "first_attempt_failure_preserved": "native-attempt1.log"
+  },
+  "build_test_public": {
+    "host": "build-test",
+    "source_commit": "390c9ad52e17e95015062b06bf990b02d48421fb",
+    "tag": "v0.34.0-qiwolf.33",
+    "assets": 9,
+    "packaged_documents": 828,
+    "anonymous_ghcr_pull": true,
+    "production_access": false,
+    "inference_calls": 0,
+    "verified_prefix_reused": true,
+    "result": "passed",
+    "browser_checks": 76,
+    "schema_version": 47
+  },
+  "public_assets": [
+    {
+      "name": "compose.yaml",
+      "size": 797,
+      "digest": "sha256:5c7891556f3a83b5e2ca1a5f263ac576ed9161938fc80f55cecfff1ea8cc9428"
+    },
+    {
+      "name": "container-deployment.md",
+      "size": 16013,
+      "digest": "sha256:53bdcf5d9d5a74feed8ef77e0825e255608d4bd4fb49e86ccb485f9e2bd4611c"
+    },
+    {
+      "name": "container.env.example",
+      "size": 316,
+      "digest": "sha256:5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4"
+    },
+    {
+      "name": "image-manifest.json",
+      "size": 199,
+      "digest": "sha256:6255b1af34f99d7620957cbb2203c7b0f33ebad2b280a76d2de416601df11923"
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "size": 564,
+      "digest": "sha256:9f8734c1d99cb0c1d7df9f32d3c5354828b93060e897ec5741ee4566b09a9b4a"
+    },
+    {
+      "name": "registry-image.txt",
+      "size": 95,
+      "digest": "sha256:edb4dd9737e061719018a725bd988f127cdaa5edc9dc7290877c41efe7de49e7"
+    },
+    {
+      "name": "tokengo-390c9ad52e17-linux-x86_64.tar.gz",
+      "size": 35709583,
+      "digest": "sha256:195246431fa4a8bc32a5996327edfbca20f3db5a3b1f779802a7dd132aa5d0e0"
+    },
+    {
+      "name": "tokengo-390c9ad52e17-linux-x86_64.tar.gz.sha256",
+      "size": 107,
+      "digest": "sha256:bec38026ebc538ef620399caaa4beea16dbdb895a8d167f9b361705d1e8647b5"
+    },
+    {
+      "name": "tokengo-390c9ad52e17e95015062b06bf990b02d48421fb-linux-amd64.tar.gz",
+      "size": 41160105,
+      "digest": "sha256:245daf3bae94ad94809912de1c82258d9dffa07e7882823049fa483b8f00b5a0"
+    }
+  ],
+  "registry_image": "ghcr.io/qiwolf/tokengo@sha256:8e3d9384af34b6c9376117187cfc1dc35cbe7c081eb4e0bb9cb54f815e3d0894",
+  "failure_history": [
+    "CI attempt1 diagnostic write timing assertion; exact-source test20 repeats and attempt2 passed",
+    "build-test initial packaging cache path failure; native/WASM already compiled; path aligned and package verified",
+    "build-test download/GHCR TLS interruptions; Mac anonymous digest downloads transferred and GHCR retry passed",
+    "private acceptance continuation script missing native variable; prefix receipts preserved; remaining container/browser checks passed"
+  ]
+}
