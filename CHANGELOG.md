@@ -1,5 +1,9 @@
 # 更新日志 / Changelog
 
+## v0.34.0-qiwolf.33 — 发布准备（2026-11-14）
+
+普通用户 Key 独立入口及离页异步取消，程序版本同步更新。[版本说明](docs/releases/v0.34.0-qiwolf.33.md)、[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。本次功能验证沿用 Key 修复专项证据，版本构建和公开产物独立记录；未新增供应商真实模型测试。
+
 ## 2026-11-14 普通用户 Key 管理独立入口
 
 恢复左侧“API Key”、`#keys` 直达和“我的空间”页头入口，不再被图表/明细挤到下方或依赖用量请求成功。离页取消 Key/统计异步任务，避免旧响应触发前端异常。build-test226项、真实WASM68项与3个延迟回归通过；已上线，原Key与账目保留。详见[修复与上线记录](docs/maintenance/personal-key-entry-20261114/README.md)。.32正式标签与附件保持不变。

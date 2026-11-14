@@ -1,5 +1,9 @@
 # 功能与验收状态
 
+## v0.34.0-qiwolf.33 — 发布准备（2026-11-14）
+
+普通用户 Key 独立入口及离页异步取消，程序版本同步更新。[版本说明](releases/v0.34.0-qiwolf.33.md)、[发行收据](acceptance/2026-11-14-qiwolf33-release/README.md)。本次功能验证沿用 Key 修复专项证据，版本构建和公开产物独立记录；未新增供应商真实模型测试。
+
 2026-11-14 后续线上修复：普通用户增加独立“API Key”导航及 `/ui/#keys`，不依赖用量成功。build-test226项、Chromium/WebKit桌面/手机68项和3个延迟响应回归通过，已实际切换官方.32运行时及新Web，schema47、原Key/ACL/配置/账目保留；这不改变.32正式标签或附件。见[上线收据](maintenance/personal-key-entry-20261114/README.md)。
 
 ## v0.34.0-qiwolf.32：已正式发行，公开产物独立验收通过
