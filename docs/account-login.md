@@ -37,6 +37,8 @@ root改密码与旧global hash在同一事务同步，撤全部new root+legacy s
 
 普通门户 `GET /api/account/portal?before_id=i64&limit=1..100`：
 
+个人总览最近调用与门户调用明细支持向下连续加载历史，固定图标可回到最新，失败保留原列表并支持图标重试；见[连续滚动记录](maintenance/infinite-scroll-20261114/README.md)。
+
 普通用户浏览器入口：左侧“API Key”或“我的空间”页头同名按钮，独立地址 `/ui/#keys`。Key 页面直接读取本人 Key API，不依赖用量/统计查询成功；管理员继续在“用户与 Key”管理授权范围内的 Key。入口和延迟响应修复见[上线记录](maintenance/personal-key-entry-20261114/README.md)。
 
 ```json

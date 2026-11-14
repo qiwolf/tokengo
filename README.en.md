@@ -1,5 +1,7 @@
 # TokenGo
 
+2026-11-14 后续Web交互更新：四处列表连续滚动及图标导航，见[验证与上线记录](docs/maintenance/infinite-scroll-20261114/README.md)。
+
 2026-11-14 follow-up: users can open **API Key** directly from navigation or the portal header. The independent `#keys` page and page-owned async cancellation are verified and live; see the [repair receipt](docs/maintenance/personal-key-entry-20261114/README.md). The qiwolf.32 tag and assets remain unchanged.
 
 **当前正式版：[v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33)** — 普通用户 API Key 独立入口、用量失败隔离与离页任务取消，程序内版本号同步更新。见[版本说明](docs/releases/v0.34.0-qiwolf.33.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。

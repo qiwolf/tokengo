@@ -1,5 +1,7 @@
 # TokenGo
 
+2026-11-14 后续Web交互更新：四处列表连续滚动及图标导航，见[验证与上线记录](docs/maintenance/infinite-scroll-20261114/README.md)。
+
 2026-11-14 后续修复：普通用户左侧新增 **API Key** 独立入口，“我的空间”顶部可直达；已完成桌面/手机验证并更新线上，见[修复记录](docs/maintenance/personal-key-entry-20261114/README.md)。
 
 **当前正式版：[v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33)** — 普通用户 API Key 独立入口、用量失败隔离与离页任务取消，程序内版本号同步更新。见[版本说明](docs/releases/v0.34.0-qiwolf.33.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。

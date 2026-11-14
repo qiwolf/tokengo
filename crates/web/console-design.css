@@ -361,3 +361,12 @@ p {text-wrap:pretty;}
 .console-content .billing-price-actions {display:flex;flex-wrap:wrap;gap:8px;min-width:136px;max-width:224px;}
 .console-content .billing-price-actions>button {min-height:36px;white-space:nowrap;}
 @media(max-width:768px) {.console-content .billing-price-actions {max-width:none;}.console-content .billing-price-actions>button {min-height:44px;}}
+
+/* Cursor lists append at the tail; navigation remains available while reading. */
+.scroll-feed {clear:both;}
+.scroll-feed-sentinel {min-height:52px;display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 0;color:var(--fg-2);font-size:0.875rem;}
+.console-layout .console-content button.scroll-feed-icon {width:48px;min-width:48px;height:48px;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:10px;}
+.scroll-feed-icon svg {width:22px;height:22px;pointer-events:none;}
+.console-layout .console-content button.ghost.scroll-feed-latest {position:fixed;right:max(24px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));z-index:20;background:var(--surface);box-shadow:0 3px 12px rgb(0 0 0 / 15%);}
+.scroll-feed-start {scroll-margin-top:100px;}
+@media (max-width:899px) {.scroll-feed-latest {right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));}.scroll-feed-start {scroll-margin-top:76px;}}

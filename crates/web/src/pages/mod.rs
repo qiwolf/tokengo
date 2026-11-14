@@ -34,6 +34,7 @@ pub mod route_policy;
 pub mod logs;
 pub mod overview;
 pub mod user_overview;
+pub mod scroll_feed;
 pub mod settings;
 pub mod operations_tokens;
 

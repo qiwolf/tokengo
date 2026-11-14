@@ -21,8 +21,11 @@ struct CreatedToken { token: Token, secret: String }
 
 #[component]
 pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
+    let tasks = crate::page_tasks::PageTasks::new();
     let rows = RwSignal::new(Vec::<Token>::new());
     let next = RwSignal::new(None::<i64>);
+    let generation = RwSignal::new(0u64);
+    let feed_failed = RwSignal::new(false);
     let busy = RwSignal::new(false);
     let loaded = RwSignal::new(false);
     let error = RwSignal::new(None::<String>);
@@ -54,19 +57,28 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
 
     let load = move |before: Option<i64>| {
         if busy.get_untracked() { return; }
+        generation.update(|value| *value += 1);
+        let current = generation.get_untracked();
+        feed_failed.set(false);
         busy.set(true);
         error.set(None);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             let path = before.map(|id| format!("/api/ops-tokens?limit=20&before_id={id}"))
                 .unwrap_or_else(|| "/api/ops-tokens?limit=20".into());
-            match api::typed::<TokenList>("GET", &path, None).await {
+            let result = api::typed::<TokenList>("GET", &path, None).await;
+            if generation.get_untracked() != current { return; }
+            match result {
                 Ok(result) => {
-                    if before.is_some() { rows.update(|items| items.extend(result.tokens)); }
+                    let empty = result.tokens.is_empty();
+                    if before.is_some() { rows.update(|items| {
+                        let mut ids = items.iter().map(|token| token.id).collect::<std::collections::HashSet<_>>();
+                        items.extend(result.tokens.into_iter().filter(|token| ids.insert(token.id)));
+                    }); }
                     else { rows.set(result.tokens); }
-                    next.set(result.next_before_id);
+                    next.set(result.next_before_id.filter(|id| !empty && before.is_none_or(|old| *id < old)));
                     loaded.set(true);
                 }
-                Err(e) => { ctx.note_err(&e); error.set(Some(e.message)); }
+                Err(e) => { ctx.note_err(&e); feed_failed.set(true); error.set(Some(e.message)); }
             }
             busy.set(false);
         });
@@ -85,7 +97,7 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
         let body = json!({"name": token_name, "expires_in_days": lifetime.unwrap(), "password": password.get_untracked()});
         password.set(String::new());
         error.set(None); busy.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             match api::typed::<CreatedToken>("POST", "/api/ops-tokens", Some(body)).await {
                 Ok(result) => {
                     secret.set(result.secret);
@@ -100,7 +112,7 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
         if busy.get_untracked() { return; }
         let Some(token) = selected.get_untracked() else { return; };
         busy.set(true); error.set(None);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             match api::call("DELETE", &format!("/api/ops-tokens/{}", token.id), None).await {
                 Ok(_) => { revoke_open.set(false); notice.set(Some("令牌已撤销，后续请求将被拒绝。".into())); busy.set(false); load(None); }
                 Err(e) => { ctx.note_err(&e); error.set(Some(e.message)); busy.set(false); }
@@ -112,7 +124,7 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
         if busy.get_untracked() || password.get_untracked().is_empty() { return; }
         let body = json!({"password": password.get_untracked()});
         password.set(String::new()); busy.set(true); error.set(None);
-        wasm_bindgen_futures::spawn_local(async move {
+        tasks.spawn(async move {
             match api::call("POST", "/api/ops-tokens/revoke-all", Some(body)).await {
                 Ok(_) => { all_open.set(false); notice.set(Some("全部现有运维令牌已撤销。".into())); busy.set(false); load(None); }
                 Err(e) => { ctx.note_err(&e); error.set(Some(e.message)); busy.set(false); }
@@ -122,7 +134,7 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
 
     view! {
         <section class="card">
-            <header class="card-head"><h2>"运维令牌"</h2><p class="muted small">"给可信智能体的高权限站点运维凭据。可修改渠道、路由、用户和费用策略；请保存在秘密存储中。"</p></header>
+            <header id="operations-token-start" class="card-head scroll-feed-start"><h2>"运维令牌"</h2><p class="muted small">"给可信智能体的高权限站点运维凭据。可修改渠道、路由、用户和费用策略；请保存在秘密存储中。"</p></header>
             <div class="card-body">
                 <p class="muted small">"所有令牌只有一种权限：站点运维。普通修改 root 用户名或密码不会撤销令牌；安全重置会撤销全部令牌。令牌不能管理 root 安全或签发运维令牌。"</p>
                 <div class="toolbar">
@@ -148,7 +160,7 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
                         </div>
                     }
                 }/>
-                <Show when=move || next.get().is_some()><button type="button" class="ghost" disabled=move || busy.get() on:click=move |_| load(next.get_untracked())>"加载更多令牌"</button></Show>
+                <super::scroll_feed::ScrollFeed busy=Signal::derive(move||busy.get()||create_open.get()||revoke_open.get()||all_open.get()) has_more=Signal::derive(move||next.get().is_some()) failed=Signal::derive(move||feed_failed.get()) on_more=Callback::new(move|()|load(next.get_untracked())) on_latest=Callback::new(move|()|load(None)) label="令牌" anchor="operations-token-start"/>
             </div>
             <super::ModuleDialog open=create_open busy=busy title="创建运维令牌".to_string()>
                 <Show when=move || secret.get().is_empty() fallback=move || view! {
@@ -161,7 +173,7 @@ pub fn OperationsTokens(ctx: Ctx) -> impl IntoView {
                     <button type="button" class="primary" disabled=move || busy.get() on:click=move |_| {
                         if busy.get_untracked() { return; }
                         busy.set(true);
-                        wasm_bindgen_futures::spawn_local(async move { copied.set(Some(super::settings::copy_text(&secret.get_untracked()).await)); busy.set(false); });
+                        tasks.spawn(async move { copied.set(Some(super::settings::copy_text(&secret.get_untracked()).await)); busy.set(false); });
                     }>"复制完整令牌"</button>
                     {move || copied.get().map(|ok| view!{<p role="status">{if ok {"已复制。请妥善保存后关闭。"} else {"自动复制失败，请在上方文本框中手动选择并复制。"}}</p>})}
                 }>

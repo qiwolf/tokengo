@@ -55,6 +55,8 @@ pub fn UserOverview(ctx:Ctx)->impl IntoView {
     let cursor=RwSignal::new(None::<i64>);
     let busy=RwSignal::new(false);
     let error=RwSignal::new(None::<String>);
+    let feed_failed=RwSignal::new(false);
+    let load_generation=RwSignal::new(0u64);
     let request_open=RwSignal::new(false);
     let selected=RwSignal::new(None::<i64>);
     let detail=RwSignal::new(None::<api::Detail>);
@@ -67,25 +69,46 @@ pub fn UserOverview(ctx:Ctx)->impl IntoView {
     });
     let load=move |before:Option<i64>| {
         if !active()||busy.get_untracked(){return;}
-        busy.set(true);error.set(None);cursor.set(before);
+        busy.set(true);error.set(None);feed_failed.set(false);cursor.set(before);
+        load_generation.update(|v|*v+=1);let current=load_generation.get_untracked();
         let window=hours.get_untracked();
+        if before.is_none() {
+            tasks.spawn(async move {
+                let response=api::stats(window).await;
+                if !active()||hours.get_untracked()!=window{return;}
+                match response {Ok(v)=>stats.set(Some(v)),Err(e)=>{ctx.note_err(&e);error.set(Some(e.message));}}
+            });
+        }
         tasks.spawn(async move {
-            crate::page_tasks::parallel([
-                Box::pin(async move {let response=api::stats(window).await;if !active(){return;}match response {
-                    Ok(v)=>{if hours.get_untracked()==window{stats.set(Some(v));}},
-                    Err(e)=>{ctx.note_err(&e);error.set(Some(e.message));}
-                }}) as crate::page_tasks::ReadTask,
-                Box::pin(async move {let response=api::logs(before).await;if !active(){return;}match response {
-                    Ok(v)=>{if cursor.get_untracked()==before{recent.set(v);}},
-                    Err(e)=>{ctx.note_err(&e);error.set(Some(e.message));}
-                }})
-            ]).await;
+            let response=api::logs(before).await;
+            if !active()||load_generation.get_untracked()!=current{return;}
+            match response {
+                Ok(mut page)=>{
+                    if let Some(before)=before {
+                        if page.logs.is_empty()||page.next_before_id.is_some_and(|next|next>=before){page.next_before_id=None;}
+                        recent.update(|old|{
+                            let mut ids=old.logs.iter().map(|r|r.id).collect::<std::collections::HashSet<_>>();
+                            old.logs.extend(page.logs.into_iter().filter(|r|ids.insert(r.id)));
+                            old.next_before_id=page.next_before_id;
+                        });
+                    } else { recent.set(page); }
+                },
+                Err(e)=>{ctx.note_err(&e);error.set(Some(e.message));feed_failed.set(true);}
+            }
             busy.set(false);
         });
     };
     load(None);
     let poll=crate::every(5000,move||{
-        if active() && crate::page_tasks::foreground() && !busy.get_untracked() && !request_open.get_untracked() && (category.get_untracked()>0||cursor.get_untracked().is_none()){load(cursor.get_untracked());}
+        if !active()||!crate::page_tasks::foreground()||busy.get_untracked()||request_open.get_untracked(){return;}
+        if category.get_untracked()>0 {
+            let window=hours.get_untracked();
+            tasks.spawn(async move {
+                let result=api::stats(window).await;
+                if !active()||hours.get_untracked()!=window{return;}
+                match result {Ok(v)=>stats.set(Some(v)),Err(e)=>{ctx.note_err(&e);error.set(Some(e.message));}}
+            });
+        } else if cursor.get_untracked().is_none()&&!feed_failed.get_untracked(){load(None);}
     });
     on_cleanup(move||crate::stop_timer(poll));
     let open=move |id:i64| {
@@ -101,7 +124,7 @@ pub fn UserOverview(ctx:Ctx)->impl IntoView {
     };
     view!{<div class="page">
         <PageHead title="运行总览" desc="仅显示你自己的调用、Key与用量；管理员的上游配置和其他用户数据不会在此展示。">
-            <button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(cursor.get_untracked())>{move||if busy.get(){"刷新中…"}else{"刷新"}}</button>
+            <button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(None)>{move||if busy.get(){"刷新中…"}else{"刷新"}}</button>
         </PageHead>
         <div class="overview-dashboard"><div class="overview-window" role="group" aria-label="时间窗口">
             {[1i64,24,72,168].into_iter().map(|h|view!{<button type="button" class="chip" class:active=move||hours.get()==h aria-pressed=move||(hours.get()==h).to_string() disabled=move||busy.get() on:click=move|_|{hours.set(h);load(None);}>{if h==168{"7天".into()}else if h==72{"3天".into()}else{format!("{h}小时")}}</button>}).collect_view()}
@@ -117,7 +140,7 @@ pub fn UserOverview(ctx:Ctx)->impl IntoView {
         </div>
         <nav class="overview-tabs" aria-label="我的总览分类">{["最近调用","按类型","按模型","按客户端"].into_iter().enumerate().map(|(i,label)|view!{<button type="button" class:active=move||category.get()==i aria-pressed=move||(category.get()==i).to_string() on:click=move|_|category.set(i)>{label}</button>}).collect_view()}</nav>
         <Show when=move||category.get()==0>
-        <section class="card recent-calls"><header class="card-head"><h2>"最近调用"</h2><span class="spacer"></span><span class="muted small">{move||if cursor.get().is_none(){"5秒自动刷新"}else{"较早记录"}}</span></header>
+        <section class="card recent-calls"><header id="overview-feed-start" class="card-head scroll-feed-start"><h2>"最近调用"</h2><span class="spacer"></span><span class="muted small">{move||if cursor.get().is_none(){"5秒自动刷新"}else{"较早记录"}}</span></header>
         <div class="recent-list"><Show when=move||!busy.get()&&recent.with(|r|r.logs.is_empty())><div class="empty">"暂无调用"</div></Show>
         <For each=move||recent.with(|p|p.logs.iter().map(|r|r.id).collect::<Vec<_>>()) key=|id|*id children=move|id|{
             let row=Memo::new(move |_|recent.with(|p|p.logs.iter().find(|r|r.id==id).cloned()));
@@ -130,7 +153,14 @@ pub fn UserOverview(ctx:Ctx)->impl IntoView {
                 <div class="recent-meta">{move||row.get().map(|r|view!{<time>{fmt::ts(r.ts_ms)}</time><span>{format!("入口：{}",r.model)}</span>})}<button type="button" class="ghost" aria-haspopup="dialog" on:click=move|_|open(id)>"查看请求详情"</button></div>
             </article>}
         }/>
-        </div><div class="account-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(None)>"回到最新"</button><button type="button" class="ghost" disabled=move||busy.get()||recent.get().next_before_id.is_none() on:click=move|_|load(recent.get_untracked().next_before_id)>"较早记录"</button></div></section>
+        </div><super::scroll_feed::ScrollFeed
+            busy=Signal::derive(move||busy.get())
+            has_more=Signal::derive(move||recent.with(|r|r.next_before_id.is_some()))
+            failed=Signal::derive(move||feed_failed.get())
+            show_latest=Signal::derive(move||recent.with(|r|!r.logs.is_empty()))
+            on_more=Callback::new(move|_|load(if feed_failed.get_untracked(){cursor.get_untracked()}else{recent.get_untracked().next_before_id}))
+            on_latest=Callback::new(move|_|load(None)) anchor="overview-feed-start"/>
+        </section>
         </Show>
         <Show when=move||(category.get()>0)><section class="card overview-breakdown"><header class="card-head"><h2>{move||["最近调用","按类型","按模型","按客户端"][category.get()]}</h2><span class="spacer"></span><span class="muted small">"仅你自己的调用 · 5秒自动刷新"</span></header>
         <div class="metric-list">{move||stats.get().map(|s|{let items=breakdown_items(&s.stats,category.get());if items.is_empty(){view!{<div class="empty">"这个时间窗口暂无调用"</div>}.into_any()}else{items.into_iter().map(|(title,summary,usage)|view!{<article class="metric-card"><div class="metric-head"><b>{title}</b></div><p>{summary}</p><p class="muted small">{usage}</p></article>}).collect_view().into_any()}})}</div></section></Show>

@@ -1,5 +1,7 @@
 # 模型兼容核实清单
 
+2026-11-14 连续滚动更新仅调整四处Web列表及导航，没有新增供应商或真实模型调用验收，详见[专项记录](maintenance/infinite-scroll-20261114/README.md)。
+
 ## v0.34.0-qiwolf.33 — 已正式发行（2026-11-14）
 
 普通用户 Key 独立入口及离页异步取消，程序版本同步更新。[版本说明](releases/v0.34.0-qiwolf.33.md)、[发行收据](acceptance/2026-11-14-qiwolf33-release/README.md)。精确源码390c9ad的main CI通过Rust1779/0/15、Python13与WASM；九附件digest、828包内文档及原生/容器/公开WASM76项验收通过。历史专项回归分开引用，未新增供应商真实模型测试或生产部署。
