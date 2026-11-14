@@ -3909,6 +3909,37 @@ impl ResponseTranscoder {
     fn finish(&mut self)->Result<Vec<u8>,String> {match self {Self::Standard(t)=>t.finish(),Self::MiniMax(t)=>t.finish()}}
 }
 
+// Metadata only: diagnose empty terminal streams without persisting text,
+// arguments, encrypted reasoning, response IDs, headers or credentials.
+#[derive(Default)]
+struct PrecommitShape { events: Vec<&'static str>, items: Vec<&'static str>, terminal: Option<&'static str>, output_tokens: Option<u64> }
+impl PrecommitShape {
+    fn observe(&mut self, frames:&[crate::protocol::sse::Frame]) {
+        fn item_kind(v:&Value)->&'static str { match v["type"].as_str().unwrap_or("") {
+            "message"=>"message", "reasoning"=>"reasoning", "function_call"=>"function_call",
+            "custom_tool_call"=>"custom_tool_call", "compaction"=>"compaction",
+            "mcp_call"=>"mcp_call", "local_shell_call"=>"local_shell_call", _=>"other" } }
+        for frame in frames {
+            let Ok(v)=serde_json::from_str::<Value>(&frame.data) else {continue};
+            let kind=v["type"].as_str().or(frame.event.as_deref()).unwrap_or("");
+            let event=match kind {
+                "response.created"=>"response.created", "response.in_progress"=>"response.in_progress",
+                "response.output_item.added"=>"response.output_item.added", "response.output_item.done"=>"response.output_item.done",
+                "response.completed"=>"response.completed", "response.incomplete"=>"response.incomplete", "response.failed"=>"response.failed",
+                "response.output_text.delta"=>"response.output_text.delta", "response.reasoning_text.delta"=>"response.reasoning_text.delta",
+                "response.reasoning_summary_text.delta"=>"response.reasoning_summary_text.delta", "response.function_call_arguments.delta"=>"response.function_call_arguments.delta", _=>"other" };
+            if self.events.len()<32 {self.events.push(event);}
+            if let Some(item)=v.get("item") {if self.items.len()<32 {self.items.push(item_kind(item));}}
+            if let Some(items)=v["response"]["output"].as_array() {for item in items.iter().take(32-self.items.len().min(32)) {self.items.push(item_kind(item));}}
+            if matches!(event,"response.completed"|"response.incomplete"|"response.failed") {
+                self.terminal=Some(match v["response"]["status"].as_str().unwrap_or("") {"completed"=>"completed","incomplete"=>"incomplete","failed"=>"failed",_=>"other"});
+                self.output_tokens=v["response"]["usage"]["output_tokens"].as_u64();
+            }
+        }
+    }
+    fn note(&self)->String {serde_json::json!({"events":self.events,"item_types":self.items,"terminal_status":self.terminal,"output_tokens":self.output_tokens}).to_string()}
+}
+
 /// Bounded precommit preserves source bytes and observes protocol semantics before headers are sent.
 struct PreparedStream {
     observer: crate::protocol::sse::Observer,
@@ -3922,6 +3953,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
         transcoder:ResponseTranscoder::new(source,client,minimax),prefix:Bytes::new(),eof:false};
     let deadline=tokio::time::Instant::now()+remaining;
     let mut prefix=Vec::new();
+    let mut shape=PrecommitShape::default();
     loop {
         let wait=deadline.saturating_duration_since(tokio::time::Instant::now()).min(idle);
         let chunk=tokio::time::timeout(wait,resp.chunk()).await
@@ -3933,13 +3965,14 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let observed=prepared.observer.feed(&chunk);
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let policy_out=policy_result.transpose().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?;
-                let _frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
+                let frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
+                shape.observe(&frames);
                 if let Some(note)=&prepared.observer.failed {return Err(format!("precommit upstream error: {note}"));}
                 let out=match policy_out {Some(out)=>out,None=>match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?,None=>chunk.to_vec()}};
                 if prefix.len().saturating_add(out.len())>1<<20 {return Err("precommit prefix exceeds 1 MiB".into());}
                 prefix.extend_from_slice(&out);
                 if prepared.observer.done {
-                    if !prepared.observer.meaningful {return Err("precommit stream completed without output".into());}
+                    if !prepared.observer.meaningful {return Err(format!("precommit stream completed without output; shape={}",shape.note()));}
                     prepared.eof=true;
                 }
                 if prepared.observer.meaningful || prepared.observer.done {break;}
@@ -3949,10 +3982,11 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let ended=prepared.observer.finish_frames();
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let policy_out=policy_result.transpose().map_err(conversion_fault)?;
-                let _frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
+                let frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
+                shape.observe(&frames);
                 if let Some(out)=policy_out {prefix.extend_from_slice(&out);}else if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?);}
                 prepared.eof=true;
-                if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err("precommit empty or failed stream".into());}
+                if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err(format!("precommit empty or failed stream; shape={}",shape.note()));}
                 break;
             }
         }
@@ -4953,6 +4987,18 @@ mod tests {
             drop(guard);server.abort();std::fs::remove_dir_all(dir).ok();
         }
     }
+
+#[cfg(test)]
+mod precommit_shape_tests {
+    use super::*;
+    #[test]
+    fn empty_terminal_diagnostic_is_bounded_and_contains_no_payloads() {
+        let mut shape=PrecommitShape::default();
+        let frame=crate::protocol::sse::Frame{event:None,data:serde_json::json!({"type":"response.completed","secret":"SYNTHETIC-PRIVATE-CREDENTIAL","response":{"id":"SYNTHETIC-PRIVATE-ID","status":"completed","output":[{"type":"custom_tool_call","input":"SYNTHETIC-PRIVATE-CREDENTIAL"}],"usage":{"output_tokens":7}}}).to_string()};
+        for _ in 0..100 {shape.observe(std::slice::from_ref(&frame));}
+        let note=shape.note();assert!(!note.contains("SYNTHETIC"));assert!(note.len()<2000);assert_eq!(shape.events.len(),32);assert_eq!(shape.items.len(),32);assert_eq!(shape.terminal,Some("completed"));assert_eq!(shape.output_tokens,Some(7));assert!(note.contains("custom_tool_call"));
+    }
+}
 
 #[cfg(test)]
 mod billing_input_reservation_tests {

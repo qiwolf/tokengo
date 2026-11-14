@@ -94,6 +94,21 @@ class DeploymentTests(unittest.TestCase):
         env.write_text(env.read_text().replace('/var/lib/tokengo', str(manage.STATE)).replace('/opt/tokengo', str(manage.BASE)).replace('/var/log/tokengo', str(manage.LOGS)))
         self.assertEqual(manage.validate_config(), 'http://127.0.0.1:3160')
 
+    def test_bundle_verification_retains_schema45_and_accepts_schema47(self):
+        # Package identity evolves, but offline verification must still permit
+        # an intact historical bundle for an explicitly chosen rollback.
+        for version in [45,47]:
+            with self.subTest(schema_version=version):
+                tree=release(self.root / f'schema-{version}')
+                manifest=json.loads((tree / 'manifest.json').read_text())
+                manifest['schema_version']=version
+                (tree / 'manifest.json').write_text(json.dumps(manifest))
+                checksums(tree)
+                archive=bundle(tree,self.root / f'schema-{version}.tar.gz')
+                unpacked,commit=manage.verify_bundle(archive,self.root / f'unpacked-{version}')
+                self.assertEqual(commit,'a'*40)
+                self.assertEqual(json.loads((unpacked / 'manifest.json').read_text())['schema_version'],version)
+
     def test_bundle_rejects_tamper_and_macos_binary(self):
         tree = release(self.root / 'release')
         path = bundle(tree, self.root / 'ok.tar.gz')

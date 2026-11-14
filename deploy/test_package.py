@@ -21,7 +21,7 @@ def load(name,path):
 package=load('tested_package',HERE/'package.py')
 manage=load('tested_package_manage',HERE/'manage.py')
 COMMIT='a'*40
-SOURCES=['request_paths.sql','account_overview.sql','query_performance.sql','model_invocation_totals.sql']
+SOURCES=['request_paths.sql','account_overview.sql','query_performance.sql','model_invocation_totals.sql','usage_time.sql','currency_units.sql']
 
 
 class PackageTests(unittest.TestCase):
@@ -70,19 +70,20 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(commit,COMMIT)
         return root,json.loads((root/'manifest.json').read_text())
 
-    def test_actual_archive_manifest_migration45_matches_schema_rs_and_all_checksums(self):
+    def test_actual_archive_manifest_schema47_matches_schema_rs_and_all_checksums(self):
         archive=self.build_package();root,manifest=self.unpack_verified(archive)
         schema=(SOURCE_ROOT/'crates/server/src/db/schema.rs').read_text()
         latest=max(map(int,re.findall(r'^\s*\((\d+),',schema,re.MULTILINE)))
         self.assertEqual(manifest['schema_version'],latest)
-        self.assertEqual(latest,45,'a new migration requires a deliberate packaging-contract update')
+        self.assertEqual(latest,47,'a new migration requires a deliberate packaging-contract update')
         self.assertEqual(manifest['commit'],COMMIT)
         self.assertEqual(manifest['target'],'x86_64-unknown-linux-gnu')
-        self.assertEqual(set(manifest['migrations']),{'43','44','45'})
-        for version,name in [('43','request_paths.sql'),('44','account_overview.sql')]:
+        self.assertEqual(set(manifest['migrations']),{'43','44','45','46','47'})
+        for version,name in [('43','request_paths.sql'),('44','account_overview.sql'),('46','usage_time.sql'),('47','currency_units.sql')]:
             record=manifest['migrations'][version]
             expected=(self.root/'crates/server/src/db'/name).read_bytes()
             self.assertEqual(record['source_path'],'crates/server/src/db/'+name)
+            self.assertRegex(schema,rf'\({version},\s*include_str!\("{name}"\)\)')
             self.assertEqual((root/record['archive_path']).read_bytes(),expected)
             self.assertEqual(record['sha256'],hashlib.sha256(expected).hexdigest())
         executed=re.search(r'\(45,\s*concat!\(include_str!\("([^"]+)"\),\s*"\\n",\s*include_str!\("([^"]+)"\)\)\)',schema)
@@ -99,7 +100,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual((root/migration['archive_path']).read_bytes(),combined)
         self.assertEqual(migration['sha256'],hashlib.sha256(combined).hexdigest())
         checksums=json.loads((root/'checksums.json').read_text())
-        for record in [manifest['migrations']['43'],manifest['migrations']['44'],migration,*migration['parts']]:
+        for record in [manifest['migrations'][v] for v in ['43','44','46','47']]+[migration,*migration['parts']]:
             self.assertEqual(checksums[record['archive_path']],record['sha256'])
         checksum_line=archive.with_name(archive.name+'.sha256').read_text().strip()
         self.assertEqual(checksum_line,hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name)
@@ -108,7 +109,17 @@ class PackageTests(unittest.TestCase):
         self.assertIn('web/fixture.wasm',checksums)
 
     def test_missing_either_migration45_part_refuses_distributable_archive(self):
-        for name in ['query_performance.sql','model_invocation_totals.sql']:
+        for name in ['query_performance.sql','model_invocation_totals.sql','usage_time.sql','currency_units.sql']:
+            with self.subTest(missing=name):
+                path=self.root/'crates/server/src/db'/name;raw=path.read_bytes();path.unlink()
+                try:
+                    with self.assertRaises(FileNotFoundError):self.build_package()
+                    self.assertEqual(list(self.output.glob('*.tar.gz')),[])
+                    self.assertEqual(list(self.output.glob('*.sha256')),[])
+                finally:path.write_bytes(raw)
+
+    def test_missing_schema46_or47_sql_refuses_distributable_archive(self):
+        for name in ['usage_time.sql','currency_units.sql']:
             with self.subTest(missing=name):
                 path=self.root/'crates/server/src/db'/name;raw=path.read_bytes();path.unlink()
                 try:

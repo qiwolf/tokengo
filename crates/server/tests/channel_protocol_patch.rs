@@ -54,3 +54,17 @@ async fn generic_background_catalog_cannot_replace_oauth_account_metadata(){
     tokengo_server::capability_detector::tick(&state).await.unwrap();assert_eq!(hits.load(Ordering::SeqCst),0,"OAuth must use its account catalog, not an unauthenticated provider fetch");
     server.abort();drop(state);std::fs::remove_dir_all(dir).ok();
 }
+
+#[tokio::test]
+async fn capacity_only_update_preserves_identity_but_raw_hash_cas_rejects_stale_form() {
+    let dir=std::env::temp_dir().join(format!("capacity-cas-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&dir).unwrap();
+    let state=AppState::init(Config{db_path:dir.join("db"),master_key_path:dir.join("master").to_string_lossy().into(),..Default::default()}).unwrap();
+    let (id,panel)={let c=state.conn();let id=db::channels::create(&c,&db::channels::NewChannel{name:"capacity-cas".into(),base_url:"https://example.invalid/v1".into(),enabled:true,unwrap_envelope:false,max_concurrent:0}).unwrap();(id,db::sessions::create_session(&c,None).unwrap())};
+    let gen=||state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[id.0],|r|r.get::<_,i64>(0)).unwrap();
+    let initial=gen();let (status,saved)=put(&state,id.0,Some(&panel),json!({"protocols":{"native":["responses"],"allow_conversion":false},"expected_binding_generation":initial})).await;assert_eq!(status,200,"{saved}");
+    let before=gen();let old_hash=saved["protocols_sha256"].as_str().unwrap();assert_eq!(old_hash.len(),64);
+    let body=json!({"protocols":{"native":["responses"],"allow_conversion":false,"max_input_tokens":272000,"max_output_tokens":272000},"expected_binding_generation":before,"expected_protocols_sha256":old_hash});
+    let (status,updated)=put(&state,id.0,Some(&panel),body.clone()).await;assert_eq!(status,200,"{updated}");assert_eq!(gen(),before);assert_ne!(updated["protocols_sha256"],saved["protocols_sha256"]);assert_eq!(updated["protocols"]["max_input_tokens"],272000);
+    let (stale,error)=put(&state,id.0,Some(&panel),body).await;assert_eq!(stale,409,"{error}");assert_eq!(gen(),before);
+    let (status,changed)=put(&state,id.0,Some(&panel),json!({"protocols":{"native":["messages"],"allow_conversion":false,"max_input_tokens":272000,"max_output_tokens":272000},"expected_binding_generation":before,"expected_protocols_sha256":updated["protocols_sha256"]})).await;assert_eq!(status,200,"{changed}");assert_eq!(gen(),before+1);
+}

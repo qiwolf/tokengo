@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_VERSION = 45
+SCHEMA_VERSION = 47
 
 def digest(path):
     h = hashlib.sha256()
@@ -32,6 +32,8 @@ def stage_migrations(root, tree):
     sources = {
         '43': ('crates/server/src/db/request_paths.sql', 'deploy/migrations/43-request-paths.sql'),
         '44': ('crates/server/src/db/account_overview.sql', 'deploy/migrations/44-account-overview.sql'),
+        '46': ('crates/server/src/db/usage_time.sql', 'deploy/migrations/46-usage-time.sql'),
+        '47': ('crates/server/src/db/currency_units.sql', 'deploy/migrations/47-currency-units.sql'),
     }
     parts = [
         ('crates/server/src/db/query_performance.sql', 'deploy/migrations/45-query-performance.part.sql'),

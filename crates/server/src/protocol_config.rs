@@ -27,7 +27,8 @@ pub struct Capabilities {
     /// Configured independent input/output limits, not a token price, provider
     /// attestation, or a promise that both fit one joint context window.
     /// Unverified native output uses an explicitly labeled local reservation
-    /// estimate; opaque/audio input admission retains its context requirement.
+    /// estimate; opaque/audio needs an input metering bound only when an explicit
+    /// TPM policy applies. These estimates do not establish a money gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_input_tokens: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,6 +108,12 @@ pub fn load(c: &rusqlite::Connection, id: i64) -> db::Result<Capabilities> {
         }
     }
 }
+/// CAS revision of the raw persisted protocol document; absent means SHA256("").
+pub fn revision(c: &rusqlite::Connection, id: i64) -> db::Result<String> {
+    use sha2::{Digest, Sha256};
+    let raw = db::settings::get(c, &format!("channel_protocols:{id}"))?.unwrap_or_default();
+    Ok(format!("{:x}", Sha256::digest(raw.as_bytes())))
+}
 pub fn save(c: &rusqlite::Connection, id: i64, caps: &Capabilities) -> db::Result<()> {
     caps.validate().map_err(db::DbError::Other)?;
     if caps.runtime_identity.is_some() {
@@ -115,7 +122,26 @@ pub fn save(c: &rusqlite::Connection, id: i64, caps: &Capabilities) -> db::Resul
     }
     let key = format!("channel_protocols:{id}");
     let value = serde_json::to_string(caps).map_err(|e| db::DbError::Other(e.to_string()))?;
-    if db::settings::get(c, &key)?.as_deref() != Some(&value) {
+    let old = db::settings::get(c, &key)?;
+    // Capacity edits retain the source identity; protocol and runtime capability
+    // changes still advance generation. The raw document revision protects edits.
+    // Keep all other current/future capability fields in the identity comparison.
+    let old_caps = match old.as_deref() {
+        None => Some(Capabilities::default()),
+        Some(raw) => serde_json::from_str::<Capabilities>(raw).ok().filter(|v| v.validate().is_ok()),
+    };
+    let identity_unchanged = if let Some(previous) = old_caps {
+        let mut before = serde_json::to_value(previous).map_err(|e| db::DbError::Other(e.to_string()))?;
+        let mut after = serde_json::to_value(caps).map_err(|e| db::DbError::Other(e.to_string()))?;
+        for value in [&mut before, &mut after] {
+            if let Some(fields) = value.as_object_mut() {
+                fields.remove("max_input_tokens");
+                fields.remove("max_output_tokens");
+            }
+        }
+        before == after
+    } else { false };
+    if !identity_unchanged {
         c.execute(
             "UPDATE channels SET binding_generation=binding_generation+1 WHERE id=?1",
             [id],
@@ -263,7 +289,7 @@ mod context_capability_tests {
 mod generation_tests {
     use super::*;
     #[test]
-    fn reasoning_and_context_capability_changes_advance_source_generation() {
+    fn identity_changes_advance_generation_but_capacity_changes_preserve_it() {
         let c = db::open_in_memory().unwrap();
         let id = db::channels::create(
             &c,
@@ -294,9 +320,9 @@ mod generation_tests {
         cap.max_input_tokens = Some(1048576);
         cap.max_output_tokens = Some(393216);
         save(&c, id, &cap).unwrap();
-        assert_eq!(generation(&c), original + 2);
+        assert_eq!(generation(&c), original + 1);
         save(&c, id, &cap).unwrap();
-        assert_eq!(generation(&c), original + 2);
+        assert_eq!(generation(&c), original + 1);
         assert_eq!(
             load(&c, id).unwrap().context_bounds(),
             Some((1048576, 393216))
@@ -394,5 +420,16 @@ mod w08_runtime_tests {
         assert!(serde_json::from_value::<Capabilities>(excessive).unwrap().validate().is_err());
         let mut conflict=declaration(&"a".repeat(64));conflict["parameter_profile"]=json!("openai");
         assert!(serde_json::from_value::<Capabilities>(conflict).unwrap().validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod capacity_identity_repair_tests {
+    use super::*;
+    #[test]
+    fn malformed_old_document_repair_invalidates_identity_and_semantic_defaults_do_not() {
+        let c=db::open_in_memory().unwrap();let id=db::channels::create(&c,&db::channels::NewChannel{name:"repair".into(),base_url:"https://example.invalid".into(),enabled:true,unwrap_envelope:false,max_concurrent:1}).unwrap().0;
+        db::settings::set(&c,&format!("channel_protocols:{id}"),"broken-json").unwrap();let before:i64=c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get(0)).unwrap();save(&c,id,&Capabilities::default()).unwrap();let repaired:i64=c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get(0)).unwrap();assert_eq!(repaired,before+1);
+        db::settings::set(&c,&format!("channel_protocols:{id}"),r#"{"allow_conversion":false,"native":["chat"]}"#).unwrap();let mut caps=Capabilities::default();caps.max_input_tokens=Some(272000);caps.max_output_tokens=Some(272000);save(&c,id,&caps).unwrap();let after:i64=c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get(0)).unwrap();assert_eq!(after,repaired);assert_eq!(load(&c,id).unwrap().context_bounds(),Some((272000,272000)));
     }
 }

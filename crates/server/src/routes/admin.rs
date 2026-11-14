@@ -360,6 +360,7 @@ fn channel_json(c:&rusqlite::Connection,l: &channels::ChannelRow) -> serde_json:
         "unwrap_envelope": l.unwrap_envelope,
         "max_concurrent": l.max_concurrent,
         "protocols": crate::protocol_config::load(c,l.id.0).ok(),
+        "protocols_sha256": crate::protocol_config::revision(c,l.id.0).ok(),
         "binding_generation":c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[l.id.0],|row|row.get::<_,i64>(0)).ok(),
         // 全局顺序：面板「渠道」页从上到下就是「先试哪条」（小的先试）
         "priority": l.priority,
@@ -613,6 +614,8 @@ fn validate_bound_protocols(c:&rusqlite::Connection,id:i64,caps:&crate::protocol
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProtocolUpdate {
+    #[serde(default)]
+    expected_protocols_sha256: Option<String>,
     protocols: crate::protocol_config::Capabilities,
     expected_binding_generation: i64,
 }
@@ -630,6 +633,11 @@ async fn channels_set_protocols(
     crate::db::in_tx(&c,|c| {
         let generation:i64=c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[id],|r|r.get(0))?;
         if generation!=body.expected_binding_generation {return Err(crate::db::DbError::Other("source_changed".into()));}
+        if let Some(expected) = body.expected_protocols_sha256.as_deref() {
+            if crate::protocol_config::revision(c,id)? != expected {
+                return Err(crate::db::DbError::Other("source_protocols_changed".into()));
+            }
+        }
         validate_bound_protocols(c,id,&body.protocols)?;
         crate::protocol_config::save(c,id,&body.protocols)?;
         crate::db::identity::audit(c,None,"channel.protocols","channel",id,serde_json::json!({"native":body.protocols.native,"allow_conversion":body.protocols.allow_conversion}))?;

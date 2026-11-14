@@ -16,6 +16,15 @@ fn patch_flag(raw: &str, flag: &str, enabled: bool) -> String {
     let Ok(mut value)=serde_json::from_str::<Value>(raw)else{return raw.into();};
     if value.is_object(){value[flag]=json!(enabled);}value.to_string()
 }
+fn protocol_save_payload(row: &Value, protocols: Value) -> Result<Value, String> {
+    let expected_generation = row["binding_generation"].as_i64()
+        .ok_or_else(|| "缺少来源版本，已重新读取配置，请确认后再保存。".to_string())?;
+    let expected_protocols_sha256 = row["protocols_sha256"].as_str()
+        .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| "服务端未提供有效协议版本，已重新读取配置；请确认版本支持后再保存。".to_string())?;
+    Ok(json!({"protocols": protocols, "expected_binding_generation": expected_generation,
+        "expected_protocols_sha256": expected_protocols_sha256}))
+}
 fn protocol_label(protocol: &str) -> &str {match protocol{"chat"=>"Chat Completions","responses"=>"Responses","messages"=>"Messages",_=>"尚未确认"}}
 fn client_protocol_status(raw:&str, protocol:&str)->(&'static str,bool) {
     let Ok(value)=serde_json::from_str::<Value>(raw)else{return ("不可用",false);};
@@ -102,15 +111,16 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
         event.prevent_default();if busy.get_untracked(){return;}
         let Some(id)=selected.get_untracked()else{error.set("请先选择已保存的来源。".into());return;};
         let value=match api::protocols(&protocols.get_untracked()){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
-        let Some(expected_generation)=channels.get_untracked().iter().find(|r|r["id"].as_i64()==Some(id)).and_then(|r|r["binding_generation"].as_i64())else{error.set("缺少来源版本，请重新读取配置后保存。".into());return;};
+        let row=channels.get_untracked().into_iter().find(|r|r["id"].as_i64()==Some(id)).unwrap_or(Value::Null);
+        let payload=match protocol_save_payload(&row,value){Ok(v)=>v,Err(e)=>{load.run(());error.set(e);return;}};
         busy.set(true);error.set(String::new());note.set(String::new());
         leptos::task::spawn_local(async move{
-            let result=api::request("PUT",&format!("/api/channels/{id}/protocols"),Some(json!({"protocols":value,"expected_binding_generation":expected_generation}))).await;
+            let result=api::request("PUT",&format!("/api/channels/{id}/protocols"),Some(payload)).await;
             if busy.try_get_untracked().is_none(){return;}
             match result{Ok(_)=>{note.set("供应方接口协议设置已保存；未发送模型推理请求。".into());load.run(());},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);
         });
     };
-    view!{<section class="connection-parameters"><h3>"参数与转发"</h3><p class="account-help">"这里显示刚保存的真实来源和模型。客户端接入协议是用户调用本系统的协议；供应方接口协议是本系统请求供应方时使用的协议。"</p>
+    view!{<section class="connection-parameters"><h3>"参数与转发"</h3><p class="account-help">"这里显示已保存的真实来源和模型；供应方协议与容量设置作用于所选接入来源及其全部模型。客户端接入协议是用户调用本系统的协议；供应方接口协议是本系统请求供应方时使用的协议。"</p>
         <Show when=move||loading.get()><p role="status">"正在读取已保存的来源与模型…"</p></Show>
         <Show when=move||!loading.get()&&channels.get().is_empty()><p role="alert">"没有可配置的已保存来源，请返回列表重新打开此凭据。"</p></Show>
         <Show when=move||{channels.get().len()>1}><label class="account-field"><span>"当前来源"</span><select aria-label="当前来源" prop:value=move||selected.get().map(|id|id.to_string()).unwrap_or_default() on:change=move|e|selected.set(event_target_value(&e).parse().ok())>{move||channels.get().into_iter().map(|c|view!{<option value=c["id"].to_string()>{api::text(&c,"name")}</option>}).collect_view()}</select><span class="account-help">"本页只修改所选来源，不批量覆盖同凭据的其他来源。"</span></label></Show>
@@ -136,6 +146,22 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn save_payload_copies_both_versions_from_the_read_row() {
+        let row=json!({"binding_generation":7,"protocols_sha256":"ab".repeat(32),"protocols":{"max_input_tokens":100,"max_output_tokens":100}});
+        let edited=json!({"native":["responses"],"max_input_tokens":272000,"max_output_tokens":272000});
+        let payload=protocol_save_payload(&row,edited.clone()).unwrap();
+        assert_eq!(payload["protocols"],edited);
+        assert_eq!(payload["expected_binding_generation"],7);
+        assert_eq!(payload["expected_protocols_sha256"],row["protocols_sha256"]);
+        // Capacity edits do not produce a replacement read hash or require a binding change.
+        assert_eq!(row["protocols"]["max_input_tokens"],100);
+    }
+    #[test] fn save_payload_rejects_missing_or_invalid_protocol_version_without_a_fallback() {
+        for hash in [Value::Null,json!(""),json!("abc"),json!("z".repeat(64)),json!(7)] {
+            assert!(protocol_save_payload(&json!({"binding_generation":7,"protocols_sha256":hash}),json!({})).is_err());
+        }
+        assert!(protocol_save_payload(&json!({"protocols_sha256":"ab".repeat(32)}),json!({})).is_err());
+    }
     #[test] fn runtime_identity_is_not_lost_when_changing_protocol_or_conversion(){
         let identity=json!({"runtime":"ollama","evidence":"operator_declared","models":[{"model":"qwen3:8b","template_sha256":"a".repeat(64)}]});
         let raw=json!({"native":["chat","responses"],"parameter_profile":"ollama","allow_conversion":true,"runtime_identity":identity}).to_string();
