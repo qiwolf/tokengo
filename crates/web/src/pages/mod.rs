@@ -53,6 +53,7 @@ pub enum Page {
     Settings,
     Accounts,
     Portal,
+    Keys,
     Strategies,
     Account,
 }
@@ -72,8 +73,14 @@ impl Page {
 
     /// UI mounting boundary mirrors the server's distinct account roles.
     pub fn for_account(self, root:bool)->Page {
-        if root {if self==Page::Portal {Page::Overview}else{self}}
-        else if matches!(self,Page::Account|Page::Portal|Page::Strategies|Page::Overview){self}else{Page::Portal}
+        if root {if matches!(self,Page::Portal|Page::Keys) {Page::Overview}else{self}}
+        else if matches!(self,Page::Account|Page::Portal|Page::Keys|Page::Strategies|Page::Overview){self}else{Page::Portal}
+    }
+
+    /// Navigation is role-scoped; personal Key management never mounts a root user editor.
+    pub fn navigation(root:bool)->&'static [Page] {
+        if root { &[Page::Overview,Page::Channels,Page::Models,Page::Users,Page::Billing,Page::SharedModels,Page::Services,Page::Probes,Page::Settings] }
+        else { &[Page::Overview,Page::Portal,Page::Keys,Page::Strategies] }
     }
 
     /// URL hash 里用的名字。
@@ -88,7 +95,7 @@ impl Page {
             Page::Users => "users",
             Page::Billing => "billing",
             Page::Settings => "settings",
-            Page::Strategies=>"strategies",Page::Accounts=>"accounts",Page::Portal=>"portal",Page::Account=>"account",
+            Page::Keys=>"keys",Page::Strategies=>"strategies",Page::Accounts=>"accounts",Page::Portal=>"portal",Page::Account=>"account",
         }
     }
 
@@ -104,7 +111,7 @@ impl Page {
             Page::Users => "用户与 Key",
             Page::Billing => "用量与账务",
             Page::Settings => "系统设置",
-            Page::Strategies=>"调用策略",Page::Accounts=>"用户",Page::Portal=>"我的空间",Page::Account=>"账号安全",
+            Page::Keys=>"API Key",Page::Strategies=>"调用策略",Page::Accounts=>"用户",Page::Portal=>"我的空间",Page::Account=>"账号安全",
         }
     }
 
@@ -120,7 +127,7 @@ impl Page {
             Page::Users => "管理用户资料、模型与透传服务授权、限流及 API Key。",
             Page::Billing => "消费记录、价格版本和持久化的逐次尝试账本。",
             Page::Settings => "网关密钥、运行参数与维护。",
-            Page::Strategies=>"私有虚拟模型与顺序、错误码和时段调用策略。",Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人密钥元数据与用量。",Page::Account=>"当前登录账号与密码。",
+            Page::Keys=>"创建、管理本人 API Key 及其权限与有效期。",Page::Strategies=>"私有虚拟模型与顺序、错误码和时段调用策略。",Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人用量、费用与已授权模型和服务。",Page::Account=>"当前登录账号与密码。",
         }
     }
 
@@ -134,10 +141,14 @@ impl Page {
             .unwrap_or_default();
         let name = raw.trim_start_matches('#').trim_start_matches('/');
         let name = name.split('/').next().unwrap_or("");
+        Self::from_slug(name)
+    }
+
+    pub fn from_slug(name:&str)->Page {
         match name {
             "groups" | "routing" => Page::Models,
             "logs" => Page::Settings,
-            "strategies"=>Page::Strategies,"portal"=>Page::Portal,"account"=>Page::Account,"accounts"=>Page::Users,
+            "keys"=>Page::Keys,"strategies"=>Page::Strategies,"portal"=>Page::Portal,"account"=>Page::Account,"accounts"=>Page::Users,
             _ => Self::ALL
                 .iter()
                 .copied()
@@ -272,6 +283,18 @@ pub fn ModuleDialog(open: RwSignal<bool>, title: String, #[prop(optional)] busy:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn personal_keys_have_a_direct_user_navigation_and_role_safe_route() {
+        assert_eq!(Page::from_slug("keys"),Page::Keys);
+        assert_eq!(Page::Keys.slug(),"keys");
+        assert_eq!(Page::Keys.title(),"API Key");
+        assert_eq!(Page::Keys.for_account(false),Page::Keys);
+        assert_eq!(Page::Keys.for_account(true),Page::Overview);
+        assert_eq!(Page::navigation(false),&[Page::Overview,Page::Portal,Page::Keys,Page::Strategies]);
+        assert!(!Page::navigation(true).contains(&Page::Keys));
+        assert!(Page::navigation(false).iter().all(|p|p.for_account(false)==*p));
+    }
 
     #[test]
     fn modal_tab_ring_wraps_both_directions_and_recovers_outside_focus() {

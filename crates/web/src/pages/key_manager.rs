@@ -62,6 +62,7 @@ pub fn KeyManager(
     #[prop(optional)] editor_active: Option<RwSignal<bool>>,
     #[prop(optional)] form_busy: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let tasks=crate::page_tasks::PageTasks::new();
     let rows = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
     let editor_open = RwSignal::new(false);
@@ -113,7 +114,7 @@ pub fn KeyManager(
             return;
         }
         loading.set(true);
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             let path = if personal {
                 "/api/account/keys".into()
             } else {
@@ -208,7 +209,7 @@ pub fn KeyManager(
         error.set(String::new());
         notice.set(String::new());
         secret.set(None);
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             let path = if personal {
                 id.map(|i| format!("/api/account/keys/{i}"))
                     .unwrap_or_else(|| "/api/account/keys".into())
@@ -263,7 +264,7 @@ pub fn KeyManager(
         let owner_id = owner.get_untracked(); let token = generation.get_untracked();
         reveal_name.set(key_label(&key,personal)); revealed_key.set(String::new()); reveal_error.set(String::new()); reveal_note.set(String::new());
         busy.set(true); reveal_open.set(true);
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             match crate::api::call("POST", &format!("{}/reveal",key_path(personal,id)), Some(json!({}))).await {
                 Ok(v) => {
                     if owner.get_untracked()==owner_id && generation.get_untracked()==token && reveal_open.get_untracked() {
@@ -286,7 +287,7 @@ pub fn KeyManager(
         let owner_id = owner.get_untracked();
         let token = generation.get_untracked();
         busy.set(true); delete_error.set(String::new());
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             match api::request("POST", &format!("{}/delete",key_path(personal,id)), Some(json!({}))).await {
                 Ok(v) => {
                     if owner.get_untracked()==owner_id && generation.get_untracked()==token {
@@ -309,7 +310,7 @@ pub fn KeyManager(
         let (id,patch,enabled)=match status_patch(&key,personal){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
         let owner_id=owner.get_untracked();let token=generation.get_untracked();
         busy.set(true);error.set(String::new());notice.set(String::new());
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             match api::request("PATCH",&key_path(personal,id),Some(patch)).await {
                 Ok(v)=>{
                     if owner.get_untracked()==owner_id&&generation.get_untracked()==token {
@@ -349,7 +350,7 @@ pub fn KeyManager(
         busy.set(true);
         secret.set(None);
         error.set(String::new());
-        leptos::task::spawn_local(async move {
+        tasks.spawn(async move {
             let path = if personal {
                 format!("/api/account/keys/{id}")
             } else {
@@ -384,7 +385,7 @@ pub fn KeyManager(
     <p>"Key 已加密保存在服务器，可在列表中再次显示和复制；未写入浏览器持久存储。"</p>
     <label class="account-field"><span>"完整 API Key（可手动选择复制）"</span><textarea readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||secret.get().unwrap_or_default()/></label>
     <p role=move||if copy_failed.get(){"alert"}else{"status"}>{move||copy_note.get()}</p>
-    <div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let Some(value)=secret.get_untracked()else{return};busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&value).await;copy_failed.set(!copied);copy_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button>
+    <div class="account-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let Some(value)=secret.get_untracked()else{return};busy.set(true);tasks.spawn(async move{let copied=super::settings::copy_text(&value).await;copy_failed.set(!copied);copy_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button>
     <button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{secret.set(None);copy_note.set(String::new());editor_open.set(false);}>"已保存，关闭并清除"</button></div></section></Show>
     <Show when=move||secret.get().is_none()>
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
@@ -405,7 +406,7 @@ pub fn KeyManager(
     <Show when=move||!revealed_key.get().is_empty()><label class="account-field"><span>"完整 API Key"</span><textarea readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||revealed_key.get()/></label><p class="account-help">"关闭后清除本页明文，需要时可再次显示。撤销的 Key 即使能查看，也不能再调用。"</p></Show>
     <div class="key-reveal-feedback"><p role="status">{move||if busy.get()&&revealed_key.get().is_empty(){"正在读取 Key…"}else{""}}</p><p role="alert">{move||reveal_error.get()}</p><p role="status">{move||reveal_note.get()}</p></div>
     </div>
-    <footer class="key-reveal-footer"><Show when=move||!revealed_key.get().is_empty()><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let value=revealed_key.get_untracked();if value.is_empty(){return;}busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&value).await;reveal_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button></Show><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|reveal_open.set(false)>"关闭并隐藏"</button></footer>
+    <footer class="key-reveal-footer"><Show when=move||!revealed_key.get().is_empty()><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let value=revealed_key.get_untracked();if value.is_empty(){return;}busy.set(true);tasks.spawn(async move{let copied=super::settings::copy_text(&value).await;reveal_note.set(key_copy_notice(copied).into());busy.set(false);});}>"复制 Key"</button></Show><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|reveal_open.set(false)>"关闭并隐藏"</button></footer>
     </div>
     </super::ModuleDialog>
     <super::ModuleDialog open=delete_open busy=busy title="删除 API Key".to_string()>
