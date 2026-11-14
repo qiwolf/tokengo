@@ -1,5 +1,7 @@
 # 功能与验收状态
 
+2026-11-14 后续线上修复：普通用户增加独立“API Key”导航及 `/ui/#keys`，不依赖用量成功。build-test226项、Chromium/WebKit桌面/手机68项和3个延迟响应回归通过，已实际切换官方.32运行时及新Web，schema47、原Key/ACL/配置/账目保留；这不改变.32正式标签或附件。见[上线收据](maintenance/personal-key-entry-20261114/README.md)。
+
 ## v0.34.0-qiwolf.32：已正式发行，公开产物独立验收通过
 
 本版包含 qiwolf.31 之后的用量与币种统计、三类价格版本管理、来源目录上限发现、取消全部本地金额门槛与会话锁源、手机价格及菜单修复。[版本范围](releases/v0.34.0-qiwolf.32.md)逐项区分先前专项覆盖与本版新测。正式源码 `4ab9085fcb758038d3a02c6de031dec4e659b612` 的 [main CI](https://github.com/qiwolf/tokengo/actions/runs/43556308521) 通过 Rust1778通过/0失败/15忽略、Python13、WASM 及五项显式规模门禁，重叠不累加；[发行流程](https://github.com/qiwolf/tokengo/actions/runs/43557334653) 成功，[正式 Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32) 于 2026-11-14 04:50:41 UTC 公开九项资产。

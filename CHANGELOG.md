@@ -1,5 +1,9 @@
 # 更新日志 / Changelog
 
+## 2026-11-14 普通用户 Key 管理独立入口
+
+恢复左侧“API Key”、`#keys` 直达和“我的空间”页头入口，不再被图表/明细挤到下方或依赖用量请求成功。离页取消 Key/统计异步任务，避免旧响应触发前端异常。build-test226项、真实WASM68项与3个延迟回归通过；已上线，原Key与账目保留。详见[修复与上线记录](docs/maintenance/personal-key-entry-20261114/README.md)。.32正式标签与附件保持不变。
+
 ## v0.34.0-qiwolf.32 — 已正式发行（2026-11-14）
 
 新增范围及逐阶段证据见[版本说明](docs/releases/v0.34.0-qiwolf.32.md)。涵盖 qiwolf.31 之后的用量看板/人民币与统计修正、模型用途计价、价格版本生命周期、来源模型上限发现、取消本地金额门槛与会话锁源、手机布局；同时纳入来源参数双版本 CAS、同来源身份保护、已保存凭据参数直达与有限流式结构诊断，见[运行补丁审计](docs/maintenance/qiwolf32-release-20261114/runtime-patch-audit.md)。精确源码 `4ab9085fcb758038d3a02c6de031dec4e659b612` 的 [main CI](https://github.com/qiwolf/tokengo/actions/runs/43556308521) 通过 Rust1778通过/0失败/15忽略、Python13、WASM 及五项显式规模门禁（重叠不累加）；[发行流程](https://github.com/qiwolf/tokengo/actions/runs/43557334653) 成功，[正式 Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32) 于 2026-11-14 04:50:41 UTC 公开九项资产并完成独立验收。

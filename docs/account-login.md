@@ -37,6 +37,8 @@ root改密码与旧global hash在同一事务同步，撤全部new root+legacy s
 
 普通门户 `GET /api/account/portal?before_id=i64&limit=1..100`：
 
+普通用户浏览器入口：左侧“API Key”或“我的空间”页头同名按钮，独立地址 `/ui/#keys`。Key 页面直接读取本人 Key API，不依赖用量/统计查询成功；管理员继续在“用户与 Key”管理授权范围内的 Key。入口和延迟响应修复见[上线记录](maintenance/personal-key-entry-20261114/README.md)。
+
 ```json
 {"account":{},"keys":[{"id":1,"name":"example","hint":"masked","enabled":true,"revoked_at":null,"expires_at":null,"parent_key_id":null,"created_at_ms":0}],"usage":{"summary":{"request_count":0,"ledger_count":0,"input_tokens":0,"output_tokens":0,"unknown_input_entries":0,"unknown_output_entries":0,"unpriced_entries":0,"known_debit_micro":0},"entries":[{"id":1,"request_id":1,"key_id":1,"model":"example","billing_unit":"token","status":"unpriced","outcome":"ok","input_tokens":null,"output_tokens":null,"usage_certainty":"unpriced","debit_micro":null,"created_ms":0,"settled_ms":0}],"next_before_id":null}}
 ```

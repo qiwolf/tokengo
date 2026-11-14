@@ -1,5 +1,7 @@
 # TokenGo
 
+2026-11-14 后续修复：普通用户左侧新增 **API Key** 独立入口，“我的空间”顶部可直达；已完成桌面/手机验证并更新线上，见[修复记录](docs/maintenance/personal-key-entry-20261114/README.md)。
+
 **当前正式版：[v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32)** — 用量看板与人民币展示、三类价格版本管理、来源上限发现、取消本地金额门槛和会话锁源、手机价格与菜单修复。精确 main CI 与九项公开资产独立验收通过。见[本版说明](docs/releases/v0.34.0-qiwolf.32.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf32-release/README.md)。
 
 **Current stable release: [v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32).** Usage reporting, versioned prices, source-limit discovery, observation-only costs, current-configuration routing and mobile layout. Exact main CI and independent acceptance of all nine public assets passed. [Release scope](docs/releases/v0.34.0-qiwolf.32.md) · [Publication receipt](docs/acceptance/2026-11-14-qiwolf32-release/README.md).

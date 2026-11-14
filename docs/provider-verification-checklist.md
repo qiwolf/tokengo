@@ -1,5 +1,7 @@
 # 模型兼容核实清单
 
+2026-11-14 普通用户 Key 入口后续修复已上线：新增独立导航、直达和离页异步取消；复用官方.32服务端/CLI，来源、路由、价格及权限保持。此项仅验证Key界面/角色和部署身份，没有新增真实模型能力测试，不能延伸现有供应商验收范围。见[修复收据](maintenance/personal-key-entry-20261114/README.md)。
+
 ## v0.34.0-qiwolf.32：已正式发行，公开产物独立验收通过
 
 本版包含 qiwolf.31 之后的用量与币种统计、三类价格版本管理、来源目录上限发现、取消全部本地金额门槛与会话锁源、手机价格及菜单修复。[版本范围](releases/v0.34.0-qiwolf.32.md)逐项区分先前专项覆盖与本版新测。正式源码 `4ab9085fcb758038d3a02c6de031dec4e659b612` 的 [main CI](https://github.com/qiwolf/tokengo/actions/runs/43556308521) 通过 Rust1778通过/0失败/15忽略、Python13、WASM 及五项显式规模门禁，重叠不累加；[发行流程](https://github.com/qiwolf/tokengo/actions/runs/43557334653) 成功，[正式 Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32) 于 2026-11-14 04:50:41 UTC 公开九项资产。

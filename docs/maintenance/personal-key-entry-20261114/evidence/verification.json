@@ -1,0 +1,91 @@
+{
+  "web_commit": "12cd8166da36cccc086f68b0250c410b9dc21a8c",
+  "runtime_commit": "4ab9085fcb758038d3a02c6de031dec4e659b612",
+  "schema_from": 47,
+  "schema_to": 47,
+  "server_sha256": "52a253f872c124000f89f07f3fdd6eaedd950aefd8114ad4e8268e1cbb2c275d",
+  "cli_sha256": "04cdd789ea03b8f59ce682100ae8fe2fc89e9e34d7926f7feee4aeeddf052246",
+  "web_tar_sha256": "e7cda229be7a6a80c5a71f0edd6a47bc7f33ec87b1a27d94fb99d3ef9d2914f7",
+  "deployment_exit": 0,
+  "configuration_preserved": true,
+  "credential_identity_preserved": true,
+  "database_inode_preserved": true,
+  "business_database_restored": false,
+  "maintenance_started_utc": "2026-11-14T11:59:39.645813+00:00",
+  "maintenance_finished_utc": "2026-11-14T12:02:13.720867+00:00",
+  "unit_tests_passed": 226,
+  "browser_cases": 8,
+  "browser_checks": 68,
+  "browser_page_errors": 0,
+  "late_response_regressions_passed": 3,
+  "engines": [
+    "Chromium",
+    "WebKit"
+  ],
+  "viewports": [
+    390,
+    1440
+  ],
+  "public_critical_assets": [
+    {
+      "name": "account-workspace-4df435622eca3d70.css",
+      "status": 200,
+      "sha256": "58dcb5237803521838d9b3c0d7566a002955f217942ede4bd272f229e303f9c4",
+      "matches_build_test": true
+    },
+    {
+      "name": "usage-dashboard-51bdda854fa112d9.css",
+      "status": 200,
+      "sha256": "bf65ffbad2587c448fecd08db365f55ba73c1138ca0a812e7c039b7c7a234ab6",
+      "matches_build_test": true
+    },
+    {
+      "name": "tokengo-web-16863a95511c735_bg.wasm",
+      "status": 200,
+      "sha256": "3a381b70a3ff8438b044b2c57e3ff6e6032b17c51256fa2ce7541d5dcb34f124",
+      "matches_build_test": true
+    },
+    {
+      "name": "console-design-b7e4b002db89eb5d.css",
+      "status": 200,
+      "sha256": "a0842430f644a595271cbf8c1fed74f87f4e27441a6eebb799918e996aa0a792",
+      "matches_build_test": true
+    },
+    {
+      "name": "style-c41c1323e5e09396.css",
+      "status": 200,
+      "sha256": "1f20503f5f444fd8662b8cc5aa96dc688672393fce432f4ce6d1f340100a8414",
+      "matches_build_test": true
+    },
+    {
+      "name": "index.html",
+      "status": 200,
+      "sha256": "83a0ee8bac2d7f019b0887ac926a3ecabe4e4230fd85c3efe99547f771876d14",
+      "matches_build_test": true
+    },
+    {
+      "name": "tokengo-web-16863a95511c735.js",
+      "status": 200,
+      "sha256": "f1fa847a3bc2f6c3b82a09f89e69fe787472d1f19ad04309044295e2dc7cb72e",
+      "matches_build_test": true
+    },
+    {
+      "name": "provider-workspace-ea99438577ec8a95.css",
+      "status": 200,
+      "sha256": "687e1bed56fc2bde2beb6c6b67bdd7e689889411903c8ca700803848ee066160",
+      "matches_build_test": true
+    }
+  ],
+  "readyz": {
+    "checks": {
+      "database": "ok",
+      "gateway_key_set": true,
+      "panel_password_set": true,
+      "routing_models_tracked": 48
+    },
+    "status": "ok"
+  },
+  "production_key_mutations": 0,
+  "physical_iPhone_tested": false,
+  "note": "Role/CRUD behavior used real compiled WASM with strict synthetic APIs; live serving verified exact same Web bytes. Official q32 server/CLI code unchanged."
+}
