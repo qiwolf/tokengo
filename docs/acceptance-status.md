@@ -1,5 +1,11 @@
 # 功能与验收状态
 
+## v0.34.0-qiwolf.32：发行验收待完成
+
+本版包含 qiwolf.31 之后的用量与币种统计、三类价格版本管理、来源目录上限发现、取消全部本地金额门槛与会话锁源、手机价格及菜单修复。[版本范围](releases/v0.34.0-qiwolf.32.md)逐项区分先前专项覆盖与本版新测。Exact main CI、发行流程和公开产物独立验收尚待完成，不能把已部署补丁的通过数当作本版验收。
+
+已有[发现上限](maintenance/model-limits-discovery-20261114/README.md)、[预算/锁源取消](maintenance/no-local-budget-20261114/README.md)及[移动端](maintenance/mobile-layout-20261114/README.md)收据分别记录其源码、生产读回与边界。目录数据是供应方声明，不是付费模型实测；移动端是实际 WASM 的 Chromium/WebKit 覆盖，不是真机 Safari。旧日期条目中的金额预算、会话pin及账号粘性合同已被替代，历史当时事实保留。
+
 ## 2026-11-14 模型价格管理
 
 三类价格支持修改、停用/启用与删除归档，历史价格和账目保留。build-test服务端676、Web216、真实WASM交互44项通过；生产状态见[收据](maintenance/price-lifecycle-20261114/README.md)。

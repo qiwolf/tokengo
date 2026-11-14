@@ -1,6 +1,6 @@
 # Logical model routing (fork development branch)
 
-This fork builds on upstream v0.34.0. Logical routing, bounded errors and stable sessions now share the user/VKey authorization, quota and per-attempt budget executor. See [identity and metering](identity-metering.md), [protocols](protocols.md), [OAuth](openai-oauth.md) and the [strict LiteLLM importer](litellm-import.md) for their separate configuration and limits.
+This fork builds on upstream v0.34.0. Logical routing, bounded errors and stable sessions now share the user/VKey authorization, rate limits and per-attempt accounting executor. See [identity and metering](identity-metering.md), [protocols](protocols.md), [OAuth](openai-oauth.md) and the [strict LiteLLM importer](litellm-import.md) for their separate configuration and limits.
 
 ## Upstream names and logical names
 
@@ -86,4 +86,4 @@ Routing controls are available through the authenticated API and the model polic
 
 ## 本地向量节点等权轮询
 
-模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。它与在线Key按用户粘性不同，不影响OAuth/native来源固定。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后需刷新兼容证据。详见[本地节点合同](maintenance/local-vector-balancing.md)。
+模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。在线 Key、OAuth/native 同样按当前策略和可用状态选源，不读取历史亲和。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后可主动重新运行兼容诊断，旧证据不阻止正常调用。详见[本地节点合同](maintenance/local-vector-balancing.md)。

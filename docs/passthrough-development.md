@@ -122,7 +122,7 @@ stateDiagram-v2
   Dispatched --> Unknown: 断流 / 取消 / 超时 / 发送结果不明
   Released --> [*]: requests=0
   Completed --> [*]: requests=1
-  Unknown --> [*]: requests=null 保守扣预留金额
+  Unknown --> [*]: requests=null 实际费用null，保留估算
 ```
 
 每次 HTTP attempt 按路由当前价格预占，4xx/5xx 完整返回亦记 1 次；不把错误正文解析成 LLM 错误类型。明确连接建立前失败可记 0 次；已发出后不完整保持未知。token 在账本中保持 null，诊断表的数值占位必须结合 known 标志解释。沿用持久 billing outbox、终态幂等和启动恢复；结算失败保留待重放记录，不靠客户端断开规避费用。

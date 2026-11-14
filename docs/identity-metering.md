@@ -24,7 +24,7 @@ AuthContext 包含 user/key/role、模型/来源/费用及限流策略、父链�
 
 省略白名单（null）继承不额外限制，空数组拒绝全部；模型归一化比较。`auto` 本身及实际候选模型都必须获准。别名不会绕过来源白名单，fallback 每次尝试重新读权限。不可用路由的错误响应也只列出获准的来源名称。来源是否付费按该渠道/逻辑模型当前价格判断；无价格按可能付费处理，禁止付费的 key 不会把未知价格当免费。
 
-普通用户通过自己的 vkey 访问自助 API，无需共享面板密码。自助列表/撤销限定当前 key 及其后代，分发给应用的窄 key 无法枚举或撤销父 key、兄弟 key；全局管理由管理员入口完成。自助创建的 key 是父 key 的子 key，不能扩大策略、延长超出父链的有效期；父预算、滚动用量和并发也共同限制所有子 key，避免建新 key 绕限。`/v1/usage` 限定当前 key，不能通过 query 读取别人账单；用户可从自己的各 key 查看其用量，管理员可按 user/key 汇总。
+普通用户通过自己的 vkey 访问自助 API，无需共享面板密码。自助列表/撤销限定当前 key 及其后代，分发给应用的窄 key 无法枚举或撤销父 key、兄弟 key；全局管理由管理员入口完成。自助创建的 key 是父 key 的子 key，不能扩大策略、延长超出父链的有效期；滚动 RPM/TPM 用量和并发也共同限制所有子 key，避免建新 key 绕限。`/v1/usage` 限定当前 key，不能通过 query 读取别人账单；用户可从自己的各 key 查看其用量，管理员可按 user/key 汇总。
 
 原有 PanelAuth 是 root 管理入口。新路线 B 管理 API 同时支持管理员 vkey，但须用户角色 admin，且用户策略及 key/祖先策略显式开启 `admin_access`。默认 false，历史 gateway key 不会自动获得管理能力。普通 user 即使策略字段为 true 也不能调用管理接口；管理员 VKey 不因此取得渠道或完整全局设置管理权限。独立[运维令牌](operations-tokens.md)是另一类授权，可访问 `/api/ops/capabilities` 明确登记的业务管理动作；完整设置写入、root安全和历史密钥明文查看仍限root。
 
@@ -40,44 +40,31 @@ AuthContext 包含 user/key/role、模型/来源/费用及限流策略、父链�
 | GET/POST `/v1/keys` | 当前 key 及后代元数据/创建受父链限制的子 key | 当前 key |
 | DELETE `/v1/keys/{id}` | 撤销自身或后代 key | 当前 key，归属与父链校验 |
 | GET/POST `/api/pricing` | 列表/追加不可变价格版本 | 管理 |
-| GET/PUT `/api/budgets?scope=user\|key&scope_id=N` | 读取/设置累计费用限额 | 管理 |
+| GET/PUT `/api/budgets?scope=user\|key&scope_id=N` | GET 读取历史消费并返回 budget_enforcement=false；PUT 返回 410 budget_enforcement_disabled | 管理 |
 | GET `/api/usage` | 按 user_id/key_id/channel_id/model 筛选持久账 | 管理 |
-| GET `/v1/usage` | 当前 key 持久账及预算 | 当前 key |
+| GET `/v1/usage` | 当前 key 持久账与历史统计（budget_enforcement=false） | 当前 key |
 
 变更拒绝未知字段；身份变更与审计在同事务，审计不含密钥。新 key 创建响应 `{"key":{...metadata},"secret":"tk-..."}`，列表和用量不返回 secret。账本倒序游标 `before_id`，`limit` 1–200，返回 `entries` 与 `next_before_id`。
 
-## 价格与费用预算
+## 价格版本与费用记录（2026-11-14 当前合同）
 
-金额用整数 **微美元（1 USD = 1,000,000 micro）**。价格的输入/输出单价均为每百万 token 的微美元；成本按输入输出总数合计后向上取整一次，采用检查溢出的整数运算。
+新价格金额用整数微人民币（1 CNY = 1,000,000 micro）；历史 USD 原值保留，用量看板按展示汇率换算人民币，不重写账本。Token 输入/输出成本合计后向上取整一次，Search/Fetch 按次、ASR 时长等数量计价分别记录。配置价格不等于对应接口已实施自动计量，范围见[版本说明](releases/v0.34.0-qiwolf.32.md)。
 
-创建价格示例：
+三类价格均支持创建、修改、停用/恢复和软归档。修改追加不可变新版本；生命周期状态独立于金额行，最新版本停用或归档不偷偷回退旧价。默认列表隐藏删除项，历史可查询；已入账/在途尝试继续使用其原价格快照。未定价费用为 null，不等于免费，付费权限仍把未知价格按可能付费处理。
 
-```json
-{
-  "channel_id": 1,
-  "model": "deepseek-v4.1-flash",
-  "input_micro_per_million": 1000000,
-  "output_micro_per_million": 2000000,
-  "max_input_tokens": 32768,
-  "max_output_tokens": 4096
-}
-```
+所有账户取消本地金额预算准入、现金 hold 和超估算冻结，旧 limit/frozen 字段不再拦截；用户/Key 写入的旧 limit_micro 兼容忽略。PUT /api/budgets 返回 410 budget_enforcement_disabled；GET 及 /v1/usage 返回 budget_enforcement=false，保留历史消费可读。权限、RPM/TPM、并发、到期和真实来源限制继续生效。
 
-这只是示例费率，不代表实际供应商价格。价格行不可改/删，更新追加新版本；每次尝试保存当时完整快照，历史不会随新价格变化。
+每个真实上游尝试保留身份、来源和价格快照、输入/输出/数量估算、实际用量及费用确定性。新现金 hold 为 0；已知实费完整记录，不封顶于估算，超估算可标记 overrun 但不冻结。缺失或部分 usage 保留已知分量，不能算出的实费保持 null/unknown，不把估算当作扣款。历史终态账本不重写；旧在途 hold 在结算/恢复时按各 allocation 原值释放，restart_unknown 也不把未知实费填成旧 hold。
 
-预算 PUT 必须显式提供 `{"limit_micro":1000000}`（或 null 表示无限），不修改已花费用，不重置历史。本批是累计/lifetime 限额，增加 limit 即充值；尚无日/月周期重置。用户与 key/祖先预算在同一 SQLite IMMEDIATE 事务中预占（金融写入连接启用 synchronous=FULL），任何一层不够则整体回滚，上游尚未发出。没有配置价格但任一层有费用上限时，返回 403 pricing_required。
+金融账不随请求清理删除，终态结算幂等。已知结算先持久写入与数据库同目录的 <db文件名>.billing-outbox/，数据库写入失败由后台补写。启动先重放已知意图再收尾未知在途项；异库、损坏或冲突文件隔离到 dead-letter。备份/恢复须同时包含数据库一致性快照、主密钥与 outbox/dead-letter，不能丢弃补写队列。
 
-每次上游尝试（包含 retry/fallback）单独预占并结算；某候选超费用预算或未配置必要价格时只跳过该候选并审计，可继续尝试获准且付得起的来源，不污染渠道健康。全部候选都被额度/价格条件拒绝才返回 429/403；不会用最后成功掩盖前一来源耗用。请求、尝试与金融账都有 user_id/key_id，金融账额外保存渠道、逻辑/上游模型、配置 revision、来源名和无用户信息/路径/查询参数的 origin、价格与身份快照、用量确定性；后续修改渠道不会改写历史来源。无价格且所有层无限的兼容请求记为 unpriced，费用/debit 都是 null，不能当作已知免费。
+## 来源界限与自动发现
 
-文本输入采用序列化请求字节数加保守开销作为 admission 上界；输出采用客户端显式 cap，缺省每个 choice 4096；Chat 的 n 必须为 1–128 的整数，TPM/金额均按 n 倍总生成上界预占，已定价请求还受价格配置 cap 限制并向上游补充 max_tokens。图像预占整项配置输入上限。未知 tokenizer、隐藏推理或供应商不遵守 cap 仍可能超出声明，本网关不能限制供应商实际账单。完全已知 usage 按价格结算；缺失/部分 usage 保留其已知分量并保守消耗预占，标记 estimated。观测成本超过预占则保留真实成本，客户扣款不超已预占，标记 overrun 并冻结所有相关用户、本 key 及祖先 scope（即使 limit 为 null，取消限额、免费或无价来源均不能绕过），需管理员核对配置与真实账单。不得把估算、unpriced、网关扣款和供应商账单混为一谈。
+来源 protocols 的成对正整数 max_input_tokens/max_output_tokens，以及现役 OAuth 约束优先。管理员可通过 POST /api/channels/{id}/limits/discover（root，body 为 {"model":"逻辑模型"}）读取该来源实际 Key 的目录声明；返回 limits、来源 URL、时间和声明状态。缓存按来源、模型和现役身份隔离，网络等待后重新核对 Key/映射身份；缓存与审计原子保存，不改费率或手工协议配置。未知不猜值，不把普通 API secret 当 OAuth 令牌使用。
 
-金融账不关联可级联删除的诊断行，30天请求清理不删除费用历史。终态结算幂等。已知结算先原子写入并 fsync 到与数据库同目录的 `<db文件名>.billing-outbox/`，数据库结算失败由后台指数退避补写（1–30秒）。启动先重放已知意图再对未知预占做 restart_unknown 收尾；损坏、异库或冲突文件隔离 dead-letter，阻止未经核对的启动恢复。备份/恢复必须同时包含数据库、WAL处理后快照、主密钥及 outbox/dead-letter。不要只复制 SQLite 文件后丢弃补写队列。
+有效来源窗口由手工配置/OAuth 优先，其次现役身份有效的供应方声明。来源参数与 Token 价格表单可以自动预填，管理员可调整；现有价格和手工值不被静默覆盖。目录声明并非付费推理或硬窗口探测。
 
-## 独立来源上下文上限
-
-普通来源可在渠道 `protocols` JSON 中配置成对正整数 `max_input_tokens` / `max_output_tokens`，无需以零价格伪装成免费。原生不透明历史或音频使用已声明来源的完整输入上限保守预占；如果同时有价格且其上限小于该完整来源上限，则拒绝请求，不用较小价格上限低估预占。图像仍须满足独立视觉能力声明。
-
-没有独立上限时保留原来的价格上限路径；两者都缺失时不接受需要完整上下文估算的输入。未定价来源若受费用预算限制仍拒绝，只有无限费用预算下才可保留 unpriced/null 费用继续执行。OAuth 来源继续使用其单独绑定的已核验上限，不以普通源声明替代；详见[协议与来源说明](protocols.md)。
+价格输入/输出/数量参考值不是调用门槛。文本用保守 JSON 字节估算，已知来源输入窗与实际 token usage 分开。原生不透明历史/音频可使用来源窗口或价格参考作估算；无 TPM 且两者未知时仍可 JSON 估算转发。TPM 启用时需保守预占，排队后的实际估算不能超过已入场令牌 hold；真实来源窗口、视觉/音频权限和参数合同独立校验。会话标识不固定来源，供应方仍可拒绝异源加密历史，见[协议](protocols.md)。
 
 ## 请求/token/并发限制
 

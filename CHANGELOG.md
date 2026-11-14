@@ -1,5 +1,15 @@
 # 更新日志 / Changelog
 
+## v0.34.0-qiwolf.32 — 发行准备中
+
+新增范围及逐阶段证据见[版本说明](docs/releases/v0.34.0-qiwolf.32.md)。涵盖 qiwolf.31 之后的用量看板/人民币与统计修正、模型用途计价、价格版本生命周期、来源模型上限发现、取消本地金额门槛与会话锁源、手机布局；同时纳入来源参数双版本 CAS、同来源身份保护、已保存凭据参数直达与有限流式结构诊断，见[运行补丁审计](docs/maintenance/qiwolf32-release-20261114/runtime-patch-audit.md)。精确 main CI、发行资产与本版独立验收待完成。
+
+以下日期条目保留各阶段事实；其中旧金额预占、estimated 扣款/overrun 冻结、会话 pin/用户 Key 粘性规则已由 2026-11-14 新合同替代，不再是当前运行要求。
+
+## 2026-11-14 手机价格与菜单
+
+修复手机价格字段/按钮裁切及滚动后菜单离开视口。实际 WASM 在 Chromium/WebKit 的 20 场景 88 项检查通过，生产资源已读回；真实 iPhone Safari 操作未覆盖。见[收据](docs/maintenance/mobile-layout-20261114/README.md)。
+
 ## 2026-11-14 取消本地预算门限与会话锁源
 
 调用不再受本地金额限额、预占不足或超估算冻结拦截，保留实际用量与费用记录。选源按当前配置及可用性，不按会话、历史active或Key affinity固定；配置变更对下一次调用生效。见[验收收据](docs/maintenance/no-local-budget-20261114/README.md)。
@@ -14,7 +24,7 @@
 
 ## 2026-11-14 修正：长输入预占与来源容量 fallback
 
-长JSON不再按字节上界直接判定模型token超窗；本地容量不足继续适配后续来源，真实上游400与会话pin规则保留。见[收据](docs/maintenance/billing-reservation-fallback-20261114/README.md)。
+长JSON不再按字节上界直接判定模型token超窗；本地容量不足继续适配后续来源，当时保留真实上游400与会话pin规则；会话pin门槛随后已由本地预算/锁源取消补丁替代。见[收据](docs/maintenance/billing-reservation-fallback-20261114/README.md)。
 
 ## 2026-11-13 后续修正：按模型类型配置价格
 

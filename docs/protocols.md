@@ -1,6 +1,6 @@
 # 协议与客户端
 
-本分支提供 `POST /v1/chat/completions`、`POST /v1/responses` 和 `POST /v1/messages`。三者均使用用户虚拟密钥（VKey），共享实时权限、限额、预算与逐来源尝试账本；管理面板口令不能用于模型调用。
+本分支提供 `POST /v1/chat/completions`、`POST /v1/responses` 和 `POST /v1/messages`。三者均使用用户虚拟密钥（VKey），共享实时权限、RPM/TPM 限流与逐来源尝试账本；管理面板口令不能用于模型调用。
 
 ## 上游协议与客户端接入协议
 
@@ -32,7 +32,7 @@ DeepSeek 原生 Responses 的渠道 base 为 `https://api.deepseek.com`，由网
 
 ## 来源上下文上限与明文推理
 
-来源的 `protocols` JSON 可声明成对的正整数 `max_input_tokens` / `max_output_tokens`，用于普通 API 来源独立于价格的输入/输出上限。原生不透明历史、音频及需要 token 限额的图像，按已声明的完整输入上限保守预占；不能用假的零价格解锁。本地费用预算门限已取消；未定价金额保留未知，与免费分开。修改能力或上限会改变来源代次。
+来源的 `protocols` JSON 可声明成对的正整数 `max_input_tokens` / `max_output_tokens`，用于普通 API 来源独立于价格的输入/输出上限。原生不透明历史、音频及需要 token 限额的图像，在启用 TPM 时按可用完整输入上限保守预占；无 TPM 且窗口未知时可按 JSON 估算转发，不要求零价格解锁。本地费用预算门限已取消；未定价金额保留未知，与免费分开。修改能力或上限会改变来源代次。
 
 两个数是独立的绝对上限，并不保证能同时装入供应商的联合上下文窗口。比如官方 DeepSeek 给出1M联合上下文和384K最大输出；完整输入上限可保守声明1048576、输出393216，但不能称其可同时容纳1M输入加384K输出。原生参数能力仍依供应商合同；[官方模型上限](https://api-docs.deepseek.com/quick_start/pricing/)应在配置时复核。
 
@@ -42,7 +42,7 @@ Chat↔Responses 可精确保留明文推理：Chat `reasoning_content` 与 Resp
 
 Chat的`response_format`与Responses的`text.format`可在已实现的双向转换范围内映射，保留JSON Schema的名称、描述、`strict`及schema内容，不通过修改schema来换取成功。具体模型是否接受该schema仍由真实来源决定。推理关闭`none`、强度档位和思考预算是不同控制；省略不等于关闭，见[推理兼容](reasoning-compatibility.md)。
 
-输出cap既约束请求，也参与预算预占。模型/来源边界与价格配置分别校验，价格不是模型能力证明；显式cap超出已知上界会明确报错，不静默缩小并重试。只有客户端省略且合同表示总输出时，普通API来源学习到的较小上限才可约束网关生成的默认cap，并在发出及预占前重算边界。截断终态与真实usage按实际协议保留，缺失usage不能伪造为0。OAuth专属最低16及已核实来源上界见[OpenAI OAuth](openai-oauth.md)。
+输出cap约束真实来源请求，并在启用 TPM 时参与令牌预占。真实模型/来源边界独立校验；价格参考值不限制调用，也不是模型能力证明；显式cap超出已知上界会明确报错，不静默缩小并重试。只有客户端省略且合同表示总输出时，普通API来源学习到的较小上限才可约束网关生成的默认cap，并在发出及预占前重算边界。截断终态与真实usage按实际协议保留，缺失usage不能伪造为0。OAuth专属最低16及已核实来源上界见[OpenAI OAuth](openai-oauth.md)。
 
 旧`drop_fields`不能删除客户端明确指定的输出上限、推理等受保护控制。配置冲突时应调整已核实的来源合同或客户端请求，不能用删参掩盖不支持的功能。未知供应商扩展和不能等价表达的跨协议字段，仍按各自保真与拒绝规则处理。
 
@@ -74,7 +74,7 @@ Responses 当前要求客户端完整重放 input。`previous_response_id`、服
 
 Responses 来源的 `response.completed.output` 若明确为空数组，只有先前 text/function item 的身份、内容、参数及全部逐项终止事件完整一致时，才使用该流的已关闭内容完成转换。缺失/null/非数组 output 不采用此例外；身份改变、漏关闭或非空汇总文本矛盾均拒绝。稀疏路径限定最多128项/内容part及16MiB累计内容，不扩展签名或加密推理转换。未知/opaque sparse item 不采用此例外；缺省 usage 仍未知并由来源独立观察器计量，原生流字节不重建。非空汇总保留既有转换路径，本次不声称它已新增全面 identity 或 item 集合一致性重校验。
 
-生成用量来自真实源，转换层的协议占位字段不能当作财务用量。转换到 Chat 流时请求源包含最终 usage；源仍可不报告，用量及费用因此可能未知。配置来源价格与预算见[身份与计量](identity-metering.md)。
+生成用量来自真实源，转换层的协议占位字段不能当作财务用量。转换到 Chat 流时请求源包含最终 usage；源仍可不报告，用量及费用因此可能未知。配置来源价格及查看历史费用见[身份与计量](identity-metering.md)。
 
 ## 已知审核 telemetry 的转换边界
 

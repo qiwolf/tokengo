@@ -1,6 +1,6 @@
 # Linux x86_64 私有站部署与回滚
 
-本文随 **v0.34.0-qiwolf.30** 源码与配套包构建，Cargo **0.34.0**、数据库 schema **45**。由44升级会追加查询索引、可重建累计调用汇总及协议会话epoch；大库建索引和首次预热需要停服维护窗口。本轮查询修复与生产配套已验收，公开发行状态见[发行收据](acceptance/2026-11-07-qiwolf30-release/README.md)，具体见[版本说明](releases/v0.34.0-qiwolf.30.md)。发行不自动升级现有实例，也不会修改反代。升级前排空调用并一致备份数据库、主密钥、程序、Web与配置；恢复写入后不能用旧整库覆盖新增账务。既有[可信反代来源IP指南](reverse-proxy-client-ip.md)继续适用。
+本文当前面向 **v0.34.0-qiwolf.32 发行准备版**，Cargo **0.34.0**、数据库 **schema47**。本版 exact CI、公开资产与独立验收仍待完成，见[版本说明](releases/v0.34.0-qiwolf.32.md)。当前公开正式版仍为 qiwolf.31/schema45；旧发行与维护收据保留原事实。安装不会自动修改来源、价格、路由、反代或调用方参数；既有[可信反代来源IP指南](reverse-proxy-client-ip.md)继续适用。
 
 历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
 
@@ -18,13 +18,17 @@ Key恢复材料复用现有AES-256-GCM密文字段；升级备份必须同时保
 
 历史公开分发 **[v0.34.0-qiwolf.8](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.8)**，功能schema40，新增共享向量/重排回退、逐来源续验、回收站与服务授权；发行源码 `ca008c7acfcc53d49c5c59670dd123fc28c37a5b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39835960738)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39837203892)通过。Linux x86_64 原生包与 linux/amd64 容器已公开，9个资产匿名下载校验、GHCR按摘要匿名拉取、无.env的Compose启动以及原生/容器实际运行和重启/同卷重建通过。见[本版说明](releases/v0.34.0-qiwolf.8.md)和[验收状态](acceptance-status.md)。上一公开版 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7) 对应 `684fa862c64bab5b16c438b7fb8db03295c5b8f4`、schema39，修复容器交付配置。安装包不会自动创建私有路由或切换调用方；[通用透传与MinerU](passthrough-development.md)仍限已实现的同步链路。由schema39升级前须一致备份数据库、主密钥和旧程序，不能用旧程序直接打开schema40数据库。
 
-## schema45迁移与回退
+## schema47升级与回退
 
-在外部入口保持维护、在途请求与账务预占排空并停服后，可使用服务相同的数据库路径、运行身份与环境执行新程序 `tokengo-server --migrate-only`。该模式只迁移及预热累计统计，不启动监听、后台任务、业务恢复或主密钥/日志初始化。包中保留43/44源SQL，45由两个源part以单个额外换行精确拼接，manifest记录片段与组合摘要。
+从 qiwolf.31/schema45 升级会依次应用 46（时间范围汇总索引）与 47（币种、数量单位价格和账本字段、按币种历史消费表）。迁移为旧价格、旧账本与旧消费统计明确标记 USD，原数字不换算；新增价格与账默认 CNY，页面汇率展示不改历史账本。已有 schema47 的指定生产补丁实例不会重跑迁移。价格生命周期与来源发现使用 settings，不新增 schema48。
 
-现有 `deploy/manage.py upgrade` 在启动健康失败时会自动恢复停服快照；因此它执行期间及验收完成前必须保持外部维护入口关闭，避免新程序接受业务写入后再恢复旧库。恢复入口前核对就绪、页面与业务结果；不将健康200等同端到端验收。
+先关闭所有入口新流量，等待/取消在途请求并让账务补写排空，保持维护直到验收完成；停服后整组备份数据库及 WAL/SHM 一致状态、原主密钥、billing-outbox/dead-letter、程序、Web、配置与 systemd 单元。大库新增索引需要维护窗口及磁盘空间，不把旧版的加性迁移兼容结论延伸到 schema47。
 
-schema45为加性迁移，已在合成库验证旧程序仍可读写。恢复流量后的普通程序回退应保留当前实时数据库与45结构；`manage.py restore`会替换数据库、主密钥及配置，只用于经评估的数据恢复，不能作为已产生新业务写入后的无损程序回退。
+可使用服务相同数据库路径、运行身份和环境执行新程序 tokengo-server --migrate-only。该模式迁移并预热统计，不启动监听、业务恢复、后台任务或主密钥/日志初始化。schema45 由两个 SQL part 组合，46/47 来自 usage_time.sql/currency_units.sql，使用同提交包内清单校验，不手动改 schema_migrations 或币种标签绕过迁移。
+
+部署同提交服务端与 Web，正常启动后核对 schema_migrations 最大版本为 47、/api/ping 与 /readyz、价格/用量页面、历史币种和合计、未知费用 null、Key 权限及一次授权真实模型调用。启动应重放 durable billing intents，再收尾未知在途 hold；不能删除 outbox/dead-letter 强行通过就绪。健康 200 不代替账本与端到端验证。
+
+现有 deploy/manage.py upgrade 在启动或健康失败时恢复停服快照，因此执行及验收期间须保持外部维护入口关闭。恢复流量后不得用旧快照覆盖新账本、身份与配置；先保留新增数据与补写意图，再制定对账恢复。schema47 已重建按币种消费表并新增字段，不能沿用 schema45“旧程序可读写”的历史结论，也不能直接换旧程序/镜像写新数据库。回退应使用匹配的完整停服备份、主密钥、outbox、配置、Web 与旧程序，明确备份后的写入损失并先在独立实例演练。
 
 ## 使用已发布的直接部署包
 
@@ -75,7 +79,7 @@ sudo python3 /opt/tokengo/current/deploy/manage.py health
 ssh -N -L 3160:127.0.0.1:3160 USER@HOST
 ```
 
-访问 `http://127.0.0.1:3160/ui/` 完成首次面板密码与 VKey 设置。密钥只通过授权的管理流程输入，避免命令行参数、工单或 shell 日志。新站初始为空，不会自动导入 LiteLLM 密钥、用户、路由或价格。管理界面已提供用户/VKey、预算、价格、账本、模型路由和源协议编辑。预算冻结解除等尚未实现的操作以页面明确标注为准。
+访问 `http://127.0.0.1:3160/ui/` 完成首次面板密码与 VKey 设置。密钥只通过授权的管理流程输入，避免命令行参数、工单或 shell 日志。新站初始为空，不会自动导入 LiteLLM 密钥、用户、路由或价格。管理界面提供用户/VKey、价格版本、只读消费汇总、账本、模型路由和来源协议编辑；本地金额限额与冻结控制已取消。
 
 安装器创建无登录 shell 的 `tokengo` 系统用户；服务固定使用非 root 身份，限制写入状态和日志目录。首次启动生成主密钥，权限 0600。固定布局：
 

@@ -1,6 +1,6 @@
 # 容器部署与分发
 
-本文随 **v0.34.0-qiwolf.25** 源码与配套交付包构建，Cargo **0.34.0**、数据库 schema **42**。本版新增供应方预设及请求渠道可见性，无数据库迁移。公开发行与独立验收状态见[本轮发行收据](acceptance/2026-11-03-qiwolf25-release/README.md)，具体功能见[版本说明](releases/v0.34.0-qiwolf.25.md)。发行不自动升级现有实例，也不会修改反代。升级前一致备份数据库、主密钥、程序、Web 与配置；恢复写入后不能用旧整库覆盖新增账务。既有[可信反代来源 IP 指南](reverse-proxy-client-ip.md)继续适用。
+本文当前面向 **v0.34.0-qiwolf.32 发行准备版**，Cargo **0.34.0**、数据库 **schema47**；公开正式版仍为 qiwolf.31/schema45，本版 exact CI、发行和公开产物验收待完成，见[版本说明](releases/v0.34.0-qiwolf.32.md)。从 schema45 升级依次应用时间索引与币种/数量计价迁移，需预留维护窗口和磁盘空间；旧数字标为 USD 保留，新数据默认 CNY。完整步骤见[原生与共用迁移合同](deployment.md#schema47升级与回退)。更换镜像前关闭流量、排空请求及结算队列，再一致备份整个数据卷、原主密钥、billing-outbox/dead-letter 与配置。不能用旧镜像直接写 schema47，也不能在恢复流量后用旧卷覆盖新账。安装不自动修改反代、路由、来源与价格。
 
 历史公开版 **[v0.34.0-qiwolf.17](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.17)**，发行源码`0aced3ddbdcc`，Cargo0.34.0/schema40。包含Luna与DeepSeek推理关闭的可分发兼容、目录effort解析与原生thinking关闭控制，并保留移动端模型分类/筛选紧凑布局。兼容限定已核实的官方来源和精确型号；冲突拒绝，管理员手工列表及默认值保留，客户端显式参数优先，第三方不自动套用。[精确main CI](https://github.com/qiwolf/tokengo/actions/runs/40159567667)和[发布流程](https://github.com/qiwolf/tokengo/actions/runs/40159639375)成功；9个公开资产、匿名GHCR拉取、配套原生/容器生命周期及Key验收通过。build-test完整工作区Rust **1253通过、0失败、3忽略**，Python三组分别13、6、3项，重复覆盖不累加。见[版本说明](https://github.com/qiwolf/tokengo/blob/main/docs/releases/v0.34.0-qiwolf.17.md)与[发布记录](https://github.com/qiwolf/tokengo/blob/main/docs/acceptance/2026-10-25-qiwolf17-release/README.md)。标签及包内文档为构建快照，后补收据维护于main与Release页面，不移动已发布标签。
 

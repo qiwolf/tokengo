@@ -1,8 +1,10 @@
 # TokenGo User Guide
 
+See the [qiwolf.32 scope](releases/v0.34.0-qiwolf.32.md): versioned token/unit/request price editing and lifecycle controls, editable source-catalog limits, observation-only costs, and current-configuration source selection. Public-release acceptance is pending.
+
 [Project home](../README.en.md) · [中文指南](guide.zh-CN.md) · [Release notes](releases/v0.34.0-qiwolf.19.md) · [Publication receipt](acceptance/2026-10-26-qiwolf19-release/README.md)
 
-This guide covers **v0.34.0-qiwolf.19**, Cargo **0.34.0**, database schema **41**. The release is public; use [GitHub Releases](https://github.com/qiwolf/tokengo/releases) and the [receipt](acceptance/2026-10-26-qiwolf19-release/README.md) for exact source and artifact identity. Historical changes remain in the [changelog](../CHANGELOG.md) and [release notes](releases/). Tagged package documentation is a build-time snapshot; later receipts live on main without moving the tag.
+This guide covers the **v0.34.0-qiwolf.32 release candidate**, Cargo **0.34.0**, database **schema47**. Exact CI, release assets and public acceptance are pending; qiwolf.31 remains the published stable release. See [Releases](https://github.com/qiwolf/tokengo/releases), [acceptance status](acceptance-status.md), and the [schema45-to-47 upgrade and rollback procedure](deployment.md#schema47升级与回退). Historical receipts retain their original scope; tagged documents are build-time snapshots. The migration preserves old numeric values as USD, defaults new accounting to CNY, and requires a consistent database/key/outbox backup before upgrading.
 
 TokenGo brings API providers, supported subscription accounts and local models into one self-hosted gateway. The Rust/Axum server uses SQLite, with a Leptos/WebAssembly console. Native and container deployments need no Node.js runtime or separate database service. Current public packages target Linux AMD64; “lightweight” describes this architecture, without a fixed memory, latency or throughput claim.
 
@@ -14,11 +16,11 @@ After deployment and administrator initialization, open Providers and Connection
 2. **Save credentials**: enter the actual API URL and key, or complete your own authorization on the official provider page and save the binding. Online channels use one API URL; local channels may contain multiple independent addresses. An API key cannot substitute for subscription authentication.
 3. **Select models**: read the selected credential's catalog, search and select models, then save mappings. Enter the upstream name and an optional public alias; a blank new alias uses the upstream name. Existing mappings retain their identity and grants. Manual entry remains available for verified models. Catalog discovery is not a paid inference test or entitlement confirmation.
 4. **Parameters and forwarding**: verify source input/output token bounds, native protocol, permitted client protocols, reasoning controls, defaults and network policy. Unknown capabilities remain unknown rather than being inferred from a brand or model name.
-5. **Grant and call**: create users and model/source grants. Configure prices and monetary budgets where required, then let users create their own gateway keys and connect with an authorized public model name.
+5. **Grant and call**: create users and model/source grants. Configure prices where needed, then let users create their own gateway keys and connect with an authorized public model name.
 
 Closing before the first save creates no empty channel. Closing after credentials are saved retains them; continue through Manage Upstream Keys. If a save response is uncertain, close and refresh to confirm the result before retrying. The system does not delete possibly saved credentials to compensate for a lost response. See [provider setup](provider-channels.md) and [credential pools](provider-key-pools.md).
 
-Vector and rerank compatibility checks are optional diagnostics. They run only when explicitly requested, never on startup or a timer. Missing, failed or expired checks do not block saving, normal calls or configured fallback; live authorization, budgets and response integrity checks still apply.
+Vector and rerank compatibility checks are optional diagnostics. They run only when explicitly requested, never on startup or a timer. Missing, failed or expired checks do not block saving, normal calls or configured fallback; live authorization, rate limits and response integrity checks still apply.
 
 ## API, Subscription and Local Routes
 
@@ -62,19 +64,19 @@ Before a new channel exists, OAuth's initial network family follows the authenti
 
 ## Routing, Credential Pools and Virtual Models
 
-An online channel's upstream credentials use ordered selection or user-sticky allocation, not duplicate inference fan-out. A user's downstream keys share upstream affinity; native session ownership takes precedence. Explicit 429/400 switches control credential changes. A parameter error does not automatically establish a bad key.
+An online channel's upstream credentials use ordered or concurrent selection based on current configuration and availability, without duplicate inference fan-out. Session IDs and legacy affinity do not fix subsequent source selection. Explicit 429/400 switches control credential changes. A parameter error does not automatically establish a bad key.
 
-Users can define private virtual models with ordered targets or weekly UTC/Asia-Shanghai schedules. Administrators can grant shared entries and restrict direct calls to backing models. Every attempt still checks actual target permissions, current policy, prices and budgets. Committed streams are not replayed. Virtual names cannot expand access. Disabling retains configuration. Virtual-model trash retains configuration/history and restores entries disabled; channel deletion retains request, price and financial history and is refused during active/unsettled work. See [key pools and private strategies](provider-key-pools.md), [shared entries](shared-virtual-models.md) and [routing](logical-routing.md).
+Users can define private virtual models with ordered targets or weekly UTC/Asia-Shanghai schedules. Administrators can grant shared entries and restrict direct calls to backing models. Every attempt still checks actual target permissions, current policy and source windows, and records source-specific prices. Committed streams are not replayed. Virtual names cannot expand access. Disabling retains configuration. Virtual-model trash retains configuration/history and restores entries disabled; channel deletion retains request, price and financial history and is refused during active/unsettled work. See [key pools and private strategies](provider-key-pools.md), [shared entries](shared-virtual-models.md) and [routing](logical-routing.md).
 
-Numeric/output compatibility checks for multi-target embedding/rerank are optional, manual diagnostics. Missing, failed or expired evidence never gates saving, normal calls or configured fallback. Production does not automatically renew it or schedule GPU compatibility probes. Local routes can choose `local_strategy: "round_robin"` to rotate their start while preserving cloud/OAuth affinity. This is not a distributed load-balancing or equal-GPU-utilization guarantee. See [vector fallback](vector-fallback.md), [capacity](vector-model-capabilities.md) and [local node rotation](maintenance/local-vector-balancing.md).
+Numeric/output compatibility checks for multi-target embedding/rerank are optional, manual diagnostics. Missing, failed or expired evidence never gates saving, normal calls or configured fallback. Production does not automatically renew it or schedule GPU compatibility probes. Local routes can choose `local_strategy: "round_robin"` to rotate their start without creating cloud/OAuth session affinity. This is not a distributed load-balancing or equal-GPU-utilization guarantee. See [vector fallback](vector-fallback.md), [capacity](vector-model-capabilities.md) and [local node rotation](maintenance/local-vector-balancing.md).
 
 Configure provider credentials and mappings first, then credential allocation or local node rotation, and finally the virtual target chain and grants. The three layers combine: targets follow their configured order/schedule, with Key/node selection inside each target. For long calls, adjust global waiting and fallback budgets under System Settings → Request Waiting Time. The model-routing editor/PUT only accepts real logical models; virtual-name timeout overrides currently have no supported configuration entrypoint. See the linked configuration guides.
 
 ## Accounts, Usage and Accounting
 
-Administrators create logins and grants together. Ordinary users manage their own keys and usage in My Space. User, key and ancestor permissions/budgets intersect; child keys cannot widen grants or bypass total budgets. Disabling a user blocks both login and API calls. Root keeps its separate security identity.
+Administrators create logins and grants together. Ordinary users manage their own keys and usage in My Space. User, key and ancestor permissions and rate limits intersect; child keys cannot widen grants or bypass RPM/TPM or concurrency controls. Disabling a user blocks both login and API calls. Root keeps its separate security identity.
 
-The overview exposes request metrics, active progress and type/source/model/client groups. Usage and Billing separates prices, budgets and per-attempt records. Each retry/fallback reserves and settles against the actual source. Token accounting is separate from request-unit Search/Fetch accounting. Missing usage is not zero, unpriced is not free, and a gateway calculation is not the provider's final invoice. Cumulative monetary budgets are not monthly Token packages or a multi-instance quota service. See [accounts](account-login.md) and [identity/metering](identity-metering.md).
+The overview exposes request metrics, active progress and type/source/model/client groups. Usage and Billing separates prices, read-only cost summaries and per-attempt records. Each retry/fallback records estimates and actual settlement against the source without creating a monetary hold. Token accounting is separate from request-unit Search/Fetch accounting. Missing usage is not zero, unpriced is not free, and a gateway calculation is not the provider's final invoice. Local monetary limits and overrun freezes are disabled; unknown actual costs remain null. This is not a multi-instance quota service. See [accounts](account-login.md) and [identity/metering](identity-metering.md).
 
 ## Diagnostics and Other Services
 
@@ -117,7 +119,7 @@ Open http://127.0.0.1:3160/ui/ and initialize your administrator password before
 
 1. Complete setup and save the once-displayed gateway key before exposing the service.
 2. Follow [Start With a Source](#start-with-a-source) for family, authentication, models and parameter review. Add backup credentials through the existing channel's Manage Upstream Keys action.
-3. Ensure provider, source and model are enabled; configure users, real source prices and optional monetary budgets.
+3. Ensure provider, source and model are enabled; configure users, real source prices.
 4. Users create their own keys. OpenAI-compatible clients normally use `http://127.0.0.1:3160/v1`, a gateway key and an allowed public model name. Messages clients should follow their base-URL convention for `/v1/messages` without duplicating `/v1`.
 
 ## Environment Variables

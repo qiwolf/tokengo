@@ -1,5 +1,9 @@
 # TokenGo
 
+**新版准备：v0.34.0-qiwolf.32** — 用量看板与人民币展示、三类价格版本管理、来源上限发现、取消本地金额门槛和会话锁源、手机价格与菜单修复。公开发行与本版精确 CI 尚待验证；当前公开正式版仍为 qiwolf.31。见[本版说明与验证边界](docs/releases/v0.34.0-qiwolf.32.md)。
+
+**Release candidate: v0.34.0-qiwolf.32.** Usage reporting, versioned prices, source-limit discovery, observation-only costs, current-configuration routing and mobile layout. Exact main CI and public-release acceptance are pending; qiwolf.31 remains the published stable release. [Release scope](docs/releases/v0.34.0-qiwolf.32.md).
+
 2026-11-14模型价格管理：[修改、启停、删除与验收状态](docs/maintenance/price-lifecycle-20261114/README.md)。
 
 2026-11-14计费预占与来源容量fallback补丁：[实现与验收状态](docs/maintenance/billing-reservation-fallback-20261114/README.md)。
@@ -41,14 +45,14 @@ https://github.com/user-attachments/assets/6a26c4d3-f4c5-4523-bc90-8cffe3a7c73f
 | 按来源适配 · Source-aware controls | 区分推理档位、thinking 开关、JSON Schema 和输出上限；显式参数优先，不能等价表达时明确报错。 | Match reasoning levels, thinking switches, JSON Schema and output caps to the source. Explicit controls take priority; unrepresentable requests are rejected. |
 | 出口可控 · Network control | 模型接入、渠道、家族逐层设置 HTTP/HTTPS 代理，可继承或明确直连。 | Set HTTP(S) proxy policies per model source, provider or family, with inheritance and explicit direct access. |
 | 统一路由 · Unified routing | 上游 Key 池、私有/共享虚拟模型、有序回退与时段策略；本地向量和重排可配置等权轮询。 | Upstream credential pools, private/shared virtual models, ordered fallback and schedules; optional round-robin for local embedding/rerank sources. |
-| 权限与账务 · Access and accounting | 用户自助 Key、逐层授权与预算、请求进度及逐次尝试账本；未知用量或费用不冒充零。 | Self-service keys, intersecting permissions and budgets, request progress and per-attempt ledgers. Unknown usage and cost remain explicit. |
+| 权限与账务 · Access and accounting | 用户自助 Key、逐层授权与限流、请求进度及逐次尝试账本；未知用量或费用不冒充零。 | Self-service keys, intersecting permissions and rate limits, request progress and per-attempt ledgers. Unknown usage and cost remain explicit. |
 
 ## From deployment to your first request · 从部署到调用
 
 1. **部署 / Deploy** — 从 [Releases](https://github.com/qiwolf/tokengo/releases) 获取原生包或容器文件，按[原生部署](docs/deployment.md)或[容器部署](docs/container-deployment.md)启动并完成管理员初始化。Install a matching native package or container and initialize the administrator.
 2. **接入来源 / Add a source** — 在“供应商与接入”点“新建渠道”，选择家族和认证线路；API 填真实地址与 Key，OAuth 在官方页面完成账号授权。In Providers and Connections, use New Channel to choose a family and authentication route; enter API credentials or complete the supported provider's authorization.
 3. **选择并核对 / Select and review** — 读取目录、保存模型映射，核对输入/输出上界、原生协议、推理档位及网络出口；目录可读不等于推理已通过。Save model mappings, verify source bounds, native protocols, reasoning controls and network policy. Catalog discovery is not an inference test.
-4. **授权并调用 / Grant and call** — 创建用户、授予模型和来源权限，按需配置价格与预算；用户创建自己的 Key，客户端使用网关地址、Key 和获准模型名。Create users and grants, configure prices and budgets where needed, then connect with a user's gateway key and authorized model name.
+4. **授权并调用 / Grant and call** — 创建用户、授予模型和来源权限，按需配置价格；用户创建自己的 Key，客户端使用网关地址、Key 和获准模型名。Create users and grants, configure prices where needed, then connect with a user's gateway key and authorized model name.
 
 完整操作见[中文指南](docs/guide.zh-CN.md) / [English guide](docs/guide.en.md)。
 

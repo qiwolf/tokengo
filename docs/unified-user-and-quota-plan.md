@@ -1,5 +1,7 @@
 # 统一用户、自助 Key 与额度改造方案
 
+> 历史方案说明：本页未实施的权益/套餐设想不构成当前接口合同。2026-11-14 已取消本地金额预算、未知费用扣估算及超估算冻结，相关旧方案表述被替代；当前实现见[身份与计量](identity-metering.md)，本页其余历史决策与待定项保留。
+
 规划日期：2026-10-20；以下实施沿革保留历史状态，当前功能与版本统一见[需求状态](requirements-status.md)和[验收状态](acceptance-status.md)。第一阶段统一用户、自助 Key 与点选策略，以及第三阶段自定义探针，均已实现，并已有匹配版本的浏览器、CI、分发与独立部署证据；历史qiwolf.7阶段的公开版本为 [v0.34.0-qiwolf.7](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.7)。月套餐、原始 Token 权益、独立系统诊断总预算仍是后续方案。历史阶段测试数不代表当前提交的全部测试结果。实际覆盖见[需求状态](requirements-status.md)，API合同见[账号与自助Key](account-login.md)。
 
 配套说明：[协议选路与桥接矩阵、回退逻辑图](protocol-routing-matrix.md)与[自定义探针当前合同](custom-probes.md)。本文保留分阶段规划与尚未实施的权益草案，不作为新增用户字段或未来API已可调用的依据。
