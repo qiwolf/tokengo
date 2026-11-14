@@ -1,0 +1,28 @@
+{
+  "verified": true,
+  "host": "tokengo-geren-wangguan",
+  "current": "/opt/tokengo/releases/web-mobile-07262cb6f6e9-969bc9bf",
+  "web_source_commit": "07262cb6f6e9fcf262e3ce32588e078aa7515ad8",
+  "web_bundle_sha256": "969bc9bf859ad2495a9161a439cc13959eda930c72d2dd8e99f63886aee51318",
+  "pid": "985161",
+  "server_sha256": "c23913c900196e7208d76674c039549d222a26ae46c3127d638ff7184a1ed2d1",
+  "public_assets": {
+    "account-workspace-4df435622eca3d70.css": "58dcb5237803521838d9b3c0d7566a002955f217942ede4bd272f229e303f9c4",
+    "usage-dashboard-51bdda854fa112d9.css": "bf65ffbad2587c448fecd08db365f55ba73c1138ca0a812e7c039b7c7a234ab6",
+    "console-design-b7e4b002db89eb5d.css": "a0842430f644a595271cbf8c1fed74f87f4e27441a6eebb799918e996aa0a792",
+    "tokengo-web-8e41b63049daccb2.js": "8575008a45a003418c3e94a9de59d9534702a519332bfc0f86460214a6a92370",
+    "style-c41c1323e5e09396.css": "1f20503f5f444fd8662b8cc5aa96dc688672393fce432f4ce6d1f340100a8414",
+    "index.html": "5acf305fec456316110c1955a2b17e21fe29ad7afe3b55cefe9681d84976ca6a",
+    "provider-workspace-ea99438577ec8a95.css": "687e1bed56fc2bde2beb6c6b67bdd7e689889411903c8ca700803848ee066160",
+    "tokengo-web-8e41b63049daccb2_bg.wasm": "4aa7d36d0a0529fa6b89cb798f1a85f01fa19e8c35bac0fb2c2e138b18876387"
+  },
+  "readyz": {
+    "checks": {
+      "database": "ok",
+      "gateway_key_set": true,
+      "panel_password_set": true,
+      "routing_models_tracked": 48
+    },
+    "status": "ok"
+  }
+}

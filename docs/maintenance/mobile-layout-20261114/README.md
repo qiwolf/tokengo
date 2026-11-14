@@ -10,6 +10,14 @@ Mac编辑、Git管理；最新源码同步到build-test独立目录/srv/build/to
 
 首轮红测缺少一条合成API，补齐后取得有效红测；首轮green暴露QA的同hash页面导航没有关闭菜单、短横屏只滚整行的隔离假设，已仅修QA并重跑，green-isolated为最终证据。未更改产品去迁就fixture。完整日志、脚本、几何数据、截图与Web归档位于Mac项目上级review/mobile-layout-20261114。
 
-部署仅叠加Web静态资源，保留旧hashed资产及运行中的server/CLI，不重启模型服务，不写业务数据库。原子current切换，逐资源HTTP核对；失败只回旧Web链接。4项build-test隔离测试已验证成功保留、坏包/越界路径拒绝、资源失败回退且新业务记录保留、运行状态漂移不覆盖。生产回执待实际发布后补充。
+部署仅叠加Web静态资源，保留旧hashed资产及运行中的server/CLI，不重启模型服务，不写业务数据库。原子current切换，逐资源HTTP核对；失败只回旧Web链接。4项build-test隔离测试已验证成功保留、坏包/越界路径拒绝、资源失败回退且新业务记录保留、运行状态漂移不覆盖。已完成生产发布，回执见下节。
 
 验证边界为Linux WebKit/Chromium实际渲染与生产资源字节一致性，不冒充真实iPhone Safari操作。历史共用知识《TokenGo 手机模型分类和筛选的同视口前后验收》（material_based/historical_needs_verification）仅作为同视口留证的方法参考；本轮事实均来自当前源码、红绿构建与部署读回。
+
+## 生产回执
+
+北京时间2026-11-14T11:16:52.153413+08:00完成Web-only更新，Web源码提交07262cb，现役静态资源路径/opt/tokengo/releases/web-mobile-07262cb6f6e9-969bc9bf。Web归档SHA256为969bc9bf859ad2495a9161a439cc13959eda930c72d2dd8e99f63886aee51318。公开HTML/JS/WASM/CSS共8项关键资源哈希与build-test产物逐一相符；服务内全部新旧静态资产已由manage.health逐文件核对。旧hashed资源保留供已打开页面继续加载，刷新页面取得新CSS。
+
+模型服务PID985161、二进制SHA256 c23913c900196e7208d76674c039549d222a26ae46c3127d638ff7184a1ed2d1、完整环境及配置指纹前后完全一致。没有停API、关闭入口、数据库写入或重启模型服务；readyz返回ok。继承原server/CLI及模型规则，未推送或公开发版。
+
+最终截图见evidence/webkit-390x900-light-token-row.png与webkit-390x900-light-scrolled-menu.png，分别显示完整字段和已滚动页面上的当前视口菜单。完整双引擎96张截图与逐字段几何报告仍在项目上级review/mobile-layout-20261114/evidence/green-isolated。

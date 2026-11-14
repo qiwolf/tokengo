@@ -1,0 +1,18 @@
+{
+  "web-identity.json": "3d43af3a32ed2dbf10a5e53c49234f91de43d6898aa0f2652bbb993d0842acbd",
+  "deploy.py": "fd9ec2fa597642ccc6d83f994c123739dd6f19f234ddaa3e3a75a4be2a3d1cfc",
+  "test_web_only_deploy.py": "8e5f785805203d6917c549f4058be11d76337278135ea4d79bd1c591bdf99167",
+  "deployment.json": "5a86357eca0e88313cec6d258de62ae2ae4a1301485e277126104f26eb1f6f7a",
+  "green-web-build.json": "e12447deb8987644aabbbc1927d6de33ebae7c73ecde3bc876ff5694c19c385d",
+  "payload-identity.json": "edaa495924a7d1198defb3c75475a076c338d6b910ff6a882fb361c435e13265",
+  "deployment-tests.log": "8ab67d398b405c8a16dd10ccbb17b3ff4d5056d0c17e0b4080e3ab60166c960b",
+  "source-green.json": "b1ed43ad469b9f4578c170fbf1298a6aaca336be9f10e5a7d3b7cfff7c87d2db",
+  "verification-summary.json": "2a13337bc3b093ed6cde3d26406b4435ad615697c1a6b4fa9327a6209225a0e3",
+  "red-fixture-fixed-run.json": "e72052fe33f4d633e4be49d67b7469b06280bc13967e02425ec63b959028b773",
+  "serving-before.json": "b7d7a454feacd9a5c07bd683b85fb150c4340c877ab6603f198c2ea651b1d320",
+  "webkit-390x900-light-scrolled-menu.png": "baa3f763a96b9e30e950a64db6661775123b5ae3931fcccfd10048d304aa6468",
+  "deployment-receipt.json": "cce243de04040edf91c06ddbd6550b00a78cd61d0f3de3f8bc2fbd410b19e746",
+  "common.py": "d76ad7da6028527b4d0a6e2296228d1c55469cc3d323d65ca30414a5c9f519f3",
+  "webkit-390x900-light-token-row.png": "f5213893873550935e65fd7a36a3fc179c76c62f42edcd7a65a18b26976a8c0d",
+  "post-verification.json": "25b1c424b5f28909dd9b49d5f15935b56df9fd5f678d1de4634917ec8c20b9c2"
+}
