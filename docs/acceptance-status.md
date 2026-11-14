@@ -1,8 +1,10 @@
 # 功能与验收状态
 
-## v0.34.0-qiwolf.32：发行验收待完成
+## v0.34.0-qiwolf.32：已正式发行，公开产物独立验收通过
 
-本版包含 qiwolf.31 之后的用量与币种统计、三类价格版本管理、来源目录上限发现、取消全部本地金额门槛与会话锁源、手机价格及菜单修复。[版本范围](releases/v0.34.0-qiwolf.32.md)逐项区分先前专项覆盖与本版新测。Exact main CI、发行流程和公开产物独立验收尚待完成，不能把已部署补丁的通过数当作本版验收。
+本版包含 qiwolf.31 之后的用量与币种统计、三类价格版本管理、来源目录上限发现、取消全部本地金额门槛与会话锁源、手机价格及菜单修复。[版本范围](releases/v0.34.0-qiwolf.32.md)逐项区分先前专项覆盖与本版新测。正式源码 `4ab9085fcb758038d3a02c6de031dec4e659b612` 的 [main CI](https://github.com/qiwolf/tokengo/actions/runs/43556308521) 通过 Rust1778通过/0失败/15忽略、Python13、WASM 及五项显式规模门禁，重叠不累加；[发行流程](https://github.com/qiwolf/tokengo/actions/runs/43557334653) 成功，[正式 Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32) 于 2026-11-14 04:50:41 UTC 公开九项资产。
+
+九项公开资产均完成匿名下载及官方 size/digest 核对，全部 813 份 tag 文档、manifest/schema47 和 SQL43–47 一致；原生 CLI/WASM、Key 加密与重启，离线及匿名 GHCR 同镜像、容器重启与同卷重建通过。Compose 仅 config，公开 QA 未访问生产、未调用真实模型、未重做浏览器交互；此前浏览器 168 项检查单列，不是本次公开资产新测。标签/包内文档保留准备快照，main 与 Release 正文补最终状态，不移动标签。见[完整发行收据](acceptance/2026-11-14-qiwolf32-release/README.md)。
 
 已有[发现上限](maintenance/model-limits-discovery-20261114/README.md)、[预算/锁源取消](maintenance/no-local-budget-20261114/README.md)及[移动端](maintenance/mobile-layout-20261114/README.md)收据分别记录其源码、生产读回与边界。目录数据是供应方声明，不是付费模型实测；移动端是实际 WASM 的 Chromium/WebKit 覆盖，不是真机 Safari。旧日期条目中的金额预算、会话pin及账号粘性合同已被替代，历史当时事实保留。
 

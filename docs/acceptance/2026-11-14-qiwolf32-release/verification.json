@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "source_commit": "4ab9085fcb758038d3a02c6de031dec4e659b612",
+  "tag": "v0.34.0-qiwolf.32",
+  "annotated_tag_object": "ed245f8c88ae36330975e806d96aed2582bc5d28",
+  "published_at": "2026-11-14T04:50:41Z",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32",
+  "main_ci": {
+    "run_url": "https://github.com/qiwolf/tokengo/actions/runs/43556308521",
+    "conclusion": "success",
+    "native_rust": {
+      "passed": 1778,
+      "failed": 0,
+      "ignored": 15
+    },
+    "python_client_tests": 13,
+    "wasm": "cargo check for wasm32-unknown-unknown passed; no browser execution claimed",
+    "explicit_scale_gate_tests": 5,
+    "scale_note": "These five explicitly executed ignored gates overlap native ignored identities; do not add to unique Rust passed count.",
+    "performance": {
+      "owner_rows": 500000,
+      "history_rows": 1000000,
+      "portal_max_us": 336558,
+      "admin_168h_max_us": 680598,
+      "admin_2160h_max_us": 681250,
+      "full_analytics_actual_us": 4487931,
+      "page_during_report_us": [
+        6946,
+        4776,
+        4455
+      ],
+      "observe_only": false,
+      "violations": []
+    },
+    "log_sha256": {
+      "native-workspace.log": "ef85fc1f9f896e850b9ef07f835be5b9ef829f95b6f893b0afadf6a0d46af862",
+      "wasm-check.log": "c5a604e4c46f101fedc197038aecc120ec9c24558bbd39a962567f3fec1f2d9a",
+      "query-performance.log": "e3bbfaf18bcc1d240cf9af66ada9912d5660b73d316d99b4edf77c5e55e0d38f"
+    }
+  },
+  "publication": {
+    "workflow_url": "https://github.com/qiwolf/tokengo/actions/runs/43557334653",
+    "conclusion": "success",
+    "assets": [
+      {
+        "name": "compose.yaml",
+        "size": 797,
+        "state": "uploaded",
+        "digest": "sha256:ca3b8321aaff393563a48774409090d0e7d411cb7dd5c7a66d96776dffca08e1",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/compose.yaml"
+      },
+      {
+        "name": "container-deployment.md",
+        "size": 15536,
+        "state": "uploaded",
+        "digest": "sha256:323b47b3a706133ec3175444042d0481765a466e32077229d325d50a74aefabf",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/container-deployment.md"
+      },
+      {
+        "name": "container.env.example",
+        "size": 316,
+        "state": "uploaded",
+        "digest": "sha256:5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/container.env.example"
+      },
+      {
+        "name": "image-manifest.json",
+        "size": 199,
+        "state": "uploaded",
+        "digest": "sha256:dc1227383517a571b71244a578b63464e741e7b8dc2aaf4e9c0b586e78da7dfc",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/image-manifest.json"
+      },
+      {
+        "name": "image-SHA256SUMS",
+        "size": 564,
+        "state": "uploaded",
+        "digest": "sha256:d2eeefdb5c93d29454d96e8f63ff753af0a24702d5613f065e1c060ea82a3cee",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/image-SHA256SUMS"
+      },
+      {
+        "name": "registry-image.txt",
+        "size": 95,
+        "state": "uploaded",
+        "digest": "sha256:34f3fa19e3af3c22a944d5a29c79a90b41a5334bb9d0417f9f8284f4d40595ef",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/registry-image.txt"
+      },
+      {
+        "name": "tokengo-4ab9085fcb75-linux-x86_64.tar.gz",
+        "size": 35499993,
+        "state": "uploaded",
+        "digest": "sha256:9e2f89b6a66e53a86d90d69835bb72a14eb6fc1a7fe01ef0ae0c49bbc731c1b1",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/tokengo-4ab9085fcb75-linux-x86_64.tar.gz"
+      },
+      {
+        "name": "tokengo-4ab9085fcb75-linux-x86_64.tar.gz.sha256",
+        "size": 107,
+        "state": "uploaded",
+        "digest": "sha256:a002eb4a079d754f8b538da212e7da632305a669e888e7d572d53ea0ca3b7c98",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/tokengo-4ab9085fcb75-linux-x86_64.tar.gz.sha256"
+      },
+      {
+        "name": "tokengo-4ab9085fcb758038d3a02c6de031dec4e659b612-linux-amd64.tar.gz",
+        "size": 41152564,
+        "state": "uploaded",
+        "digest": "sha256:d1d6c7dba096d558c18b1c70e5c5ce0487d544aa7fa8be73f9e5ba5d181685d7",
+        "url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.32/tokengo-4ab9085fcb758038d3a02c6de031dec4e659b612-linux-amd64.tar.gz"
+      }
+    ],
+    "registry_image": "ghcr.io/qiwolf/tokengo@sha256:48bca4537466ab318bd0050328613a5e767d4529f49d964b18c835dc2a41195d"
+  },
+  "independent_public_qa": {
+    "host": "build-test",
+    "source_commit": "4ab9085fcb758038d3a02c6de031dec4e659b612",
+    "tag": "v0.34.0-qiwolf.32",
+    "exact_main_ci_url": "https://github.com/qiwolf/tokengo/actions/runs/43556308521",
+    "production_access": false,
+    "inference_calls": 0,
+    "started_utc": "2026-11-14T04:52:51.224199+00:00",
+    "result": "passed",
+    "assets": 9,
+    "schema_version": 47,
+    "native_key_restart": true,
+    "container_key_restart_recreate": true,
+    "anonymous_ghcr_pull": true,
+    "browser_behavior_executed": false,
+    "elapsed_seconds": 24.681,
+    "qa_script_hashes": {
+      "run-public-qa.py": "905a761146b1dc8bd443c22590b2ef4edd445f9598c63a9507649e2dd11088eb",
+      "bind-source.py": "e5bfd6fa9f6329e53bcd855b296c619019d2b37c4d5ed78d569aefa848ed5d90",
+      "download-assets.py": "7149adfd36831b8f7219e5ebbfb92cc745e812b0f7082137cebd2f958f1c098f",
+      "helpers/verify-assets.py": "3bf3b9ab70186f71faad9f2c11acdb3d43ede5217a5985c299d44bbfccaa3541"
+    },
+    "isolated_qa_hashes": {
+      "container_smoke.py": "7a8384b7071b5b7a7ca199f1c51f9684b857915dc44f4eb50d045521916d05c1",
+      "schema47.py": "1d9f850cb43dbbf6ddca9b77ed5f172a83e2311ce63f7d6d9ee0dae722845813",
+      "native.py": "0dc72c9a9d3bde9b586a5180473a89465907e84075c5d1fe28fe6a536c3d5466",
+      "container.py": "d750217f4d6fe5afe873579b7da837f9f5b2710c06a3b8a8382b14c326d40924"
+    }
+  },
+  "public_docs_files_exact_to_tag": 813,
+  "assets_anonymous_download": true,
+  "compose_validation": "config only, not deployment",
+  "production_changed": false,
+  "real_model_calls_in_public_qa": 0,
+  "browser_behavior_in_public_qa": false,
+  "separate_build_test_wasm_browser": {
+    "statistics_cases": 8,
+    "statistics_checks": 80,
+    "mobile_cases": 20,
+    "mobile_checks": 88,
+    "engines": [
+      "Chromium",
+      "WebKit"
+    ],
+    "actual_iPhone_Safari": false
+  },
+  "documentation_policy": "Tag and bundled documentation are immutable build snapshots. Post-publication receipts are maintained on main and the Release page."
+}

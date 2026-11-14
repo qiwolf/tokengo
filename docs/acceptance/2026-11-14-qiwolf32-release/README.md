@@ -1,6 +1,6 @@
 # qiwolf.32 发行与公开产物验收
 
-状态：发行准备。Cargo 0.34.0，schema47。GitHub main 精确 CI、标签发行与公开资产验收尚未完成，不能将下列分阶段结果称为公开包已验收；发布后在 main 和 Release 正文补收据，已发布标签不移动。
+状态：已正式发行，独立公开产物验收通过。Cargo 0.34.0，schema47。固定源码为 `4ab9085fcb758038d3a02c6de031dec4e659b612`，标签和包内文档保持构建快照；本页及 Release 正文记录后补结果，不移动标签或替换附件。
 
 ## 本轮范围
 
@@ -24,6 +24,14 @@
 
 未新增全部供应商、全部模型或持续可用性测试。此前 DeepSeek fallback、GPT Sol/Luna、向量/重排的真实调用恢复属于各自提交和指定生产实例的既有证据，见[模型核实清单](../../provider-verification-checklist.md)及专项收据；不能冒充本次正式公开包新测。本次 GitHub 发行不会自动升级任意生产实例。
 
-## 待公开后回填
+## 正式发行与独立公开验收
 
-固定源码提交、精确 main CI、发行流程、九项资产清单与摘要、GHCR digest、匿名下载及隔离运行结果，在正式发行后补入本节。发行包文档是构建时快照，最新状态以 main 和 Release 正文为准。
+[精确 main CI](https://github.com/qiwolf/tokengo/actions/runs/43556308521)成功：Rust **1778 通过、0 失败、15 忽略**，Python 客户端 13 项、WASM check 和 5 项显式规模检查通过。规模检查与原 ignored 身份重叠，不累加为唯一 Rust 总数。该结果覆盖最终完整源码，不能与前述多轮局部通过数相加。
+
+[发行流程](https://github.com/qiwolf/tokengo/actions/runs/43557334653)成功，[正式 Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32)于 **2026-11-14 12:50:41（北京时间）**公开 9 个附件。annotated tag 对象 `ed245f8c88ae36330975e806d96aed2582bc5d28` 指向上述提交。原生包 SHA256 为 `9e2f89b6a66e53a86d90d69835bb72a14eb6fc1a7fe01ef0ae0c49bbc731c1b1`；离线镜像包 SHA256 为 `d1d6c7dba096d558c18b1c70e5c5ce0487d544aa7fa8be73f9e5ba5d181685d7`。
+
+公开后在 build-test 独立完成匿名下载及运行验收，24.681 秒、exit0：9 个附件大小及 GitHub 官方 digest 一致；包内 checksums、**813 份文档的完整库存与字节**、Cargo.lock、manifest/schema47/43–47 SQL及45组合均与 tag 源码匹配，没有混入未跟踪 `.DS_Store`。公开 ELF/CLI、实际 HTTP Web/WASM 字节、schema47、Key 加密/重启持久化及容器非 root、只读根文件系统、重启与同卷重建均通过。
+
+镜像为 `ghcr.io/qiwolf/tokengo@sha256:48bca4537466ab318bd0050328613a5e767d4529f49d964b18c835dc2a41195d`。空 DOCKER_CONFIG 匿名按 digest 拉取，并与离线镜像内容、两个精确 SHA 别名、OCI revision/linux/amd64 身份核对通过。Compose 只验证无 `.env` 的 config，未进行 Compose 部署。此次合成容器、卷及新增别名已清理；没有访问生产或调用真实模型。公开包的浏览器行为没有重跑，行为证据为前述同前端源码的 build-test 实际 WASM 28 场景，不能将公开 HTTP 字节校验说成公开包浏览器验收。
+
+机器可读的附件摘要、CI 与边界见 [verification.json](verification.json)；已执行的独立 QA 脚本保存在 [qa/](qa/)。本地完整日志、9 个公开附件及执行收据分别保留在项目 `review/qiwolf32-release-20261114/` 和 `review/release-qiwolf32-20261114/public/`，未将二进制、登录材料或原始运维目录批量纳入 Git。

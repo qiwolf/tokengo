@@ -1,8 +1,12 @@
 # TokenGo
 
-**新版准备：v0.34.0-qiwolf.32** — 用量看板与人民币展示、三类价格版本管理、来源上限发现、取消本地金额门槛和会话锁源、手机价格与菜单修复。公开发行与本版精确 CI 尚待验证；当前公开正式版仍为 qiwolf.31。见[本版说明与验证边界](docs/releases/v0.34.0-qiwolf.32.md)。
+**当前正式版：[v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32)** — 用量看板与人民币展示、三类价格版本管理、来源上限发现、取消本地金额门槛和会话锁源、手机价格与菜单修复。精确 main CI 与九项公开资产独立验收通过。见[本版说明](docs/releases/v0.34.0-qiwolf.32.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf32-release/README.md)。
 
-**Release candidate: v0.34.0-qiwolf.32.** Usage reporting, versioned prices, source-limit discovery, observation-only costs, current-configuration routing and mobile layout. Exact main CI and public-release acceptance are pending; qiwolf.31 remains the published stable release. [Release scope](docs/releases/v0.34.0-qiwolf.32.md).
+**Current stable release: [v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32).** Usage reporting, versioned prices, source-limit discovery, observation-only costs, current-configuration routing and mobile layout. Exact main CI and independent acceptance of all nine public assets passed. [Release scope](docs/releases/v0.34.0-qiwolf.32.md) · [Publication receipt](docs/acceptance/2026-11-14-qiwolf32-release/README.md).
+
+发行源码 `4ab9085fcb758038d3a02c6de031dec4e659b612`，公开于 2026-11-14 04:50:41 UTC。标签和包内文档保留构建时准备快照，main 与 Release 正文补入最终收据，不移动标签。本次公开验收未访问生产、未调用真实模型、未重做浏览器交互；Compose 仅检查配置。此前同产物浏览器 168 项检查单列，不冒充公开资产新测。
+
+Source `4ab9085fcb758038d3a02c6de031dec4e659b612`, published 2026-11-14 04:50:41 UTC. Tagged and bundled documents retain their preparation snapshot; main and the Release page contain the final receipt without moving the tag. Public QA did not deploy to production, call real models or rerun browser interactions; Compose was checked with config only. The earlier 168 browser checks remain separate evidence.
 
 2026-11-14模型价格管理：[修改、启停、删除与验收状态](docs/maintenance/price-lifecycle-20261114/README.md)。
 
@@ -18,11 +22,11 @@ TokenGo 是面向个人与小团队的自托管大模型网关：把 API 服务�
 
 [English guide](docs/guide.en.md) · [中文使用指南](docs/guide.zh-CN.md) · [中文优先](README.md) · [Releases](https://github.com/qiwolf/tokengo/releases) · [MIT](LICENSE)
 
-Current stable release: **[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [Release notes](docs/releases/v0.34.0-qiwolf.31.md) · [Release receipt](docs/acceptance/2026-11-07-qiwolf31-release/README.md) (published; independent public-asset acceptance passed).
+Previous stable release: **[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [Release notes](docs/releases/v0.34.0-qiwolf.31.md) · [Release receipt](docs/acceptance/2026-11-07-qiwolf31-release/README.md) (published; independent public-asset acceptance passed).
 
 This version stops a request from rejoining busy local queues after a later fallback has already been attempted and failed. A deployed companion patch verified local priority and busy-source spillover. Schema45, permissions and accounting rules are unchanged. Exact CI and independent acceptance of nine public assets passed; the verified official package is deployed and its live routing has been checked. Installing a release does not automatically change existing routes, node parameters or caller timeouts. The previous verified stable release is [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30); see its [historical receipt](docs/acceptance/2026-11-07-qiwolf30-release/README.md).
 
-当前正式版：**[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（已正式发行，公开资产独立验收通过）。
+上一正式版：**[v0.34.0-qiwolf.31](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.31)** · [版本说明](docs/releases/v0.34.0-qiwolf.31.md) · [本版发行收据](docs/acceptance/2026-11-07-qiwolf31-release/README.md)（已正式发行，公开资产独立验收通过）。
 
 本版修复繁忙本地节点转后备来源后，后备失败又回头排本地的分支。已部署配套补丁验证本地优先、忙时转云端；schema45与权限、账务口径保持。精确CI及9公开资产独立验收通过，正式包已完成生产切换和实际来源读回。发行包不会自动改现有路由、节点参数或调用方超时。上一已核实正式版为 [v0.34.0-qiwolf.30](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.30)，见[历史收据](docs/acceptance/2026-11-07-qiwolf30-release/README.md)。
 

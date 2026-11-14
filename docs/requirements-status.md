@@ -1,6 +1,6 @@
 # 需求覆盖与未完成项
 
-当前实现覆盖 **v0.34.0-qiwolf.32 发行准备版**（Cargo0.34.0/schema47）；本版 exact CI、公开资产及独立验收尚待完成，当前公开稳定版仍为 qiwolf.31。[版本范围](releases/v0.34.0-qiwolf.32.md)和[验收状态](acceptance-status.md)区分既有部署与本版新测；旧日期记录保留当时事实。
+当前正式版为 **[v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32)**（Cargo0.34.0/schema47）；精确 main CI 与本版九项公开资产独立验收通过，见[发行收据](acceptance/2026-11-14-qiwolf32-release/README.md)。[版本范围](releases/v0.34.0-qiwolf.32.md)和[验收状态](acceptance-status.md)区分既有部署与本版新测；旧日期记录保留当时事实。标签与包内文档保留准备快照，最终状态后补于 main 和 Release 正文，不移动标签。公开 QA 未部署生产、调用真实模型或重做浏览器交互，Compose 仅 config；此前浏览器 168 项检查单列。
 
 ## 当前已实现
 

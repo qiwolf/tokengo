@@ -1,10 +1,10 @@
 # TokenGo 中文使用指南
 
-当前行为与新版范围见 [qiwolf.32 说明](releases/v0.34.0-qiwolf.32.md)：三类价格可版本化修改/启停/归档，来源目录界限可自动预填并由管理员调整，本地金额门槛与会话锁源已取消；公开发行验收待完成。
+当前行为与新版范围见 [qiwolf.32 说明](releases/v0.34.0-qiwolf.32.md)：三类价格可版本化修改/启停/归档，来源目录界限可自动预填并由管理员调整，本地金额门槛与会话锁源已取消；公开发行与九项公开资产独立验收通过。
 
 [项目首页](../README.md) · [English guide](guide.en.md) · [版本说明](releases/v0.34.0-qiwolf.32.md) · [发行与验收](acceptance-status.md)
 
-本文面向 **v0.34.0-qiwolf.32 发行准备版**：Cargo **0.34.0**、数据库 **schema47**。公开发行与本版验收待完成，当前公开正式版仍为 qiwolf.31；固定下载和实际状态以 [GitHub Releases](https://github.com/qiwolf/tokengo/releases) 和[验收状态](acceptance-status.md)为准。历史版本与收据保留原事实。schema45→47 升级与整组回退见[部署说明](deployment.md#schema47升级与回退)。
+本文面向已正式发行的 **[v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32)**：Cargo **0.34.0**、数据库 **schema47**。精确 main CI 与本版九项公开资产独立验收通过，见[发行收据](acceptance/2026-11-14-qiwolf32-release/README.md)和[验收状态](acceptance-status.md)。标签与包内文档保留准备快照，最终状态后补于 main 和 Release 正文，不移动标签。公开 QA 未部署生产、调用真实模型或重做浏览器交互，Compose 仅 config；此前浏览器 168 项检查单列。历史版本与收据保留原事实。schema45→47 升级与整组回退见[部署说明](deployment.md#schema47升级与回退)。
 
 TokenGo 将 API 服务、可接入的订阅账号与本地模型放进同一个自托管网关。Rust/Axum 服务端使用 SQLite，Leptos/WebAssembly 控制台无需 Node.js 运行时。可使用原生包或容器部署；当前公开产物为 Linux AMD64。“轻量”指部署结构，不代表固定内存、延迟或吞吐保证。
 

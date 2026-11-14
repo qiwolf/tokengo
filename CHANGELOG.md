@@ -1,8 +1,10 @@
 # 更新日志 / Changelog
 
-## v0.34.0-qiwolf.32 — 发行准备中
+## v0.34.0-qiwolf.32 — 已正式发行（2026-11-14）
 
-新增范围及逐阶段证据见[版本说明](docs/releases/v0.34.0-qiwolf.32.md)。涵盖 qiwolf.31 之后的用量看板/人民币与统计修正、模型用途计价、价格版本生命周期、来源模型上限发现、取消本地金额门槛与会话锁源、手机布局；同时纳入来源参数双版本 CAS、同来源身份保护、已保存凭据参数直达与有限流式结构诊断，见[运行补丁审计](docs/maintenance/qiwolf32-release-20261114/runtime-patch-audit.md)。精确 main CI、发行资产与本版独立验收待完成。
+新增范围及逐阶段证据见[版本说明](docs/releases/v0.34.0-qiwolf.32.md)。涵盖 qiwolf.31 之后的用量看板/人民币与统计修正、模型用途计价、价格版本生命周期、来源模型上限发现、取消本地金额门槛与会话锁源、手机布局；同时纳入来源参数双版本 CAS、同来源身份保护、已保存凭据参数直达与有限流式结构诊断，见[运行补丁审计](docs/maintenance/qiwolf32-release-20261114/runtime-patch-audit.md)。精确源码 `4ab9085fcb758038d3a02c6de031dec4e659b612` 的 [main CI](https://github.com/qiwolf/tokengo/actions/runs/43556308521) 通过 Rust1778通过/0失败/15忽略、Python13、WASM 及五项显式规模门禁（重叠不累加）；[发行流程](https://github.com/qiwolf/tokengo/actions/runs/43557334653) 成功，[正式 Release](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32) 于 2026-11-14 04:50:41 UTC 公开九项资产并完成独立验收。
+
+匿名九资产官方 size/digest、全部 813 份 tag 文档与 schema47/SQL43–47、原生 CLI/WASM 与 Key 重启、离线与匿名 GHCR 同镜像及容器重启/重建检查通过。Compose 仅 config；公开 QA 未重做浏览器交互、未调用真实模型或部署生产，此前浏览器 168 项检查单列。标签/包内文档为准备快照，最终状态后补于 main 与 Release 正文，不移动标签。详见[发行收据](docs/acceptance/2026-11-14-qiwolf32-release/README.md)。
 
 以下日期条目保留各阶段事实；其中旧金额预占、estimated 扣款/overrun 冻结、会话 pin/用户 Key 粘性规则已由 2026-11-14 新合同替代，不再是当前运行要求。
 

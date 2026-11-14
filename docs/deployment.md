@@ -1,6 +1,8 @@
 # Linux x86_64 私有站部署与回滚
 
-本文当前面向 **v0.34.0-qiwolf.32 发行准备版**，Cargo **0.34.0**、数据库 **schema47**。本版 exact CI、公开资产与独立验收仍待完成，见[版本说明](releases/v0.34.0-qiwolf.32.md)。当前公开正式版仍为 qiwolf.31/schema45；旧发行与维护收据保留原事实。安装不会自动修改来源、价格、路由、反代或调用方参数；既有[可信反代来源IP指南](reverse-proxy-client-ip.md)继续适用。
+本文当前面向已正式发行的 **[v0.34.0-qiwolf.32](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.32)**，Cargo **0.34.0**、数据库 **schema47**。精确 main CI 与九项公开资产独立验收通过，见[版本说明](releases/v0.34.0-qiwolf.32.md)和[发行收据](acceptance/2026-11-14-qiwolf32-release/README.md)。上一公开版为 qiwolf.31/schema45；旧发行与维护收据保留原事实。安装不会自动修改来源、价格、路由、反代或调用方参数；既有[可信反代来源IP指南](reverse-proxy-client-ip.md)继续适用。
+
+标签和包内文档是构建时准备快照，最终状态后补于 main 与 Release 正文，不移动标签。公开包已验证原生/容器 schema47、CLI/WASM 与 Key 重启持久化；Compose 仅 config，未因此部署生产、调用真实模型或重做公开资产浏览器交互。
 
 历史公开版 **[v0.34.0-qiwolf.15](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.15)**，发行源码`c3ecd31250f0`，Cargo0.34.0/schema40。统一控制台、系统设置分组和关键弹窗，修正表单、聚焦与错误状态样式；没有业务接口或数据库迁移变更。本地合并后的原生/WASM构建及原生/容器测试通过；精确main CI和发行流程已成功，9个附件与GHCR镜像已公开。已验收UI完成284项有效浏览器检查。标签/包内文档为构建快照，后补收据维护于main和Release页面。见[版本说明](releases/v0.34.0-qiwolf.15.md)与[发布记录](acceptance/2026-10-25-qiwolf15-release/README.md)。
 
