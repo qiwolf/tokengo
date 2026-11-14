@@ -1,0 +1,91 @@
+{
+  "host": "tokengo-geren-wangguan",
+  "checked_utc": "2026-11-14T02:28:32.769793+00:00",
+  "current": "/opt/tokengo/releases/model-limits-discovery-235b7bcb88b3-cfde508a",
+  "luna_sources": [
+    {
+      "id": 31,
+      "name": "OpenAI OAuth · 对话 · gpt-6-luna-medium",
+      "priority": 30,
+      "enabled": 1,
+      "model_name": "gpt-6-luna",
+      "upstream_model": null,
+      "mapping_enabled": 1
+    },
+    {
+      "id": 64,
+      "name": "Codex 小学卡",
+      "priority": 43,
+      "enabled": 1,
+      "model_name": "gpt-6-luna",
+      "upstream_model": null,
+      "mapping_enabled": 1
+    }
+  ],
+  "luna_settings": [
+    {
+      "key": "model_routing:gpt 6 luna low",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[30],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 6 luna medium",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[31],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 6 luna high",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[32],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 5.6 luna low",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[33],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 5.6 luna medium",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[34],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 5.6 luna high",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[35],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 6 luna low fast",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[36],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    },
+    {
+      "key": "model_routing:gpt 6 luna",
+      "value": "{\"channel_ids\":[31,64],\"retry_times\":0,\"probe_enabled\":false,\"include_in_auto\":false,\"attempt_timeout_ms\":300000,\"nonstream_timeout_ms\":300000,\"request_budget_ms\":300000}"
+    },
+    {
+      "key": "model_routing:gpt 5.6 luna",
+      "value": "{\"attempt_timeout_ms\":300000,\"channel_ids\":[34],\"include_in_auto\":false,\"nonstream_timeout_ms\":300000,\"probe_enabled\":false,\"request_budget_ms\":300000,\"retry_times\":0}"
+    }
+  ],
+  "frozen": [
+    {
+      "scope": "user",
+      "scope_id": 31,
+      "currency": "CNY",
+      "frozen": 1
+    },
+    {
+      "scope": "key",
+      "scope_id": 93,
+      "currency": "CNY",
+      "frozen": 1
+    },
+    {
+      "scope": "user",
+      "scope_id": 47,
+      "currency": "CNY",
+      "frozen": 1
+    },
+    {
+      "scope": "key",
+      "scope_id": 123,
+      "currency": "CNY",
+      "frozen": 1
+    }
+  ],
+  "legacy_trigger_ledger_sha256": "2fca1eff902f9eeed57e8ebbcde4d9b7f33e09e79b743d3aa1bd2d72d7b6bf34",
+  "session_rows": 477
+}

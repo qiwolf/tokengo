@@ -1,0 +1,2426 @@
+{
+  "cases": [
+    {
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "existing_key_navigation_and_automatic_missing_value_fill",
+          "passed": true
+        },
+        {
+          "name": "supplier_url_and_discovery_time_are_visible",
+          "passed": true
+        },
+        {
+          "name": "geometry_automatic-fill",
+          "passed": true,
+          "geometry": {
+            "viewport": 1440,
+            "documentWidth": 1440,
+            "dialogClient": 998,
+            "dialogScroll": 998,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 245,
+                "right": 1195,
+                "width": 950,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 245,
+                "right": 712,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 728,
+                "right": 1195,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 245,
+                "right": 493,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 509,
+                "right": 757,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 245,
+                "right": 355.015625,
+                "width": 110.015625,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 245,
+                "right": 259,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 387.015625,
+                "right": 521.03125,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 351.015625,
+                "right": 425.03125,
+                "width": 74.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 387.015625,
+                "right": 485.03125,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-deepseek-flash-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-deepseek-flash-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              }
+            ]
+          }
+        },
+        {
+          "name": "automatic_discovery_preserves_unsaved_manual_values",
+          "passed": true
+        },
+        {
+          "name": "manual_values_saved_with_original_protocol_and_binding_CAS",
+          "passed": true
+        },
+        {
+          "name": "geometry_manual-saved",
+          "passed": true,
+          "geometry": {
+            "viewport": 1440,
+            "documentWidth": 1440,
+            "dialogClient": 998,
+            "dialogScroll": 998,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 245,
+                "right": 1195,
+                "width": 950,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 245,
+                "right": 712,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 728,
+                "right": 1195,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 245,
+                "right": 493,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 509,
+                "right": 757,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 245,
+                "right": 355.015625,
+                "width": 110.015625,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 245,
+                "right": 259,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 387.015625,
+                "right": 521.03125,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 351.015625,
+                "right": 425.03125,
+                "width": 74.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 387.015625,
+                "right": 485.03125,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              }
+            ]
+          }
+        },
+        {
+          "name": "persisted_manual_configuration_takes_priority_over_supplier_declaration",
+          "passed": true
+        },
+        {
+          "name": "explicit_redetection_replaces_draft_without_automatic_persistence",
+          "passed": true
+        },
+        {
+          "name": "redetected_values_save_without_rebinding_source",
+          "passed": true
+        },
+        {
+          "name": "geometry_redetected-saved",
+          "passed": true,
+          "geometry": {
+            "viewport": 1440,
+            "documentWidth": 1440,
+            "dialogClient": 998,
+            "dialogScroll": 998,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 245,
+                "right": 1195,
+                "width": 950,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 245,
+                "right": 712,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 728,
+                "right": 1195,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 245,
+                "right": 493,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 509,
+                "right": 757,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 245,
+                "right": 355.015625,
+                "width": 110.015625,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 245,
+                "right": 259,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 387.015625,
+                "right": 521.03125,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 351.015625,
+                "right": 425.03125,
+                "width": 74.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 387.015625,
+                "right": 485.03125,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              }
+            ]
+          }
+        },
+        {
+          "name": "discovery_failure_keeps_existing_values_and_allows_manual_edit",
+          "passed": true
+        },
+        {
+          "name": "geometry_failure-preserves-draft",
+          "passed": true,
+          "geometry": {
+            "viewport": 1440,
+            "documentWidth": 1440,
+            "dialogClient": 998,
+            "dialogScroll": 998,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 245,
+                "right": 1195,
+                "width": 950,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 245,
+                "right": 712,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 728,
+                "right": 1195,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 245,
+                "right": 493,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 509,
+                "right": 757,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 245,
+                "right": 355.015625,
+                "width": 110.015625,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 245,
+                "right": 259,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 387.015625,
+                "right": 521.03125,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 351.015625,
+                "right": 425.03125,
+                "width": 74.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 387.015625,
+                "right": 485.03125,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              }
+            ]
+          }
+        },
+        {
+          "name": "unknown_supplier_metadata_stays_unknown_without_default_or_zero",
+          "passed": true
+        },
+        {
+          "name": "admin_can_fill_missing_supplier_limits_and_save",
+          "passed": true
+        },
+        {
+          "name": "geometry_unknown-manual-saved",
+          "passed": true,
+          "geometry": {
+            "viewport": 1440,
+            "documentWidth": 1440,
+            "dialogClient": 998,
+            "dialogScroll": 998,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 245,
+                "right": 1195,
+                "width": 950,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 245,
+                "right": 712,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 728,
+                "right": 1195,
+                "width": 467,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 245,
+                "right": 493,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 509,
+                "right": 757,
+                "width": 248,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 245,
+                "right": 355.015625,
+                "width": 110.015625,
+                "height": 32
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 245,
+                "right": 259,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 387.015625,
+                "right": 521.03125,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 351.015625,
+                "right": 425.03125,
+                "width": 74.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 387.015625,
+                "right": 485.03125,
+                "width": 98.015625,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 245,
+                "right": 379.015625,
+                "width": 134.015625,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-103-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-103-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 245,
+                "right": 757,
+                "width": 512,
+                "height": 32
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 245,
+                "right": 343.015625,
+                "width": 98.015625,
+                "height": 32
+              }
+            ]
+          }
+        },
+        {
+          "name": "no_credential_model_rebind_inference_or_external_requests",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/oauth/accounts",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/101/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-deepseek-flash"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/101/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/channels/101/protocols",
+          "method": "PUT",
+          "body": {
+            "expected_binding_generation": 118,
+            "expected_protocols_sha256": "4465998cab56c2127de78fad76e607ddd590b406da401123cf21dc9753358e6c",
+            "protocols": {
+              "allow_conversion": true,
+              "chat_reasoning_replay": true,
+              "max_input_tokens": 700000,
+              "max_output_tokens": 128000,
+              "native": [
+                "chat",
+                "responses"
+              ],
+              "native_input_audio": false,
+              "parameter_profile": "deepseek",
+              "runtime_identity": null
+            }
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/channels/102/protocols",
+          "method": "PUT",
+          "body": {
+            "expected_binding_generation": 119,
+            "expected_protocols_sha256": "bf9c3a31b56020c4e10ae9536b90a37b90094caaed1c41b45923b811f78c5811",
+            "protocols": {
+              "allow_conversion": true,
+              "chat_reasoning_replay": true,
+              "max_input_tokens": 1000000,
+              "max_output_tokens": 384000,
+              "native": [
+                "chat",
+                "responses"
+              ],
+              "native_input_audio": false,
+              "parameter_profile": "deepseek",
+              "runtime_identity": null
+            }
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/103/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/103/protocols",
+          "method": "PUT",
+          "body": {
+            "expected_binding_generation": 120,
+            "expected_protocols_sha256": "4465998cab56c2127de78fad76e607ddd590b406da401123cf21dc9753358e6c",
+            "protocols": {
+              "allow_conversion": true,
+              "chat_reasoning_replay": true,
+              "max_input_tokens": 600000,
+              "max_output_tokens": 128000,
+              "native": [
+                "chat",
+                "responses"
+              ],
+              "native_input_audio": false,
+              "parameter_profile": "deepseek",
+              "runtime_identity": null
+            }
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "page_errors": [],
+      "request_failures": [],
+      "fixture_errors": [],
+      "external_requests": [],
+      "authority": "Actual compiled WASM; isolated synthetic API responses and protocol writes",
+      "backend_behavior": "Not exercised by this browser fixture; backend tests and production readbacks are separate"
+    },
+    {
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "existing_key_navigation_and_automatic_missing_value_fill",
+          "passed": true
+        },
+        {
+          "name": "supplier_url_and_discovery_time_are_visible",
+          "passed": true
+        },
+        {
+          "name": "geometry_automatic-fill",
+          "passed": true,
+          "geometry": {
+            "viewport": 390,
+            "documentWidth": 390,
+            "dialogClient": 372,
+            "dialogScroll": 372,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 25,
+                "right": 135.015625,
+                "width": 110.015625,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 25,
+                "right": 39,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 167.015625,
+                "right": 301.03125,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 131.015625,
+                "right": 205.03125,
+                "width": 74.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 167.015625,
+                "right": 265.03125,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-deepseek-flash-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-deepseek-flash-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              }
+            ]
+          }
+        },
+        {
+          "name": "automatic_discovery_preserves_unsaved_manual_values",
+          "passed": true
+        },
+        {
+          "name": "manual_values_saved_with_original_protocol_and_binding_CAS",
+          "passed": true
+        },
+        {
+          "name": "geometry_manual-saved",
+          "passed": true,
+          "geometry": {
+            "viewport": 390,
+            "documentWidth": 390,
+            "dialogClient": 372,
+            "dialogScroll": 372,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 25,
+                "right": 135.015625,
+                "width": 110.015625,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 25,
+                "right": 39,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 167.015625,
+                "right": 301.03125,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 131.015625,
+                "right": 205.03125,
+                "width": 74.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 167.015625,
+                "right": 265.03125,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-101-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              }
+            ]
+          }
+        },
+        {
+          "name": "persisted_manual_configuration_takes_priority_over_supplier_declaration",
+          "passed": true
+        },
+        {
+          "name": "explicit_redetection_replaces_draft_without_automatic_persistence",
+          "passed": true
+        },
+        {
+          "name": "redetected_values_save_without_rebinding_source",
+          "passed": true
+        },
+        {
+          "name": "geometry_redetected-saved",
+          "passed": true,
+          "geometry": {
+            "viewport": 390,
+            "documentWidth": 390,
+            "dialogClient": 372,
+            "dialogScroll": 372,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 25,
+                "right": 135.015625,
+                "width": 110.015625,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 25,
+                "right": 39,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 167.015625,
+                "right": 301.03125,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 131.015625,
+                "right": 205.03125,
+                "width": 74.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 167.015625,
+                "right": 265.03125,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              }
+            ]
+          }
+        },
+        {
+          "name": "discovery_failure_keeps_existing_values_and_allows_manual_edit",
+          "passed": true
+        },
+        {
+          "name": "geometry_failure-preserves-draft",
+          "passed": true,
+          "geometry": {
+            "viewport": 390,
+            "documentWidth": 390,
+            "dialogClient": 372,
+            "dialogScroll": 372,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 25,
+                "right": 135.015625,
+                "width": 110.015625,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 25,
+                "right": 39,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 167.015625,
+                "right": 301.03125,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 131.015625,
+                "right": 205.03125,
+                "width": 74.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 167.015625,
+                "right": 265.03125,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-102-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              }
+            ]
+          }
+        },
+        {
+          "name": "unknown_supplier_metadata_stays_unknown_without_default_or_zero",
+          "passed": true
+        },
+        {
+          "name": "admin_can_fill_missing_supplier_limits_and_save",
+          "passed": true
+        },
+        {
+          "name": "geometry_unknown-manual-saved",
+          "passed": true,
+          "geometry": {
+            "viewport": 390,
+            "documentWidth": 390,
+            "dialogClient": 372,
+            "dialogScroll": 372,
+            "controls": [
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "待探测来源已有手工窗口目录未声明来源",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "synthetic-deepseek-flashsynthetic-other-model",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat Completions · 原生Responses · 原生Messages · 经转换",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "Chat CompletionsResponses",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-input",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "source-max-output",
+                "label": "",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新探测并填入",
+                "left": 25,
+                "right": 135.015625,
+                "width": 110.015625,
+                "height": 44
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "label": "",
+                "left": 25,
+                "right": 39,
+                "width": 14,
+                "height": 14
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存供应方协议设置",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取已保存配置",
+                "left": 167.015625,
+                "right": 301.03125,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "继承上层策略直连（不使用代理）指定 HTTP / HTTPS 代理",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "",
+                "label": "按官方服务地址识别 / 不指定GPTClaudeGeminiDeepSeekQwenGLMKimiMiMoMiniMaxDoubaoGrokMistralMeta / LlamaCohere其他 / 多家族",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存代理策略",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "重新读取",
+                "left": 131.015625,
+                "right": 205.03125,
+                "width": 74.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "识别依据与高级说明",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "更新模型信息",
+                "left": 167.015625,
+                "right": 265.03125,
+                "width": 98.015625,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "兼容诊断与独立验证",
+                "left": 25,
+                "right": 159.015625,
+                "width": 134.015625,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-103-synthetic-other-model-mode",
+                "label": "跟随来源（无人工设置）追加档位覆盖支持列表",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "SELECT",
+                "id": "reasoning-103-synthetic-other-model-default",
+                "label": "沿用服务商默认lowhighmax",
+                "left": 25,
+                "right": 365,
+                "width": 340,
+                "height": 44
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "label": "保存推理参数",
+                "left": 25,
+                "right": 123.015625,
+                "width": 98.015625,
+                "height": 44
+              }
+            ]
+          }
+        },
+        {
+          "name": "no_credential_model_rebind_inference_or_external_requests",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/oauth/accounts",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/101/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-deepseek-flash"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/101/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/channels/101/protocols",
+          "method": "PUT",
+          "body": {
+            "expected_binding_generation": 118,
+            "expected_protocols_sha256": "4465998cab56c2127de78fad76e607ddd590b406da401123cf21dc9753358e6c",
+            "protocols": {
+              "allow_conversion": true,
+              "chat_reasoning_replay": true,
+              "max_input_tokens": 700000,
+              "max_output_tokens": 128000,
+              "native": [
+                "chat",
+                "responses"
+              ],
+              "native_input_audio": false,
+              "parameter_profile": "deepseek",
+              "runtime_identity": null
+            }
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/channels/102/protocols",
+          "method": "PUT",
+          "body": {
+            "expected_binding_generation": 119,
+            "expected_protocols_sha256": "bf9c3a31b56020c4e10ae9536b90a37b90094caaed1c41b45923b811f78c5811",
+            "protocols": {
+              "allow_conversion": true,
+              "chat_reasoning_replay": true,
+              "max_input_tokens": 1000000,
+              "max_output_tokens": 384000,
+              "native": [
+                "chat",
+                "responses"
+              ],
+              "native_input_audio": false,
+              "parameter_profile": "deepseek",
+              "runtime_identity": null
+            }
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/103/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "synthetic-other-model"
+          }
+        },
+        {
+          "path": "/api/network/proxy-policies",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/103/protocols",
+          "method": "PUT",
+          "body": {
+            "expected_binding_generation": 120,
+            "expected_protocols_sha256": "4465998cab56c2127de78fad76e607ddd590b406da401123cf21dc9753358e6c",
+            "protocols": {
+              "allow_conversion": true,
+              "chat_reasoning_replay": true,
+              "max_input_tokens": 600000,
+              "max_output_tokens": 128000,
+              "native": [
+                "chat",
+                "responses"
+              ],
+              "native_input_audio": false,
+              "parameter_profile": "deepseek",
+              "runtime_identity": null
+            }
+          }
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        }
+      ],
+      "page_errors": [],
+      "request_failures": [],
+      "fixture_errors": [],
+      "external_requests": [],
+      "authority": "Actual compiled WASM; isolated synthetic API responses and protocol writes",
+      "backend_behavior": "Not exercised by this browser fixture; backend tests and production readbacks are separate"
+    }
+  ],
+  "passed": 2,
+  "expected_cases": 2,
+  "failure": null,
+  "limitations": "UI-only synthetic backend: real vendor windows, backend CAS validation, inference and deployment require separate receipts."
+}

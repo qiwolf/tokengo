@@ -1,0 +1,486 @@
+{
+  "host": "tokengo-geren-wangguan",
+  "checked_utc": "2026-11-14T02:51:26.130053+00:00",
+  "current": "/opt/tokengo/releases/no-local-budget-cbab724cf3cb-c23913c9",
+  "requests": [
+    {
+      "id": 639380,
+      "ts_ms": 1794624407573,
+      "model": "gpt-6-luna",
+      "status": "ok",
+      "http_status": null,
+      "channel_id": 64,
+      "input_tokens": 4400,
+      "output_tokens": 9,
+      "usage_source": "upstream",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-no-local-budget-20261114-recovery-luna",
+      "key_id": 93
+    },
+    {
+      "id": 639381,
+      "ts_ms": 1794624407586,
+      "model": "bge-m3-fallback",
+      "status": "ok",
+      "http_status": 200,
+      "channel_id": 2,
+      "input_tokens": 9,
+      "output_tokens": 0,
+      "usage_source": "upstream",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-no-local-budget-20261114-recovery-embedding",
+      "key_id": 93
+    },
+    {
+      "id": 639382,
+      "ts_ms": 1794624407605,
+      "model": "bge-reranker-v2-m3-fallback",
+      "status": "ok",
+      "http_status": 200,
+      "channel_id": 3,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "usage_source": "unreported",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-no-local-budget-20261114-recovery-rerank",
+      "key_id": 93
+    },
+    {
+      "id": 639442,
+      "ts_ms": 1794624606377,
+      "model": "gpt-6.1-sol",
+      "status": "ok",
+      "http_status": null,
+      "channel_id": 64,
+      "input_tokens": 4414,
+      "output_tokens": 8,
+      "usage_source": "upstream",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-no-local-budget-20261114-original-short-sol",
+      "key_id": 126
+    },
+    {
+      "id": 639443,
+      "ts_ms": 1794624606397,
+      "model": "Deepseek-v4.1-flash-fallback",
+      "status": "ok",
+      "http_status": null,
+      "channel_id": 60,
+      "input_tokens": 62,
+      "output_tokens": 23,
+      "usage_source": "upstream",
+      "error": null,
+      "error_code": null,
+      "user_agent": "tokengo-no-local-budget-20261114-original-short-deepseek",
+      "key_id": 126
+    }
+  ],
+  "attempts": [
+    {
+      "request_id": 639380,
+      "ordinal": 0,
+      "channel_id": 31,
+      "outcome": "channel_fault",
+      "http_status": 200,
+      "error": "precommit protocol error: Upstream Responses stream error",
+      "model_name": "gpt-6-luna",
+      "upstream_model": "gpt-6-luna"
+    },
+    {
+      "request_id": 639380,
+      "ordinal": 1,
+      "channel_id": 64,
+      "outcome": "success",
+      "http_status": null,
+      "error": null,
+      "model_name": "gpt-6-luna",
+      "upstream_model": "gpt-6-luna"
+    },
+    {
+      "request_id": 639381,
+      "ordinal": 0,
+      "channel_id": 2,
+      "outcome": "success",
+      "http_status": 200,
+      "error": null,
+      "model_name": "bge-m3",
+      "upstream_model": "BAAI/bge-m3"
+    },
+    {
+      "request_id": 639382,
+      "ordinal": 0,
+      "channel_id": 3,
+      "outcome": "success",
+      "http_status": 200,
+      "error": null,
+      "model_name": "bge-reranker-v2-m3-gpu03",
+      "upstream_model": "bge-reranker-v2-m3"
+    },
+    {
+      "request_id": 639442,
+      "ordinal": 0,
+      "channel_id": 64,
+      "outcome": "success",
+      "http_status": null,
+      "error": null,
+      "model_name": "gpt-6.1-sol",
+      "upstream_model": "gpt-6.1-sol"
+    },
+    {
+      "request_id": 639443,
+      "ordinal": 0,
+      "channel_id": 58,
+      "outcome": "channel_fault",
+      "http_status": 401,
+      "error": "{\"error\":{\"message\":\"Invalid 'Authorization' header or token.\",\"type\":\"authentication_error\",\"code\":\"UNAUTHORIZED\"}}",
+      "model_name": "CommandGo-Deepseek-v4.1-flash",
+      "upstream_model": "deepseek/deepseek-v4.1-flash"
+    },
+    {
+      "request_id": 639443,
+      "ordinal": 1,
+      "channel_id": 59,
+      "outcome": "explicit_route_switch",
+      "http_status": 400,
+      "error": "Explicit request-local key/target switch; no global key suspension",
+      "model_name": "CommandGo-Deepseek-v4.1-flash",
+      "upstream_model": "deepseek/deepseek-v4.1-flash"
+    },
+    {
+      "request_id": 639443,
+      "ordinal": 2,
+      "channel_id": 60,
+      "outcome": "success",
+      "http_status": null,
+      "error": null,
+      "model_name": "OpenCode-Deepseek-v4.1-flash",
+      "upstream_model": "deepseek-v4.1-flash"
+    }
+  ],
+  "ledgers": [
+    {
+      "id": 724998,
+      "request_id": 639381,
+      "key_id": 93,
+      "channel_id": 2,
+      "model": "bge m3",
+      "price_id": 19,
+      "input_bound": 322,
+      "output_bound": 0,
+      "reserved_micro": 0,
+      "debit_micro": 0,
+      "observed_cost_micro": 0,
+      "input_tokens": 9,
+      "output_tokens": 0,
+      "usage_certainty": "reported",
+      "status": "success",
+      "outcome": "success",
+      "overrun": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": 724999,
+      "request_id": 639382,
+      "key_id": 93,
+      "channel_id": 3,
+      "model": "bge reranker v2 m3 gpu03",
+      "price_id": null,
+      "input_bound": 417,
+      "output_bound": 0,
+      "reserved_micro": 0,
+      "debit_micro": null,
+      "observed_cost_micro": null,
+      "input_tokens": null,
+      "output_tokens": 0,
+      "usage_certainty": "unpriced",
+      "status": "unpriced",
+      "outcome": "success",
+      "overrun": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": 725000,
+      "request_id": 639380,
+      "key_id": 93,
+      "channel_id": 31,
+      "model": "gpt 6 luna",
+      "price_id": 43,
+      "input_bound": 451,
+      "output_bound": 128,
+      "reserved_micro": 289,
+      "debit_micro": null,
+      "observed_cost_micro": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "usage_certainty": "unknown",
+      "status": "precommit_fault",
+      "outcome": "precommit_fault",
+      "overrun": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": 725001,
+      "request_id": 639380,
+      "key_id": 93,
+      "channel_id": 64,
+      "model": "gpt 6 luna",
+      "price_id": 30,
+      "input_bound": 392,
+      "output_bound": 128,
+      "reserved_micro": 273,
+      "debit_micro": 1200,
+      "observed_cost_micro": 1200,
+      "input_tokens": 4400,
+      "output_tokens": 9,
+      "usage_certainty": "reported",
+      "status": "ok",
+      "outcome": "ok",
+      "overrun": 1,
+      "currency": "CNY"
+    },
+    {
+      "id": 725061,
+      "request_id": 639442,
+      "key_id": 126,
+      "channel_id": 64,
+      "model": "gpt 6.1 sol",
+      "price_id": 34,
+      "input_bound": 506,
+      "output_bound": 128000,
+      "reserved_micro": 666106,
+      "debit_micro": 4456,
+      "observed_cost_micro": 4456,
+      "input_tokens": 4414,
+      "output_tokens": 8,
+      "usage_certainty": "reported",
+      "status": "ok",
+      "outcome": "ok",
+      "overrun": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": 725062,
+      "request_id": 639443,
+      "key_id": 126,
+      "channel_id": 58,
+      "model": "commandgo deepseek v4.1 flash",
+      "price_id": 44,
+      "input_bound": 572,
+      "output_bound": 128000,
+      "reserved_micro": 512572,
+      "debit_micro": null,
+      "observed_cost_micro": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "usage_certainty": "unknown",
+      "status": "channel_fault",
+      "outcome": "channel_fault",
+      "overrun": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": 725063,
+      "request_id": 639443,
+      "key_id": 126,
+      "channel_id": 59,
+      "model": "commandgo deepseek v4.1 flash",
+      "price_id": 42,
+      "input_bound": 572,
+      "output_bound": 128000,
+      "reserved_micro": 512572,
+      "debit_micro": null,
+      "observed_cost_micro": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "usage_certainty": "unknown",
+      "status": "explicit_route_switch",
+      "outcome": "explicit_route_switch",
+      "overrun": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": 725065,
+      "request_id": 639443,
+      "key_id": 126,
+      "channel_id": 60,
+      "model": "opencode deepseek v4.1 flash",
+      "price_id": 37,
+      "input_bound": 563,
+      "output_bound": 128000,
+      "reserved_micro": 512563,
+      "debit_micro": 154,
+      "observed_cost_micro": 154,
+      "input_tokens": 62,
+      "output_tokens": 23,
+      "usage_certainty": "reported",
+      "status": "ok",
+      "outcome": "ok",
+      "overrun": 0,
+      "currency": "CNY"
+    }
+  ],
+  "allocations": [
+    {
+      "reservation_id": 724998,
+      "scope": "key",
+      "scope_id": 93,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 724998,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 724999,
+      "scope": "key",
+      "scope_id": 93,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 724999,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725000,
+      "scope": "key",
+      "scope_id": 93,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725000,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725001,
+      "scope": "key",
+      "scope_id": 93,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725001,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725061,
+      "scope": "key",
+      "scope_id": 126,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725061,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725062,
+      "scope": "key",
+      "scope_id": 126,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725062,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725063,
+      "scope": "key",
+      "scope_id": 126,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725063,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725065,
+      "scope": "key",
+      "scope_id": 126,
+      "reserved_micro": 0
+    },
+    {
+      "reservation_id": 725065,
+      "scope": "user",
+      "scope_id": 31,
+      "reserved_micro": 0
+    }
+  ],
+  "budgets": [
+    {
+      "scope": "user",
+      "scope_id": 31,
+      "currency": "CNY",
+      "reserved_micro": 0,
+      "frozen": 0
+    },
+    {
+      "scope": "user",
+      "scope_id": 31,
+      "currency": "USD",
+      "reserved_micro": 0,
+      "frozen": 0
+    },
+    {
+      "scope": "key",
+      "scope_id": 93,
+      "currency": "CNY",
+      "reserved_micro": 0,
+      "frozen": 0
+    },
+    {
+      "scope": "key",
+      "scope_id": 93,
+      "currency": "USD",
+      "reserved_micro": 0,
+      "frozen": 0
+    },
+    {
+      "scope": "key",
+      "scope_id": 126,
+      "currency": "CNY",
+      "reserved_micro": 0,
+      "frozen": 0
+    },
+    {
+      "scope": "key",
+      "scope_id": 126,
+      "currency": "USD",
+      "reserved_micro": 0,
+      "frozen": 0
+    }
+  ],
+  "global_frozen_count": 0,
+  "legacy_trigger_ledger_sha256": "2fca1eff902f9eeed57e8ebbcde4d9b7f33e09e79b743d3aa1bd2d72d7b6bf34",
+  "session_rows": 477,
+  "price_hashes": {
+    "billing_prices": "b05d883a48d7f7bb3410fd058df13072c6143fca82e1f9c5fb0da037c1a29d58",
+    "billing_request_prices": "7e9f80621c5393c6060492177cc99b556a31124849f80d5ff6f3c5690ce705d3",
+    "billing_unit_prices": "67e076c54419715bd596eac171aa92bfc8893066d1bc522fd91e14bb386c8c7d"
+  },
+  "verified": true,
+  "all_cash_allocations_zero": true,
+  "actual_cost_exceeding_estimate_does_not_freeze": true,
+  "historical_trigger_unchanged": true,
+  "price_rows_unchanged": true,
+  "no_session_binding_rows_written": true,
+  "configured_luna_order_followed": [
+    31,
+    64
+  ]
+}

@@ -14,10 +14,30 @@ PUT /api/budgets返回410 budget_enforcement_disabled；GET及usage返回budget_
 
 Mac保留主仓库与编辑；每轮将最新工作树同步至build-test独立目录/srv/build/tokengo-no-local-budget-20261114并核对所有源码哈希。release broad与accepted仅相差4个测试文件，生产源码完全相同。服务端29个完整suite及1项proxy过滤回归共926项通过、4项既有忽略；Web223项通过；真实WASM浏览器10场景118项检查、48张截图，包含root/user与桌面/手机，价格管理与来源配置回归。
 
-第一次lib有两项旧预算/未知费用fixture断言失败；后续broad有5项旧会话归属/估算门限断言不符合新合同，保留原日志，修正后仅重跑对应4个suite。DeepSeek不接受summary的真实参数拒绝仍保留，未把它误改成会话放行。路由审查发现关闭400/429仍切换、忙Key不试其他可用候选、缺省输出投影不一致，均先修复并补真实HTTP回归，再运行最终broad。无TPM时未知成本/估算变化不再拦截；有TPM与真实source cap的独立回归通过。
+第一次lib有两项旧预算/未知费用fixture断言失败；后续broad有5项旧会话归属/估算门限断言不符合新合同，保留原日志，修正后仅重跑对应4个suite。修正了中途误改的DeepSeek summary测试预期，真实供应方参数拒绝仍保留。路由审查发现关闭400/429仍切换、忙Key不试其他可用候选、缺省输出投影不一致，均先修复并补真实HTTP回归，再运行最终broad。无TPM时未知成本/估算变化不再拦截；有TPM与真实source cap的独立回归通过。
 
 完整日志、源码清单、Linux交付物与截图已回收Mac项目上级review/no-local-budget-20261114。历史无关协议CAS与密钥UI补丁保留工作树，流式shape诊断仍随现役运行源码保留但不混入本次规则提交。没有把旧失败或多轮重复通过数累加成验收数量。
 
 ## 生产
 
-发布与真实调用回执待下节补充。旧冻结清理只修改frozen标记并备份、审计和读回，不抹除既有账本、估算差额、价格或历史消费。普通管理员生产登录材料仍无有效会话，因此管理UI操作以隔离HTTP/WASM验证为准，生产独立验证运行版本、资源、实际模型调用和账本。
+已配套更新服务端与Web，实际回执见下节。旧冻结清理只修改frozen标记并备份、审计和读回，不抹除既有账本、估算差额、价格或历史消费。普通管理员生产登录材料仍无有效会话，因此管理UI操作以隔离HTTP/WASM验证为准，生产独立验证运行版本、资源、实际模型调用和账本。
+
+## 生产验收回执
+
+北京时间2026-11-14 10:46:02–10:46:18完成更新，代码cbab724，路径/opt/tokengo/releases/no-local-budget-cbab724cf3cb-c23913c9。Server SHA256 c23913c900196e7208d76674c039549d222a26ae46c3127d638ff7184a1ed2d1，Web归档SHA256 3b7febac17ad4625bf86be0c70ead4e0b027e89e0bcef86555c9aa0d0dedae55。公开HTML/JS/WASM/CSS逐文件哈希与build-test产物一致；schema47、静态来源/路由及运行配置保留，定时导出状态恢复。部署流程4项隔离测试通过，没有恢复业务数据库、推送或公开发版。
+
+已清理4条旧冻结标记（user31/key93及user47/key123，均CNY），在拥有主机上先备份、CAS更新、事务内读回并审计。仅frozen改为0，不改既有限额元数据、价格、账本或历史消费。保护性备份路径见freeze-clearance.json；全局冻结数0。
+
+|生产请求|调用者Key|模型|实际来源|结果|
+|---|---:|---|---|---|
+|639380|93 Memory|gpt-6-luna|按配置先31，真实上游流错误后切64|200、完整流、LUNA_RECOVERED|
+|639381|93 Memory|bge-m3-fallback|2|200、1024维向量|
+|639382|93 Memory|bge-reranker-v2-m3-fallback|3|200、正确结构的排序结果|
+|639442|126|gpt-6.1-sol|64|200、完整流、SOL_RECOVERED|
+|639443|126|Deepseek-v4.1-flash-fallback|60 OpenCode Go Plus|200、完整流、DEEPSEEK_RECOVERED|
+
+Luna此次输入预估392、上游报告4400，费用估算273微元、实际记录1200微元；超估算诊断overrun=1，但实际费用完整记录，user/key冻结仍0，全部现金allocation hold为0。来源31失败用量未报告的费用保持null，重排来源3未定价费用也保持null，均不伪装为免费或估算实费。原事故账本724971完整行SHA与更新前一致，不追补历史费用。三类价格表全部行hash保持，protocol_sessions仍477行，测试调用没有新增来源绑定。
+
+Luna这次实际执行了配置[31,64]，没有直接沿用旧成功来源64；31的上游流错误仍是其真实可用性问题，本轮不将其称为已恢复。配置改序、停用、旧pin以及忙源选择的即时行为另由真实HTTP隔离回归覆盖，未为了验收改动生产路由顺序。DeepSeek/Sol复测保留客户端128000输出参数。
+
+最终验收覆盖本次指定调用与规则，管理界面交互仍以build-test隔离HTTP/WASM证据支持，不声称完成生产管理员登录点击。完整命令、退出码、原始失败/通过日志、48截图和Linux交付物在Mac项目上级review/no-local-budget-20261114。

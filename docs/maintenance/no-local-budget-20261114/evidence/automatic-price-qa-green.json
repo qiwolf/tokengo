@@ -1,0 +1,332 @@
+{
+  "cases": [
+    {
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "configured_administrator_values_are_prefilled_and_editable",
+          "passed": true
+        },
+        {
+          "name": "automatic_probe_fills_missing_input_preserves_saved_output_and_shows_source_time",
+          "passed": true
+        },
+        {
+          "name": "administrator_override_is_submitted_to_backend",
+          "passed": true
+        },
+        {
+          "name": "explicit_reprobe_can_replace_current_form_limits",
+          "passed": true
+        },
+        {
+          "name": "late_probe_does_not_overwrite_user_typing",
+          "passed": true
+        },
+        {
+          "name": "stale_probe_for_another_source_does_not_cross_fill",
+          "passed": true
+        },
+        {
+          "name": "unknown_probe_remains_blank_without_guessing_zero",
+          "passed": true
+        },
+        {
+          "name": "unknown_reprobe_preserves_administrator_draft",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "input_micro_per_million": 1000000,
+            "max_input_tokens": 64000,
+            "max_output_tokens": 128000,
+            "model": "text model",
+            "output_micro_per_million": 4000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM with controlled supplier declaration API"
+    },
+    {
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "configured_administrator_values_are_prefilled_and_editable",
+          "passed": true
+        },
+        {
+          "name": "automatic_probe_fills_missing_input_preserves_saved_output_and_shows_source_time",
+          "passed": true
+        },
+        {
+          "name": "administrator_override_is_submitted_to_backend",
+          "passed": true
+        },
+        {
+          "name": "explicit_reprobe_can_replace_current_form_limits",
+          "passed": true
+        },
+        {
+          "name": "late_probe_does_not_overwrite_user_typing",
+          "passed": true
+        },
+        {
+          "name": "stale_probe_for_another_source_does_not_cross_fill",
+          "passed": true
+        },
+        {
+          "name": "unknown_probe_remains_blank_without_guessing_zero",
+          "passed": true
+        },
+        {
+          "name": "unknown_reprobe_preserves_administrator_draft",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/providers/1/credentials",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "POST",
+          "body": {
+            "channel_id": 102,
+            "currency": "CNY",
+            "input_micro_per_million": 1000000,
+            "max_input_tokens": 64000,
+            "max_output_tokens": 128000,
+            "model": "text model",
+            "output_micro_per_million": 4000000
+          }
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        },
+        {
+          "path": "/api/channels/102/limits/discover",
+          "method": "POST",
+          "body": {
+            "model": "text model"
+          }
+        }
+      ],
+      "page_errors": [],
+      "authority": "Actual compiled WASM with controlled supplier declaration API"
+    }
+  ],
+  "passed": 2,
+  "expected_cases": 2,
+  "failure": null,
+  "limitations": "Synthetic responses verify UI scheme/units/inputs/payloads; backend correctness, live model configuration and deployment are separately verified."
+}

@@ -1,0 +1,19 @@
+{
+  "verified": true,
+  "current": "/opt/tokengo/releases/no-local-budget-cbab724cf3cb-c23913c9",
+  "running_binary_sha256": "c23913c900196e7208d76674c039549d222a26ae46c3127d638ff7184a1ed2d1",
+  "source_commit": "cbab724cf3cb23d5d8e389da8a79f0867050fb4d",
+  "source_manifest_sha256": "0df9522a2fa86904d0b75e8a5ab097c1595e33c213c87215069afed0fe7d7ddd",
+  "web_verified": true,
+  "public_assets": {
+    "console-design-54f0ce6f04735e1e.css": "2b793bb5b8e4b1770fae5dd29c08b13121d5d4d99bf2f6d48076799f67826512",
+    "tokengo-web-8e41b63049daccb2.js": "8575008a45a003418c3e94a9de59d9534702a519332bfc0f86460214a6a92370",
+    "usage-dashboard-51bdda854fa112d9.css": "bf65ffbad2587c448fecd08db365f55ba73c1138ca0a812e7c039b7c7a234ab6",
+    "index.html": "82f10d9b8c2fca08c2612c878e41d6bf57762c71ecf3f1c9f841f4dcc9ab7ef6",
+    "style-c41c1323e5e09396.css": "1f20503f5f444fd8662b8cc5aa96dc688672393fce432f4ce6d1f340100a8414",
+    "provider-workspace-ea99438577ec8a95.css": "687e1bed56fc2bde2beb6c6b67bdd7e689889411903c8ca700803848ee066160",
+    "tokengo-web-8e41b63049daccb2_bg.wasm": "4aa7d36d0a0529fa6b89cb798f1a85f01fa19e8c35bac0fb2c2e138b18876387",
+    "account-workspace-4df435622eca3d70.css": "58dcb5237803521838d9b3c0d7566a002955f217942ede4bd272f229e303f9c4"
+  },
+  "snapshot_timer": "active"
+}

@@ -1,0 +1,73 @@
+{
+  "host": "build-test",
+  "phase": "recovery",
+  "script_sha256": "13c28e514817d457d3a1d1888fb29dc40a9e0b3320bb12f5d40178cfa5dad87c",
+  "results": [
+    {
+      "kind": "luna",
+      "model": "gpt-6-luna",
+      "user_agent": "tokengo-no-local-budget-20261114-recovery-luna",
+      "key_id": 93,
+      "request_bytes": 136,
+      "request_sha256": "5fba09096a39b159df9c7f95ab530d8d06b5a48c8548726eba3901276d037075",
+      "http_status": 200,
+      "text": "LUNA_RECOVERED",
+      "completed": true,
+      "usage": {
+        "input_tokens": 4400,
+        "output_tokens": 9,
+        "total_tokens": 4409
+      },
+      "event_types": [
+        "response.completed",
+        "response.content_part.added",
+        "response.content_part.done",
+        "response.created",
+        "response.in_progress",
+        "response.metadata",
+        "response.output_item.added",
+        "response.output_item.done",
+        "response.output_text.delta",
+        "response.output_text.done"
+      ],
+      "passed": true,
+      "duration_ms": 5753
+    },
+    {
+      "kind": "embedding",
+      "model": "bge-m3-fallback",
+      "user_agent": "tokengo-no-local-budget-20261114-recovery-embedding",
+      "key_id": 93,
+      "request_bytes": 70,
+      "request_sha256": "4aada8231237096f18cf771c524e71630f617605b335b242e5c1edaf5d150e31",
+      "http_status": 200,
+      "items": 1,
+      "dimensions": [
+        1024
+      ],
+      "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 0,
+        "total_tokens": 9
+      },
+      "passed": true,
+      "duration_ms": 252
+    },
+    {
+      "kind": "rerank",
+      "model": "bge-reranker-v2-m3-fallback",
+      "user_agent": "tokengo-no-local-budget-20261114-recovery-rerank",
+      "key_id": 93,
+      "request_bytes": 152,
+      "request_sha256": "da7dab2694e899039a0c220df16267e35185121bda0873b2eee7e9d223ef183e",
+      "http_status": 200,
+      "result_count": 1,
+      "indexes": [
+        0
+      ],
+      "usage": null,
+      "passed": true,
+      "duration_ms": 247
+    }
+  ]
+}

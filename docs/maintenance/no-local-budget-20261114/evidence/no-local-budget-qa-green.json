@@ -1,0 +1,498 @@
+{
+  "cases": [
+    {
+      "role": "root",
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "legacy_zero_limit_and_frozen_marker_are_readonly_accounting",
+          "passed": true
+        },
+        {
+          "name": "key_consumption_remains_visible_without_budget_management",
+          "passed": true
+        },
+        {
+          "name": "price_management_remains_available",
+          "passed": true
+        },
+        {
+          "name": "actual_usage_and_fee_summary_remain_visible",
+          "passed": true
+        },
+        {
+          "name": "user_editor_keeps_rate_and_concurrency_controls_without_money_limits",
+          "passed": true
+        },
+        {
+          "name": "user_save_omits_limit_and_freeze_fields",
+          "passed": true
+        },
+        {
+          "name": "key_editor_preserves_authorization_expiry_and_rate_controls",
+          "passed": true
+        },
+        {
+          "name": "key_save_succeeds_without_implicit_budget_API_call",
+          "passed": true
+        },
+        {
+          "name": "no_budget_mutations_or_page_errors",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/managed-users",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/model-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/passthrough-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/managed-users/7",
+          "method": "PATCH",
+          "body": {
+            "display_name": "合成用户",
+            "enabled": true,
+            "policy": {
+              "admin_access": false,
+              "allow_paid": true,
+              "allowed_channels": null,
+              "allowed_models": null,
+              "allowed_services": null,
+              "max_concurrent": 2,
+              "rpm": 9,
+              "tpm": null
+            }
+          }
+        },
+        {
+          "path": "/api/managed-users",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/model-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/passthrough-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/users/7/keys",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/vkeys/21",
+          "method": "PATCH",
+          "body": {
+            "expires_at": null,
+            "name": "修改后的 Key",
+            "policy": {
+              "admin_access": false,
+              "allow_paid": true,
+              "allowed_channels": null,
+              "allowed_models": null,
+              "allowed_services": null,
+              "max_concurrent": 2,
+              "rpm": 3,
+              "tpm": null
+            }
+          }
+        }
+      ],
+      "page_errors": [],
+      "fixture_errors": [],
+      "authority": "Real compiled WASM with isolated synthetic root/user APIs; backend and production verified separately"
+    },
+    {
+      "role": "root",
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "legacy_zero_limit_and_frozen_marker_are_readonly_accounting",
+          "passed": true
+        },
+        {
+          "name": "key_consumption_remains_visible_without_budget_management",
+          "passed": true
+        },
+        {
+          "name": "price_management_remains_available",
+          "passed": true
+        },
+        {
+          "name": "actual_usage_and_fee_summary_remain_visible",
+          "passed": true
+        },
+        {
+          "name": "user_editor_keeps_rate_and_concurrency_controls_without_money_limits",
+          "passed": true
+        },
+        {
+          "name": "user_save_omits_limit_and_freeze_fields",
+          "passed": true
+        },
+        {
+          "name": "key_editor_preserves_authorization_expiry_and_rate_controls",
+          "passed": true
+        },
+        {
+          "name": "key_save_succeeds_without_implicit_budget_API_call",
+          "passed": true
+        },
+        {
+          "name": "no_budget_mutations_or_page_errors",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/billing/objects",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/budgets",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/pricing/options",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/unit-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/request-pricing",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/usage",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/managed-users",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/model-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/passthrough-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/managed-users/7",
+          "method": "PATCH",
+          "body": {
+            "display_name": "合成用户",
+            "enabled": true,
+            "policy": {
+              "admin_access": false,
+              "allow_paid": true,
+              "allowed_channels": null,
+              "allowed_models": null,
+              "allowed_services": null,
+              "max_concurrent": 2,
+              "rpm": 9,
+              "tpm": null
+            }
+          }
+        },
+        {
+          "path": "/api/managed-users",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/channels",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/model-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/passthrough-routes",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/users/7/keys",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/vkeys/21",
+          "method": "PATCH",
+          "body": {
+            "expires_at": null,
+            "name": "修改后的 Key",
+            "policy": {
+              "admin_access": false,
+              "allow_paid": true,
+              "allowed_channels": null,
+              "allowed_models": null,
+              "allowed_services": null,
+              "max_concurrent": 2,
+              "rpm": 3,
+              "tpm": null
+            }
+          }
+        }
+      ],
+      "page_errors": [],
+      "fixture_errors": [],
+      "authority": "Real compiled WASM with isolated synthetic root/user APIs; backend and production verified separately"
+    },
+    {
+      "role": "user",
+      "width": 1440,
+      "passed": true,
+      "checks": [
+        {
+          "name": "personal_portal_keeps_actual_usage_and_fees_without_shared_quota_claim",
+          "passed": true
+        },
+        {
+          "name": "key_editor_preserves_authorization_expiry_and_rate_controls",
+          "passed": true
+        },
+        {
+          "name": "key_save_succeeds_without_implicit_budget_API_call",
+          "passed": true
+        },
+        {
+          "name": "no_budget_mutations_or_page_errors",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys/21",
+          "method": "PATCH",
+          "body": {
+            "expires_at": null,
+            "name": "修改后的 Key",
+            "policy": {
+              "admin_access": false,
+              "allow_paid": true,
+              "allowed_channels": null,
+              "allowed_models": null,
+              "allowed_services": null,
+              "max_concurrent": 2,
+              "rpm": 3,
+              "tpm": null
+            }
+          }
+        }
+      ],
+      "page_errors": [],
+      "fixture_errors": [],
+      "authority": "Real compiled WASM with isolated synthetic root/user APIs; backend and production verified separately"
+    },
+    {
+      "role": "user",
+      "width": 390,
+      "passed": true,
+      "checks": [
+        {
+          "name": "personal_portal_keeps_actual_usage_and_fees_without_shared_quota_claim",
+          "passed": true
+        },
+        {
+          "name": "key_editor_preserves_authorization_expiry_and_rate_controls",
+          "passed": true
+        },
+        {
+          "name": "key_save_succeeds_without_implicit_budget_API_call",
+          "passed": true
+        },
+        {
+          "name": "no_budget_mutations_or_page_errors",
+          "passed": true
+        }
+      ],
+      "calls": [
+        {
+          "path": "/api/auth/status",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/me",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/portal",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/api/account/keys/21",
+          "method": "PATCH",
+          "body": {
+            "expires_at": null,
+            "name": "修改后的 Key",
+            "policy": {
+              "admin_access": false,
+              "allow_paid": true,
+              "allowed_channels": null,
+              "allowed_models": null,
+              "allowed_services": null,
+              "max_concurrent": 2,
+              "rpm": 3,
+              "tpm": null
+            }
+          }
+        }
+      ],
+      "page_errors": [],
+      "fixture_errors": [],
+      "authority": "Real compiled WASM with isolated synthetic root/user APIs; backend and production verified separately"
+    }
+  ],
+  "passed": 4,
+  "expected_cases": 4,
+  "failure": null,
+  "limitations": "Synthetic browser API fixture checks controls/payloads and rendered usage; production budget enforcement and model inference require separate checks."
+}
