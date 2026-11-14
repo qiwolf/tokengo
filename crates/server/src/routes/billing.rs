@@ -1,4 +1,4 @@
-//! Pricing and budget administration; key-authenticated usage is always key-scoped.
+//! Pricing and cost reporting; local monetary budget enforcement is disabled.
 use super::{identity::AdminAuth, proxy::GatewayKey, ApiError};
 use crate::{
     db::{
@@ -204,48 +204,11 @@ async fn budgets(
     Query(q): Query<BudgetQuery>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        json!({"budgets":db::billing_management::budgets_currency(&state.conn(),q.scope.as_deref(),q.scope_id,q.state.as_deref(),&q.currency).map_err(mutation_error)?}),
+        json!({"budget_enforcement":false,"budgets":db::billing_management::budgets_currency(&state.conn(),q.scope.as_deref(),q.scope_id,q.state.as_deref(),&q.currency).map_err(mutation_error)?}),
     ))
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BudgetUpdate {
-    #[serde(deserialize_with = "required_limit")]
-    limit_micro: Option<i64>,
-    #[serde(default)]
-    frozen: Option<bool>,
-}
-fn required_limit<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
-    Option::<i64>::deserialize(d)
-}
-async fn update_budget(
-    _auth: AdminAuth,
-    State(state): State<SharedState>,
-    Query(q): Query<BudgetQuery>,
-    payload: Result<Json<BudgetUpdate>, axum::extract::rejection::JsonRejection>,
-) -> Result<Json<Value>, ApiError> {
-    let Json(b) = payload
-        .map_err(|_| ApiError::bad_request("Invalid budget body; limit_micro is required"))?;
-    let scope = q
-        .scope
-        .as_deref()
-        .ok_or_else(|| ApiError::bad_request("scope is required"))?;
-    let id = q
-        .scope_id
-        .ok_or_else(|| ApiError::bad_request("scope_id is required"))?;
-    db::billing_management::update_budget_currency(
-        &state.conn(),
-        scope,
-        id,
-        b.limit_micro,
-        b.frozen,
-        &_auth.actor_label(),
-        &q.currency,
-    )
-    .map_err(mutation_error)?;
-    Ok(Json(
-        json!({"budgets":db::billing_management::budgets_currency(&state.conn(),Some(scope),Some(id),Some("all"),&q.currency)?}),
-    ))
+async fn update_budget(_auth:AdminAuth)->Result<Json<Value>,ApiError> {
+    Err(ApiError::new(axum::http::StatusCode::GONE,"budget_enforcement_disabled","本地预算门限已取消，费用只记录，不再设置限额或冻结。"))
 }
 async fn admin_usage(
     _auth: AdminAuth,
@@ -260,7 +223,7 @@ async fn admin_usage(
     let summary=billing::usage_summary_with_catalog(&conn,&q,Some(&catalog)).map_err(mutation_error)?;
     let analytics=billing::usage_analytics_with_catalog(&conn,&q,Some(&catalog),&summary).map_err(mutation_error)?;
     let entries=db::billing_management::enrich_entries_with_catalog(entries,&catalog)?;
-    json!({"entries":entries,"next_before_id":next,"summary":summary,"analytics":analytics})
+    json!({"budget_enforcement":false,"entries":entries,"next_before_id":next,"summary":summary,"analytics":analytics})
     };
     let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
     crate::reporting_currency::apply(&mut response,quote.as_ref());
@@ -285,7 +248,7 @@ async fn self_usage(
         budgets.extend(billing::budgets_currency(&conn,Some("user"),Some(key.auth.user_id),currency)?);
         budgets.extend(billing::budgets_currency(&conn,Some("key"),Some(key.auth.key_id),currency)?);
     }
-    json!({"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics})
+    json!({"budget_enforcement":false,"entries":entries,"next_before_id":next,"budgets":budgets,"summary":summary,"analytics":analytics})
     };
     let quote=if crate::reporting_currency::needs_quote(&response){crate::reporting_currency::quote(&state).await}else{None};
     crate::reporting_currency::apply(&mut response,quote.as_ref());
@@ -368,7 +331,7 @@ mod request_pricing_tests {
         assert!(objects["keys"].as_array().unwrap().iter().any(|v|v["name"]=="request-pricing-test"));
         assert!(!objects.to_string().contains(&secret));
         let (bad_budget,_)=call(&state,"PUT","/api/budgets?scope=user&scope_id=999999",&admin,json!({"limit_micro":1})).await;
-        assert_eq!(bad_budget,StatusCode::BAD_REQUEST);
+        assert_eq!(bad_budget,StatusCode::GONE);
         let (bad_state,_)=call(&state,"GET","/api/usage?state=invalid",&admin,Value::Null).await;
         assert_eq!(bad_state,StatusCode::BAD_REQUEST);
         let body = json!({"channel_id":1,"model":"web-search","micro_per_call":750});

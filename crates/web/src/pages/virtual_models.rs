@@ -205,7 +205,7 @@ pub fn VirtualModels(ctx: Ctx, #[prop(default=false)] shared:bool) -> impl IntoV
     }
     let api_base=if shared{"/api/shared-virtual-models"}else{"/api/account/virtual-models"};
     let title=if shared{"共享虚拟模型"}else{"调用策略"};
-    let description=if shared{"维护统一调用入口并向用户分配访问权限。底层模型可设为仅内部调用，用户只需使用共享名称。"}else{"给模型组合起一个私有名字，按顺序或时段选择调用目标。每次尝试都受你的权限、Key 和总额度限制。"};
+    let description=if shared{"维护统一调用入口并向用户分配访问权限。底层模型可设为仅内部调用，用户只需使用共享名称。"}else{"给模型组合起一个私有名字，按顺序或时段选择调用目标。每次尝试都受你的权限、Key 和限流设置约束。"};
     let show_trash=RwSignal::new(false);
     let delete_open=RwSignal::new(false);
     let delete_target=RwSignal::new(Value::Null);

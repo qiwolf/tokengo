@@ -46,7 +46,6 @@ struct UserDraft {
     password: String,
     enabled: bool,
     policy: Value,
-    limit: String,
 }
 impl UserDraft {
     fn from_user(user: &Value) -> Self {
@@ -54,7 +53,6 @@ impl UserDraft {
             username: login_username(user).unwrap_or_default(),
             name: api::text(user, "name"), password: String::new(),
             enabled: user["enabled"] == true, policy: user["policy"].clone(),
-            limit: user["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default(),
         }
     }
     fn payload(&self, creating: bool, has_login: bool, open_login: bool) -> Result<Value, String> {
@@ -66,7 +64,7 @@ impl UserDraft {
         } else if !self.password.is_empty() && !account_api::valid_password(&self.password) {
             return Err("新密码需为12–256字节；留空不修改。".into());
         }
-        let mut body = json!({"display_name":self.name.trim(),"policy":self.policy,"limit_micro":policy::optional_limit(&self.limit)?});
+        let mut body = json!({"display_name":self.name.trim(),"policy":self.policy});
         if creating {
             body["username"] = json!(self.username.trim()); body["password"] = json!(self.password);
         } else {
@@ -99,7 +97,6 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     let credentials_copy_failed=RwSignal::new(false);
     let enabled = RwSignal::new(true);
     let draft = RwSignal::new(policy::default_policy());
-    let limit = RwSignal::new(String::new());
     let models = RwSignal::new(Vec::<String>::new());
     let services=RwSignal::new(Vec::<Value>::new());
     let channels = RwSignal::new(Vec::<(i64, String)>::new());
@@ -179,7 +176,6 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         password.set(generated.as_ref().cloned().unwrap_or_default());
         enabled.set(true);
         draft.set(policy::new_user_policy());
-        limit.set(String::new());
         error.set(generated.err().unwrap_or_default());
         notice.set(String::new());
     };
@@ -190,7 +186,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             if let Some(row) = selected.get_untracked() {
                 let saved = UserDraft::from_user(&row);
                 username.set(saved.username); name.set(saved.name); enabled.set(saved.enabled);
-                draft.set(saved.policy); limit.set(saved.limit);
+                draft.set(saved.policy);
             }
         }
     });
@@ -226,7 +222,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         let pw = password.get_untracked();
         let result = UserDraft {
             username: username.get_untracked(), name: name.get_untracked(), password: pw.clone(),
-            enabled: enabled.get_untracked(), policy: draft.get_untracked(), limit: limit.get_untracked(),
+            enabled: enabled.get_untracked(), policy: draft.get_untracked(),
         }.payload(creating, has_login, open_login.get_untracked());
         let body = match result {
             Ok(v) => v,
@@ -285,7 +281,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
                         } else if creating {
                             "用户已创建，可直接使用登录名和初始密码登录，并自行创建 API Key。"
                         } else {
-                            "用户已保存；模型权限和总额度实时约束其全部 Key。"
+                            "用户已保存；模型权限和限流设置作用于其全部 Key。"
                         }
                         .into(),
                     );
@@ -324,7 +320,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     };
     view! {<div class="page admin-page users-page">
     <style>{include_str!("../../users.css")}</style>
-    <PageHead title="用户" desc="管理账号、授权与消费上限；用户可自行管理 API Key。"/>
+    <PageHead title="用户" desc="管理账号、授权与限流；用户可自行管理 API Key。"/>
     <section class="card users-directory">
         <header class="card-head"><h2>"用户列表"</h2><div class="user-actions"><button type="button" class="ghost" disabled=move||loading.get()||busy.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|reset()>"新建用户"</button></div></header>
         <div class="card-body">
@@ -332,16 +328,16 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         <Show when=move||!notice.get().is_empty()><p class="banner good" role="status">{move||notice.get()}</p></Show>
         <Show when=move||!list_error.get().is_empty()><p class="banner bad" role="alert">{move||list_error.get()}</p></Show>
         <Show when=move||loading.get()><p role="status">"正在读取用户…"</p></Show>
-        <div class="table-wrap"><table class="users-table"><thead><tr><th>"显示名称"</th><th>"登录账号"</th><th>"状态"</th><th>"消费额度"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||login_username(u).unwrap_or_default().to_lowercase().contains(&query))}).map(|u|{
+        <div class="table-wrap"><table class="users-table"><thead><tr><th>"显示名称"</th><th>"登录账号"</th><th>"状态"</th><th>"消费记录"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().filter(|u|{let query=search.get().trim().to_lowercase();(show_disabled.get()||u["enabled"]==true)&&(query.is_empty()||api::text(u,"name").to_lowercase().contains(&query)||login_username(u).unwrap_or_default().to_lowercase().contains(&query))}).map(|u|{
             let id=u["id"].as_i64().unwrap_or(0);
             let n=api::text(&u,"name");
             let account=login_username(&u).unwrap_or_else(||"未开通登录".into());
             let active=u["enabled"]==true;
             let quota=policy::budget_label(&u["budget"]);
             let delete_row=u.clone(); let status_row=u.clone(); let can_delete=id!=1;
-            view!{<tr><td data-label="显示名称"><strong>{n}</strong></td><td data-label="登录账号">{account}</td><td data-label="状态"><span class=if active {"badge good"}else{"badge"}>{if active {"已启用"}else{"已停用"}}</span></td><td data-label="消费额度"><span class="users-quota">{quota}</span></td><td data-label="操作"><div class="users-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|{
+            view!{<tr><td data-label="显示名称"><strong>{n}</strong></td><td data-label="登录账号">{account}</td><td data-label="状态"><span class=if active {"badge good"}else{"badge"}>{if active {"已启用"}else{"已停用"}}</span></td><td data-label="消费记录"><span class="users-quota">{quota}</span></td><td data-label="操作"><div class="users-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|{
                 created_credentials.set(None);credentials_copy_note.set(String::new());credentials_copy_failed.set(false);
-                let saved=UserDraft::from_user(&u); owner.set(Some(id)); username.set(saved.username);name.set(saved.name);password.set(String::new());enabled.set(saved.enabled);draft.set(saved.policy);limit.set(saved.limit);selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);section.set(UserSection::Profile);editing.set(true);
+                let saved=UserDraft::from_user(&u); owner.set(Some(id)); username.set(saved.username);name.set(saved.name);password.set(String::new());enabled.set(saved.enabled);draft.set(saved.policy);selected.set(Some(u.clone()));error.set(String::new());notice.set(String::new());open_login.set(false);section.set(UserSection::Profile);editing.set(true);
             }>"管理"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|toggle_user(status_row.clone())>{if active {"停用"}else{"启用"}}</button><button type="button" class="ghost danger" disabled=move||busy.get()||!can_delete title=if can_delete{"删除用户，撤销登录和 API Key，保留历史"}else{"保留的管理员身份不可删除"} on:click=move |_|{delete_target.set(Some(delete_row.clone()));error.set(String::new());delete_open.set(true);}>"删除"</button></div></td></tr>}
         }).collect_view()}</tbody></table></div>
         <Show when=move||!loading.get()&&rows.get().iter().all(|u|{let q=search.get().trim().to_lowercase();(!show_disabled.get()&&u["enabled"]!=true)||(!q.is_empty()&&!api::text(u,"name").to_lowercase().contains(&q)&&!login_username(u).unwrap_or_default().to_lowercase().contains(&q))})><p class="users-empty">"没有符合条件的用户。可调整筛选或新建用户。"</p></Show>
@@ -352,7 +348,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     <div class="user-workspace">
         <Show when=move||created_credentials.get().is_some()><section class="user-credential-delivery" aria-labelledby="user-credential-title"><h3 id="user-credential-title">"新用户登录信息"</h3><p class="account-help">"用户已保存。下列信息仅在当前页面内存中保留，关闭此处或用户设置后会清除；请及时交付并安全保存。"</p><label class="account-field" for="user-credential-text"><span>"可选择并手动复制"</span><textarea id="user-credential-text" readonly=true autocomplete="off" spellcheck="false" rows="3" prop:value=move||created_credentials.get().map(|v|v.text()).unwrap_or_default()/></label><p role=move||if credentials_copy_failed.get(){"alert"}else{"status"}>{move||credentials_copy_note.get()}</p><div class="user-actions"><button type="button" class="primary" disabled=move||busy.get() on:click=move |_|{let Some(delivery)=created_credentials.get_untracked()else{return};busy.set(true);leptos::task::spawn_local(async move{let copied=super::settings::copy_text(&delivery.text()).await;credentials_copy_failed.set(!copied);credentials_copy_note.set(if copied{"登录信息已复制到剪贴板。"}else{"复制失败，请选中上方文字手动复制。"}.into());busy.set(false);});}>"复制登录信息"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{created_credentials.set(None);credentials_copy_note.set(String::new());credentials_copy_failed.set(false);}>"关闭并清除"</button></div></section></Show>
         <Show when=move||!key_editor_active.get()><header class="user-identity"><div><h3>{move||selected.get().map(|v|api::text(&v,"name")).unwrap_or_else(||"新建用户".into())}</h3><p>{move||selected.get().map(|v|login_username(&v).map(|s|format!("登录账号：{s}")).unwrap_or_else(||"尚未开通登录 · 已有 Key 与历史保留".into())).unwrap_or_else(||"设置账号并分配权限，保存后用户即可登录。".into())}</p></div><Show when=move||selected.get().is_some()><span class=move||if enabled.get(){"badge good"}else{"badge"}>{move||if enabled.get(){"已启用"}else{"已停用"}}</span><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{if let Some(u)=selected.get_untracked(){toggle_user(u)}}>{move||if enabled.get(){"停用用户"}else{"启用用户"}}</button></Show></header>
-        <nav class="user-workspace-nav" aria-label="用户设置分区">{[(UserSection::Profile,"基本资料"),(UserSection::Access,"模型与服务"),(UserSection::Limits,"限流与额度"),(UserSection::Keys,"API Key")].into_iter().map(|(tab,label)|view!{
+        <nav class="user-workspace-nav" aria-label="用户设置分区">{[(UserSection::Profile,"基本资料"),(UserSection::Access,"模型与服务"),(UserSection::Limits,"限流与记录"),(UserSection::Keys,"API Key")].into_iter().map(|(tab,label)|view!{
             <button type="button" class="ghost" aria-pressed=move||(section.get()==tab).to_string() disabled=move||busy.get()||(tab==UserSection::Keys&&selected.get().is_none()) title=if tab==UserSection::Keys{"创建用户后可管理其 API Key"}else{""} on:click=move |_|section.set(tab)>{label}</button>
         }).collect_view()}</nav></Show>
         <Show when=move||section.get()!=UserSection::Keys>
@@ -366,10 +362,10 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
             <Show when=move||selected.get().is_none()||selected.get().is_some_and(|u|login_username(&u).is_some())||open_login.get()><crate::account_ui::PasswordField id="user-password" label="设置密码" value=password autocomplete="new-password" error=error describedby="user-help user-error" required=false/><Show when=move||selected.get().is_none()><div class="user-password-actions"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{match generate_password(){Ok(generated)=>{password.set(generated);error.set(String::new());},Err(message)=>error.set(message)}}>"重新生成密码"</button></div></Show><p id="user-help" class="account-help">{move||if selected.get().is_none(){"默认生成24位安全随机密码，可修改或重新生成；若浏览器无法生成，请手动设置。保存成功后自动复制登录信息；复制失败可再次点击复制。"}else if open_login.get(){"请输入至少12字节的初始密码。"}else{"密码留空不修改；设置新密码将退出此用户现有登录会话。登录账号创建后不可在此修改。"}}</p></Show>
         </Show>
         <Show when=move||section.get()==UserSection::Access><h3>"模型与透传服务授权"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-access" admin=true show_limits=false/></Show>
-        <Show when=move||section.get()==UserSection::Limits><h3>"限流与额度"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-limits" admin=true show_access=false/><div class="workspace-budget-grid"><label class="account-field user-budget-field"><span>"累计消费上限（人民币）"</span><input type="number" min="0" step="0.000001" placeholder="留空不限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><BudgetUsage budget=Signal::derive(move||selected.get().map(|u|u["budget"].clone()).unwrap_or(Value::Null))/></div><p class="account-help">"按实际用量与模型价格累计费用。留空不限，0 表示无付费额度；此处是累计金额，不是月度套餐或 Token 余额。"</p></Show>
+        <Show when=move||section.get()==UserSection::Limits><h3>"限流与记录"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix="user-limits" admin=true show_access=false/><BudgetUsage budget=Signal::derive(move||selected.get().map(|u|u["budget"].clone()).unwrap_or(Value::Null))/><p class="account-help">"本地预算门限已取消；历史限额和冻结标记不再限制调用。用量和费用继续记录。"</p></Show>
         </div>
         <Show when=move||!error.get().is_empty()><p id="user-error" class="banner bad" role="alert">{move||error.get()}</p></Show><Show when=move||!notice.get().is_empty()><p class="banner good" role="status">{move||notice.get()}</p></Show>
-        <footer class="user-workspace-footer"><span>"保存会同时应用基本资料、授权和额度。"</span><div class="user-actions"><button type="button" class="ghost" on:click=move |_|editing.set(false)>"取消"</button><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button></div></footer>
+        <footer class="user-workspace-footer"><span>"保存会同时应用基本资料、授权和限流设置。"</span><div class="user-actions"><button type="button" class="ghost" on:click=move |_|editing.set(false)>"取消"</button><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button></div></footer>
         </fieldset></form>
         </Show>
         <Show when=move||editing.get()&&section.get()==UserSection::Keys&&owner.get().is_some()><Show when=move||!key_editor_active.get()><p class="account-help">"Key 操作独立保存；其他分区的草稿保留，返回后可继续编辑。"</p></Show><KeyManager ctx=ctx owner=owner models=models channels=channels services=services form_busy=busy embedded=true editor_active=key_editor_active/></Show>
@@ -411,13 +407,12 @@ mod tests {
             "budget":{"limit_micro":12345678}})
     }
     #[test]
-    fn cross_section_save_keeps_identity_acl_limits_and_zero_budget() {
+    fn cross_section_save_preserves_identity_acl_rate_limits_without_reapplying_legacy_budget() {
         let saved = saved_user();
         let mut form = UserDraft::from_user(&saved);
         // Profile, access and quota edits share one draft; no tab supplies defaults.
         form.name = "Changed".into();
         form.policy["rpm"] = json!(9);
-        form.limit = "0".into();
         let body = form.payload(false, true, false).unwrap();
         assert_eq!(body["display_name"], "Changed");
         assert_eq!(body["policy"]["allowed_models"], json!(["legacy-hidden"]));
@@ -425,7 +420,7 @@ mod tests {
         assert_eq!(body["policy"]["admin_access"], true);
         assert_eq!(body["policy"]["allow_paid"], false);
         assert_eq!(body["policy"]["rpm"], 9);
-        assert_eq!(body["limit_micro"], 0);
+        assert!(body.get("limit_micro").is_none());
         assert!(body.get("password").is_none());
         assert!(body.get("username").is_none());
     }
@@ -435,14 +430,13 @@ mod tests {
         let original = UserDraft::from_user(&saved);
         let mut dirty = original.clone();
         dirty.name = "Unsaved".into(); dirty.password = "temporary-password".into();
-        dirty.policy["allowed_models"] = Value::Null; dirty.limit.clear();
+        dirty.policy["allowed_models"] = Value::Null;
         assert_ne!(dirty, original);
         // This is the same restoration used by Cancel, dialog Close and Escape.
         dirty = UserDraft::from_user(&saved);
         assert_eq!(dirty, original);
         assert!(dirty.password.is_empty());
         assert_eq!(dirty.username, "andy-login");
-        assert_eq!(dirty.limit, "12.345678");
     }
     #[test]
     fn historical_user_edit_does_not_silently_create_login_or_grants() {

@@ -273,7 +273,7 @@ async fn nonbillable_errors_do_not_suspend_model_account_and_invalid_requests_ne
     assert_eq!(f.seen.seen.lock().unwrap().len(), 3);
 }
 #[tokio::test]
-async fn request_budget_and_live_key_revocation_prevent_another_source_call() {
+async fn legacy_request_budget_is_ignored_but_live_key_revocation_blocks_source_call() {
     let f = Fixture::new().await;
     f.state.conn().execute("INSERT OR REPLACE INTO billing_budgets(scope,scope_id,limit_micro) VALUES('key',?1,750)",[f.key_id]).unwrap();
     assert_eq!(
@@ -281,11 +281,10 @@ async fn request_budget_and_live_key_revocation_prevent_another_source_call() {
         StatusCode::OK
     );
     f.settle();
-    let denied = f.send("search", json!({"query":"second"})).await;
-    assert_eq!(denied.status(), StatusCode::TOO_MANY_REQUESTS);
-    let error: Value = denied.json().await.unwrap();
-    assert_eq!(error["error"]["type"], "budget_exceeded");
-    assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+    let second = f.send("search", json!({"query":"second"})).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    f.settle();
+    assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
     f.state
         .conn()
         .execute("UPDATE gateway_keys SET enabled=0 WHERE id=?1", [f.key_id])
@@ -294,7 +293,7 @@ async fn request_budget_and_live_key_revocation_prevent_another_source_call() {
         f.send("search", json!({"query":"revoked"})).await.status(),
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
+    assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
 }
 #[tokio::test]
 async fn capabilities_are_explicit_and_background_probes_do_not_make_unmetered_calls() {

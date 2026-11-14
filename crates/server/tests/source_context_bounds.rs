@@ -209,46 +209,43 @@ async fn ancestor_tpm_reserves_full_opaque_context_before_send() {
     );
 }
 #[tokio::test]
-async fn source_bounds_change_invalidates_existing_opaque_pin() {
+async fn source_bounds_change_allows_existing_opaque_history_within_current_window() {
     let f = Fixture::new(None).await;
     let first = f.first().await;
     let mut cap = tokengo_server::protocol_config::load(&f.state.conn(), f.id).unwrap();
     cap.max_input_tokens = Some(4097);
     tokengo_server::protocol_config::save(&f.state.conn(), f.id, &cap).unwrap();
     let response = f.send(Fixture::replay(&first)).await;
-    assert_eq!(response.status(), 400);
-    assert_eq!(f.seen.lock().unwrap().len(), 1);
+    assert_eq!(response.status(), 200);
+    assert_eq!(f.seen.lock().unwrap().len(), 2);
 }
 #[tokio::test]
-async fn smaller_price_cap_cannot_replace_full_source_context() {
+async fn smaller_price_estimate_does_not_reject_full_source_context() {
     let f = Fixture::new(Some(512)).await;
     let first = f.first().await;
     let response = f.send(Fixture::replay(&first)).await;
-    assert_eq!(response.status(), 400);
-    assert_eq!(f.seen.lock().unwrap().len(), 1);
+    assert_eq!(response.status(), 200);
+    assert_eq!(f.seen.lock().unwrap().len(), 2);
     assert_eq!(
         db::billing::usage(&f.state.conn(), &Default::default())
             .unwrap()
             .len(),
-        1
+        2
     );
 }
 #[tokio::test]
-async fn context_declaration_does_not_turn_unknown_money_into_free_price() {
+async fn context_declaration_keeps_unknown_cost_with_a_legacy_finite_budget() {
     let f = Fixture::new(None).await;
     db::billing::set_budget(&f.state.conn(), "user", f.uid, Some(1500), "test").unwrap();
     let response = f.send(json!([{"role":"user","content":"compute"}])).await;
-    assert_eq!(response.status(), 403);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"]["type"], "permission_error");
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("config_required"));
-    assert!(f.seen.lock().unwrap().is_empty());
-    assert!(db::billing::usage(&f.state.conn(), &Default::default())
-        .unwrap()
-        .is_empty());
+    assert_eq!(response.status(), 200);
+    let _: Value = response.json().await.unwrap();
+    assert_eq!(f.seen.lock().unwrap().len(), 1);
+    f.state.drain_writes();
+    let rows = db::billing::usage(&f.state.conn(), &Default::default()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].debit_micro, None);
+    assert_eq!(rows[0].usage_certainty, "unpriced");
 }
 
 #[tokio::test]

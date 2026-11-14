@@ -163,28 +163,8 @@ pub fn enrich_entries_with_catalog(entries:Vec<billing::Ledger>,catalog:&Value)-
 }
 pub fn update_budget(c:&Connection,scope:&str,id:i64,limit:Option<i64>,frozen:Option<bool>,actor:&str)->Result<()> {update_budget_currency(c,scope,id,limit,frozen,actor,"CNY")}
 pub fn update_budget_currency(c:&Connection,scope:&str,id:i64,limit:Option<i64>,frozen:Option<bool>,actor:&str,currency:&str)->Result<()> {
-    billing::valid_currency(currency)?;
-    if currency=="USD" {
-        return super::in_tx(c,|c|{
-            require_active_object(c,scope,id)?;
-            let old:Option<Option<i64>>=c.query_row("SELECT limit_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='USD'",params![scope,id],|r|r.get(0)).optional()?;
-            if old!=Some(limit)||frozen.is_none(){return Err(bad("历史美元预算只允许明确冻结或解冻，限额不可重写"));}
-            c.execute("UPDATE billing_budgets SET frozen=?3 WHERE scope=?1 AND scope_id=?2 AND currency='USD'",params![scope,id,frozen])?;
-            c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('legacy_budget_freeze',?1,?2,?3,?4)",params![actor,format!("{scope}:{id}:USD"),json!({"frozen":frozen}).to_string(),now_ms()])?;
-            Ok(())
-        });
-    }
-    super::in_tx(c,|c|{
-        require_active_object(c,scope,id)?;
-        if limit.is_some_and(|v|v<0){return Err(bad("预算不能为负数"));}
-        if frozen==Some(false){
-            let (spent,reserved):(i64,i64)=c.query_row("SELECT COALESCE((SELECT spent_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'),0),COALESCE((SELECT reserved_micro FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'),0)",params![scope,id],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            if limit.is_some_and(|limit|i128::from(limit)<i128::from(spent)+i128::from(reserved)){return Err(bad("解冻前请提高限额或解除限额，以覆盖已扣和预占金额"));}
-        }
-        c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,frozen) VALUES(?1,?2,?3,COALESCE(?4,0)) ON CONFLICT(scope,scope_id,currency) DO UPDATE SET limit_micro=excluded.limit_micro,frozen=COALESCE(?4,billing_budgets.frozen)",params![scope,id,limit,frozen])?;
-        c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('budget_updated',?1,?2,?3,?4)",params![actor,format!("{scope}:{id}"),json!({"limit_micro":limit,"frozen":frozen}).to_string(),now_ms()])?;
-        Ok(())
-    })
+    let _=(c,scope,id,limit,frozen,actor,currency);
+    Err(bad("budget_enforcement_disabled: local monetary limits and freezes are disabled; historical budget rows are read-only"))
 }
 
 #[cfg(test)]
@@ -317,8 +297,8 @@ mod tests {
     fn budget_filtering_happens_before_cap_without_historical_ledger_reads() {
         let(c,user,key)=fixture();
         c.execute("WITH RECURSIVE n(i) AS (VALUES(10000) UNION ALL SELECT i+1 FROM n WHERE i<11010) INSERT INTO billing_budgets(scope,scope_id,limit_micro) SELECT 'key',i,100 FROM n",[]).unwrap();
-        update_budget(&c,"user",user,Some(42),None,"test").unwrap();
-        update_budget(&c,"key",key,Some(17),None,"test").unwrap();
+        billing::set_budget(&c,"user",user,Some(42),"historical-fixture").unwrap();
+        billing::set_budget(&c,"key",key,Some(17),"historical-fixture").unwrap();
         let rows=budgets(&c,None,None,Some("active")).unwrap();
         assert_eq!(rows.len(),2);
         assert!(rows.iter().any(|r|r["scope"]=="user"&&r["limit_micro"]==42));
@@ -359,28 +339,17 @@ mod tests {
         (c,user.id,key.id)
     }
     #[test]
-    fn budget_management_rejects_unknown_objects_and_preserves_money_and_audit() {
+    fn retired_budget_management_preserves_historical_money_and_never_writes_new_policy() {
         let(c,user,key)=fixture();
-        assert!(billing::set_budget(&c,"user",99999,Some(100),"test").is_err());
-        assert!(update_budget(&c,"key",99999,Some(100),None,"test").is_err());
-        update_budget(&c,"user",user,Some(100),Some(true),"test").unwrap();
-        c.execute("UPDATE billing_budgets SET spent_micro=50,reserved_micro=20 WHERE scope='user' AND scope_id=?1",[user]).unwrap();
-        assert!(update_budget(&c,"user",user,Some(60),Some(false),"test").is_err());
-        assert!(billing::budgets(&c,Some("user"),Some(user)).unwrap()[0].frozen);
-        update_budget(&c,"user",user,None,Some(false),"test").unwrap();
-        let rows=budgets(&c,None,None,None).unwrap();
-        assert_eq!(rows[0]["object_name"],"额度管理用户");
-        assert_eq!(rows[0]["spent_micro"],50);
-        assert_eq!(rows[0]["reserved_micro"],20);
-        assert_eq!(rows[0]["frozen"],false);
-        assert!(rows[0]["limit_micro"].is_null());
-        let events:i64=c.query_row("SELECT count(*) FROM billing_audit WHERE event='budget_updated'",[],|r|r.get(0)).unwrap();
-        assert_eq!(events,2);
-        update_budget(&c,"key",key,Some(10),None,"test").unwrap();
-        let mut k=identity::key(&c,key).unwrap().unwrap();k.enabled=false;identity::update_key(&c,&k).unwrap();
-        assert!(update_budget(&c,"key",key,None,Some(false),"test").is_err());
-        assert_eq!(budgets(&c,None,None,None).unwrap().len(),1);
-        assert_eq!(budgets(&c,None,None,Some("historical")).unwrap()[0]["object_name"],"应用 Key");
+        billing::set_budget(&c,"user",user,Some(100),"legacy-fixture").unwrap();
+        billing::set_budget(&c,"key",key,Some(10),"legacy-fixture").unwrap();
+        c.execute("UPDATE billing_budgets SET spent_micro=50,reserved_micro=20,frozen=1 WHERE scope='user' AND scope_id=?1",[user]).unwrap();
+        for (scope,id) in [("user",user),("key",key),("user",99999)] {
+            assert!(update_budget(&c,scope,id,None,Some(false),"test").unwrap_err().to_string().contains("budget_enforcement_disabled"));
+        }
+        let rows=budgets(&c,Some("user"),Some(user),None).unwrap();assert_eq!(rows[0]["spent_micro"],50);assert_eq!(rows[0]["reserved_micro"],20);assert_eq!(rows[0]["frozen"],true);assert_eq!(rows[0]["limit_micro"],100);
+        let events:i64=c.query_row("SELECT count(*) FROM billing_audit WHERE event='budget_updated'",[],|r|r.get(0)).unwrap();assert_eq!(events,2);
+        let mut k=identity::key(&c,key).unwrap().unwrap();k.enabled=false;identity::update_key(&c,&k).unwrap();assert_eq!(budgets(&c,None,None,None).unwrap().len(),1);assert_eq!(budgets(&c,None,None,Some("historical")).unwrap()[0]["object_name"],"应用 Key");
     }
     #[test]
     fn ledger_names_and_state_survive_archival_and_filter_before_pagination() {

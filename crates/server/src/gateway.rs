@@ -192,9 +192,7 @@ type GatewayPermits = (
 type PoolGroup = (Option<usize>, i64, String);
 #[derive(Default)]
 struct PoolControl {
-    selected: HashMap<PoolGroup, i64>,
     seen: std::collections::HashSet<(Option<usize>, i64, String)>,
-    tokens: HashMap<i64, crate::db::provider_pool::AffinityToken>,
 }
 fn pool_group(
     target: Option<&crate::db::user_virtual_routes::ResolvedTarget>,
@@ -220,7 +218,7 @@ fn virtual_route_error(error: crate::db::user_virtual_routes::VirtualError) -> A
 fn order_pool_entries(
     state: &SharedState,
     plan: &mut Plan,
-    auth: &crate::db::identity::AuthContext,
+    _auth: &crate::db::identity::AuthContext,
     endpoint: EndpointKind,
 ) -> Result<(), ApiError> {
     let balance_scope = plan.local_balance_scope();
@@ -245,7 +243,7 @@ fn order_pool_entries(
     let mut groups: HashMap<PoolGroup, Vec<usize>> = HashMap::new();
     for (index, entry) in plan.entries.iter().enumerate() {
         if let Some(credential) = &entry.credential {
-            // Protocol-ineligible sources cannot establish affinity for an unusable key.
+            // Protocol-ineligible sources do not participate in credential ordering.
             if endpoint
                 .protocol()
                 .is_some_and(|protocol| entry.protocols.select(protocol).is_none())
@@ -284,9 +282,17 @@ fn order_pool_entries(
             }
             ordered
         } else {
-            crate::db::provider_pool::order_for_user_with_load(
-                &c, auth.user_id, provider, &ids, &loads,
-            )?
+            // Current key strategy and live load apply to every request. Historical
+            // per-user affinity never outranks configured credential priority.
+            let concurrent = indices.first().is_some_and(|index|
+                entries[*index].as_ref().unwrap().credential.as_ref().unwrap().key_strategy == "concurrent");
+            let mut ranked = ids;
+            ranked.sort_by_key(|id| {
+                let credential = indices.iter().find_map(|index| entries[*index].as_ref()
+                    .filter(|entry| entry.channel.id.0 == *id).and_then(|entry| entry.credential.as_ref())).unwrap();
+                (if concurrent { loads.get(&credential.id).copied().unwrap_or(0) } else { 0 }, credential.priority, credential.id)
+            });
+            ranked
         };
         let mut available: HashMap<i64, Candidate> = indices
             .iter()
@@ -349,15 +355,10 @@ fn advance_explicit_route(
     index: usize,
     status: u16,
     auth: Option<&crate::db::identity::AuthContext>,
-    pinned: bool,
     control: &mut PoolControl,
-    active_target: &mut Option<usize>,
 ) -> Result<bool, ApiError> {
-    if pinned {
-        return Ok(false);
-    }
     let entry = &plan.entries[index];
-    if let (Some(credential), Some(auth)) = (&entry.credential, auth) {
+    if let (Some(credential), Some(_auth)) = (&entry.credential, auth) {
         let current =
             crate::db::provider_pool::source_credential(&state.conn(), entry.channel.id.0)?;
         if current.as_ref().is_none_or(|current| {
@@ -375,7 +376,7 @@ fn advance_explicit_route(
         };
         if allowed {
             let group = pool_group(entry.target.as_ref(), credential, &entry.name);
-            if let Some(next) = plan.entries.iter().skip(index + 1).find(|next| {
+            if plan.entries.iter().skip(index + 1).any(|next| {
                 next.credential.as_ref().is_some_and(|next_credential| {
                     pool_group(next.target.as_ref(), next_credential, &next.name) == group
                         && next_credential.id != credential.id
@@ -386,30 +387,7 @@ fn advance_explicit_route(
                         ))
                 })
             }) {
-                let next_credential = next.credential.as_ref().unwrap();
-                if let Some(token) = control.tokens.get(&credential.provider_id).filter(|_| !entry.local_balanced) {
-                    if token.credential_id == credential.id
-                        && !crate::db::provider_pool::switch_affinity(
-                            &state.conn(),
-                            auth.user_id,
-                            credential.provider_id,
-                            token,
-                            next_credential.id,
-                        )?
-                    {
-                        return Err(ApiError::new(StatusCode::CONFLICT,"affinity_changed","Concurrent request already changed this user's upstream key; retry with current affinity"));
-                    }
-                    if let Some(token) = crate::db::provider_pool::affinity_token(
-                        &state.conn(),
-                        auth.user_id,
-                        credential.provider_id,
-                    )? {
-                        control.tokens.insert(credential.provider_id, token);
-                    }
-                }
-                if !entry.local_balanced {
-                    control.selected.insert(group, next_credential.id);
-                }
+
                 return Ok(true);
             }
         }
@@ -421,14 +399,10 @@ fn advance_explicit_route(
             _ => false,
         };
         if allowed {
-            if let Some(next) = plan
-                .entries
-                .iter()
-                .skip(index + 1)
+            if plan.entries.iter().skip(index + 1)
                 .filter_map(|next| next.target.as_ref())
-                .find(|next| next.position != target.position)
+                .any(|next| next.position != target.position)
             {
-                *active_target = Some(next.position);
                 return Ok(true);
             }
         }
@@ -746,17 +720,16 @@ fn billing_bound_with_contract(body:&mut Value,endpoint:EndpointKind,price:Optio
     *body = outgoing;
     Ok(bounds)
 }
-fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
+fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,_price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>,contract:Option<&crate::parameter_contracts::Context<'_>>)->Result<(i64,i64),ApiError> {
     let mut input=generation_input_reservation(admission_input_bound(body,endpoint)?,endpoint,context);
     let mut output=if let Some(contract)=contract {
-        crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
+        crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),_price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?
     } else {output_bound(body,endpoint)?};
     if has_input_audio(body) || endpoint.protocol().is_some_and(|p|crate::protocol_sessions::opaque_history(p,body)) {
-        input=context.map(|v|v.0).or(price.map(|p|p.max_input_tokens)).filter(|n|*n>0)
-            .ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque history or audio requires a configured maximum input context bound"))?;
+        input=context.map(|v|v.0).or(_price.map(|p|p.max_input_tokens)).filter(|n|*n>0).unwrap_or(input);
     }
     if endpoint.has_image(body) {if let Some((max_input,_))=context {input=max_input;}}
-    if price.is_none() && endpoint.is_generation() && crate::parameter_budgets::cap_value(body,"max_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_output_tokens").is_none() {
+    if endpoint.is_generation() && crate::parameter_budgets::cap_value(body,"max_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_output_tokens").is_none() {
         let choices=if endpoint==EndpointKind::Chat {choices_count(body)?}else{1};
         let per_choice=4096.min(context.map(|v|v.1/choices).unwrap_or(4096));
         if per_choice<=0 {return Err(ApiError::bad_request("Source configuration needs a positive output cap"));}
@@ -764,25 +737,9 @@ fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price
         let field=contract.map(crate::parameter_budgets::default_output_key).unwrap_or(if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"});
         body[field]=Value::from(per_choice);
     }
-    if let Some(p)=price {
-        if endpoint.is_generation() && crate::parameter_budgets::cap_value(body,"max_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_completion_tokens").is_none() && crate::parameter_budgets::cap_value(body,"max_output_tokens").is_none() {
-            let choices=if endpoint==EndpointKind::Chat {choices_count(body)?} else {1};
-            let per_choice=4096.min(p.max_output_tokens.min(context.map(|v|v.1).unwrap_or(i64::MAX))/choices);
-            if per_choice<=0 {return Err(ApiError::bad_request("Pricing configuration needs a positive output cap"));}
-            output=per_choice.checked_mul(choices).ok_or_else(||ApiError::bad_request("Total output token bound overflow"))?;
-            let field=contract.map(crate::parameter_budgets::default_output_key).unwrap_or(if endpoint==EndpointKind::Responses{"max_output_tokens"}else{"max_tokens"});
-            body[field]=Value::from(per_choice);
-        }
-        if let Some(contract)=contract {
-            output=crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
-        }
-        if endpoint.has_image(body) {input=context.map(|v|v.0).unwrap_or(p.max_input_tokens);}
-        if input>p.max_input_tokens || output>p.max_output_tokens {
-            return Err(token_bound_error("billing_token_limit","billing",input,output,p.max_input_tokens,p.max_output_tokens));
-        }
-    }
+
     if let Some(contract)=contract {
-        output=crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
+        output=crate::parameter_budgets::reservation_estimate(contract,body,context.map(|v|v.1),_price.map(|p|p.max_output_tokens),if endpoint==EndpointKind::Chat{choices_count(body)?}else{1}).map(|estimate|estimate.output_tokens).map_err(|note|ApiError::new(StatusCode::BAD_REQUEST,"source_parameter_budget",note))?;
     }
     if let Some((max_input,max_output))=context {
         if input>max_input || output>max_output {return Err(token_bound_error("source_token_limit","source",input,output,max_input,max_output));}
@@ -792,7 +749,7 @@ fn billing_bound_with_contract_inner(body:&mut Value,endpoint:EndpointKind,price
 
 /// Reserve an explicit enforced cap, or the full verified provider ceiling when
 /// omitted. Unknown monetary prices remain unknown.
-fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
+fn subscription_bound(body:&Value,_price:Option<&crate::db::billing::Price>,context:Option<(i64,i64)>)->Result<(i64,i64),ApiError> {
     let (max_input,max_output)=context.filter(|(i,o)|*i>0&&*o>0).ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"source_limits_required","ChatGPT plan requests require verified full provider context and output bounds"))?;
     let mut input=generation_input_reservation(admission_input_bound(body,EndpointKind::Responses)?,EndpointKind::Responses,context);
     let output=if crate::parameter_budgets::cap_value(body,"max_output_tokens").is_some() {
@@ -803,9 +760,6 @@ fn subscription_bound(body:&Value,price:Option<&crate::db::billing::Price>,conte
     if crate::protocol_sessions::opaque_history(crate::protocol::Protocol::Responses,body) || crate::protocol::has_image(crate::protocol::Protocol::Responses,body) {input=max_input;}
     if input>max_input || output>max_output {
         return Err(token_bound_error("source_token_limit","source",input,output,max_input,max_output));
-    }
-    if let Some(p)=price.filter(|p|input>p.max_input_tokens||output>p.max_output_tokens) {
-        return Err(token_bound_error("billing_token_limit","billing",input,output,p.max_input_tokens,p.max_output_tokens));
     }
     Ok((input,output))
 }
@@ -1278,59 +1232,10 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     }
     let pooled = req.auth.is_some() && plan.entries.iter().any(|entry| entry.credential.is_some());
     let local_balanced = plan.entries.iter().any(|entry| entry.local_balanced);
-    // 顺序：
-    // · 普通模型名 → 问状态机（首选 / 回切 / 上一条走的谁），带图时再按能看图筛一遍；
-    // · `auto` → 现场算出来的那条链就是顺序（不读也不写状态机）。
-    let mut order: Vec<usize> = if plan.auto || plan.virtual_route.is_some() || local_balanced {
-        (0..plan.entries.len())
-            .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
-            .collect()
-    } else {
-        let mut ord = state
-            .routing()
-            .attempt_order(&plan.route, &all_ids, started_ms);
-        if ord.is_empty() {
-            ord = all_ids.clone();
-        }
-        let index_of: HashMap<i64, usize> = plan
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(i, e)| (e.channel.id.0, i))
-            .collect();
-        ord.iter()
-            .filter_map(|id| index_of.get(&id.0).copied())
-            .filter(|i| !wants_vision || plan.entries[*i].channel.vision)
-            .collect()
-    };
-    if pooled && !plan.auto && plan.virtual_route.is_none() {
-        // Keep the global source/provider slots; only key preference within the same
-        // logical-model/provider group belongs to this authenticated user's affinity.
-        let mut slots: HashMap<PoolGroup, Vec<usize>> = HashMap::new();
-        for (position, index) in order.iter().copied().enumerate() {
-            let entry = &plan.entries[index];
-            if let Some(credential) = &entry.credential {
-                slots
-                    .entry(pool_group(entry.target.as_ref(), credential, &entry.name))
-                    .or_default()
-                    .push(position);
-            }
-        }
-        for positions in slots.into_values() {
-            let mut indices: Vec<usize> =
-                positions.iter().map(|position| order[*position]).collect();
-            indices.sort_unstable();
-            for (position, index) in positions.into_iter().zip(indices) {
-                order[position] = index;
-            }
-        }
-    }
-    // 带图请求与 `auto` **只读状态机、不写**：
-    // · 带图请求本来就只在「能看图」这个小圈子里挑渠道，让它的结果去改整个模型名的口味，
-    //   等于一条带图请求把后面十分钟的纯文字请求一起改道。
-    // · `auto` 每一发都是现场挑的，没有「首选/回切」可言；让它去写状态，
-    //   那个名字下的账就没人解释得清了。
-    // 渠道自身的健康照旧由每分钟探活和普通请求看着。
+    // Configuration order is authoritative on every request, including continuations.
+    let order: Vec<usize> = (0..plan.entries.len())
+        .filter(|index| !wants_vision || plan.entries[*index].channel.vision)
+        .collect();
     let request_id = {
         let conn = state.conn();
         requests::start(
@@ -1344,6 +1249,20 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     let mut guard = RequestGuard::new(state.clone(), request_id, started_ms, &req.model);
     record_client_app(&state, request_id, req.user_agent.as_deref());
     guard.identify(req.auth.as_ref())?;
+    // Pool availability filtering can remove the final candidate. Settle that
+    // before opaque-input admission tries to derive bounds from an empty pool.
+    if plan.entries.is_empty() {
+        let error = ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "models_cooling",
+            "No eligible source remains after availability checks; retry after source availability recovers",
+        );
+        guard.error_code = Some(error.kind.into());
+        guard.finish(&state, Status::Failed, Some(503), None, started_ms,
+            None, 0, 0, false, Some(&error.message));
+        return Err(error);
+    }
+    let touch_state = !wants_vision && !plan.auto && plan.virtual_route.is_none() && !local_balanced;
     crate::parameter_budgets::normalize_null_caps(&mut req.body);
     if req.endpoint == EndpointKind::Responses {
         normalize_responses_output_caps(&mut req.body).map_err(|error| {
@@ -1424,6 +1343,11 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     }
                 }
                 let ceiling = candidate_context;
+                if default_output && !managed_openai {
+                    let per_choice = 4096.min(ceiling.map(|value| value.1 / choices).unwrap_or(4096));
+                    if per_choice <= 0 { output_contract_error=Some("Source configuration needs a positive output cap".into()); continue; }
+                    projection[crate::parameter_budgets::default_output_key(&contract)] = Value::from(per_choice);
+                }
                 let bound = if managed_openai && default_output {
                     ceiling.map(|v|v.1).ok_or_else(|| "OAuth source requires verified full context/output bounds".to_owned())
                 } else if protocol!=native && !default_output {
@@ -1507,7 +1431,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         .flatten()
                         .is_some_and(|p| p.effective_policy().tpm.is_some())
                 });
-            if opaque_input || audio_input || tpm_limited {
+            if tpm_limited {
                 input=maximum.ok_or_else(||ApiError::new(StatusCode::FORBIDDEN,"pricing_required","Opaque/audio input or image input with token limits requires configured context bounds")).map_err(|error|{guard.reject(&error);error})?;
             } else if let Some(maximum) = maximum {
                 input = maximum;
@@ -1582,74 +1506,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
         .or_else(|| tokengo_shared::session_id_from_body(&req.body))
         .map(|id| tokengo_shared::short_hash(&format!("{}:{id}", req.session_namespace)));
 
-    let opaque = req
-        .endpoint
-        .protocol()
-        .is_some_and(|p| crate::protocol_sessions::opaque_history(p, &req.body));
-    let mut pin_key = req.explicit_session.as_deref().and_then(|id| {
-        req.endpoint
-            .protocol()
-            .map(|p| crate::protocol_sessions::key(&req.session_namespace, id, &req.model, p))
-    });
-    let mut existing_pin = pin_key
-        .as_deref()
-        .map(|key| crate::protocol_sessions::load(&state.conn(), key))
-        .transpose()?
-        .flatten();
-    let anonymous_native = matches!(req.endpoint, EndpointKind::Chat | EndpointKind::Responses)
-        && req.explicit_session.is_none();
-    if anonymous_native && opaque {
-        let candidates: Vec<_> = plan.entries.iter().filter_map(|entry| {
-            (entry.protocols.select(req.endpoint.protocol().unwrap())
-                == req.endpoint.protocol()).then(|| crate::protocol_sessions::Pin {
-                    channel: entry.channel.id.0,
-                    generation: entry.binding_generation,
-                    upstream_model: entry.channel.upstream_model(&entry.name).into(),
-                    protocol: req.endpoint.protocol().unwrap(),
-                })
-        }).collect();
-        if let Some((owner, pin)) = crate::protocol_sessions::resolve_anonymous(
-            &state.conn(), &req.session_namespace, &req.model, &candidates, &req.body,
-        )? {
-            pin_key = Some(owner);
-            existing_pin = Some(pin);
-        }
-    }
-    // A continuation must retain its original source, but its result says
-    // nothing about the preferred source for unrelated conversations. Resolve
-    // anonymous opaque ownership before deciding whether to update global state.
-    let touch_state = !wants_vision
-        && !plan.auto
-        && plan.virtual_route.is_none()
-        && !local_balanced
-        && existing_pin.is_none();
-    let order: Vec<usize> = order
-        .into_iter()
-        .filter(|index| {
-            existing_pin
-                .as_ref()
-                .is_none_or(|pin| plan.entries[*index].channel.id.0 == pin.channel)
-        })
-        .collect();
-    if existing_pin.is_some() && order.is_empty() {
-        let error = ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "native_source_unavailable",
-            "Native session source is unavailable; retry later or start a new session",
-        );
-        guard.reject(&error);
-        return Err(error);
-    }
-    if opaque && existing_pin.is_none() {
-        let note = if anonymous_native {
-            "Opaque reasoning history has no unique verifiable ownership for this key, model and authorized source; history may be expired or unknown, start a new conversation without untracked opaque history"
-        } else {
-            "Opaque reasoning history requires an existing explicit session bound to its original source; history may have expired, start a new conversation"
-        };
-        let error = ApiError::bad_request(note).with_code("explicit_session_required");
-        guard.reject(&error);
-        return Err(error);
-    }
+
     let mut ordinal: u32 = 0;
     let mut last_fault: Option<String> = None;
     let mut last_http: Option<UpstreamError> = None;
@@ -1665,11 +1522,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
     let mut pre_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     let mut pre_credential_permits: HashMap<i64, crate::state::ChannelPermit> = HashMap::new();
     let mut pool_control = PoolControl::default();
-    let mut active_target = plan
-        .entries
-        .first()
-        .and_then(|entry| entry.target.as_ref())
-        .map(|target| target.position);
     'pass: loop {
         let mut tried_any = false;
         let mut tried_fallback_after_local_busy = false;
@@ -1695,14 +1547,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
             // Vector chains may walk the remaining configured candidates
             // on transport, source-health and malformed-output faults. Complete
             // 400/429 responses still stop below when their switches are off.
-            // A restored native pin may belong to a later target selected on a prior
-            // turn. Its exact source check below takes precedence over the fresh-call cursor.
-            if existing_pin.is_none() && !plan.automatic_target_failover(req.endpoint) && target
-                .as_ref()
-                .is_some_and(|target| Some(target.position) != active_target)
-            {
-                continue;
-            }
+
             let tool_caps = if let Some(kind) = req.endpoint.tool_kind() {
                 let caps = crate::search_tools::load(&state.conn(), channel.id.0)?;
                 if !caps.permits(kind) {
@@ -1738,39 +1583,9 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                 },
                 None => None,
             };
-            let candidate_pin = upstream_protocol.map(|protocol| crate::protocol_sessions::Pin {
-                channel: channel.id.0,
-                generation: *binding_generation,
-                upstream_model: channel.upstream_model(name).into(),
-                protocol,
-            });
-            // Fresh anonymous calls acquire ownership only after a successful response.
-            // Replays use the previously resolved source and all existing pin safeguards.
-            let pin_key = pin_key.clone().filter(|_| req.endpoint != EndpointKind::Chat
-                || upstream_protocol == Some(crate::protocol::Protocol::Chat)).or_else(|| {
-                candidate_pin.as_ref()
-                    .filter(|_| anonymous_native)
-                    .filter(|pin| Some(pin.protocol) == req.endpoint.protocol())
-                    .map(|pin| crate::protocol_sessions::anonymous_key(
-                        &req.session_namespace, &req.model, pin,
-                    ))
-            });
-            if existing_pin
-                .as_ref()
-                .is_some_and(|pin| candidate_pin.as_ref() != Some(pin))
-            {
-                last_policy_error=Some(ApiError::bad_request("Native session is pinned to a different or changed source; start a new session"));
-                continue;
-            }
             if pooled {
                 if let Some(credential) = credential {
-                    if !balanced_node {
-                        let group = pool_group(target.as_ref(), credential, name);
-                        let selected = pool_control.selected.entry(group).or_insert(credential.id);
-                        if *selected != credential.id {
-                            continue;
-                        }
-                    }
+
                     if pool_control.seen.contains(&(
                         target.as_ref().map(|target| target.position),
                         credential.id,
@@ -1780,20 +1595,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     }
                 }
             }
-            if opaque {
-                if let (Some(owner), Some(pin)) = (&pin_key, &candidate_pin) {
-                    if !crate::protocol_sessions::verify_artifacts(
-                        &state.conn(),
-                        owner,
-                        pin,
-                        &req.body,
-                    )? {
-                        let error=ApiError::bad_request("Opaque history contains artifacts not issued to this key, session and source, or history has expired; start a new conversation");
-                        guard.reject(&error);
-                        return Err(error);
-                    }
-                }
-            }
+
             let upstream_path = upstream_protocol
                 .map(|p| p.path())
                 .unwrap_or(req.endpoint.path());
@@ -1873,37 +1675,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     Some(sem) => match sem.clone().try_acquire_owned() {
                         Ok(p) => Some(p),
                         Err(_) => {
-                            if *balanced_node {
-                                // A waiter may have reserved this credential before the source
-                                // gate became busy. Never hold credential -> wait for channel:
-                                // ordinary aliases acquire them in the opposite order.
-                                if let Some(credential) = credential {
-                                    pre_credential_permits.remove(&credential.id);
-                                }
-                                local_busy = true;
-                                busy.push((channel.id.0, sem));
-                                continue 'channels;
-                            } else if pooled && credential.is_some() {
-                                let left = cfg
-                                    .request_budget_ms
-                                    .saturating_sub((now_ms() - started_ms).max(0) as u64);
-                                match tokio::time::timeout(
-                                    Duration::from_millis(left),
-                                    sem.acquire_owned(),
-                                )
-                                .await
-                                {
-                                    Ok(Ok(permit)) => Some(permit),
-                                    _ => {
-                                        let error=ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"credential_busy","Selected upstream source remained busy until request deadline");
-                                        guard.reject(&error);
-                                        return Err(error);
-                                    }
-                                }
-                            } else {
-                                busy.push((channel.id.0, sem));
-                                continue;
+                            // Try the remaining configured sources before waiting. A
+                            // queued credential permit must not be held while its source is busy.
+                            if let Some(credential) = credential {
+                                pre_credential_permits.remove(&credential.id);
                             }
+                            local_busy |= pooled;
+                            busy.push((channel.id.0, sem));
+                            continue 'channels;
                         }
                     },
                 },
@@ -1914,35 +1693,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         Some(permit) => Some(permit),
                         None => match state.credential_gate(credential.id, credential.max_concurrent) {
                         None => None,
-                        Some(gate) => {
-                            if *balanced_node {
-                                match gate.clone().try_acquire_owned() {
-                                    Ok(permit) => Some(permit),
-                                    Err(_) => {
-                                        local_busy = true;
-                                        credential_busy.push((credential.id, gate));
-                                        continue 'channels;
-                                    }
-                                }
-                            } else {
-                            let left = cfg
-                                .request_budget_ms
-                                .saturating_sub((now_ms() - started_ms).max(0) as u64);
-                            match tokio::time::timeout(
-                                Duration::from_millis(left),
-                                gate.acquire_owned(),
-                            )
-                            .await
-                            {
-                                Ok(Ok(permit)) => Some(permit),
-                                _ => {
-                                    let error=ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"credential_busy","Selected upstream credential remained busy until request deadline");
-                                    guard.reject(&error);
-                                    return Err(error);
-                                }
+                        Some(gate) => match gate.clone().try_acquire_owned() {
+                            Ok(permit) => Some(permit),
+                            Err(_) => {
+                                local_busy = true;
+                                credential_busy.push((credential.id, gate));
+                                continue 'channels;
                             }
-                            }
-                        }
+                        },
                         }
                     }
                 } else {
@@ -2194,8 +1952,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         let error = ApiError::bad_request(
                             "OAuth source binding changed; retry with current source configuration",
                         );
-                        guard.reject(&error);
-                        return Err(error);
+                        last_policy_error=Some(error);
+                        continue 'channels;
                     }
                     if let Err(error)=crate::oauth_external::validate_bound_models(&state.conn(),credential.account_id,std::slice::from_ref(&sent_model)) {
                         last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"oauth_model_protocol",error.0));
@@ -2227,9 +1985,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     )
                     .map_err(crate::db::DbError::from)?;
                 if live_generation != *binding_generation {
-                    let error=ApiError::bad_request("Source configuration changed during request; retry with current configuration");
-                    guard.reject(&error);
-                    return Err(error);
+                    last_policy_error=Some(ApiError::bad_request("Source configuration changed during request"));
+                    continue 'channels;
                 }
                 {
                     let c = state.conn();
@@ -2295,6 +2052,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     Ok(())
                 })();
                 if let Err(error) = live_route_check {
+                    if error.kind == "credential_changed" {last_policy_error=Some(error);continue 'channels;}
                     guard.reject(&error);
                     return Err(error);
                 }
@@ -2319,40 +2077,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         guard.reject(&error);
                         return Err(error);
                     }
-                    if pooled && !balanced_node {
-                        if let Some(credential) = credential {
-                            if existing_pin.is_none() {
-                                let live_affinity = crate::db::provider_pool::affinity_token(
-                                    &c,
-                                    current.user_id,
-                                    credential.provider_id,
-                                )?;
-                                if live_affinity.as_ref().is_some_and(|token| {
-                                    token.credential_id != credential.id
-                                        && plan.entries.iter().enumerate().any(|(index,candidate)| {
-                                            !local_capacity_rejected.contains(&index) && candidate.credential.as_ref().is_some_and(|other| {
-                                                other.id == token.credential_id
-                                                    && pool_group(
-                                                        candidate.target.as_ref(),
-                                                        other,
-                                                        &candidate.name,
-                                                    ) == pool_group(
-                                                        target.as_ref(),
-                                                        credential,
-                                                        name,
-                                                    )
-                                            })
-                                        })
-                                }) {
-                                    drop(c);
-                                    let error=ApiError::new(StatusCode::CONFLICT,"affinity_changed","Upstream key affinity changed while this request was queued; retry with the current identity");
-                                    guard.reject(&error);
-                                    return Err(error);
-                                }
-                            }
 
-                        }
-                    }
                     let price = crate::db::billing::price(&c, name, channel.id.0)?;
                     let context = match oauth.as_ref() {
                         Some(credential) => credential
@@ -2414,28 +2139,21 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                     let (input, output) = match bounds {
                         Ok(bounds)=>bounds,
                         Err(error) if matches!(error.kind,"source_parameter_budget"|"billing_token_limit"|"source_token_limit")=>{
-                            if existing_pin.is_some() {guard.reject(&error);return Err(error);}
                             // No request was sent: capacity mismatch is source-local,
                             // independent of the route's *upstream* HTTP 400 switches.
                             local_capacity_rejected.insert(entry_idx);
-                            if let Some(credential)=credential {
-                                pool_control.selected.remove(&pool_group(target.as_ref(),credential,name));
-                            }
-                            active_target=order.iter().copied().skip_while(|index|*index!=entry_idx).skip(1)
-                                .filter(|index|!local_capacity_rejected.contains(index))
-                                .find_map(|index|plan.entries[index].target.as_ref().map(|target|target.position));
                             last_policy_error=Some(error);continue 'channels;
                         }
                         Err(error)=>{guard.reject(&error);return Err(error);}
                     };
-                    if admitted_output.is_some_and(|reserved| output > reserved) {
+                    if tpm_limited && admitted_output.is_some_and(|reserved| output > reserved) {
                         last_policy_error=Some(ApiError::new(StatusCode::BAD_REQUEST,"source_output_changed","Source output exceeds the admitted reservation; retry with current configuration"));
                         continue 'channels;
                     }
                     let discovery_input_changed=req.endpoint.is_generation()
                         && admitted_discovery_inputs.get(&(channel.id.0,name.clone()))
                             .is_some_and(|previous|context.map(|value|value.0)!=Some(*previous));
-                    if (full_context_input || discovery_input_changed)
+                    if tpm_limited && (full_context_input || discovery_input_changed)
                         && admitted_input.is_some_and(|reserved| input > reserved)
                     {
                         let error=ApiError::new(StatusCode::BAD_REQUEST,"source_context_changed","Source context exceeds the admitted input reservation; retry with current configuration");
@@ -2456,20 +2174,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                         let note=format!("Output reservation uses {} tokens; origin={}; confidence={}; supplier hard cap not verified",estimate.output_tokens,estimate.origin,estimate.confidence);
                         adaptation_note=Some(adaptation_note.take().map(|previous|format!("{previous}; {note}")).unwrap_or(note));
                     }
-                    if pooled && !balanced_node {
-                        if let Some(credential)=credential {
-                            if !pool_control.tokens.contains_key(&credential.provider_id) {
-                                let token =
-                                    crate::db::provider_pool::ensure_affinity_for_selection(
-                                        &c,
-                                        current.user_id,
-                                        credential.provider_id,
-                                        credential.id,
-                                    )?;
-                                pool_control.tokens.insert(credential.provider_id, token);
-                            }
-                        }
-                    }
+
                     let attempt_id = format!("{}:{}", request_id, ordinal);
                     let reservation = if req.endpoint.tool_kind().is_some() {
                         match crate::db::billing::request_price(&c, name, channel.id.0)? {
@@ -2481,14 +2186,10 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 &attempt_id,
                                 &p,
                             ),
-                            None => {
-                                last_policy_error = Some(ApiError::new(
-                                    StatusCode::FORBIDDEN,
-                                    "pricing_required",
-                                    "Standalone tools require a configured per-request price",
-                                ));
-                                continue 'channels;
-                            }
+                            None => crate::db::billing::reserve_unpriced_request(
+                                &c, current.user_id, current.key_id, request_id,
+                                &attempt_id, channel.id.0, name,
+                            ),
                         }
                     } else {
                         match price {
@@ -2692,15 +2393,13 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                         .saturating_sub((now_ms() - started_ms).max(0) as u64),
                                 );
                             let mut resp = resp;
-                            let mut prepared = match prepare_stream(
+                            let prepared = match prepare_stream(
                                 &mut resp,
                                 source,
                                 client,
                                 Duration::from_millis(left),
                                 attempt_timeout,
                                 &mut guard,
-                                pin_key.is_some(),
-                                candidate_pin.as_ref().map(|pin| crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(), pin)).transpose()?.unwrap_or_default(),
                                 minimax_policy.as_ref(),
                             )
                             .await
@@ -2756,86 +2455,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                     continue;
                                 }
                             };
-                            if let (Some(key), Some(pin)) = (&pin_key, &candidate_pin) {
-                                let claimed = {
-                                    let conn = state.conn();
-                                    if pin.protocol == crate::protocol::Protocol::Chat { Ok(true) }
-                                    else { crate::protocol_sessions::claim(&conn, key, pin) }
-                                };
-                                match claimed {
-                                    Ok(true) => {}
-                                    Ok(false) => {
-                                        let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");
-                                        guard.reject(&error);
-                                        return Err(error);
-                                    }
-                                    Err(_) => {
-                                        guard.settle_billing("local_state_fault");
-                                        guard.active_attempt = None;
-                                        record_attempt(
-                                            &state,
-                                            request_id,
-                                            ordinal,
-                                            channel,
-                                            name,
-                                            &sent_model,
-                                            "local_fault",
-                                            Some(status),
-                                            now_ms() - t0,
-                                            Some("Native session state unavailable"),
-                                        );
-                                        guard.error_code = Some("state_unavailable".into());
-                                        guard.finish(
-                                            &state,
-                                            Status::Failed,
-                                            Some(503),
-                                            Some(channel.id.0),
-                                            started_ms,
-                                            None,
-                                            0,
-                                            0,
-                                            false,
-                                            Some("Native session state unavailable"),
-                                        );
-                                        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Native session state could not be persisted; no fallback was attempted"));
-                                    }
-                                }
-                            }
-                            if let (Some(owner), Some(pin)) = (&pin_key, &candidate_pin) {
-                                let persisted =
-                                    prepared.artifacts.persist(&state.conn(), owner, pin);
-                                if let Err(error) = persisted {
-                                    let note = crate::protocol_sessions::persistence_note(&error);
-                                    guard.settle_billing("local_state_fault");
-                                    guard.active_attempt = None;
-                                    record_attempt(
-                                        &state,
-                                        request_id,
-                                        ordinal,
-                                        channel,
-                                        name,
-                                        &sent_model,
-                                        "local_fault",
-                                        Some(status),
-                                        now_ms() - t0,
-                                        Some(&note),
-                                    );
-                                    guard.error_code = Some("state_unavailable".into());
-                                    guard.finish(
-                                        &state,
-                                        Status::Failed,
-                                        Some(503),
-                                        Some(channel.id.0),
-                                        started_ms,
-                                        None,
-                                        0,
-                                        0,
-                                        false,
-                                        Some(&note),
-                                    );
-                                    return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE,"state_unavailable","Opaque history state could not be persisted; no fallback was attempted"));
-                                }
-                            }
                             if touch_state {
                                 let mut r = state.routing();
                                 r.on_success_with_interval(
@@ -2852,7 +2471,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 state.clone(),
                                 resp,
                                 prepared,
-                                pin_key.clone().zip(candidate_pin.clone()),
                                 guard,
                                 request_id,
                                 started_ms,
@@ -2892,10 +2510,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 req.endpoint
                                     .protocol()
                                     .unwrap_or(crate::protocol::Protocol::Responses),
-                                pin_key
-                                    .as_deref()
-                                    .zip(candidate_pin.as_ref())
-                                    .map(|(owner, pin)| (&state, owner, pin)),
                                 Duration::from_millis(left),
                                 attempt_timeout,
                                 &mut guard,
@@ -2910,10 +2524,6 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 channel.unwrap_envelope,
                                 req.endpoint == EndpointKind::Chat,
                                 upstream_protocol.zip(req.endpoint.protocol()),
-                                pin_key
-                                    .as_deref()
-                                    .zip(candidate_pin.as_ref())
-                                    .map(|(owner, pin)| (&state, owner, pin)),
                                 (req.endpoint == EndpointKind::Embeddings && plan.virtual_route.is_some())
                                     .then_some((tokengo_shared::ModelKind::Embeddings, &req.body)),
                                 upstream_protocol.is_some_and(|native|native==crate::protocol::Protocol::Messages
@@ -3016,14 +2626,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                             }
                             continue;
                         }
-                        if let (Some(key), Some(pin)) = (&pin_key, &candidate_pin) {
-                            if pin.protocol != crate::protocol::Protocol::Chat
-                                && !crate::protocol_sessions::claim(&state.conn(), key, pin)? {
-                                let error=ApiError::bad_request("Concurrent native session selected a different source; start a new session");
-                                guard.reject(&error);
-                                return Err(error);
-                            }
-                        }
+
                         guard.settle_billing("success");
                         guard.active_attempt = None;
                         record_attempt(
@@ -3134,16 +2737,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 entry_idx,
                                 status,
                                 req.auth.as_ref(),
-                                existing_pin.is_some(),
                                 &mut pool_control,
-                                &mut active_target,
                             ) {
                                 Ok(switched) => switched,
                                 Err(error) => {
                                     guard.usage = serde_json::from_slice::<Value>(&err.body)
                                         .map(|value| Usage::read(&value))
                                         .unwrap_or_default();
-                                    guard.settle_billing("affinity_changed");
+                                    guard.settle_billing("credential_changed");
                                     guard.active_attempt = None;
                                     record_attempt(
                                         &state,
@@ -3152,7 +2753,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                         channel,
                                         name,
                                         &sent_model,
-                                        "affinity_changed",
+                                        "credential_changed",
                                         Some(status),
                                         now_ms() - t0,
                                         Some(&error.message),
@@ -3176,7 +2777,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 last_http = Some(err);
                                 continue 'channels;
                             }
-                            if plan.automatic_target_failover(req.endpoint) || *balanced_node {
+                            {
+                                // A complete 400/429 may advance only when its configured switch permits it.
                                 guard.usage = serde_json::from_slice::<Value>(&err.body)
                                     .map(|value| Usage::read(&value)).unwrap_or_default();
                                 guard.settle_billing("explicit_route_stop");
@@ -3501,16 +3103,14 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 entry_idx,
                                 status,
                                 req.auth.as_ref(),
-                                existing_pin.is_some(),
                                 &mut pool_control,
-                                &mut active_target,
                             ) {
                                 Ok(switched) => switched,
                                 Err(error) => {
                                     guard.usage = serde_json::from_slice::<Value>(&err.body)
                                         .map(|value| Usage::read(&value))
                                         .unwrap_or_default();
-                                    guard.settle_billing("affinity_changed");
+                                    guard.settle_billing("credential_changed");
                                     guard.active_attempt = None;
                                     record_attempt(
                                         &state,
@@ -3519,7 +3119,7 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                         channel,
                                         name,
                                         &sent_model,
-                                        "affinity_changed",
+                                        "credential_changed",
                                         Some(status),
                                         now_ms() - t0,
                                         Some(&error.message),
@@ -3543,7 +3143,8 @@ pub async fn forward(state: SharedState, mut req: ForwardRequest) -> Result<Resp
                                 last_http = Some(err);
                                 continue 'channels;
                             }
-                            if plan.automatic_target_failover(req.endpoint) || *balanced_node {
+                            {
+                                // A complete 400/429 may advance only when its configured switch permits it.
                                 guard.usage = serde_json::from_slice::<Value>(&err.body)
                                     .map(|value| Usage::read(&value)).unwrap_or_default();
                                 guard.settle_billing("explicit_route_stop");
@@ -4073,7 +3674,6 @@ async fn buffer_passthrough(
     unwrap_envelope: bool,
     _check_empty: bool,
     protocols: Option<(crate::protocol::Protocol,crate::protocol::Protocol)>,
-    provenance:Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
     vector: Option<(tokengo_shared::ModelKind, &Value)>,
     cache_warmup: bool,
     minimax: Option<&crate::protocol::minimax_codec::Policy>,
@@ -4129,10 +3729,7 @@ async fn buffer_passthrough(
                     }
                 }
             }
-            if let Some((state,owner,pin))=provenance {
-                let mut artifacts=match crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(),pin) {Ok(v)=>v,Err(error)=>{let mut invalid=invalid_buffer(crate::protocol_sessions::persistence_note(&error));invalid.4=usage;return invalid;}};artifacts.value(&validated);
-                if let Err(error)=artifacts.persist(&state.conn(),owner,pin){let mut invalid=invalid_buffer(crate::protocol_sessions::persistence_note(&error));invalid.4=usage;return invalid;}
-            }
+
             usage_from_value(&v)
         }
         Err(e) => return invalid_buffer(format!("invalid upstream JSON: {e}")),
@@ -4169,7 +3766,6 @@ fn invalid_buffer(note: String) -> (Response, i64, i64, Option<String>, Usage) {
 async fn buffer_responses_stream(
     mut resp: reqwest::Response,
     client: crate::protocol::Protocol,
-    provenance: Option<(&SharedState,&str,&crate::protocol_sessions::Pin)>,
     remaining: Duration,
     idle: Duration,
     guard: &mut RequestGuard,
@@ -4196,10 +3792,7 @@ async fn buffer_responses_stream(
         Ok(v)=>v,Err(note)=>return fail(conversion_fault(note)),
     };
     let bytes=match serde_json::to_vec(&converted) {Ok(b)=>b,Err(_)=>return fail("Invalid collected Responses JSON".into())};
-    if let Some((state,owner,pin))=provenance {
-        let mut artifacts=match crate::protocol_sessions::ArtifactCollector::for_source(&state.conn(),pin) {Ok(v)=>v,Err(error)=>return fail(crate::protocol_sessions::persistence_note(&error))};artifacts.value(&value);
-        if let Err(error)=artifacts.persist(&state.conn(),owner,pin) {return fail(crate::protocol_sessions::persistence_note(&error));}
-    }
+
     let response=Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE,"application/json")
         .body(Body::from(bytes)).unwrap_or_else(|_|StatusCode::BAD_GATEWAY.into_response());
     (response,usage.input.unwrap_or(0),usage.output.unwrap_or(0),None,usage)
@@ -4322,12 +3915,11 @@ struct PreparedStream {
     transcoder: Option<ResponseTranscoder>,
     prefix: Bytes,
     eof: bool,
-    artifacts:crate::protocol_sessions::ArtifactCollector,
 }
 async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Protocol,client:crate::protocol::Protocol,
-    remaining:Duration,idle:Duration,guard:&mut RequestGuard,track_artifacts:bool,artifacts:crate::protocol_sessions::ArtifactCollector,minimax:Option<&crate::protocol::minimax_codec::Policy>)->Result<PreparedStream,String> {
+    remaining:Duration,idle:Duration,guard:&mut RequestGuard,minimax:Option<&crate::protocol::minimax_codec::Policy>)->Result<PreparedStream,String> {
     let mut prepared=PreparedStream {observer:crate::protocol::sse::Observer::new(source),
-        transcoder:ResponseTranscoder::new(source,client,minimax),prefix:Bytes::new(),eof:false,artifacts};
+        transcoder:ResponseTranscoder::new(source,client,minimax),prefix:Bytes::new(),eof:false};
     let deadline=tokio::time::Instant::now()+remaining;
     let mut prefix=Vec::new();
     loop {
@@ -4341,8 +3933,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let observed=prepared.observer.feed(&chunk);
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let policy_out=policy_result.transpose().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?;
-                let frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
-                if track_artifacts {prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;}
+                let _frames=observed.map_err(|note|format!("precommit protocol error: {note}"))?;
                 if let Some(note)=&prepared.observer.failed {return Err(format!("precommit upstream error: {note}"));}
                 let out=match policy_out {Some(out)=>out,None=>match prepared.transcoder.as_mut() {Some(t)=>t.feed(&chunk).map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?,None=>chunk.to_vec()}};
                 if prefix.len().saturating_add(out.len())>1<<20 {return Err("precommit prefix exceeds 1 MiB".into());}
@@ -4358,8 +3949,7 @@ async fn prepare_stream(resp:&mut reqwest::Response,source:crate::protocol::Prot
                 let ended=prepared.observer.finish_frames();
                 guard.usage=Usage{input:prepared.observer.input,output:prepared.observer.output};
                 let policy_out=policy_result.transpose().map_err(conversion_fault)?;
-                let frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
-                if track_artifacts {prepared.artifacts.frames(&frames).map_err(|note|format!("precommit artifact error: {note}"))?;}
+                let _frames=ended.map_err(|note|format!("precommit incomplete stream: {note}"))?;
                 if let Some(out)=policy_out {prefix.extend_from_slice(&out);}else if let Some(t)=prepared.transcoder.as_mut() {prefix.extend_from_slice(&t.finish().map_err(|note|{let classified=conversion_fault(note);if is_conversion_fault(&classified){classified}else{format!("precommit conversion error: {classified}")}})?);}
                 prepared.eof=true;
                 if prepared.observer.failed.is_some() || !prepared.observer.meaningful {return Err("precommit empty or failed stream".into());}
@@ -4376,7 +3966,6 @@ fn stream_passthrough(
     state: SharedState,
     resp: reqwest::Response,
     prepared: PreparedStream,
-    provenance: Option<(String, crate::protocol_sessions::Pin)>,
     guard: RequestGuard,
     request_id: i64,
     started_ms: i64,
@@ -4407,8 +3996,6 @@ fn stream_passthrough(
         transcoder: prepared.transcoder,
         prefix: Some(prepared.prefix),
         eof: prepared.eof,
-        artifacts: prepared.artifacts,
-        provenance,
         endpoint,
         first_byte_ms: None,
         guard: Some(guard),
@@ -4448,15 +4035,7 @@ fn stream_passthrough(
                 }
                 let policy_out=policy_result.transpose().map_err(conversion_fault);
                 let out = policy_out.and_then(|policy_out|observed
-                    .and_then(|frames| {
-                        if let Some((owner, pin)) = &st.provenance {
-                            st.artifacts.frames(&frames)?;
-                            st.artifacts
-                                .persist(&st.state.conn(), owner, pin)
-                                .map_err(|error| crate::protocol_sessions::persistence_note(&error))?;
-                        }
-                        Ok(())
-                    })
+                    .map(|_| ())
                     .and_then(|_| match policy_out {Some(out)=>Ok(out),None=>match st.transcoder.as_mut() {
                         Some(t) => t.feed(&chunk).map_err(conversion_fault),
                         None => Ok(chunk.to_vec()),
@@ -4481,26 +4060,12 @@ fn stream_passthrough(
                 }
             }
             Ok(Ok(None)) => {
-                let ended = st.observer.finish_frames();
+                let _ = st.observer.finish_frames();
                 if let Some(g) = st.guard.as_mut() {
                     g.usage = Usage {
                         input: st.observer.input,
                         output: st.observer.output,
                     };
-                }
-                if let Ok(frames) = ended {
-                    if let Err(note) = (|| -> Result<(), String> {
-                        if let Some((owner, pin)) = &st.provenance {
-                            st.artifacts.frames(&frames)?;
-                            st.artifacts
-                                .persist(&st.state.conn(), owner, pin)
-                                .map_err(|error| crate::protocol_sessions::persistence_note(&error))?;
-                        }
-                        Ok(())
-                    })() {
-                        st.finish(Some(&note));
-                        return Some((Ok(stream_error(st.endpoint.protocol(), &note)), st));
-                    }
                 }
                 let tail = match st.transcoder.as_mut() {
                     Some(t) => t.finish().map_err(conversion_fault),
@@ -4576,8 +4141,6 @@ struct StreamState {
     transcoder: Option<ResponseTranscoder>,
     prefix: Option<Bytes>,
     eof: bool,
-    artifacts: crate::protocol_sessions::ArtifactCollector,
-    provenance: Option<(String, crate::protocol_sessions::Pin)>,
     guard: Option<RequestGuard>,
     started_ms: i64,
     channel_id: i64,
@@ -5235,7 +4798,7 @@ mod tests {
         assert!(validate_native_cost_and_state(EndpointKind::Responses,&serde_json::json!({"input":[{"type":"tool_search_output","tools":[]}]})).is_err());
     }
     #[test]
-    fn subscription_caps_keep_model_price_and_opaque_input_bounds() {
+    fn subscription_caps_ignore_price_limits_and_keep_source_opaque_bounds() {
         let mut body=json!({"model":"m","input":"hello","max_output_tokens":16});
         assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap().1,16);
         body["max_output_tokens"]=json!(32768);
@@ -5248,13 +4811,13 @@ mod tests {
         body["input"]=json!([{"type":"reasoning","encrypted_content":"opaque"}]);
         assert_eq!(subscription_bound(&body,None,Some((131072,32768))).unwrap(),(131072,16));
         let price=crate::db::billing::Price{currency:"CNY".into(),id:1,channel_id:1,model:"m".into(),input_micro_per_million:0,output_micro_per_million:1,max_input_tokens:131072,max_output_tokens:15};
-        assert!(subscription_bound(&body,Some(&price),Some((131072,32768))).is_err());
+        assert_eq!(subscription_bound(&body,Some(&price),Some((131072,32768))).unwrap(),(131072,16));
         assert!(subscription_bound(&body,None,None).is_err());
     }
     #[test]
     fn subscription_context_bounds_do_not_invent_a_token_price() {
         let mut body=serde_json::json!({"model":"m","input":[{"type":"reasoning","encrypted_content":"synthetic-opaque"}],"max_output_tokens":31});
-        assert!(billing_bound(&mut body,EndpointKind::Responses,None).is_err());
+        assert!(billing_bound(&mut body,EndpointKind::Responses,None).is_ok());
         assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Responses,None,Some((131072,4096))).unwrap(),(131072,31));
         assert_eq!(body["max_output_tokens"],31);
         assert!(billing_bound_with_context(&mut body,EndpointKind::Responses,None,Some((131072,30))).is_err());
@@ -5263,7 +4826,7 @@ mod tests {
     fn declared_source_context_cannot_be_underreserved_by_smaller_price_cap() {
         let price=crate::db::billing::Price{currency:"CNY".into(),id:1,channel_id:1,model:"m".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:512,max_output_tokens:4096};
         let mut body=json!({"model":"m","input":[{"type":"reasoning","encrypted_content":"opaque"}],"max_output_tokens":16});
-        assert!(billing_bound_with_context(&mut body,EndpointKind::Responses,Some(&price),Some((4096,4096))).is_err(),"fullsource context4096 must not be replaced by price cap512");
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Responses,Some(&price),Some((4096,4096))).unwrap(),(4096,16),"price cap512 must not reject source context4096");
     }
     #[test]
     fn declared_generic_source_context_accounts_for_audio_and_images_without_price() {
@@ -5380,7 +4943,7 @@ mod tests {
             let state=crate::AppState::init(crate::Config{db_path:dir.join("state.db"),master_key_path:dir.join("master.key").to_string_lossy().into_owned(),..Default::default()}).unwrap();
             let id=requests::start(&state.conn(),"responses","test",None,false).unwrap();
             let mut guard=RequestGuard::new(state.clone(),id,now_ms(),"test");
-            let (out,input,output,error,usage)=tokio::time::timeout(Duration::from_secs(1),buffer_responses_stream(response,crate::protocol::Protocol::Chat,None,Duration::from_millis(300),Duration::from_millis(100),&mut guard)).await.unwrap();
+            let (out,input,output,error,usage)=tokio::time::timeout(Duration::from_secs(1),buffer_responses_stream(response,crate::protocol::Protocol::Chat,Duration::from_millis(300),Duration::from_millis(100),&mut guard)).await.unwrap();
             assert_eq!(usage.input,Some(expected_input));assert_eq!(guard.usage.input,Some(expected_input));
             if expected_ok {
                 assert!(error.is_none());assert_eq!((input,output),(7,3));
@@ -5408,13 +4971,13 @@ mod billing_input_reservation_tests {
         }
     }
     #[test]
-    fn billing_generation_keeps_small_input_byte_reservations_and_requires_funded_bounds() {
+    fn billing_generation_keeps_small_reservations_and_ignores_price_caps() {
         let mut body=serde_json::json!({"messages":[{"role":"user","content":"hello"}],"max_tokens":64});
         let bound=admission_input_bound(&body,EndpointKind::Chat).unwrap();
         assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(1000,128)),Some((1000,128))).unwrap().0,bound);
         body["messages"][0]["content"]=Value::String("x".repeat(2000));
-        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(500,128)),Some((1000,128))).unwrap_err().kind,"billing_token_limit");
-        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(1000,128)),None).unwrap_err().kind,"billing_token_limit");
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(500,1)),Some((1000,128))).unwrap(),(1000,64));
+        assert_eq!(billing_bound_with_context(&mut body,EndpointKind::Chat,Some(&price(1000,1)),None).unwrap().1,64);
     }
     #[test]
     fn billing_subscription_reserves_full_source_ceiling_for_large_text() {
@@ -5425,7 +4988,7 @@ mod billing_input_reservation_tests {
     fn billing_generation_bounds_do_not_clip_embedding_or_rerank_batches() {
         for endpoint in [EndpointKind::Embeddings,EndpointKind::Rerank] {
             let mut body=serde_json::json!({"input":"x".repeat(2000),"query":"q","documents":["d"]});
-            assert_eq!(billing_bound_with_context(&mut body,endpoint,Some(&price(1000,0)),Some((1000,0))).unwrap_err().kind,"billing_token_limit");
+            assert_eq!(billing_bound_with_context(&mut body,endpoint,Some(&price(1000,0)),Some((1000,0))).unwrap_err().kind,"source_token_limit");
         }
     }
 }

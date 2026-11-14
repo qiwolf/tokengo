@@ -11,11 +11,8 @@ fn key_label(key: &Value, personal: bool) -> String {
     }
     api::text(key,"name")
 }
-fn key_list_rows(value: &Value, personal: bool) -> Result<Vec<Value>, &'static str> {
+fn key_list_rows(value: &Value, _personal: bool) -> Result<Vec<Value>, &'static str> {
     let rows = api::rows(value, "keys");
-    if !personal && rows.iter().any(|key| key.get("budget").is_none()) {
-        return Err("密钥列表缺少额度信息，请刷新页面以使用配套面板后重试。");
-    }
     Ok(rows)
 }
 fn key_copy_notice(copied: bool) -> &'static str {
@@ -74,7 +71,6 @@ pub fn KeyManager(
     let draft = RwSignal::new(policy::default_policy());
     let base = RwSignal::new(policy::default_policy());
     let expiry = RwSignal::new(String::new());
-    let limit = RwSignal::new(String::new());
     let error = RwSignal::new(String::new());
     let notice = RwSignal::new(String::new());
     let busy = form_busy.unwrap_or_else(|| RwSignal::new(false));
@@ -110,7 +106,6 @@ pub fn KeyManager(
         editor_open.set(false);
         name.set(String::new());
         expiry.set(String::new());
-        limit.set(String::new());
         error.set(String::new());
         notice.set(String::new());
         if !personal && id.is_none() {
@@ -141,12 +136,6 @@ pub fn KeyManager(
                             base.set(v["policy"].clone());
                             draft.set(v["policy"].clone());
                             user_budget.set(v["budget"].clone());
-                            limit.set(
-                                v["budget"]["limit_micro"]
-                                    .as_i64()
-                                    .map(policy::money_input)
-                                    .unwrap_or_default(),
-                            );
                             // This account endpoint already applies model_routes.visible and user permissions.
                             models.set(
                                 v["models"]
@@ -184,14 +173,6 @@ pub fn KeyManager(
         name.set(String::new());
         draft.set(new_key_policy(base.get_untracked(),personal));
         expiry.set(String::new());
-        limit.set(if personal {
-            user_budget.get_untracked()["limit_micro"]
-                .as_i64()
-                .map(policy::money_input)
-                .unwrap_or_default()
-        } else {
-            String::new()
-        });
         secret.set(None);
         error.set(String::new());
         notice.set(String::new());
@@ -207,11 +188,7 @@ pub fn KeyManager(
                 return Err("请填写密钥名称。".into());
             }
             let exp = policy::expiry_value(&expiry.get_untracked())?;
-            let cap = policy::optional_limit(&limit.get_untracked())?;
-            let mut v = json!({"name":name.get_untracked().trim(),"policy":if personal{policy::inherit_policy(draft.get_untracked(),&base.get_untracked())}else{draft.get_untracked()},"expires_at":exp});
-            if personal {
-                v["limit_micro"] = json!(cap);
-            }
+            let v = json!({"name":name.get_untracked().trim(),"policy":if personal{policy::inherit_policy(draft.get_untracked(),&base.get_untracked())}else{draft.get_untracked()},"expires_at":exp});
             Ok(v)
         })();
         let body = match result {
@@ -224,11 +201,6 @@ pub fn KeyManager(
         let id = selected.get_untracked().and_then(|k| k["id"].as_i64());
         let owner_id = owner.get_untracked();
         let token = generation.get_untracked();
-        let captured_cap = policy::optional_limit(&limit.get_untracked()).unwrap_or(None);
-        let previous_budget = selected
-            .get_untracked()
-            .map(|k| k["budget"].clone())
-            .unwrap_or(Value::Null);
         if !personal && owner_id.is_none() {
             return;
         }
@@ -252,35 +224,8 @@ pub fn KeyManager(
             .await
             {
                 Ok(v) => {
-                    let mut row = v["key"].clone();
+                    let row = v["key"].clone();
                     let new_secret = v["secret"].as_str().map(str::to_owned);
-                    if !personal {
-                        if let Some(k) = row["id"].as_i64() {
-                            let cap = captured_cap;
-                            match api::request(
-                                "PUT",
-                                &format!("/api/budgets?scope=key&scope_id={k}"),
-                                Some(json!({"limit_micro":cap})),
-                            )
-                            .await
-                            {
-                                Ok(b) => {
-                                    row["budget"] = api::rows(&b, "budgets")
-                                        .into_iter()
-                                        .find(|b| b["scope_id"] == k)
-                                        .unwrap_or(Value::Null);
-                                }
-                                Err(e) => {
-                                    row["budget"] = previous_budget;
-                                    if owner.get_untracked() == owner_id
-                                        && generation.get_untracked() == token
-                                    {
-                                        error.set(format!("密钥已保存，但费用上限未保存：{}。保留旧限额，请保管刚生成的密钥后刷新重试额度。",e.message));
-                                    }
-                                }
-                            }
-                        }
-                    }
                     if owner.get_untracked() != owner_id || generation.get_untracked() != token {
                         busy.set(false);
                         return;
@@ -373,7 +318,7 @@ pub fn KeyManager(
                         else {
                             if row["budget"].is_null(){row["budget"]=key["budget"].clone();}
                             rows.update(|r|{if let Some(existing)=r.iter_mut().find(|k|k["id"].as_i64()==Some(id)){*existing=row.clone();}});
-                            notice.set(if enabled{"Key 已启用；仍受用户权限、到期时间和额度限制。"}else{"Key 已停用，可随时重新启用。"}.into());
+                            notice.set(if enabled{"Key 已启用；仍受用户权限、到期时间和限流设置约束。"}else{"Key 已停用，可随时重新启用。"}.into());
                         }
                     }
                 },
@@ -429,9 +374,9 @@ pub fn KeyManager(
         });
     };
     view! {<Show when=move||!embedded||!editor_open.get()><section class="card key-manager"><header class="card-head"><h2>{if personal{"我的 API Key"}else{"用户的 API Key"}}</h2><div class="account-actions"><button type="button" class="primary" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none()) on:click=move |_|{reset();editor_open.set(true);}>"新建 API Key"</button><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|revision.update(|r|*r+=1)>"刷新"</button></div></header><div class="card-body">
-    <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"各 Key 共享用户总额度，设置 Key 上限不会增加总额度。最多32把活动 Key；已有密钥保留。"</p></Show>
+    <Show when=move||personal><p class="muted small">{move||policy::budget_label(&user_budget.get())}</p><p class="muted small">"本地预算门限已取消；历史限额和冻结标记不再限制调用。最多32把活动 Key；已有密钥保留。"</p></Show>
     <p role="status">{move||if loading.get(){"正在读取密钥…"}else if !personal&&owner.get().is_none(){"保存或选择用户后可管理密钥。"}else if rows.get().is_empty(){"暂无密钥，点击新建 API Key 开始。"}else{""}}</p>
-    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let delete_row=k.clone();let reveal_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=key_label(&k,personal);let hint=api::text(&k,"hint");let key_id=api::text(&k,"id");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div><div class="muted small">{format!("VKey ID：{key_id}")}</div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><div class="key-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|reveal_key(reveal_row.clone())>"显示 Key"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));limit.set(k["budget"]["limit_micro"].as_i64().map(policy::money_input).unwrap_or_default());selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限和额度限制"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button>{if key_can_delete(&delete_row){view!{<button type="button" class="ghost danger" disabled=move||busy.get()||loading.get() on:click=move |_|{delete_target.set(Some(delete_row.clone()));delete_error.set(String::new());delete_open.set(true);}>"删除 Key"</button>}.into_any()}else{().into_any()}}</div></td></tr>}}).collect_view()}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>"名称 / 标识"</th><th>"状态 / 到期"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().map(|k|{let toggle_row=k.clone();let delete_row=k.clone();let reveal_row=k.clone();let revoked=!k["revoked_at"].is_null();let enabled=k["enabled"]==true;let resume_blocked=personal&&!enabled&&k["can_enable"]!=true;let state=if !k["revoked_at"].is_null(){"已撤销"}else if k["enabled"]!=true{"已停用"}else if k["expires_at"].as_i64().is_some_and(|n|n<=crate::now_ms()){"已到期"}else{"可用"};let label=key_label(&k,personal);let hint=api::text(&k,"hint");let key_id=api::text(&k,"id");let time=k["expires_at"].as_i64().map(fmt::ts_short).unwrap_or_else(||"未设到期".into());view!{<tr><td data-label="密钥"><strong>{label}</strong><div><code>{hint}</code></div><div class="muted small">{format!("VKey ID：{key_id}")}</div></td><td data-label="状态">{state}<div class="muted small">{time}</div></td><td data-label="操作"><div class="key-row-actions"><button type="button" class="ghost" disabled=move||busy.get()||loading.get() on:click=move |_|reveal_key(reveal_row.clone())>"显示 Key"</button><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|{name.set(api::text(&k,"name"));draft.set(k["policy"].clone());expiry.set(policy::expiry_input(k["expires_at"].as_i64()));selected.set(Some(k.clone()));secret.set(None);error.set(String::new());notice.set(String::new());editor_open.set(true);}>"编辑 Key"</button><button type="button" class=if enabled{"ghost danger"}else{"ghost"} title=if resume_blocked{"管理员停用、已到期或上级 Key 不可用时不能自行恢复"}else{"停用保留配置与历史，重新启用仍受权限、到期时间和限流设置约束"} disabled=move||busy.get()||loading.get()||revoked||resume_blocked on:click=move |_|toggle_enabled(toggle_row.clone())>{if revoked{"已永久撤销"}else if enabled{"停用 Key"}else if resume_blocked{"不可自行启用"}else{"启用 Key"}}</button>{if key_can_delete(&delete_row){view!{<button type="button" class="ghost danger" disabled=move||busy.get()||loading.get() on:click=move |_|{delete_target.set(Some(delete_row.clone()));delete_error.set(String::new());delete_open.set(true);}>"删除 Key"</button>}.into_any()}else{().into_any()}}</div></td></tr>}}).collect_view()}</tbody></table></div>
     <Show when=move||!editor_open.get()><p role="status">{move||notice.get()}</p><p role="alert">{move||error.get()}</p></Show></div></section>
     </Show><KeyEditorSurface open=editor_open busy=busy embedded=embedded>
     <Show when=move||secret.get().is_some()><section class="one-time-key" aria-labelledby=if personal{"my-created-key-title"}else{"admin-created-key-title"}>
@@ -446,8 +391,8 @@ pub fn KeyManager(
     <form class="account-form workspace-key-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
     <section class="workspace-form-section"><h3>"凭据设置"</h3><div class="workspace-field-grid">    <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label></div></section>
     <section class="workspace-form-section"><h3>"权限范围"</h3><p class="account-help">"Key 的权限只能缩小所属用户的授权范围。"</p><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal show_limits=false/></section>
-    <section class="workspace-form-section workspace-key-limits"><h3>"限流与消费上限"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key-limits"}else{"admin-key-limits"} admin=!personal show_access=false show_validation=false/>
-    <div class="workspace-budget-grid"><label class="account-field"><span>"累计消费上限（人民币）"</span><input type="number" min="0" step="0.000001" placeholder="留空：不额外限制" prop:value=limit on:input=move|e|limit.set(event_target_value(&e))/></label><BudgetUsage budget=Signal::derive(move||selected.get().map(|k|k["budget"].clone()).unwrap_or(Value::Null))/></div><p class="account-help">"这是按已配置价格与 Token 用量计算的金额限额，金额最多6位小数；不是原始 Token 套餐。0表示没有付费额度，未定价调用仍按现有计量规则。"</p></section>
+    <section class="workspace-form-section workspace-key-limits"><h3>"限流与消费记录"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key-limits"}else{"admin-key-limits"} admin=!personal show_access=false show_validation=false/>
+    <BudgetUsage budget=Signal::derive(move||selected.get().map(|k|k["budget"].clone()).unwrap_or(Value::Null))/><p class="account-help">"本地预算门限已取消；历史限额和冻结标记不再限制调用。用量和费用继续记录。"</p></section>
     <p class="workspace-preservation-note">"编辑元数据和权限不会更换此 Key，已有调用凭据和历史保留。"</p>
     </fieldset><footer class="workspace-key-footer"><fieldset class="account-actions workspace-key-actions" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></fieldset><div class="account-actions workspace-key-cancel"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></footer></form>
     </Show>
@@ -475,12 +420,12 @@ pub fn KeyManager(
 mod tests {
     use super::*;
     #[test]
-    fn key_lists_preserve_budget_values_and_reject_missing_admin_budget_metadata() {
+    fn key_lists_keep_legacy_accounting_without_requiring_budget_control_metadata() {
         let response = json!({"keys":[{"id":1,"budget":null},{"id":2,"budget":{"limit_micro":0,"spent_micro":17,"reserved_micro":3,"frozen":true}}]});
         let rows = key_list_rows(&response, false).unwrap();
         assert!(rows[0]["budget"].is_null());
         assert_eq!(rows[1]["budget"], response["keys"][1]["budget"]);
-        assert!(key_list_rows(&json!({"keys":[{"id":1}]}), false).is_err());
+        assert!(key_list_rows(&json!({"keys":[{"id":1}]}), false).is_ok());
         assert!(key_list_rows(&json!({"keys":[]}), false).unwrap().is_empty());
         assert!(key_list_rows(&json!({"keys":[{"id":1}]}), true).is_ok());
     }

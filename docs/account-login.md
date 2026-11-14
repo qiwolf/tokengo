@@ -4,7 +4,7 @@
 
 ## 从控制台配置用户与 Key
 
-管理员在“用户与 Key”创建普通用户并设置登录凭证、模型/来源权限及费用上限；这和“供应商与接入”中保存的上游 API Key 或 OAuth 账号是两类凭据。客户端填写用户自己的下游 Key，不能填写上游 token、管理员密码或运维令牌。普通用户登录后在自己的门户管理 Key、查看本人用量；权限和预算只能收紧，不能借创建新 Key 扩大。
+管理员在“用户与 Key”创建普通用户并设置登录凭证、模型/来源权限及费用上限；这和“供应商与接入”中保存的上游 API Key 或 OAuth 账号是两类凭据。客户端填写用户自己的下游 Key，不能填写上游 token、管理员密码或运维令牌。普通用户登录后在自己的门户管理 Key、查看本人用量；权限和限流只能收紧，不能借创建新 Key 扩大；本地金额预算门限已取消。
 
 需要脚本访问管理接口时使用[独立运维令牌](operations-tokens.md)，需要调用模型时使用下游 Key。账号密码、登录 Cookie、运维令牌、上游凭据和下游 Key 的用途见下文[选择凭据](#选择凭据)。新增上游请按[完整渠道流程](provider-channels.md#从新建渠道开始)操作。
 
@@ -145,11 +145,11 @@ print("会话已撤销，再次访问返回401")
 
 | API | 请求/行为 | 成功输出 |
 | --- | --- | --- |
-| GET /api/managed-users | root或独立运维令牌管理；统一用户、关联凭证安全元数据、现有金额预算；root账号仅向root投影 | root返回`{users,root_accounts}`，运维令牌仅返回`{users}` |
-| POST /api/managed-users | `{username,password,display_name,policy?,limit_micro?}`；同一事务创建普通user/凭证/可选金额预算/审计；不接受user_id或root身份 | `{user}` |
-| PATCH /api/managed-users/{id} | `{display_name?,enabled?,policy?,password?,limit_micro?}`；保留原ID；更新金额上限不清零spent/reserved；用户停用同步其登录状态 | `{user}` |
+| GET /api/managed-users | root或独立运维令牌管理；统一用户、关联凭证安全元数据、历史消费摘要；root账号仅向root投影 | root返回`{users,root_accounts}`，运维令牌仅返回`{users}` |
+| POST /api/managed-users | `{username,password,display_name,policy?,limit_micro?}`；同一事务创建普通user/凭证/审计；旧limit_micro仅兼容接收并忽略；不接受user_id或root身份 | `{user}` |
+| PATCH /api/managed-users/{id} | `{display_name?,enabled?,policy?,password?,limit_micro?}`；保留原ID；旧limit_micro不设置金额门槛，也不重写历史spent/reserved；用户停用同步其登录状态 | `{user}` |
 | POST /api/managed-users/{id}/login-credential | `{username,password,display_name?}`；仅为尚无凭证的历史用户补登录，不重挂既有账号 | `{user}` |
-| GET /api/account/keys | 从普通Cookie会话推导owner，返回本人Key/预算/安全策略/获准可见模型/32把上限 | `{keys,policy,budget,models,max_active_keys}` |
+| GET /api/account/keys | 从普通Cookie会话推导owner，返回本人Key/历史费用摘要/安全策略/获准可见模型/32把上限 | `{keys,policy,budget,models,max_active_keys}` |
 | POST /api/account/keys | `{name,policy?,expires_at?,limit_micro?}`；顶级Key归属当前user，不要求先有VKey；事务内检查活动Key数 | `{key,secret}`；同时加密留存，可通过显示接口再次读取 |
 | PATCH /api/account/keys/{id} | `{name?,policy?,enabled?,expires_at?,limit_micro?,revoke?}`；只能收紧本人Key策略；允许暂停、撤销及恢复自己暂停的未到期Key，恢复须通过祖先有效性和活动Key数量检查；不能恢复管理员停用或已撤销的Key | `{key}` |
 | DELETE /api/account/keys/{id} | 撤销本人Key；非本人404；已撤销不能复活 | `{key}` |
@@ -160,7 +160,7 @@ print("会话已撤销，再次访问返回401")
 
 统一管理入口支持root会话和明确登记的独立运维令牌，保留现有root运维Bearer兼容；独立令牌不返回root账号投影，也不因此获得root安全或令牌签发权限。普通自助Key接口只接受浏览器会话，Cookie写操作沿用CSRF门，Cookie/Bearer混合拒绝。所有新响应加no-store。模型选项不泄露未授权来源配置或凭据；新 Key 用安全摘要鉴权，另用服务器主密钥加密保存可再次显示的副本；列表永不返回 secret 或密文。
 
-新建 API Key 成功后，前端切换到独立的明文保存界面并自动尝试复制完整 Key；页面提供“复制 Key”重试和只读文本框手动复制。普通 HTTP 或剪贴板权限限制导致复制失败时明确提示，并保留本次明文，直到关闭交付界面或离开页面。管理员代建同样适用。完整 Key 可从列表点击“显示 Key”再次查看和复制，关闭后清除本页明文，不写入浏览器持久存储。旧版本只存摘要、未保存密文的历史 Key 无法恢复，界面会明确提示；已有密文的历史 Key 可以读取。新建Key的恢复材料使用服务器主密钥与AES-256-GCM保存，与创建、额度及审计同事务；写入失败不退回仅存摘要。历史Hermes Key已核实没有密文副本，保持原Key可调用但不能再次显示原值。普通HTTP的嵌套弹窗复制使用当前操作所在对话框内的回退控件；现场以原生系统剪贴板内容核对，不能只凭页面“复制成功”提示判断交付。关闭只清除本页明文，不自动清除用户已复制的系统剪贴板。
+新建 API Key 成功后，前端切换到独立的明文保存界面并自动尝试复制完整 Key；页面提供“复制 Key”重试和只读文本框手动复制。普通 HTTP 或剪贴板权限限制导致复制失败时明确提示，并保留本次明文，直到关闭交付界面或离开页面。管理员代建同样适用。完整 Key 可从列表点击“显示 Key”再次查看和复制，关闭后清除本页明文，不写入浏览器持久存储。旧版本只存摘要、未保存密文的历史 Key 无法恢复，界面会明确提示；已有密文的历史 Key 可以读取。新建Key的恢复材料使用服务器主密钥与AES-256-GCM保存，与创建及审计同事务；写入失败不退回仅存摘要。历史Hermes Key已核实没有密文副本，保持原Key可调用但不能再次显示原值。普通HTTP的嵌套弹窗复制使用当前操作所在对话框内的回退控件；现场以原生系统剪贴板内容核对，不能只凭页面“复制成功”提示判断交付。关闭只清除本页明文，不自动清除用户已复制的系统剪贴板。
 
 已停用、本人暂停或已撤销的 Key 可以点击“删除 Key”并确认；删除会永久撤销，不能再恢复，从日常列表移除；调用历史、账务、审计与父子约束保留。已删除 Key 不再允许编辑或启用。此删除能力与前述明文交付修复属于 qiwolf.8 之后的 main 改动，已在237部署验收，原 qiwolf.8 发行附件保持原样，详见[删除验收](acceptance/2026-10-23-key-delete/README.md)。
 
@@ -184,3 +184,7 @@ Key 再次显示及嵌套弹窗系统剪贴板验收见[记录](acceptance/2026-
 ## 历史交付沿革
 
 历史沿革：Key交付、列表删除和加密再次显示已随 **[v0.34.0-qiwolf.9](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.9)** 公开，Cargo0.34.0/schema40。发行源码 `8598fc070ca4a91e700d5748947d0343766ad06b`；[Rust/WASM CI](https://github.com/qiwolf/tokengo/actions/runs/39898866368)与[打包发布](https://github.com/qiwolf/tokengo/actions/runs/39898890902)均通过。9个公开资产匿名下载校验、GHCR匿名按摘要拉取、原生与容器Key运行检查及无.env固定SHA Compose启动/重启/同卷重建通过。完整测试和公开产物收据见[本版记录](releases/v0.34.0-qiwolf.9.md)及[独立发行验收](acceptance/2026-10-23-qiwolf9-release/README.md)；214项定向和237部署证据单列，不合计或据此声称237换用本版公开二进制。
+
+## 本地金额预算已取消（2026-11-14）
+
+请求不因历史limit/frozen值、缺少价格或超估算费用而触发本地预算拒绝或冻结。用户及Key创建/更新中的旧limit_micro兼容忽略，不再继承金额上限；权限、RPM/TPM、并发及到期继续生效。GET /api/budgets仅用于历史消费统计并返回budget_enforcement=false，PUT返回410 budget_enforcement_disabled。实际用量与费用继续记录，未知费用保持null，旧账本不重写。

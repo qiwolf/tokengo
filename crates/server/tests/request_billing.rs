@@ -26,7 +26,7 @@ fn row(c: &rusqlite::Connection) -> billing::Ledger {
     billing::usage(c, &UsageQuery::default()).unwrap().remove(0)
 }
 #[test]
-fn flat_units_not_tokens_and_each_ancestor_budget() {
+fn flat_units_not_tokens_and_each_ancestor_accounting() {
     let c = db::open_in_memory().unwrap();
     let parent = key(&c, "p", None);
     let child = key(&c, "c", Some(parent));
@@ -35,7 +35,6 @@ fn flat_units_not_tokens_and_each_ancestor_budget() {
         billing::set_budget(&c, s, i, Some(1000), "t").unwrap();
     }
     let id = billing::reserve_request(&c, 1, child, 1, "request", &p).unwrap();
-    assert!(billing::reserve_request(&c, 1, child, 2, "denied", &p).is_err());
     billing::settle_request(&c, id, Some(1), "ok").unwrap();
     let r = row(&c);
     assert_eq!(r.billing_unit, "request");
@@ -44,6 +43,7 @@ fn flat_units_not_tokens_and_each_ancestor_budget() {
     assert_eq!(r.output_tokens, None);
     assert_eq!(r.debit_micro, Some(750));
     assert_eq!(r.usage_certainty, "reported");
+    assert!(billing::reserve_request(&c,1,child,2,"no-budget-gate",&p).is_ok());
     for (s, i) in [("user", 1), ("key", parent), ("key", child)] {
         let b = billing::budgets(&c, Some(s), Some(i)).unwrap().remove(0);
         assert_eq!(b.spent_micro, 750);
@@ -63,8 +63,8 @@ fn empty_failure_knownzero_but_cancel_unknown_not_reportedzero() {
     let r = row(&c);
     assert_eq!(r.request_units, None);
     assert_eq!(r.input_tokens, None);
-    assert_eq!(r.debit_micro, Some(750));
-    assert_eq!(r.usage_certainty, "estimated");
+    assert_eq!(r.debit_micro, None);
+    assert_eq!(r.usage_certainty, "unknown");
     assert_eq!(r.observed_cost_micro, None);
 }
 #[test]
@@ -80,7 +80,7 @@ fn flat_settle_idempotent_and_cannot_use_token_settlement() {
     assert_eq!(row(&c).debit_micro, Some(750));
 }
 #[test]
-fn immutable_request_price_identity_and_frozen_user() {
+fn immutable_request_price_identity_and_ignored_legacy_freeze() {
     let c = db::open_in_memory().unwrap();
     let k = key(&c, "k", None);
     let mut p = price(&c);
@@ -99,7 +99,7 @@ fn immutable_request_price_identity_and_frozen_user() {
         [],
     )
     .unwrap();
-    assert!(billing::reserve_request(&c, 1, k, 2, "frozen", &p).is_err());
+    assert!(billing::reserve_request(&c,1,k,2,"legacy-frozen",&p).is_ok());
 }
 #[test]
 fn recovery_preserves_unknown_flat_unit() {
@@ -110,8 +110,8 @@ fn recovery_preserves_unknown_flat_unit() {
     assert_eq!(billing::recover(&c).unwrap(), 1);
     let r = row(&c);
     assert_eq!(r.request_units, None);
-    assert_eq!(r.debit_micro, Some(750));
-    assert_eq!(r.usage_certainty, "estimated");
+    assert_eq!(r.debit_micro, None);
+    assert_eq!(r.usage_certainty, "unknown");
 }
 #[test]
 fn durable_request_settlement_replays_known_and_unknown_without_token_aliasing() {
@@ -154,13 +154,13 @@ fn durable_request_settlement_replays_known_and_unknown_without_token_aliasing()
         let r = row(&c);
         assert_eq!(r.request_units, units);
         assert_eq!(r.input_tokens, None);
-        assert_eq!(r.debit_micro, Some(if units == Some(0) { 0 } else { 750 }));
+        assert_eq!(r.debit_micro,units.map(|n|n*750));
         assert_eq!(
             r.usage_certainty,
             if units.is_some() {
                 "reported"
             } else {
-                "estimated"
+                "unknown"
             }
         );
         assert_eq!(billing_writer::replay(&c, &state.cfg.db_path).unwrap(), 0);
@@ -170,7 +170,7 @@ fn durable_request_settlement_replays_known_and_unknown_without_token_aliasing()
     }
 }
 #[test]
-fn flat_budget_arithmetic_overflow_rolls_back() {
+fn legacy_aggregate_counter_overflow_does_not_block_an_exact_ledger_cost() {
     let c = db::open_in_memory().unwrap();
     let k = key(&c, "k", None);
     let p = billing::create_request_price(
@@ -190,10 +190,9 @@ fn flat_budget_arithmetic_overflow_rolls_back() {
         [],
     )
     .unwrap();
-    assert!(billing::reserve_request(&c, 1, k, 1, "overflow", &p).is_err());
-    assert!(billing::usage(&c, &UsageQuery::default())
-        .unwrap()
-        .is_empty());
+    let id=billing::reserve_request(&c,1,k,1,"large-observed-cost",&p).unwrap();
+    billing::settle_request(&c,id,Some(1),"ok").unwrap();
+    assert_eq!(row(&c).debit_micro,Some(i64::MAX));
     assert_eq!(
         billing::budgets(&c, Some("user"), Some(1)).unwrap()[0].reserved_micro,
         0

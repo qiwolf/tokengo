@@ -195,8 +195,8 @@ impl Fixture {
                     allow_conversion: false,
                     native_input_audio: false,
                     chat_reasoning_replay: false,
-                    max_input_tokens: None,
-                    max_output_tokens: None,
+                    max_input_tokens: Some(5000),
+                    max_output_tokens: Some(100),
                 },
             )
             .unwrap();
@@ -303,82 +303,33 @@ impl Fixture {
     }
 }
 #[tokio::test]
-async fn issued_nonstream_and_sse_artifacts_replay_only_for_same_owner_and_generation() {
+async fn native_opaque_history_is_not_bound_to_gateway_session_or_key_issuance() {
     for stream in [false, true] {
         let f = Fixture::new(true).await;
-        let response = f
-            .call(&f.key, "owner", Fixture::body("issue", stream))
-            .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        response.bytes().await.unwrap();
-        let r = f.call(&f.key, "owner", Fixture::replay(FULL)).await;
-        let status = r.status();
-        let body = r.text().await.unwrap();
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let (_, other) =
-            db::identity::create_key(&f.state.conn(), 1, "other", &Default::default(), None, None)
-                .unwrap();
-        assert_eq!(
-            f.call(&other, "owner", Fixture::body("plain", false))
-                .await
-                .status(),
-            200
-        );
-        let before = f.calls();
-        assert_eq!(
-            f.call(&other, "owner", Fixture::replay(FULL))
-                .await
-                .status(),
-            400
-        );
-        assert_eq!(f.calls(), before);
-        assert_eq!(
-            f.call(&f.key, "different", Fixture::body("plain", false))
-                .await
-                .status(),
-            200
-        );
-        let before = f.calls();
-        assert_eq!(
-            f.call(&f.key, "different", Fixture::replay(FULL))
-                .await
-                .status(),
-            400
-        );
-        assert_eq!(f.calls(), before);
-        db::channels::set_secret(
-            &f.state.conn(),
-            &f.state.secrets,
-            f.channel,
-            "SYNTHETIC-ROTATED-KEY",
-        )
-        .unwrap();
-        assert_eq!(
-            f.call(&f.key, "owner", Fixture::replay(FULL))
-                .await
-                .status(),
-            400
-        );
-        assert_eq!(f.calls(), before);
+        let response=f.call(&f.key,"owner",Fixture::body("issue",stream)).await;
+        assert_eq!(response.status(),200);response.bytes().await.unwrap();
+        let (_,other)=db::identity::create_key(&f.state.conn(),1,"other",&Default::default(),None,None).unwrap();
+        for (key,session) in [(&f.key,"owner"),(&other,"owner"),(&f.key,"different")] {
+            let response=f.call(key,session,Fixture::replay(FULL)).await;
+            let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{text}");
+        }
+        db::channels::set_secret(&f.state.conn(),&f.state.secrets,f.channel,"SYNTHETIC-ROTATED-KEY").unwrap();
+        let response=f.call(&f.key,"owner",Fixture::replay(FULL)).await;assert_eq!(response.status(),200);response.bytes().await.unwrap();
+        let c=f.state.conn();
+        assert_eq!(c.query_row("SELECT count(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(c.query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     }
 }
+
 #[tokio::test]
-async fn unclosed_sse_signature_prefix_is_never_issued() {
-    let f = Fixture::new(true).await;
-    let r = f
-        .call(&f.key, "prefix", Fixture::body("prefix", true))
-        .await;
-    assert_eq!(r.status(), 200);
-    r.bytes().await.unwrap();
-    let before = f.calls();
-    assert_eq!(
-        f.call(&f.key, "prefix", Fixture::replay("synthetic-signature-"))
-            .await
-            .status(),
-        400
-    );
-    assert_eq!(f.calls(), before);
+async fn opaque_history_is_forwarded_without_a_local_issuance_registry() {
+    let f=Fixture::new(true).await;
+    let response=f.call(&f.key,"prefix",Fixture::body("prefix",true)).await;
+    assert_eq!(response.status(),200);response.bytes().await.unwrap();
+    let before=f.calls();let response=f.call(&f.key,"prefix",Fixture::replay("synthetic-signature-")).await;
+    assert_eq!(response.status(),200);response.bytes().await.unwrap();assert_eq!(f.calls(),before+1);
 }
+
 #[tokio::test]
 async fn cancellation_before_and_after_headers_records_exactly_one_canceled_attempt() {
     for postcommit in [false, true] {
@@ -411,23 +362,14 @@ async fn cancellation_before_and_after_headers_records_exactly_one_canceled_atte
     }
 }
 #[tokio::test]
-async fn early_pricing_denial_has_no_phantom_attempt_or_canceled_status() {
-    let f = Fixture::new(false).await;
-    db::billing::set_budget(&f.state.conn(), "key", f.key_id, Some(100), "test").unwrap();
-    assert_eq!(
-        f.call(&f.key, "pricing", Fixture::body("plain", false))
-            .await
-            .status(),
-        403
-    );
-    assert_eq!(f.calls(), 0);
-    let (_, status, attempts) = f.terminal().await;
-    assert_eq!(status, "client_error");
-    assert!(
-        attempts.is_empty(),
-        "pricing rejection did not send an upstream attempt"
-    );
+async fn legacy_local_budget_does_not_block_an_unpriced_native_request() {
+    let f=Fixture::new(false).await;
+    f.state.conn().execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,frozen) VALUES('key',?1,0,1)",[f.key_id]).unwrap();
+    let response=f.call(&f.key,"pricing",Fixture::body("plain",false)).await;
+    assert_eq!(response.status(),200);response.bytes().await.unwrap();assert_eq!(f.calls(),1);
+    let (_,status,attempts)=f.terminal().await;assert_eq!(status,"ok");assert_eq!(attempts,vec![(0,"success".into())]);
 }
+
 #[tokio::test]
 async fn queued_request_cannot_outlive_model_disable() {
     let f = Fixture::new(true).await;
@@ -493,122 +435,90 @@ async fn revoked_queued_key_is_a_client_error_not_a_client_cancel() {
     assert!(attempts.is_empty());
 }
 #[tokio::test]
-async fn local_artifact_storage_failure_never_falls_back_or_cools_sources() {
-    for stream in [false, true] {
-        let f = Fixture::new(true).await;
-        {
-            let c = f.state.conn();
-            let row = db::channels::get(&c, f.channel).unwrap().unwrap();
-            let id = db::channels::create(
-                &c,
-                &db::channels::NewChannel {
-                    name: "backup".into(),
-                    base_url: row.base_url,
-                    enabled: true,
-                    unwrap_envelope: false,
-                    max_concurrent: 1,
-                },
-            )
-            .unwrap();
-            db::channels::set_models(
-                &c,
-                id,
-                &[db::channels::ModelMapping::new(
-                    MODEL,
-                    Some("BackupExact".into()),
-                    false,
-                )],
-            )
-            .unwrap();
-            db::channels::set_secret(&c, &f.state.secrets, id, "SYNTHETIC-BACKUP-KEY").unwrap();
-            tokengo_server::protocol_config::save(
-                &c,
-                id.0,
-                &tokengo_server::protocol_config::Capabilities {
-                    parameter_profile: None,
-                    runtime_identity: None,
-                    native: vec![tokengo_server::protocol::Protocol::Messages],
-                    allow_conversion: false,
-                    native_input_audio: false,
-                    chat_reasoning_replay: false,
-                    max_input_tokens: None,
-                    max_output_tokens: None,
-                },
-            )
-            .unwrap();
-            db::billing::create_price(
-                &c,
-                &db::billing::Price{currency:"CNY".into(),
-                    id: 0,
-                    channel_id: id.0,
-                    model: MODEL.into(),
-                    input_micro_per_million: 0,
-                    output_micro_per_million: 0,
-                    max_input_tokens: 5000,
-                    max_output_tokens: 100,
-                },
-                "test",
-            )
-            .unwrap();
-            c.execute_batch("CREATE TRIGGER local_issue_abort BEFORE INSERT ON protocol_artifacts BEGIN SELECT RAISE(ABORT,'synthetic persistence error'); END").unwrap();
-        }
-        let response = f
-            .call(&f.key, "local-fault", Fixture::body("issue", stream))
-            .await;
-        let status = response.status();
-        let body = response.text().await.unwrap();
-        assert_eq!(status, 503, "{body}");
-        assert_eq!(f.calls(), 1, "local persistence error must not call backup");
-        let (_, status, attempts) = f.terminal().await;
-        assert_eq!(status, "failed");
-        assert_eq!(attempts, vec![(0, "local_fault".into())]);
+async fn unavailable_legacy_artifact_storage_does_not_affect_native_calls() {
+    for stream in [false,true] {
+        let f=Fixture::new(true).await;
+        f.state.conn().execute_batch("CREATE TRIGGER local_issue_abort BEFORE INSERT ON protocol_artifacts BEGIN SELECT RAISE(ABORT,'synthetic persistence error'); END").unwrap();
+        let response=f.call(&f.key,"local-fault",Fixture::body("issue",stream)).await;
+        assert_eq!(response.status(),200);response.bytes().await.unwrap();assert_eq!(f.calls(),1);
+        let (_,status,attempts)=f.terminal().await;assert_eq!(status,"ok");assert_eq!(attempts,vec![(0,"success".into())]);
         assert!(db::faults::rows(&f.state.conn()).unwrap().is_empty());
-        assert!(db::policy::rows(&f.state.conn(), MODEL)
-            .unwrap()
-            .iter()
-            .all(|r| r.failures == 0));
     }
 }
+
 #[tokio::test]
-async fn postcommit_local_artifact_failure_is_not_a_source_fault() {
-    let f = Fixture::new(true).await;
-    f.state.conn().execute_batch("CREATE TRIGGER late_issue_abort BEFORE INSERT ON protocol_artifacts BEGIN SELECT RAISE(ABORT,'synthetic postcommit persistence error'); END").unwrap();
-    let response = f
-        .call(&f.key, "late-local", Fixture::body("late_issue", true))
-        .await;
-    assert_eq!(
-        response.status(),
-        200,
-        "headers committed after initial real text"
-    );
-    let _ = response.bytes().await;
-    assert_eq!(f.calls(), 1);
-    let (_, status, attempts) = f.terminal().await;
-    assert_eq!(status, "failed");
-    assert_eq!(attempts, vec![(0, "local_fault".into())]);
-    assert!(db::policy::rows(&f.state.conn(), MODEL)
-        .unwrap()
-        .iter()
-        .all(|r| r.failures == 0));
+async fn late_native_artifacts_do_not_write_legacy_storage() {
+    let f=Fixture::new(true).await;
+    f.state.conn().execute_batch("CREATE TRIGGER late_issue_abort BEFORE INSERT ON protocol_artifacts BEGIN SELECT RAISE(ABORT,'synthetic persistence error'); END").unwrap();
+    let response=f.call(&f.key,"late-local",Fixture::body("late_issue",true)).await;
+    assert_eq!(response.status(),200);response.bytes().await.unwrap();
+    let (_,status,attempts)=f.terminal().await;assert_eq!(status,"ok");assert_eq!(attempts,vec![(0,"success".into())]);
 }
+
 #[tokio::test]
-async fn precommit_pin_storage_failure_is_local_fault_not_cancellation() {
-    let f = Fixture::new(true).await;
-    f.state.conn().execute_batch("CREATE TRIGGER pin_storage_abort BEFORE INSERT ON protocol_sessions BEGIN SELECT RAISE(ABORT,'synthetic pin persistence error'); END").unwrap();
-    let response = f
-        .call(&f.key, "pin-store-failed", Fixture::body("issue", true))
-        .await;
-    assert_eq!(
-        response.status(),
-        503,
-        "local pin capacity/storage failure must use state_unavailable"
-    );
-    let (_, status, attempts) = f.terminal().await;
-    assert_eq!(status, "failed");
-    assert_eq!(attempts, vec![(0, "local_fault".into())]);
-    assert_eq!(f.calls(), 1);
-    assert!(db::policy::rows(&f.state.conn(), MODEL)
-        .unwrap()
-        .iter()
-        .all(|r| r.failures == 0));
+async fn unavailable_legacy_pin_storage_does_not_block_streaming() {
+    let f=Fixture::new(true).await;
+    f.state.conn().execute_batch("CREATE TRIGGER pin_storage_abort BEFORE INSERT ON protocol_sessions BEGIN SELECT RAISE(ABORT,'synthetic persistence error'); END").unwrap();
+    let response=f.call(&f.key,"pin-store-failed",Fixture::body("issue",true)).await;
+    assert_eq!(response.status(),200);response.bytes().await.unwrap();
+    let (_,status,attempts)=f.terminal().await;assert_eq!(status,"ok");assert_eq!(attempts,vec![(0,"success".into())]);
+}
+
+async fn known_unavailable_pin_case(cooldown:bool) {
+    let f=Fixture::new(true).await;
+    let backup;
+    {let c=f.state.conn();let row=db::channels::get(&c,f.channel).unwrap().unwrap();
+     let generation:i64=c.query_row("SELECT binding_generation FROM channels WHERE id=?1",[f.channel.0],|r|r.get(0)).unwrap();
+     let owner=tokengo_server::protocol_sessions::key(&tokengo_shared::short_hash(&f.key),"pinned-unavailable",MODEL,tokengo_server::protocol::Protocol::Messages);
+     let pin=tokengo_server::protocol_sessions::Pin{channel:f.channel.0,generation,upstream_model:"ExactNative".into(),protocol:tokengo_server::protocol::Protocol::Messages};
+     assert!(tokengo_server::protocol_sessions::claim(&c,&owner,&pin).unwrap());
+     backup=db::channels::create(&c,&db::channels::NewChannel{name:"current-backup".into(),base_url:row.base_url,enabled:true,unwrap_envelope:false,max_concurrent:1}).unwrap();
+     db::channels::set_models(&c,backup,&[db::channels::ModelMapping::new(MODEL,Some("BackupExact".into()),false)]).unwrap();
+     db::channels::set_secret(&c,&f.state.secrets,backup,"SYNTHETIC-BACKUP").unwrap();
+     tokengo_server::protocol_config::save(&c,backup.0,&tokengo_server::protocol_config::Capabilities{native:vec![tokengo_server::protocol::Protocol::Messages],allow_conversion:false,max_input_tokens:Some(5000),max_output_tokens:Some(100),..Default::default()}).unwrap();
+     if cooldown {
+         c.execute("INSERT INTO provider_channels(name,enabled,created_ms) VALUES('fixture-pool',1,0)",[]).unwrap();let provider=c.last_insert_rowid();
+         db::provider_channels::set_membership(&c,f.channel.0,Some(provider)).unwrap();
+         db::provider_pool::backfill(&c,&f.state.secrets).unwrap();
+         let now=db::now_ms();let generation=db::policy::claim(&c,f.channel.0,MODEL,"ExactNative",now).unwrap().unwrap();
+         for _ in 0..3 {db::policy::complete(&c,f.channel.0,MODEL,"ExactNative",generation,false,"synthetic transient failure",0,now).unwrap();}
+     } else {c.execute("UPDATE channels SET enabled=0 WHERE id=?1",[f.channel.0]).unwrap();}}
+    let response=f.call(&f.key,"pinned-unavailable",Fixture::replay(FULL)).await;
+    let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{text}");
+    assert_eq!(f.seen.seen.lock().unwrap().last().unwrap()["model"],"BackupExact");
+    assert_eq!(f.calls(),1,"disabled or cooling historical source must not be called");
+    let (request,_,_)=f.terminal().await;
+    let served:i64=f.state.conn().query_row("SELECT channel_id FROM attempts WHERE request_id=?1",[request],|r|r.get(0)).unwrap();assert_eq!(served,backup.0);
+}
+
+#[tokio::test]
+async fn historical_pin_and_opaque_history_do_not_block_current_available_fallback() {
+    known_unavailable_pin_case(false).await;
+    known_unavailable_pin_case(true).await;
+}
+
+#[tokio::test]
+async fn capacity_only_change_keeps_issued_opaque_history_and_applies_new_budget() {
+    let f=Fixture::new(false).await;
+    let issued=f.call(&f.key,"capacity-owner",Fixture::body("issue",false)).await;assert_eq!(issued.status(),200);let _=issued.bytes().await.unwrap();
+    let generation=||f.state.conn().query_row("SELECT binding_generation FROM channels WHERE id=?1",[f.channel.0],|r|r.get::<_,i64>(0)).unwrap();let before=generation();
+    let mut caps=tokengo_server::protocol_config::load(&f.state.conn(),f.channel.0).unwrap();caps.max_input_tokens=Some(272000);caps.max_output_tokens=Some(272000);
+    {let c=f.state.conn();tokengo_server::protocol_config::save(&c,f.channel.0,&caps).unwrap();}
+    assert_eq!(generation(),before);
+    let replay=f.call(&f.key,"capacity-owner",Fixture::replay(FULL)).await;let status=replay.status();let body:Value=replay.json().await.unwrap();assert_eq!(status,200,"{body}");f.terminal().await;
+    let bound:i64=f.state.conn().query_row("SELECT input_bound FROM billing_ledger ORDER BY id DESC LIMIT 1",[],|r|r.get(0)).unwrap();assert_eq!(bound,272000,"capacity must apply immediately without pin rewrite");
+    let calls=f.calls();caps.allow_conversion=true;tokengo_server::protocol_config::save(&f.state.conn(),f.channel.0,&caps).unwrap();assert_eq!(generation(),before+1);let denied=f.call(&f.key,"capacity-owner",Fixture::replay(FULL)).await;assert_eq!(denied.status(),200);denied.bytes().await.unwrap();assert_eq!(f.calls(),calls+1,"current identity must apply without a stale session restriction");
+}
+
+
+#[tokio::test]
+async fn unpriced_opaque_history_requires_an_input_bound_only_for_an_explicit_tpm_limit() {
+    let f=Fixture::new(false).await;
+    {let c=f.state.conn();let mut caps=tokengo_server::protocol_config::load(&c,f.channel.0).unwrap();
+        caps.max_input_tokens=None;caps.max_output_tokens=None;tokengo_server::protocol_config::save(&c,f.channel.0,&caps).unwrap();}
+    let response=f.call(&f.key,"unpriced-history",Fixture::replay(FULL)).await;
+    let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{text}");assert_eq!(f.calls(),1);
+    {let c=f.state.conn();let mut user=db::identity::user(&c,1).unwrap().unwrap();user.policy.tpm=Some(10000);db::identity::update_user(&c,&user).unwrap();}
+    let response=f.call(&f.key,"unpriced-history",Fixture::replay(FULL)).await;
+    let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,403,"{text}");assert_eq!(f.calls(),1,"explicit TPM still requires a configured input bound before sending");
 }

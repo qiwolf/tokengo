@@ -32,7 +32,7 @@ DeepSeek 原生 Responses 的渠道 base 为 `https://api.deepseek.com`，由网
 
 ## 来源上下文上限与明文推理
 
-来源的 `protocols` JSON 可声明成对的正整数 `max_input_tokens` / `max_output_tokens`，用于普通 API 来源独立于价格的输入/输出上限。原生不透明历史、音频及需要 token 限额的图像，按已声明的完整输入上限保守预占；不能用假的零价格解锁。费用预算存在时，未定价来源仍会被拒绝，未定价与免费分开。修改能力或上限会改变来源代次。
+来源的 `protocols` JSON 可声明成对的正整数 `max_input_tokens` / `max_output_tokens`，用于普通 API 来源独立于价格的输入/输出上限。原生不透明历史、音频及需要 token 限额的图像，按已声明的完整输入上限保守预占；不能用假的零价格解锁。本地费用预算门限已取消；未定价金额保留未知，与免费分开。修改能力或上限会改变来源代次。
 
 两个数是独立的绝对上限，并不保证能同时装入供应商的联合上下文窗口。比如官方 DeepSeek 给出1M联合上下文和384K最大输出；完整输入上限可保守声明1048576、输出393216，但不能称其可同时容纳1M输入加384K输出。原生参数能力仍依供应商合同；[官方模型上限](https://api-docs.deepseek.com/quick_start/pricing/)应在配置时复核。
 
@@ -66,7 +66,7 @@ curl "$TOKENGO_BASE/v1/messages" \
   -d '{"model":"MODEL","max_tokens":256,"messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Responses 当前要求客户端完整重放 input。`previous_response_id`、服务端 conversation 续接不支持。不要把其他用户、密钥、会话或来源发行的原生不透明内容移入当前会话：网关只保留归属摘要并验证已发行的状态，不保存这些原文作为共享会话。
+Responses 当前要求客户端完整重放 input。`previous_response_id`、服务端 conversation 续接不支持。不要把其他用户、密钥、会话或来源发行的原生不透明内容移入当前会话：网关不保存原文作为共享会话，也不按历史会话记录限制来源选择。
 
 ## 流式、取消与错误
 
@@ -96,21 +96,13 @@ envelope 仅接受 `type`、`metadata` 和可选的 `response_id` / `sequence_nu
 
 DeepSeek 独立[Search/Fetch](deepseek-search-fetch.md)是两条 JSON 工具接口，不会自动接管 CLI 的内置搜索工具。向量与重排接口保持原生，不通过对话协议转换。
 
-### Responses 的稳定会话标识与加密 reasoning
+### 会话信息与当前来源选择
 
-`/v1/responses` 按以下优先级识别会话：专用会话头（沿用现有顺序）、顶层 `session_id` / `conversation_id`、`metadata.conversation_id` / `metadata.session_id`、`client_metadata.session_id`。最后一项仅在 Responses 入口参与身份识别。显式 ID 须非空、至多256字节且无控制字符；所有已提供候选均接受类型与边界校验。
+2026-11-14起，每次调用按当前模型配置顺序、Key策略和真实来源可用性选源。会话ID、缓存键、历史成功来源、旧protocol_sessions记录及credential affinity均不绑定下一次选源；修改顺序或停用来源对下一次调用生效，不要求新建会话。故障切换仍按当前配置执行，已开始输出的流不重放。
 
-`prompt_cache_key` 始终只是缓存路由提示，不用于会话身份或 opaque 产物归属。它沿用至多512字节、无控制字符、允许空白字符串的兼容合同。工具或提示词变化时缓存键可以改变，独立真实会话也可以共用缓存键；两种情况都不会改变真实会话的来源绑定。
+会话头及请求内的session/conversation标识保留协议边界校验，并可按供应方协议转发；它们不用于TokenGo会话锁源。客户端完整重放原生reasoning及工具历史，网关不再创建或核对产物来源归属。跨协议仍只做已支持的无损转换。供应方对自身加密状态的接受情况由实际响应决定，TokenGo不伪造或删除这些状态。
 
-Hermes 等客户端使用 `store:false` 时，可以完整回放网关实际返回的 `reasoning.encrypted_content` 和工具结果，无需为了基本兼容修改客户端、额外发送专用会话头。网关不会删除 reasoning，也不会把密文转发到未知来源。
-
-提供稳定、每会话唯一的真实会话 ID 时，仍采用严格会话绑定：按 API Key、逻辑模型、协议、渠道、上游模型和来源代次隔离，并核对 opaque 产物确由该真实会话签发。显式身份优先，不能借用匿名归属或其他显式会话的产物。
-
-仅对无显式会话 ID 的 Responses 请求，网关自动记录匿名来源归属。首轮按正常授权路由调用，记录实际返回产物的摘要；后续携带加密历史时，必须在当前已授权的原生 Responses 来源中找到唯一来源，且全部产物均已签发给当前 Key、逻辑模型及该来源代次，才允许原样回放。缓存键、instructions 和 tools 变化不会改变此归属。恢复来源后沿用已有来源固定及失败处理，不会因该来源失败而跨账号重放。JSON 和 SSE 共用归属机制，遵守现有容量与30天不活跃过期限制（同一匿名 Key/模型/来源桶最多4096个不同产物，全局最多100万个；达到上限拒绝写入且不驱逐活跃历史）；不新增数据库结构，不保存推理正文或密文。
-
-无身份请求不能证明真实聊天边界，因此同 Key、同逻辑模型、同来源代次下的匿名聊天共享产物归属；需要聊天级隔离的客户端应传真实会话 ID。匿名与显式归属互不借用，切换身份方式须从不含旧 opaque 的请求建立新归属。
-
-未知、过期、混合来源、跨 Key、跨逻辑模型或来源代次已变化的产物不能自动追认。没有可核验归属或来源匹配不唯一时返回 HTTP400，保留 `error.type=invalid_request_error` 和 `error.code=explicit_session_required`；不要把该错误理解成只要补一个任意 ID 就能恢复。升级前未记录归属的旧历史需要由客户端从不含旧 opaque 的可恢复上下文重新开始，TokenGo 不会静默过滤历史。普通工具调用、工具结果和正文仍须由客户端按协议完整回传。此匿名兼容不扩展到 Chat/Messages，也不承诺恢复未跟踪的 `previous_response_id` 等服务端状态。
+Responses仍要求客户端提供完整input历史；previous_response_id和服务端conversation续接合同保持原状。
 
 ## Chat 请求中的 effort 对象兼容
 

@@ -1361,7 +1361,7 @@ mod tests {
         assert!(validate_output(&nonunit, ModelKind::Embeddings, &body, &out).is_ok());
     }
     #[test]
-    fn probe_cancellation_charges_unknown_usage_without_regular_request_rows() {
+    fn probe_cancellation_keeps_unknown_cost_without_regular_request_rows() {
         let dir = std::env::temp_dir().join(format!("compat-cancel-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let state = crate::AppState::init(crate::Config {
@@ -1413,7 +1413,12 @@ mod tests {
             let budget = db::billing::budgets(&c, Some("user"), Some(user))
                 .unwrap()
                 .remove(0);
-            assert_eq!(budget.spent_micro, 30);
+            assert_eq!(budget.spent_micro, 0);
+            let entry = db::billing::usage(&c, &Default::default()).unwrap().remove(0);
+            assert_eq!(entry.reserved_micro, 30);
+            assert_eq!(entry.debit_micro, None);
+            assert_eq!(entry.observed_cost_micro, None);
+            assert_eq!(entry.usage_certainty, "unknown");
             assert_eq!(budget.reserved_micro, 0);
             let requests: i64 = c
                 .query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))

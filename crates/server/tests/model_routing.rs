@@ -336,3 +336,27 @@ async fn policy_requires_admin_validates_atomically_and_excludes_auto() {
     );
     ah.abort();
 }
+
+
+#[tokio::test]
+async fn same_session_uses_latest_config_order_instead_of_historical_active_source() {
+    let f=Fixture::new();
+    let (a,ac,ah)=f.upstream("first",StatusCode::OK).await;
+    let (b,bc,bh)=f.upstream("second",StatusCode::OK).await;
+    async fn call(f:&Fixture)->Value {
+        let response=app(f.state.clone()).oneshot(Request::builder().method("POST")
+            .uri("/v1/chat/completions").header("content-type","application/json")
+            .header("authorization","Bearer test-key").header("x-session-id","unchanged-session")
+            .body(Body::from(json!({"model":"chat","messages":[{"role":"user","content":"hello"}]}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(),200);
+        serde_json::from_slice(&axum::body::to_bytes(response.into_body(),1<<20).await.unwrap()).unwrap()
+    }
+    assert_eq!(f.policy("chat",json!({"channel_ids":[b,a],"retry_times":0,"probe_enabled":false})).await.0,200);
+    assert_eq!(call(&f).await["choices"][0]["message"]["content"],"second");
+    assert_eq!(f.policy("chat",json!({"channel_ids":[a,b],"retry_times":0,"probe_enabled":false})).await.0,200);
+    assert_eq!(call(&f).await["choices"][0]["message"]["content"],"first");
+    f.state.conn().execute("UPDATE channels SET enabled=0 WHERE id=?1",[a]).unwrap();
+    assert_eq!(call(&f).await["choices"][0]["message"]["content"],"second");
+    assert_eq!(ac.load(Ordering::SeqCst),1);assert_eq!(bc.load(Ordering::SeqCst),2);
+    ah.abort();bh.abort();
+}

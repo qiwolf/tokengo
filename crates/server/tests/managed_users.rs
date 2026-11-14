@@ -149,7 +149,8 @@ async fn unified_creation_is_atomic_and_login_and_self_service_work() {
     assert_eq!(s, StatusCode::OK, "{v}");
     let id = v["user"]["id"].as_i64().unwrap();
     assert_eq!(v["user"]["accounts"].as_array().unwrap().len(), 1);
-    assert_eq!(v["user"]["budget"]["limit_micro"], 12000);
+    assert!(v["user"]["budget"].is_null());
+    assert_eq!(v["user"]["budget_enforcement"], false);
     let (_, cookie) = f.login("alice", PASSWORD).await;
     let (s, v, h) = f
         .req(
@@ -189,7 +190,8 @@ async fn unified_creation_is_atomic_and_login_and_self_service_work() {
         .await;
     assert_eq!(s, StatusCode::OK, "{listed}");
     assert!(listed["keys"][0].get("secret").is_none());
-    assert_eq!(listed["budget"]["limit_micro"], 12000);
+    assert!(listed["budget"].is_null());
+    assert_eq!(listed["budget_enforcement"], false);
     let before_users = db::identity::users(&f.state.conn()).unwrap().len();
     let before_accounts = db::accounts::accounts(&f.state.conn()).unwrap().len();
     let (s, _, _) = f
@@ -492,128 +494,57 @@ async fn existing_identity_gains_login_without_rewriting_keys_and_root_stays_sep
 }
 
 #[tokio::test]
-async fn self_service_budgets_cannot_raise_clear_or_escape_user_or_parent_caps() {
+async fn legacy_budget_fields_are_ignored_without_mutating_historical_budgets() {
     let f = Fixture::new();
-    let (s,v,_)=f.admin("POST","/api/managed-users",json!({"username":"budgeted","display_name":"Budget","password":PASSWORD,"limit_micro":1000})).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let user = v["user"]["id"].as_i64().unwrap();
+    let (status, value, _) = f.admin("POST", "/api/managed-users", json!({
+        "username":"budgeted", "display_name":"Budget", "password":PASSWORD,
+        "limit_micro":-1
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let user = value["user"]["id"].as_i64().unwrap();
+    assert!(value["user"]["budget"].is_null());
+    assert_eq!(value["user"]["budget_enforcement"], false);
     let (_, cookie) = f.login("budgeted", PASSWORD).await;
-    for limit in [Value::Null, json!(1001)] {
-        assert_eq!(
-            f.req(
-                "POST",
-                "/api/account/keys",
-                Some(&cookie),
-                None,
-                true,
-                None,
-                json!({"name":"wide","limit_micro":limit})
-            )
-            .await
-            .0,
-            StatusCode::FORBIDDEN
-        );
-    }
-    let (s, v, _) = f
-        .req(
-            "POST",
-            "/api/account/keys",
-            Some(&cookie),
-            None,
-            true,
-            None,
-            json!({"name":"limited","limit_micro":400}),
-        )
-        .await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let key = v["key"]["id"].as_i64().unwrap();
-    let path = format!("/api/account/keys/{key}");
-    assert_eq!(v["key"]["budget"]["limit_micro"], 400);
-    for limit in [Value::Null, json!(401), json!(1001)] {
-        assert_eq!(
-            f.req(
-                "PATCH",
-                &path,
-                Some(&cookie),
-                None,
-                true,
-                None,
-                json!({"limit_micro":limit})
-            )
-            .await
-            .0,
-            StatusCode::FORBIDDEN
-        );
-    }
+    let parent = db::identity::create_key(&f.state.conn(), user, "parent", &Default::default(), None, None).unwrap().0;
+    let child = db::identity::create_key(&f.state.conn(), user, "child", &Default::default(), None, Some(parent.id)).unwrap().0;
     {
         let c = f.state.conn();
-        c.execute("UPDATE billing_budgets SET spent_micro=20,reserved_micro=30 WHERE scope='key' AND scope_id=?1",[key]).unwrap();
+        for (scope, id) in [("user", user), ("key", parent.id), ("key", child.id)] {
+            c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen) VALUES(?1,?2,0,20,30,1)", rusqlite::params![scope,id]).unwrap();
+        }
     }
-    let (s, v, _) = f
-        .req(
-            "PATCH",
-            &path,
-            Some(&cookie),
-            None,
-            true,
-            None,
-            json!({"limit_micro":200}),
-        )
-        .await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["key"]["budget"]["limit_micro"], 200);
-    assert_eq!(v["key"]["budget"]["spent_micro"], 20);
-    assert_eq!(v["key"]["budget"]["reserved_micro"], 30);
-    let parent = db::identity::create_key(
-        &f.state.conn(),
-        user,
-        "parent",
-        &Default::default(),
-        None,
-        None,
-    )
-    .unwrap()
-    .0;
-    db::billing::set_budget(&f.state.conn(), "key", parent.id, Some(100), "test").unwrap();
-    let child = db::identity::create_key(
-        &f.state.conn(),
-        user,
-        "child",
-        &Default::default(),
-        None,
-        Some(parent.id),
-    )
-    .unwrap()
-    .0;
-    let path = format!("/api/account/keys/{}", child.id);
-    assert_eq!(
-        f.req(
-            "PATCH",
-            &path,
-            Some(&cookie),
-            None,
-            true,
-            None,
-            json!({"limit_micro":101})
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        f.req(
-            "PATCH",
-            &path,
-            Some(&cookie),
-            None,
-            true,
-            None,
-            json!({"limit_micro":80})
-        )
-        .await
-        .0,
-        StatusCode::OK
-    );
+    let snapshot = || {
+        let c = f.state.conn();
+        let rows = c.prepare("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets ORDER BY scope,scope_id,currency").unwrap()
+            .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<i64>>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,bool>(5)?,r.get::<_,String>(6)?))).unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        let audits = c.query_row("SELECT count(*) FROM billing_audit", [], |r| r.get::<_,i64>(0)).unwrap();
+        (rows, audits)
+    };
+    let before = snapshot();
+    for (index, limit) in [Value::Null, json!(0), json!(-1), json!(999999), json!("obsolete"), json!({"disabled":true})].into_iter().enumerate() {
+        let (status, value, _) = f.req("POST", "/api/account/keys", Some(&cookie), None, true, None,
+            json!({"name":format!("legacy-{index}"),"limit_micro":limit})).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert!(value["key"]["budget"].is_null());
+        assert_eq!(value["key"]["budget_enforcement"], false);
+        let (status, value, _) = f.req("PATCH", &format!("/api/account/keys/{}",child.id), Some(&cookie), None, true, None,
+            json!({"name":format!("renamed-{index}"),"limit_micro":limit})).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert_eq!(value["key"]["budget"]["spent_micro"], 20);
+        assert_eq!(value["key"]["budget"]["reserved_micro"], 30);
+        assert_eq!(value["key"]["budget_enforcement"], false);
+        let (status, value, _) = f.admin("PATCH", &format!("/api/managed-users/{user}"),
+            json!({"display_name":format!("Budget {index}"),"limit_micro":limit})).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert_eq!(value["user"]["budget_enforcement"], false);
+        assert_eq!(snapshot(), before, "legacy fields must not write or reset historical budgets/audits");
+    }
+    let (status, value, _) = f.req("POST", "/api/account/keys", Some(&cookie), None, true, None,
+        json!({"name":"no-budget-field"})).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert!(value["key"]["budget"].is_null(), "owner budget must not be inherited into a new key");
+    assert_eq!(snapshot(), before);
 }
 
 #[tokio::test]
@@ -723,7 +654,8 @@ async fn credential_updates_revoke_sessions_keep_identity_and_legacy_duplicate_l
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["user"]["accounts"][0]["display_name"], "After");
     assert_eq!(v["user"]["accounts"][0]["id"], account);
-    assert_eq!(v["user"]["budget"]["limit_micro"], 0);
+    assert!(v["user"]["budget"].is_null());
+    assert_eq!(v["user"]["budget_enforcement"], false);
     assert_eq!(
         f.req(
             "GET",

@@ -58,30 +58,30 @@ impl Fixture {
     fn replay(kind:&str,value:&str)->Value {json!([{"role":"user","content":"compute"},assistant(kind,value),{"role":"user","content":"continue"}])}
 }
 #[tokio::test]
-async fn chat_opaque_json_and_sse_replay_preserve_and_reject_foreign_values() {
+async fn chat_opaque_json_and_sse_replay_preserve_provider_state_without_local_ownership() {
     for kind in ["gemini","ark"] {for stream in [false,true] {for session in [None,Some("explicit-a")] {
         let f=Fixture::new(kind).await;
-        let(code,text)=f.send(&f.key,session,json!([{"role":"user","content":"compute"}]),stream).await;assert_eq!(code,200,"{kind} {stream}: {text}");
-        let replay=Fixture::replay(kind,"issued-complete");let(code,text)=f.send(&f.key,session,replay.clone(),false).await;assert_eq!(code,200,"{kind} {stream} {session:?}: {text}");
-        assert_eq!(f.seen.lock().unwrap()[1]["messages"],replay);
-        let count=f.seen.lock().unwrap().len();
-        for value in ["issued-","complete","tampered"] {let(code,text)=f.send(&f.key,session,Fixture::replay(kind,value),false).await;assert_eq!(code,400,"{kind} {stream} {value}: {text}");}
-        let foreign={let c=f.state.conn();db::identity::create_key(&c,1,"foreign",&Default::default(),None,None).unwrap().1};
-        let(code,text)=f.send(&foreign,session,replay.clone(),false).await;assert_eq!(code,400,"foreign key: {text}");
-        if session.is_some() {let(code,text)=f.send(&f.key,Some("explicit-b"),replay,false).await;assert_eq!(code,400,"foreign session: {text}");}
-        let response=reqwest::Client::new().post(format!("{}/v1/responses",f.http.url)).bearer_auth(&f.key)
-            .json(&json!({"model":"logical","max_output_tokens":32,"input":[assistant(kind,"issued-complete")]})).send().await.unwrap();
-        let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,400,"cross-protocol history: {text}");
-        assert_eq!(f.seen.lock().unwrap().len(),count,"invalid history reached upstream");
+        let(code,text)=f.send(&f.key,session,json!([{"role":"user","content":"compute"}]),stream).await;assert_eq!(code,200,"{text}");
+        for value in ["issued-complete","issued-","complete","provider-state"] {
+            let replay=Fixture::replay(kind,value);let(code,text)=f.send(&f.key,session,replay.clone(),false).await;
+            assert_eq!(code,200,"{kind}/{value}: {text}");assert_eq!(f.seen.lock().unwrap().last().unwrap()["messages"],replay);
+        }
+        let other=db::identity::create_key(&f.state.conn(),1,"other",&Default::default(),None,None).unwrap().1;
+        let(code,text)=f.send(&other,Some("other-session"),Fixture::replay(kind,"issued-complete"),false).await;assert_eq!(code,200,"{text}");
+        assert_eq!(f.seen.lock().unwrap().len(),6);
+        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_sessions",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(f.state.conn().query_row("SELECT count(*) FROM protocol_artifacts",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     }}}
 }
 #[tokio::test]
-async fn chat_opaque_replay_rejects_changed_source_generation() {
-    for kind in ["gemini","ark"] {let f=Fixture::new(kind).await;let(code,text)=f.send(&f.key,None,json!([{"role":"user","content":"compute"}]),false).await;assert_eq!(code,200,"{text}");
+async fn chat_opaque_replay_uses_current_source_capacity() {
+    for kind in ["gemini","ark"] {
+        let f=Fixture::new(kind).await;let(code,text)=f.send(&f.key,None,json!([{"role":"user","content":"compute"}]),false).await;assert_eq!(code,200,"{text}");
         let c=f.state.conn();let mut cap=tokengo_server::protocol_config::load(&c,f.channel).unwrap();cap.max_output_tokens=Some(63);tokengo_server::protocol_config::save(&c,f.channel,&cap).unwrap();drop(c);
-        let(code,text)=f.send(&f.key,None,Fixture::replay(kind,"issued-complete"),false).await;assert_eq!(code,400,"{text}");assert_eq!(f.seen.lock().unwrap().len(),1);
+        let(code,text)=f.send(&f.key,None,Fixture::replay(kind,"issued-complete"),false).await;assert_eq!(code,200,"{text}");assert_eq!(f.seen.lock().unwrap().len(),2);
     }
 }
+
 #[test]
 fn chat_opaque_extraction_ignores_arguments_and_preserves_scope() {
     use tokengo_server::protocol_sessions::{artifact_values,opaque_history,verify_artifacts,ArtifactCollector,Pin};
@@ -154,7 +154,7 @@ fn chat_stream_message_snapshots_require_choice_close_and_do_not_concatenate() {
 }
 
 #[tokio::test]
-async fn foreign_chat_opaque_fields_never_pass_native_responses_or_messages() {
+async fn native_payload_is_forwarded_without_a_foreign_opaque_ownership_gate() {
     for protocol in [Protocol::Responses,Protocol::Messages] {for kind in ["gemini","ark"] {
         let f=Fixture::new("plain").await;
         {let c=f.state.conn();let mut caps=tokengo_server::protocol_config::load(&c,f.channel).unwrap();caps.native=vec![protocol];tokengo_server::protocol_config::save(&c,f.channel,&caps).unwrap();}
@@ -163,8 +163,10 @@ async fn foreign_chat_opaque_fields_never_pass_native_responses_or_messages() {
             reqwest::Client::new().post(format!("{}/v1/{}",f.http.url,protocol.path())).bearer_auth(&f.key).header("x-session-id","native-owned").json(&body).send()
         };
         let response=call(json!([{"role":"user","content":"hello"}])).await.unwrap();let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{protocol:?}: {text}");
-        let response=call(json!([assistant(kind,"unissued-chat-state"),{"role":"user","content":"continue"}])).await.unwrap();let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,400,"{protocol:?}/{kind}: {text}");
-        assert_eq!(f.seen.lock().unwrap().len(),1,"foreign Chat state was sent on native {protocol:?}");
+        let response=call(json!([assistant(kind,"unissued-chat-state"),{"role":"user","content":"continue"}])).await.unwrap();let status=response.status();let text=response.text().await.unwrap();assert_eq!(status,200,"{protocol:?}/{kind}: {text}");
+        let seen=f.seen.lock().unwrap();assert_eq!(seen.len(),2,"native source accepts this payload without local ownership filtering");
+        let field=if protocol==Protocol::Responses {"input"} else {"messages"};
+        assert_eq!(seen[1][field],json!([assistant(kind,"unissued-chat-state"),{"role":"user","content":"continue"}]),"native payload must reach the source unchanged");
     }}
 }
 #[test]

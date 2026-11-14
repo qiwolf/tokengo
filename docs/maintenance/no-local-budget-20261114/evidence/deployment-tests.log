@@ -1,0 +1,13 @@
+test_opening_failure_preserves_new_business_write (__main__.SameSchemaDeploy.test_opening_failure_preserves_new_business_write) ... ok
+test_partial_stop_restarts_old_without_snapshot (__main__.SameSchemaDeploy.test_partial_stop_restarts_old_without_snapshot) ... ok
+test_start_failure_rolls_back_code_only (__main__.SameSchemaDeploy.test_start_failure_rolls_back_code_only) ... ok
+test_success (__main__.SameSchemaDeploy.test_success) ... {"case": "open_then_fail", "exit_code": 1, "schema": 47, "ledger_count": 2, "same_database_file_retained": true, "writer_restored": true, "passed": true}
+{"case": "stop_partial", "exit_code": 1, "schema": 47, "ledger_count": 1, "same_database_file_retained": true, "writer_restored": true, "passed": true}
+{"case": "start_failure", "exit_code": 1, "schema": 47, "ledger_count": 1, "same_database_file_retained": true, "writer_restored": true, "passed": true}
+{"case": "success", "exit_code": 0, "schema": 47, "ledger_count": 1, "same_database_file_retained": true, "writer_restored": true, "passed": true}
+ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.325s
+
+OK

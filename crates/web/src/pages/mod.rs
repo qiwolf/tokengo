@@ -117,8 +117,8 @@ impl Page {
             Page::SharedModels => "管理员维护共享调用入口，再向普通用户分配访问权限。",
             Page::Services => "管理按路径访问的透传服务，并在用户或 API Key 中分配权限。",
             Page::Probes => "配置渠道与模型的定时检查，查看结果和响应速度。",
-            Page::Users => "管理用户资料、模型与透传服务授权、限额及 API Key。",
-            Page::Billing => "预算、价格版本和持久化的逐次尝试账本。",
+            Page::Users => "管理用户资料、模型与透传服务授权、限流及 API Key。",
+            Page::Billing => "消费记录、价格版本和持久化的逐次尝试账本。",
             Page::Settings => "网关密钥、运行参数与维护。",
             Page::Strategies=>"私有虚拟模型与顺序、错误码和时段调用策略。",Page::Accounts=>"登录控制台的独立账号和启用状态。",Page::Portal=>"本人密钥元数据与用量。",Page::Account=>"当前登录账号与密码。",
         }

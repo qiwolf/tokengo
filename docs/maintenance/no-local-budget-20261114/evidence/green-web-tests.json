@@ -1,0 +1,18 @@
+{
+  "host": "build-test",
+  "source_phase": "green",
+  "source_manifest_sha256": "ea633929b6793e124e6f8e11d17ae6e4caeaf736c474073b0587a20088e42e07",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--release",
+    "-p",
+    "tokengo-web",
+    "--lib"
+  ],
+  "cwd": "/srv/build/tokengo-no-local-budget-20261114/source",
+  "exit_code": 0,
+  "seconds": 48.54330348968506
+}

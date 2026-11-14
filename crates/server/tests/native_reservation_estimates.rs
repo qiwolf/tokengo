@@ -41,22 +41,37 @@ async fn native_json_and_sse_use_price_estimate_without_source_metadata_and_sett
     }
 }
 #[tokio::test]
-async fn native_default_estimate_is_unpriced_and_finite_money_budget_still_requires_price(){
+async fn native_default_estimate_stays_unpriced_with_a_legacy_finite_money_budget(){
     let f=Fixture::new(false,3).await;let(code,wire)=f.call(false,64).await;assert_eq!(code,200,"{wire}");f.state.drain_writes();
     {let c=f.state.conn();let(bound,debit,certainty,snapshot):(i64,Option<i64>,String,String)=c.query_row("SELECT output_bound,debit_micro,usage_certainty,source_snapshot FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();assert_eq!((bound,debit,certainty.as_str()),(4096,None,"unpriced"));let snapshot:Value=serde_json::from_str(&snapshot).unwrap();assert_eq!(snapshot["reservation_estimate"]["origin"],"gateway_default");}
-    let denied=Fixture::new(false,3).await;db::billing::set_budget(&denied.state.conn(),"user",denied.user,Some(1000),"test").unwrap();let(code,wire)=denied.call(false,64).await;assert_eq!(code,403,"{wire}");assert!(wire.contains("config_required"));assert!(denied.seen.seen.lock().unwrap().is_empty());
+    let denied=Fixture::new(false,3).await;db::billing::set_budget(&denied.state.conn(),"user",denied.user,Some(1000),"test").unwrap();let(code,wire)=denied.call(false,64).await;assert_eq!(code,200,"{wire}");assert_eq!(denied.seen.seen.lock().unwrap().len(),1);
 }
 #[tokio::test]
-async fn estimates_do_not_override_explicit_price_permissions_or_tpm_limits(){
-    let f=Fixture::new(true,3).await;let(code,wire)=f.call(false,4096).await;assert_eq!(code,400,"{wire}");assert!(f.seen.seen.lock().unwrap().is_empty());
+async fn price_estimates_do_not_reject_larger_requests_but_permissions_and_tpm_remain_enforced(){
+    let f=Fixture::new(true,3).await;let(code,wire)=f.call(false,4096).await;assert_eq!(code,200,"{wire}");assert_eq!(f.seen.seen.lock().unwrap().len(),1);
     let denied=Fixture::new(true,3).await;{let c=denied.state.conn();let mut user=db::identity::user(&c,denied.user).unwrap().unwrap();user.policy.allowed_models=Some(vec![]);db::identity::update_user(&c,&user).unwrap();}
     assert_eq!(denied.call(false,64).await.0,403);assert!(denied.seen.seen.lock().unwrap().is_empty());
     let limited=Fixture::new(true,3).await;{let c=limited.state.conn();let mut user=db::identity::user(&c,limited.user).unwrap().unwrap();user.policy.tpm=Some(1);db::identity::update_user(&c,&user).unwrap();}
     assert_eq!(limited.call(false,64).await.0,429);assert!(limited.seen.seen.lock().unwrap().is_empty());
 }
 #[tokio::test]
-async fn real_usage_overrun_is_recorded_once_and_existing_freeze_blocks_followup(){
+async fn real_usage_above_price_estimate_is_recorded_fully_without_freezing_followup(){
     let f=Fixture::new(true,4096).await;let(code,wire)=f.call(false,64).await;assert_eq!(code,200,"{wire}");f.state.drain_writes();
-    {let c=f.state.conn();let(bound,actual,reserved,debit,observed,overrun):(i64,i64,i64,i64,i64,bool)=c.query_row("SELECT output_bound,output_tokens,reserved_micro,debit_micro,observed_cost_micro,overrun FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).unwrap();assert_eq!((bound,actual,observed),(2048,4096,4103));assert_eq!(debit,reserved);assert!(overrun);}
-    let(code,wire)=f.call(false,64).await;assert_eq!(code,429,"{wire}");assert_eq!(f.seen.seen.lock().unwrap().len(),1);f.state.drain_writes();assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM billing_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    {let c=f.state.conn();let(bound,actual,reserved,debit,observed,overrun):(i64,i64,i64,i64,i64,bool)=c.query_row("SELECT output_bound,output_tokens,reserved_micro,debit_micro,observed_cost_micro,overrun FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).unwrap();assert_eq!((bound,actual,observed),(2048,4096,4103));assert_eq!(debit,observed);assert!(debit>reserved);assert!(overrun);}
+    let(code,wire)=f.call(false,64).await;assert_eq!(code,200,"{wire}");assert_eq!(f.seen.seen.lock().unwrap().len(),2);f.state.drain_writes();assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM billing_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+}
+
+#[tokio::test]
+async fn omitted_output_cap_uses_the_same_default_before_and_after_admission_despite_small_price_estimate() {
+    for stream in [false,true] {
+        let f=Fixture::new(true,3).await;
+        {let c=f.state.conn();let mut user=db::identity::user(&c,f.user).unwrap().unwrap();user.policy.tpm=Some(10000);db::identity::update_user(&c,&user).unwrap();}
+        let response=reqwest::Client::new().post(format!("{}/v1/chat/completions",f.gateway.url)).bearer_auth(&f.key)
+            .json(&json!({"model":"logical","messages":[{"role":"user","content":"hello"}],"stream":stream})).send().await.unwrap();
+        let status=response.status();let wire=response.text().await.unwrap();assert_eq!(status,200,"{wire}");assert!(wire.contains("ANSWER"));
+        f.state.drain_writes();assert_eq!(f.seen.seen.lock().unwrap().len(),1);
+        assert_eq!(f.seen.seen.lock().unwrap()[0]["max_tokens"],4096,"small price estimate must not clamp the configured gateway default");
+        let c=f.state.conn();let(bound,snapshot):(i64,String)=c.query_row("SELECT output_bound,source_snapshot FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(bound,4096);let snapshot:Value=serde_json::from_str(&snapshot).unwrap();assert_eq!(snapshot["reservation_estimate"]["output_tokens"],4096);
+    }
 }

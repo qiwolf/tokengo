@@ -570,27 +570,10 @@ async fn scoped_admin_vkeys_manage_route_b_without_access_to_legacy_secrets() {
     let target = created["user"]["id"].as_i64().unwrap();
     let(actor_user,actor_key):(i64,i64)=f.state.conn().query_row("SELECT actor_user_id,actor_key_id FROM audit_events WHERE action='user.create' AND target_id=?1 ORDER BY id DESC LIMIT 1",[target],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
     assert_eq!((actor_user, actor_key), (uid, id));
-    assert_eq!(
-        f.request(
-            "PUT",
-            &format!("/api/budgets?scope=user&scope_id={target}"),
-            Some(&key),
-            json!({"limit_micro":1000})
-        )
-        .await
-        .0,
-        StatusCode::OK
-    );
-    let actor: String = f
-        .state
-        .conn()
-        .query_row(
-            "SELECT actor FROM billing_audit ORDER BY id DESC LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(actor, format!("user:{uid}/key:{id}"));
+    let (status,disabled)=f.request("PUT",&format!("/api/budgets?scope=user&scope_id={target}"),Some(&key),json!({"limit_micro":1000})).await;
+    assert_eq!(status,StatusCode::GONE,"{disabled}");
+    let mutations:i64=f.state.conn().query_row("SELECT COUNT(*) FROM billing_audit WHERE event='budget_updated' AND object=?1",[format!("user:{target}")],|r|r.get(0)).unwrap();
+    assert_eq!(mutations,0,"disabled budgets must not write a legacy gate");
     f.admin("PATCH", &format!("/api/vkeys/{id}"), json!({"revoke":true}))
         .await;
     assert_eq!(

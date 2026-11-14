@@ -55,7 +55,7 @@ pub fn Portal(ctx: Ctx) -> impl IntoView {
             Err(e) => error.set(e),
         }
     };
-    view! {<div class="page portal-page"><PageHead title="我的空间" desc="管理自己的 API Key，查看用量和费用；全部 Key 共享你的总额度。"><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(None, active_query.get_untracked(),page_limit.get_untracked())>"刷新"</button></PageHead>
+    view! {<div class="page portal-page"><PageHead title="我的空间" desc="管理自己的 API Key，查看用量和费用。本地预算与历史冻结标记不再限制调用。"><button type="button" class="ghost" disabled=move||busy.get() on:click=move|_|load(None, active_query.get_untracked(),page_limit.get_untracked())>"刷新"</button></PageHead>
     <section class="card portal-usage-panel"><header class="card-head"><h2>"用量看板"</h2></header><div class="card-body">
     <form class="usage-filter-bar" on:submit=search><fieldset disabled=move||busy.get()><div class="usage-filter-row"><UsagePeriod period=period start=start end=end start_time=start_time end_time=end_time compact=true/><div class="usage-inline-actions"><button class="primary" type="submit">{move||if busy.get(){"查询中…"}else{"查询"}}</button><button type="button" class="ghost" on:click=move |_|{period.set("today".into());start.set(String::new());end.set(String::new());start_time.set(String::new());end_time.set(String::new());load(None,format!("{}&currency=all",default_period_query()),25);}>"重置"</button></div></div></fieldset></form>
 

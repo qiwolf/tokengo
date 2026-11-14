@@ -181,12 +181,21 @@ async fn declared_native_audio_preserves_payload_and_records_reported_tokens() {
     assert_eq!(row, ("reported".into(), 7, 3, "success".into()));
 }
 #[tokio::test]
-async fn native_audio_requires_priced_context_bound_before_any_upstream_call() {
-    let f = Fixture::new(true, false, None).await;
-    let (code, reply) = f.call("/v1/chat/completions", request()).await;
-    assert_eq!(code, 403, "{reply}");
-    assert!(f.seen.lock().unwrap().is_empty());
+async fn unpriced_native_audio_without_tpm_does_not_require_a_financial_input_estimate() {
+    let f=Fixture::new(true,false,None).await;
+    let body=request();let(code,reply)=f.call("/v1/chat/completions",body.clone()).await;
+    assert_eq!(code,200,"{reply}");assert_eq!(f.seen.lock().unwrap()[0]["messages"],body["messages"]);
+    f.state.drain_writes();let c=f.state.conn();
+    let row:(Option<i64>,String)=c.query_row("SELECT debit_micro,usage_certainty FROM billing_ledger",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(row,(None,"unpriced".into()));
 }
+#[tokio::test]
+async fn native_audio_with_explicit_tpm_requires_a_configured_input_metering_bound() {
+    let f=Fixture::new(true,false,Some(10000)).await;
+    let(code,reply)=f.call("/v1/chat/completions",request()).await;
+    assert_eq!(code,403,"{reply}");assert!(f.seen.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn undeclared_source_is_rejected_even_with_free_pricing() {
     let f = Fixture::new(false, true, None).await;

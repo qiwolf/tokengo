@@ -1,0 +1,80 @@
+{
+  "host": "build-test",
+  "phase": "green",
+  "verified_at_utc": "2026-11-14T02:26:42.273332+00:00",
+  "artifact_sha256": "3b7febac17ad4625bf86be0c70ead4e0b027e89e0bcef86555c9aa0d0dedae55",
+  "artifact_bytes": 1574318,
+  "tar_contents_match_remote_dist": true,
+  "web_sources_match_current_mac": true,
+  "source_green_manifest_sha256": "ea633929b6793e124e6f8e11d17ae6e4caeaf736c474073b0587a20088e42e07",
+  "browser_groups": {
+    "no-local-budget-qa": {
+      "cases": 4,
+      "checks": 26,
+      "screenshots": 12,
+      "path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/no-local-budget-20261114/evidence/no-local-budget-qa-green"
+    },
+    "lifecycle-qa": {
+      "cases": 2,
+      "checks": 44,
+      "screenshots": 20,
+      "path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/no-local-budget-20261114/evidence/lifecycle-qa-green"
+    },
+    "automatic-price-qa": {
+      "cases": 2,
+      "checks": 16,
+      "screenshots": 6,
+      "path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/no-local-budget-20261114/evidence/automatic-price-qa-green"
+    },
+    "source-limits-qa": {
+      "cases": 2,
+      "checks": 32,
+      "screenshots": 10,
+      "path": "/Users/andy/Documents/ChatGPT/LLM 中转站开发/review/no-local-budget-20261114/evidence/source-limits-qa-green"
+    }
+  },
+  "browser_total_cases": 10,
+  "browser_total_checks": 118,
+  "screenshots": 48,
+  "web_unit_receipt": {
+    "host": "build-test",
+    "source_phase": "green",
+    "source_manifest_sha256": "ea633929b6793e124e6f8e11d17ae6e4caeaf736c474073b0587a20088e42e07",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "--release",
+      "-p",
+      "tokengo-web",
+      "--lib"
+    ],
+    "cwd": "/srv/build/tokengo-no-local-budget-20261114/source",
+    "exit_code": 0,
+    "seconds": 48.54330348968506
+  },
+  "web_build_receipt": {
+    "host": "build-test",
+    "source_phase": "green",
+    "source_manifest_sha256": "ea633929b6793e124e6f8e11d17ae6e4caeaf736c474073b0587a20088e42e07",
+    "command": [
+      "trunk",
+      "build",
+      "--release"
+    ],
+    "cwd": "/srv/build/tokengo-no-local-budget-20261114/source/crates/web",
+    "exit_code": 0,
+    "seconds": 141.75678157806396
+  },
+  "web_unit_counts": [
+    [
+      "223",
+      "0",
+      "0"
+    ]
+  ],
+  "superseded": false,
+  "deployed": false,
+  "supersedes": "ae86b83090fb3773b9a6b9da45affd1a4704c2fda4d2f31892dd695694db817d"
+}

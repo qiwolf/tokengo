@@ -632,7 +632,7 @@ async fn native_routes_do_not_bypass_virtual_key_policy_or_unknown_continuation(
 }
 
 #[tokio::test]
-async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_generations() {
+async fn explicit_native_session_uses_current_available_source_and_key_acl() {
     let f = Fixture::new().await;
     let secondary_seen = Arc::new(Source::default());
     let secondary = serve(
@@ -695,7 +695,7 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
     assert_eq!(f.seen.seen.lock().unwrap().len(), 1);
     assert_eq!(secondary_seen.seen.lock().unwrap().len(), 0);
     f.seen.status.store(503, Ordering::SeqCst);
-    assert!(!f
+    assert!(f
         .call("/v1/messages", &headers, Fixture::body("/v1/messages"))
         .await
         .status()
@@ -703,8 +703,8 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
     assert_eq!(f.seen.seen.lock().unwrap().len(), 2);
     assert_eq!(
         secondary_seen.seen.lock().unwrap().len(),
-        0,
-        "a pinned failed session must not cross account"
+        1,
+        "same session immediately falls back from a failed source"
     );
     let (_, other) = db::identity::create_key(
         &f.state.conn(),
@@ -733,8 +733,8 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
     );
     assert_eq!(
         secondary_seen.seen.lock().unwrap().len(),
-        1,
-        "same session text under a different VKey must have an independent source binding"
+        2,
+        "current VKey ACL still selects only its authorized source"
     );
     f.seen.status.store(200, Ordering::SeqCst);
     db::channels::set_secret(
@@ -748,7 +748,7 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
         f.seen.seen.lock().unwrap().len(),
         secondary_seen.seen.lock().unwrap().len(),
     );
-    assert!(!f
+    assert!(f
         .call("/v1/messages", &headers, Fixture::body("/v1/messages"))
         .await
         .status()
@@ -758,8 +758,8 @@ async fn explicit_native_session_pins_source_and_isolates_keys_and_credential_ge
             f.seen.seen.lock().unwrap().len(),
             secondary_seen.seen.lock().unwrap().len()
         ),
-        before,
-        "credential rotation must not silently reuse or move old session"
+        (before.0 + 1, before.1),
+        "the current credential applies to the existing session"
     );
 }
 
@@ -827,12 +827,12 @@ async fn opaque_native_history_requires_its_key_binding_and_reserves_full_input_
         )
         .await
         .status(),
-        StatusCode::BAD_REQUEST
+        StatusCode::OK
     );
     assert_eq!(
         f.seen.seen.lock().unwrap().len(),
-        before,
-        "another VKey must not borrow an existing opaque history binding"
+        before + 1,
+        "another authorized VKey uses its own current limits without a local history binding"
     );
 }
 

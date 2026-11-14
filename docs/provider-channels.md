@@ -37,7 +37,7 @@ ChatGPT/Codex沿用既有PKCE流程；Kimi、MiniMax中国/Global与Copilot默�
 
 ## 渠道、接入与兼容接口
 
-服务商渠道是显式配置的父层；下面的连接仍保留原channel ID。相同域名、模型名或供应商品牌不自动合并凭据，父层不宣称共享并发、价格或账号配额。OAuth绑定、VKey allowed_channels、fallback目标和协议会话继续引用原连接ID。
+服务商渠道是显式配置的父层；下面的连接仍保留原channel ID。相同域名、模型名或供应商品牌不自动合并凭据，父层不宣称共享并发、价格或账号配额。OAuth绑定、VKey allowed_channels和fallback目标继续引用原连接ID；会话不再固定来源。
 
 迁移33新增provider_channels、provider_connections；每连接最多一个父层。未分组连接仍可见且照旧路由。channel_models.enabled默认true；停用不删除upstream/vision/drop_fields，重新启用恢复原配置。来源有效条件为父层启用（无父层则true）、连接启用、mapping启用、逻辑模型全局启用及原权限/能力/路由限制全部满足。
 
@@ -82,4 +82,4 @@ ReasoningCapabilities字段为`{status,levels,source,reason,default_effort,confi
 
 ## 本地向量节点等权轮询
 
-模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。它与在线Key按用户粘性不同，不影响OAuth/native来源固定。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后需刷新兼容证据。详见[本地节点合同](maintenance/local-vector-balancing.md)。
+模型路由可配置 `local_strategy: "round_robin"`，在本地Embeddings/Rerank获授权来源间按请求轮转起点，并沿用故障切换；`ordered`或省略继承已有Key策略。在线Key按当前priority/concurrent策略和实时负载选择，不再读取历史用户粘性；OAuth/native请求同样按当前规则选源。游标按调用入口、owner、provider及目标模型隔离，进程重启后重置；不是分布式加权或等GPU利用率承诺。来源身份变化后需刷新兼容证据。详见[本地节点合同](maintenance/local-vector-balancing.md)。

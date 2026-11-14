@@ -240,11 +240,13 @@ async fn concurrent_strategy_distributes_users_without_vkey_randomization() {
 
 #[tokio::test]
 async fn explicit_400_is_request_local_and_disabled_switches_stop() {
-    for (status, on429, on400, expected_calls) in [
-        (400, false, false, 1),
-        (400, false, true, 2),
-        (429, false, false, 1),
-        (429, true, false, 2),
+    for (status, on429, on400, expected_calls, message) in [
+        (400, false, false, 1, "ordinary request rejection"),
+        (400, false, true, 2, "ordinary request rejection"),
+        (429, false, false, 1, "ordinary request rejection"),
+        (429, true, false, 2, "ordinary request rejection"),
+        (400, false, false, 1, "maximum context length exceeded"),
+        (429, false, false, 1, "insufficient balance"),
     ] {
         let f = fixture();
         let m = start_mock(Reply::Ok).await;
@@ -255,12 +257,12 @@ async fn explicit_400_is_request_local_and_disabled_switches_stop() {
             .replies
             .lock()
             .unwrap()
-            .push_back(Reply::Status(status, "ordinary request rejection"));
+            .push_back(Reply::Status(status, message));
         let result = call(&f, &keys[0].1, "real-model").await;
         assert_eq!(
             m.count(),
             expected_calls,
-            "HTTP {status}, 429={on429}, 400={on400}"
+            "HTTP {status}, 429={on429}, 400={on400}, error={message}"
         );
         assert_eq!(result.is_success(), expected_calls == 2);
         if status == 400 {

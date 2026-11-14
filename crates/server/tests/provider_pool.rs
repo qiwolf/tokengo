@@ -757,3 +757,144 @@ async fn last_usable_mapping_removal_blocks_references_but_not_another_keys_copy
     let(s,v)=f.req("PATCH",&format!("{base}/{second}"),json!({"remove_models":["a"]})).await;assert_eq!(s,409,"{v}");
     let rows=db::channels::get(&f.state.conn(),tokengo_shared::ChannelId(second_source)).unwrap().unwrap();assert_eq!(rows.models.len(),1);
 }
+
+// An available source can have valid bounds while a transient pool cooldown
+// leaves this request with no eligible candidates. That is availability, not
+// a caller credential or pricing error, even when the request has opaque input.
+async fn empty_pool_case(blocked: bool, bounded: bool, opaque: bool, tpm:Option<u64>) -> (u16, Value, usize, i64, Value) {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let calls=Arc::new(AtomicUsize::new(0));
+    let seen=calls.clone();
+    let (upstream, task)=serve(Router::new().route("/v1/responses", axum::routing::post(move || {
+        let seen=seen.clone(); async move {seen.fetch_add(1,Ordering::SeqCst); axum::Json(json!({"id":"resp_synthetic","object":"response","status":"completed","model":"exact-M","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"synthetic fixture"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}))}
+    }))).await;
+    let f=Fixture::new().await;
+    let supplier=f.provider("synthetic availability supplier").await;
+    let source=f.channel(&format!("{upstream}/v1")).await;
+    f.assign(source,Some(supplier)).await;
+    let secret={
+        let c=f.state.conn();
+        db::provider_pool::backfill(&c,&f.state.secrets).unwrap();
+        assert!(db::provider_pool::source_credential(&c,source).unwrap().is_some());
+        let caps=tokengo_server::protocol_config::Capabilities {
+            native:vec![tokengo_server::protocol::Protocol::Responses],
+            max_input_tokens:bounded.then_some(50000), max_output_tokens:bounded.then_some(1024),
+            ..Default::default()
+        };
+        tokengo_server::protocol_config::save(&c,source,&caps).unwrap();
+        let user=db::identity::create_user(&c,"synthetic availability caller","user",&db::identity::Policy{tpm,..Default::default()}).unwrap();
+        let (_,secret)=db::identity::create_key(&c,user.id,"synthetic availability key",&Default::default(),None,None).unwrap();
+        if bounded {
+            db::billing::set_budget(&c,"user",user.id,Some(1_000_000_000),"fixture").unwrap();
+            db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:source,model:"m".into(),input_micro_per_million:1,output_micro_per_million:1,max_input_tokens:50000,max_output_tokens:1024},"fixture").unwrap();
+        }
+        if blocked {
+            let now=db::now_ms();let generation=db::policy::claim(&c,source,"m","exact-M",now).unwrap().unwrap();
+            for _ in 0..3 {db::policy::complete(&c,source,"m","exact-M",generation,false,"synthetic transient upstream failure",0,now).unwrap();}
+            assert!(db::policy::peek(&c,source,"m","exact-M",now).unwrap().is_some());
+        }
+        secret
+    };
+    let input=if opaque {json!([{"type":"reasoning","encrypted_content":"synthetic-opaque-history"}])} else {json!("synthetic text")};
+    let response=reqwest::Client::new().post(format!("{}/v1/responses",f.base)).bearer_auth(secret).json(&json!({"model":"m","input":input,"max_output_tokens":8})).send().await.unwrap();
+    let status=response.status().as_u16();let body:Value=response.json().await.unwrap();
+    let (ledger,record)={let c=f.state.conn();let n=c.query_row("SELECT count(*) FROM billing_ledger",[],|r|r.get(0)).unwrap();let row=c.query_row("SELECT status,http_status,error_code,channel_id FROM requests ORDER BY id DESC LIMIT 1",[],|r|Ok(json!({"status":r.get::<_,String>(0)?,"http_status":r.get::<_,Option<i64>>(1)?,"error_code":r.get::<_,Option<String>>(2)?,"channel_id":r.get::<_,Option<i64>>(3)?}))).unwrap();(n,row)};
+    task.abort();(status,body,calls.load(Ordering::SeqCst),ledger,record)
+}
+#[tokio::test]
+async fn empty_pool_reports_availability_before_opaque_input_pricing() {
+    for opaque in [true,false] {
+        let(status,body,calls,ledger,record)=empty_pool_case(true,true,opaque,None).await;
+        assert_eq!(status,503,"opaque={opaque}: {body}");
+        assert_eq!(body["error"]["type"],"models_cooling","{body}");
+        assert_eq!(calls,0);assert_eq!(ledger,0);
+        assert_eq!(record["status"],"failed");
+        assert_eq!(record["http_status"],503);assert_eq!(record["error_code"],"models_cooling");assert!(record["channel_id"].is_null());
+    }
+}
+#[tokio::test]
+async fn available_pool_does_not_require_an_opaque_cost_bound_without_tpm() {
+    let(status,body,calls,ledger,_)=empty_pool_case(false,false,true,None).await;
+    assert_eq!(status,200,"{body}");assert_eq!(calls,1);assert_eq!(ledger,1);
+}
+#[tokio::test]
+async fn available_pool_requires_opaque_input_metering_for_an_explicit_tpm_limit() {
+    let(status,body,calls,ledger,_)=empty_pool_case(false,false,true,Some(100000)).await;
+    assert_eq!(status,403,"{body}");assert_eq!(body["error"]["type"],"pricing_required");assert_eq!(calls,0);assert_eq!(ledger,0);
+}
+#[tokio::test]
+async fn empty_pool_fix_keeps_eligible_source_working() {
+    let(status,body,calls,_,_)=empty_pool_case(false,true,false,None).await;
+    assert_eq!(status,200,"{body}");assert_eq!(calls,1);
+}
+
+#[tokio::test]
+async fn forwarding_uses_current_key_priority_and_availability_without_historical_affinity() {
+    async fn upstream(headers:axum::http::HeaderMap)->axum::Json<Value> {
+        let key=headers.get("authorization").and_then(|v|v.to_str().ok()).unwrap_or("");
+        axum::Json(json!({"choices":[{"message":{"role":"assistant","content":key}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}))
+    }
+    let f=Fixture::new().await;
+    let(base,task)=serve(Router::new().route("/v1/chat/completions",axum::routing::post(upstream))).await;
+    let(status,value)=f.req("POST","/api/providers",json!({"name":"Current priority","base_url":format!("{base}/v1"),"key_strategy":"ordered"})).await;
+    assert_eq!(status,200,"{value}");let provider=value["provider"]["id"].as_i64().unwrap();
+    let mut keys=Vec::new();
+    for index in 0..2 {
+        let(status,value)=f.req("POST",&format!("/api/providers/{provider}/credentials"),json!({"label":format!("key{index}"),"key":format!("current-key-{index}"),"models":[{"model":"m"}]})).await;
+        assert_eq!(status,200,"{value}");keys.push(value["credential"]["id"].as_i64().unwrap());
+    }
+    let historical=db::provider_pool::ensure_affinity_for_selection(&f.state.conn(),1,provider,keys[1]).unwrap();
+    async fn call(f:&Fixture)->String {
+        let response=reqwest::Client::new().post(format!("{}/v1/chat/completions",f.base))
+            .bearer_auth("provider-pool-key").header("x-session-id","same-client-session")
+            .json(&json!({"model":"m","messages":[{"role":"user","content":"hi"}]})).send().await.unwrap();
+        let status=response.status();let value:Value=response.json().await.unwrap();assert_eq!(status,200,"{value}");value["choices"][0]["message"]["content"].as_str().unwrap().to_owned()
+    }
+    assert_eq!(call(&f).await,"Bearer current-key-0","old affinity must not outrank current ordered credentials");
+    f.state.conn().execute("UPDATE provider_credentials SET priority=10 WHERE id=?1",[keys[0]]).unwrap();
+    assert_eq!(call(&f).await,"Bearer current-key-1","same session observes new priority immediately");
+    f.state.conn().execute("UPDATE provider_credentials SET enabled=0 WHERE id=?1",[keys[1]]).unwrap();
+    assert_eq!(call(&f).await,"Bearer current-key-0","disabled credential cannot pin this session");
+    assert_eq!(db::provider_pool::affinity_token(&f.state.conn(),1,provider).unwrap(),Some(historical),"forwarding must not rewrite legacy affinity");
+    task.abort();
+}
+
+#[tokio::test]
+async fn full_source_or_credential_gate_tries_the_next_available_key_before_waiting() {
+    async fn upstream(headers:axum::http::HeaderMap)->axum::Json<Value> {
+        axum::Json(json!({"choices":[{"message":{"role":"assistant","content":headers.get("authorization").unwrap().to_str().unwrap()}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}))
+    }
+    for strategy in ["ordered","concurrent"] {
+        for source_busy in [true,false] {
+            let f=Fixture::new().await;
+            f.state.routing().cfg.request_budget_ms=250;
+            let(base,task)=serve(Router::new().route("/v1/chat/completions",axum::routing::post(upstream))).await;
+            let(status,value)=f.req("POST","/api/providers",json!({"name":"Available capacity","base_url":format!("{base}/v1"),"key_strategy":strategy})).await;
+            assert_eq!(status,200,"{value}");let provider=value["provider"]["id"].as_i64().unwrap();let mut credentials=Vec::new();let mut sources=Vec::new();
+            for index in 0..2 {
+                let(status,value)=f.req("POST",&format!("/api/providers/{provider}/credentials"),json!({"label":format!("key{index}"),"key":format!("available-key-{index}"),"models":[{"model":"m"}]})).await;
+                assert_eq!(status,200,"{value}");credentials.push(value["credential"]["id"].as_i64().unwrap());sources.push(value["source_id"].as_i64().unwrap());
+            }
+            let mut held=Vec::new();
+            if source_busy {
+                f.state.conn().execute("UPDATE channels SET max_concurrent=1 WHERE id=?1",[sources[0]]).unwrap();
+                held.push(f.state.channel_gate(sources[0],1).unwrap().try_acquire_owned().unwrap());
+            } else {
+                f.state.conn().execute("UPDATE provider_credentials SET max_concurrent=CASE WHEN id=?1 THEN 1 ELSE 10 END WHERE provider_id=?2",rusqlite::params![credentials[0],provider]).unwrap();
+                held.push(f.state.credential_gate(credentials[0],1).unwrap().try_acquire_owned().unwrap());
+                // Raw-load concurrent sorting still ranks the saturated 1/1 key before
+                // the available 2/10 key. Gate availability must decide the actual attempt.
+                if strategy=="concurrent" {
+                    let gate=f.state.credential_gate(credentials[1],10).unwrap();
+                    held.push(gate.clone().try_acquire_owned().unwrap());held.push(gate.try_acquire_owned().unwrap());
+                }
+            }
+            let response=reqwest::Client::new().post(format!("{}/v1/chat/completions",f.base)).bearer_auth("provider-pool-key")
+                .json(&json!({"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":16})).send().await.unwrap();
+            let status=response.status();let value:Value=response.json().await.unwrap();
+            assert_eq!(status,200,"{strategy}, source_busy={source_busy}: {value}");
+            assert_eq!(value["choices"][0]["message"]["content"],"Bearer available-key-1");
+            drop(held);task.abort();
+        }
+    }
+}

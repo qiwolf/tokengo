@@ -121,31 +121,31 @@ fn exact_cost_ceil_and_immutable_price_versions() {
     assert_eq!(billing::cost(&fractional, 1, 1).unwrap(), 1);
 }
 #[test]
-fn both_budget_layers_roll_back_atomically_and_lowering_blocks_new_holds() {
+fn legacy_budget_limits_are_metadata_and_never_block_new_observations() {
     let c = db::open_in_memory().unwrap();
     let k = key(&c, "key", None);
     let p = price(&c);
     billing::set_budget(&c, "user", 1, Some(100), "test").unwrap();
     billing::set_budget(&c, "key", k, Some(5), "test").unwrap();
-    assert!(billing::reserve(&c, 1, k, 1, "denied", &p, 10, 0).is_err());
+    assert!(billing::reserve(&c, 1, k, 1, "formerly-denied", &p, 10, 0).is_ok());
     assert_eq!(budget(&c, "user", 1).reserved_micro, 0);
-    assert!(rows(&c).is_empty());
+    assert_eq!(rows(&c).len(),1);
     billing::set_budget(&c, "key", k, Some(100), "test").unwrap();
     let r = billing::reserve(&c, 1, k, 1, "hold", &p, 50, 0).unwrap();
     billing::set_budget(&c, "user", 1, Some(20), "test").unwrap();
-    assert!(billing::reserve(&c, 1, k, 1, "new", &p, 1, 0).is_err());
+    assert!(billing::reserve(&c, 1, k, 1, "new", &p, 1, 0).is_ok());
     billing::settle(&c, r, Some(15), Some(0), "ok").unwrap();
     assert_eq!(budget(&c, "user", 1).spent_micro, 15);
     assert_eq!(budget(&c, "user", 1).reserved_micro, 0);
-    assert!(billing::reserve(&c, 1, k, 1, "too-much", &p, 6, 0).is_err());
+    assert!(billing::reserve(&c, 1, k, 1, "formerly-too-much", &p, 6, 0).is_ok());
     assert!(billing::reserve(&c, 1, k, 1, "fits", &p, 5, 0).is_ok());
 }
 #[test]
-fn partial_missing_usage_is_estimated_but_reported_zero_is_zero() {
+fn missing_actual_usage_stays_unknown_but_reported_zero_is_zero() {
     for (i, o, expected, certainty) in [
-        (None, None, 50, "estimated"),
-        (Some(2), None, 50, "estimated"),
-        (Some(0), Some(0), 0, "reported"),
+        (None, None, None, "unknown"),
+        (Some(2), None, None, "unknown"),
+        (Some(0), Some(0), Some(0), "reported"),
     ] {
         let c = db::open_in_memory().unwrap();
         let k = key(&c, "key", None);
@@ -153,7 +153,7 @@ fn partial_missing_usage_is_estimated_but_reported_zero_is_zero() {
         let r = billing::reserve(&c, 1, k, 1, "hold", &p, 10, 20).unwrap();
         billing::settle(&c, r, i, o, "canceled").unwrap();
         let row = rows(&c).remove(0);
-        assert_eq!(row.debit_micro, Some(expected));
+        assert_eq!(row.debit_micro, expected);
         assert_eq!(row.usage_certainty, certainty);
         assert_eq!(row.input_tokens, i);
         assert_eq!(row.output_tokens, o);
@@ -170,7 +170,7 @@ fn idempotent_reservation_settlement_release_and_retention_are_independent() {
         billing::reserve(&c, 1, k, request, "unique", &p, 10, 0).unwrap(),
         r
     );
-    assert_eq!(budget(&c, "user", 1).reserved_micro, 10);
+    assert_eq!(budget(&c, "user", 1).reserved_micro, 0);
     assert!(billing::reserve(&c, 1, k, request, "unique", &p, 11, 0).is_err());
     c.execute("DELETE FROM requests", []).unwrap();
     assert_eq!(rows(&c).len(), 1);
@@ -186,7 +186,7 @@ fn idempotent_reservation_settlement_release_and_retention_are_independent() {
     assert_eq!(budget(&c, "key", k).reserved_micro, 0);
 }
 #[test]
-fn overrun_keeps_provider_cost_visible_caps_debit_and_freezes_future_budgeted_attempts() {
+fn estimate_overrun_records_full_cost_without_freezing_later_calls() {
     let c = db::open_in_memory().unwrap();
     let k = key(&c, "key", None);
     let p = price(&c);
@@ -194,14 +194,14 @@ fn overrun_keeps_provider_cost_visible_caps_debit_and_freezes_future_budgeted_at
     let r = billing::reserve(&c, 1, k, 1, "small", &p, 10, 0).unwrap();
     billing::settle(&c, r, Some(40), Some(0), "ok").unwrap();
     let row = rows(&c).remove(0);
-    assert_eq!(row.debit_micro, Some(10));
+    assert_eq!(row.debit_micro, Some(40));
     assert_eq!(row.observed_cost_micro, Some(40));
     assert!(row.overrun);
-    assert!(budget(&c, "user", 1).frozen);
-    assert!(billing::reserve(&c, 1, k, 1, "frozen", &p, 1, 0).is_err());
+    assert!(!budget(&c, "user", 1).frozen);
+    assert!(billing::reserve(&c, 1, k, 1, "after-overrun", &p, 1, 0).is_ok());
 }
 #[test]
-fn restart_conservatively_charges_outstanding_once_without_diagnostic_rows() {
+fn restart_preserves_unknown_cost_once_without_fabricated_debit() {
     let f = Fixture::new();
     let k = key(&f.state.conn(), "key", None);
     let p = price(&f.state.conn());
@@ -210,12 +210,13 @@ fn restart_conservatively_charges_outstanding_once_without_diagnostic_rows() {
     assert_eq!(billing::recover(&other).unwrap(), 1);
     assert_eq!(billing::recover(&other).unwrap(), 0);
     billing::settle(&other, id, Some(1), Some(0), "late").unwrap();
-    assert_eq!(budget(&other, "user", 1).spent_micro, 10);
+    assert_eq!(budget(&other, "user", 1).spent_micro, 0);
     assert_eq!(rows(&other)[0].status, "restart_unknown");
-    assert_eq!(rows(&other)[0].usage_certainty, "estimated");
+    assert_eq!(rows(&other)[0].usage_certainty, "unknown");
+    assert_eq!(rows(&other)[0].debit_micro,None);
 }
 #[test]
-fn two_connections_cannot_overreserve_the_same_budget() {
+fn two_connections_can_observe_concurrently_without_a_cash_budget_gate() {
     let f = Fixture::new();
     let k = key(&f.state.conn(), "key", None);
     let p = price(&f.state.conn());
@@ -238,20 +239,20 @@ fn two_connections_cannot_overreserve_the_same_budget() {
         .into_iter()
         .map(|t| usize::from(t.join().unwrap()))
         .sum::<usize>();
-    assert_eq!(count, 1);
-    assert_eq!(budget(&f.state.conn(), "user", 1).reserved_micro, 10);
-    assert_eq!(rows(&f.state.conn()).len(), 1);
+    assert_eq!(count, 2);
+    assert_eq!(budget(&f.state.conn(), "user", 1).reserved_micro, 0);
+    assert_eq!(rows(&f.state.conn()).len(), 2);
 }
 #[test]
-fn ancestor_budget_is_shared_and_snapshot_survives_parent_deletion() {
+fn ancestor_accounting_is_shared_and_snapshot_survives_parent_deletion() {
     let c = db::open_in_memory().unwrap();
     let parent = key(&c, "parent", None);
     let child = key(&c, "child", Some(parent));
     let p = price(&c);
     billing::set_budget(&c, "key", parent, Some(10), "test").unwrap();
     let r = billing::reserve(&c, 1, child, 1, "child", &p, 10, 0).unwrap();
-    assert_eq!(budget(&c, "key", parent).reserved_micro, 10);
-    assert!(billing::reserve(&c, 1, parent, 1, "parent", &p, 1, 0).is_err());
+    assert_eq!(budget(&c, "key", parent).reserved_micro, 0);
+    assert!(billing::reserve(&c, 1, parent, 1, "parent", &p, 1, 0).is_ok());
     c.execute("DELETE FROM gateway_keys WHERE id=?1", [parent])
         .unwrap();
     billing::settle(&c, r, Some(3), Some(0), "ok").unwrap();
@@ -259,7 +260,7 @@ fn ancestor_budget_is_shared_and_snapshot_survives_parent_deletion() {
     assert_eq!(budget(&c, "key", child).spent_micro, 3);
 }
 #[test]
-fn unpriced_ledger_stays_unknown_and_any_finite_ancestor_budget_requires_configuration() {
+fn unpriced_ledger_stays_unknown_despite_legacy_finite_ancestor_budget() {
     let c = db::open_in_memory().unwrap();
     let parent = key(&c, "parent", None);
     let child = key(&c, "child", Some(parent));
@@ -274,13 +275,8 @@ fn unpriced_ledger_stays_unknown_and_any_finite_ancestor_budget_requires_configu
     assert_eq!(row.status, "unpriced");
     assert_eq!(row.outcome.as_deref(), Some("ok"));
     billing::set_budget(&c, "key", parent, Some(0), "test").unwrap();
-    assert!(
-        billing::reserve_unpriced(&c, 1, child, 1, "denied", 1, "Model-A")
-            .unwrap_err()
-            .to_string()
-            .contains("config_required")
-    );
-    assert_eq!(rows(&c).len(), 1);
+    assert!(billing::reserve_unpriced(&c,1,child,1,"finite-budget-does-not-block",1,"Model-A").is_ok());
+    assert_eq!(rows(&c).len(),2);
 }
 #[test]
 fn negatives_overflows_and_price_snapshot_tampering_are_rejected() {
@@ -299,14 +295,16 @@ fn negatives_overflows_and_price_snapshot_tampering_are_rejected() {
     assert!(billing::reserve(&c, 1, k, 1, "fake", &fake, 1, 0).is_err());
     let r = billing::reserve(&c, 1, k, 1, "valid", &p, 1, 0).unwrap();
     assert!(billing::settle(&c, r, Some(-1), Some(0), "ok").is_err());
-    assert_eq!(budget(&c, "user", 1).reserved_micro, 1);
+    assert_eq!(budget(&c, "user", 1).reserved_micro, 0);
     c.execute(
         "UPDATE billing_budgets SET spent_micro=?1 WHERE scope='user'",
         [i64::MAX],
     )
     .unwrap();
-    assert!(billing::reserve(&c, 1, k, 1, "overflow", &p, 1, 0).is_err());
-    assert_eq!(rows(&c).len(), 1);
+    let observed=billing::reserve(&c,1,k,1,"legacy-counter-overflow",&p,1,0).unwrap();
+    billing::settle(&c,observed,Some(1),Some(0),"ok").unwrap();
+    assert_eq!(rows(&c)[0].debit_micro,Some(1));
+    assert_eq!(rows(&c).len(),2);
 }
 
 async fn http(
@@ -351,49 +349,13 @@ async fn real_http_pricing_budgets_audit_and_bounded_usage() {
     let id = p["price"]["id"].as_i64().unwrap();
     let (_, p2) = http(&f, "POST", "/api/pricing", Some(&token), Some(body)).await;
     assert!(p2["price"]["id"].as_i64().unwrap() > id);
-    let (s, b) = http(
-        &f,
-        "PUT",
-        "/api/budgets?scope=user&scope_id=1",
-        Some(&token),
-        Some(serde_json::json!({"limit_micro":100})),
-    )
-    .await;
-    assert_eq!(s, 200);
-    assert_eq!(b["budgets"][0]["limit_micro"], 100);
-    assert_eq!(
-        http(
-            &f,
-            "PUT",
-            "/api/budgets?scope=user&scope_id=1",
-            Some(&token),
-            Some(serde_json::json!({"limit_micro":-1}))
-        )
-        .await
-        .0,
-        400
-    );
-    assert_eq!(
-        http(
-            &f,
-            "PUT",
-            "/api/budgets?scope=user&scope_id=1",
-            Some(&token),
-            Some(serde_json::json!({}))
-        )
-        .await
-        .0,
-        400
-    );
-    assert_eq!(budget(&f.state.conn(), "user", 1).limit_micro, Some(100));
-    assert_eq!(
-        f.state
-            .conn()
-            .query_row("SELECT COUNT(*) FROM billing_audit", [], |r| r
-                .get::<_, i64>(0))
-            .unwrap(),
-        3
-    );
+    for body in [serde_json::json!({"limit_micro":100}),serde_json::json!({"limit_micro":-1}),serde_json::json!({})] {
+        let(status,value)=http(&f,"PUT","/api/budgets?scope=user&scope_id=1",Some(&token),Some(body)).await;
+        assert_eq!(status,410);assert_eq!(value["error"]["type"],"budget_enforcement_disabled");
+    }
+    assert_eq!(http(&f,"PUT","/api/budgets?scope=user&scope_id=1",None,Some(serde_json::json!({"limit_micro":100}))).await.0,401);
+    assert!(billing::budgets(&f.state.conn(),Some("user"),Some(1)).unwrap().is_empty());
+    assert_eq!(f.state.conn().query_row("SELECT COUNT(*) FROM billing_audit",[],|r|r.get::<_,i64>(0)).unwrap(),2);
     assert_eq!(
         http(&f, "GET", "/api/usage?limit=999999", Some(&token), None)
             .await
@@ -463,36 +425,34 @@ fn partial_usage_can_prove_overrun_without_claiming_a_complete_provider_cost() {
     billing::settle(&c, r, Some(40), None, "failed").unwrap();
     let row = rows(&c).remove(0);
     assert!(row.overrun);
-    assert_eq!(row.debit_micro, Some(10));
+    assert_eq!(row.debit_micro, None);
     assert_eq!(row.observed_cost_micro, None);
-    assert_eq!(row.usage_certainty, "estimated");
-    assert!(budget(&c, "key", k).frozen);
-    assert!(billing::reserve(&c, 1, k, 1, "blocked", &p, 1, 0).is_err());
+    assert_eq!(row.usage_certainty, "unknown");
+    assert!(!budget(&c, "key", k).frozen);
+    assert!(billing::reserve(&c,1,k,1,"after-partial",&p,1,0).is_ok());
 }
 
 #[test]
-fn unlimited_overrun_freezes_new_priced_and_zero_cost_attempts() {
+fn unlimited_estimate_overrun_never_freezes_priced_or_free_calls() {
     let c = db::open_in_memory().unwrap();
     let k = key(&c, "key", None);
     let p = price(&c);
     let id = billing::reserve(&c, 1, k, 1, "overrun-unlimited", &p, 10, 0).unwrap();
     billing::settle(&c, id, Some(40), Some(0), "ok").unwrap();
-    assert!(budget(&c, "user", 1).frozen);
-    assert!(budget(&c, "key", k).frozen);
+    assert!(!budget(&c, "user", 1).frozen);
+    assert!(!budget(&c, "key", k).frozen);
     assert_eq!(budget(&c, "user", 1).limit_micro, None);
     let mut free = p.clone();
     free.input_micro_per_million = 0;
     free.output_micro_per_million = 0;
     let free = billing::create_price(&c, &free, "test").unwrap();
     for (attempt, p) in [("new-priced", &p), ("new-free", &free)] {
-        let error = billing::reserve(&c, 1, k, 1, attempt, p, 1, 0)
-            .expect_err("frozen scope must reject even without a finite cap");
-        assert!(error.to_string().contains("budget"));
+        assert!(billing::reserve(&c,1,k,1,attempt,p,1,0).is_ok());
     }
-    assert_eq!(rows(&c).len(), 1);
+    assert_eq!(rows(&c).len(),3);
 }
 #[test]
-fn removing_a_finite_limit_never_implicitly_unfreezes_after_overrun() {
+fn legacy_frozen_flags_remain_historical_but_never_control_calls() {
     let c = db::open_in_memory().unwrap();
     let k = key(&c, "key", None);
     let p = price(&c);
@@ -500,20 +460,16 @@ fn removing_a_finite_limit_never_implicitly_unfreezes_after_overrun() {
     billing::set_budget(&c, "key", k, Some(100), "test").unwrap();
     let id = billing::reserve(&c, 1, k, 1, "overrun-finite", &p, 10, 0).unwrap();
     billing::settle(&c, id, Some(40), Some(0), "ok").unwrap();
+    c.execute("UPDATE billing_budgets SET frozen=1",[]).unwrap();
     billing::set_budget(&c, "user", 1, None, "test").unwrap();
     billing::set_budget(&c, "key", k, None, "test").unwrap();
     assert!(budget(&c, "user", 1).frozen);
     assert!(budget(&c, "key", k).frozen);
-    assert!(
-        billing::reserve(&c, 1, k, 1, "null-cannot-unfreeze", &p, 1, 0)
-            .unwrap_err()
-            .to_string()
-            .contains("budget")
-    );
-    assert_eq!(rows(&c).len(), 1);
+    assert!(billing::reserve(&c,1,k,1,"ignored-legacy-freeze",&p,1,0).is_ok());
+    assert_eq!(rows(&c).len(),2);
 }
 #[test]
-fn unpriced_does_not_bypass_any_frozen_user_key_or_ancestor_allocation() {
+fn unpriced_calls_ignore_any_legacy_frozen_user_key_or_ancestor() {
     for scope_to_freeze in ["user", "own-key", "ancestor"] {
         let c = db::open_in_memory().unwrap();
         let parent = key(&c, "parent", None);
@@ -530,19 +486,13 @@ fn unpriced_does_not_bypass_any_frozen_user_key_or_ancestor_allocation() {
             rusqlite::params![scope, id],
         )
         .unwrap();
-        let error =
-            billing::reserve_unpriced(&c, 1, child, 1, "unpriced-frozen", 1, "unpriced-model")
-                .expect_err("removing a price cannot bypass a freeze");
-        assert!(
-            error.to_string().contains("budget"),
-            "{scope_to_freeze}: {error}"
-        );
-        assert!(rows(&c).is_empty());
+        assert!(billing::reserve_unpriced(&c,1,child,1,"legacy-frozen-unpriced",1,"unpriced-model").is_ok(),"{scope_to_freeze}");
+        assert_eq!(rows(&c).len(),1);
         assert_eq!(budget(&c, scope, id).reserved_micro, 0);
     }
 }
 #[test]
-fn isolated_frozen_ancestor_blocks_child_priced_and_free_reservations() {
+fn isolated_legacy_frozen_ancestor_does_not_block_priced_or_free_calls() {
     let c = db::open_in_memory().unwrap();
     let parent = key(&c, "parent", None);
     let child = key(&c, "child", Some(parent));
@@ -558,11 +508,8 @@ fn isolated_frozen_ancestor_blocks_child_priced_and_free_reservations() {
     free.output_micro_per_million = 0;
     let free = billing::create_price(&c, &free, "test").unwrap();
     for (attempt, p) in [("parent-blocks-priced", &p), ("parent-blocks-free", &free)] {
-        assert!(billing::reserve(&c, 1, child, 1, attempt, p, 1, 0)
-            .unwrap_err()
-            .to_string()
-            .contains("budget"));
+        assert!(billing::reserve(&c,1,child,1,attempt,p,1,0).is_ok());
     }
-    assert!(rows(&c).is_empty());
+    assert_eq!(rows(&c).len(),2);
     assert_eq!(budget(&c, "key", parent).reserved_micro, 0);
 }

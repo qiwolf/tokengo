@@ -129,7 +129,7 @@ async fn search_source(
 }
 
 #[tokio::test]
-async fn standalone_tools_respect_ancestor_rpm_and_budget_without_spending_token_quota() {
+async fn standalone_tools_respect_ancestor_rpm_and_record_cost_without_spending_token_quota() {
     let dir = std::env::temp_dir().join(format!("tokengo-tool-ancestor-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let state = AppState::init(Config {
@@ -254,7 +254,7 @@ async fn standalone_tools_respect_ancestor_rpm_and_budget_without_spending_token
             db::identity::create_key(&c, user.id, "child", &child_policy, None, Some(parent.id))
                 .unwrap();
         c.execute(
-            "INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES('key',?1,10)",
+            "INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES('key',?1,0)",
             [parent.id],
         )
         .unwrap();

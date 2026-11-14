@@ -50,7 +50,6 @@ impl Fixture {
 async fn china_parameter_rejection_precedes_upstream_and_reservation() {
     for (profile,model,protocol,bad,field) in [
         ("deepseek","deepseek-flash",Protocol::Responses,json!({"parallel_tool_calls":false}),"parallel_tool_calls"),
-        ("deepseek","deepseek-flash",Protocol::Responses,json!({"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"summary"}]}]}),"explicit_session_required"),
         ("deepseek","deepseek-v4-pro",Protocol::Chat,json!({"tool_choice":"required"}),"tool_choice"),
         ("dashscope","qwen3.8-max",Protocol::Chat,json!({"tool_choice":"required","enable_thinking":false}),"tool_choice"),
         ("dashscope","kimi-k3",Protocol::Chat,json!({"parallel_tool_calls":false}),"parallel_tool_calls"),
@@ -76,9 +75,9 @@ async fn converted_requests_enforce_destination_contract_without_changing_defaul
     assert_eq!(code,200,"{text}");assert_eq!(f.seen.lock().unwrap()[0]["tool_choice"],"auto");
 }
 
-// G09 native Kimi summaries require their independently issued source proof.
+// Native Kimi summary content belongs to the provider protocol, not a local issuance registry.
 #[tokio::test]
-async fn kimi_summary_output_replays_only_with_issued_source_proof() {
+async fn kimi_summary_history_replays_without_local_issuance_proof() {
     let f=Fixture::new("moonshot","kimi-k3",Protocol::Responses).await;
     let(code,text)=f.call(Protocol::Responses,json!({"prompt_cache_key":"summary-fixture"})).await;
     assert_eq!(code,200,"{text}");
@@ -90,9 +89,10 @@ async fn kimi_summary_output_replays_only_with_issued_source_proof() {
     assert_eq!(code,200,"{text}");
     assert_eq!(f.seen.lock().unwrap()[1]["input"],json!(history));
     history[0]["summary"][0]["text"]=json!("never issued");
-    let(code,text)=f.call(Protocol::Responses,json!({"input":history})).await;
-    assert_eq!(code,400,"{text}");
-    assert_eq!(f.seen.lock().unwrap().len(),2,"unissued summary history must not reach the source");
+    let(code,text)=f.call(Protocol::Responses,json!({"input":history.clone()})).await;
+    assert_eq!(code,200,"{text}");
+    let seen=f.seen.lock().unwrap();assert_eq!(seen.len(),3);
+    assert_eq!(seen[2]["input"],json!(history),"native Kimi summary is forwarded unchanged without local issuance proof");
 }
 
 #[tokio::test]
@@ -104,4 +104,15 @@ async fn deepseek_strict_default_does_not_escape_to_unverified_beta_transport() 
     assert!(f.seen.lock().unwrap().is_empty());
     assert!(request["tools"][0].get("strict").is_none());
     let count:i64=f.state.conn().query_row("SELECT count(*) FROM billing_ledger",[],|r|r.get(0)).unwrap();assert_eq!(count,0);
+}
+
+#[tokio::test]
+async fn deepseek_summary_replay_preserves_real_supplier_parameter_rejection() {
+    let f=Fixture::new("deepseek","deepseek-flash",Protocol::Responses).await;
+    let input=json!([{"type":"reasoning","summary":[{"type":"summary_text","text":"summary"}]},{"role":"user","content":"continue"}]);
+    let(code,text)=f.call(Protocol::Responses,json!({"input":input})).await;
+    assert_eq!(code,400,"{text}");assert!(text.contains("input.reasoning"),"{text}");
+    assert!(text.contains("DeepSeek accepts raw reasoning content"),"{text}");
+    assert!(!text.contains("explicit_session_required"),"a supplier parameter error must not be replaced with a local session gate");
+    assert!(f.seen.lock().unwrap().is_empty());
 }

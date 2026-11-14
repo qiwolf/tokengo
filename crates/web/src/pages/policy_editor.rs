@@ -161,8 +161,8 @@ pub fn expiry_input(ms: Option<i64>) -> String {
     })
     .unwrap_or_default()
 }
-pub fn budget_label(b:&Value)->String{if b.is_null(){return "未设累计消费上限".into()}format!("上限 {} · 已用 {} · 预占 {} {}{}",b["limit_micro"].as_i64().map(money_input).unwrap_or_else(||"不限".into()),b["spent_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),b["reserved_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),crate::fmt::currency_of(b),if b["frozen"]==true{" · 已冻结"}else{""})}
-/// Read-only amounts from the selected object's saved budget, never from its limit draft.
+pub fn budget_label(b:&Value)->String{if b.is_null(){return "暂无消费记录".into()}format!("累计 {} · 历史预留 {} {}",b["spent_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),b["reserved_micro"].as_i64().map(money_input).unwrap_or_else(||"未知".into()),crate::fmt::currency_of(b))}
+/// Read-only historical accounting, independent of legacy spending limits and freeze flags.
 #[component]
 pub fn BudgetUsage(budget: Signal<Value>) -> impl IntoView {
     view! {
@@ -170,7 +170,7 @@ pub fn BudgetUsage(budget: Signal<Value>) -> impl IntoView {
             <span class="workspace-budget-label">"消费用量"</span>
             <div class="workspace-budget-tags">
                 <span class="workspace-budget-tag"><span>"已使用"</span><strong>{move||budget.get()["spent_micro"].as_i64().map(|n|format!("{} {}",money_input(n),crate::fmt::currency_of(&budget.get()))).unwrap_or_else(||"未知".into())}</strong></span>
-                <span class="workspace-budget-tag"><span>"在途预占"</span><strong>{move||budget.get()["reserved_micro"].as_i64().map(|n|format!("{} {}",money_input(n),crate::fmt::currency_of(&budget.get()))).unwrap_or_else(||"未知".into())}</strong></span>
+                <span class="workspace-budget-tag"><span>"历史预留金额"</span><strong>{move||budget.get()["reserved_micro"].as_i64().map(|n|format!("{} {}",money_input(n),crate::fmt::currency_of(&budget.get()))).unwrap_or_else(||"未知".into())}</strong></span>
             </div>
         </div>
     }
@@ -212,7 +212,7 @@ pub fn PolicyEditor(
     <Show when=move||!policy.get()["allowed_services"].is_null()><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_services"].as_array().cloned().unwrap_or_default();service_options(&p,&services.get()).0.into_iter().map(|(id,label)|{let checked=current.contains(&json!(id));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_services",json!(id),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div>
     <Show when=move||service_options(&policy.get(),&services.get()).0.is_empty()><p class="account-help">"没有可新增授权的已启用服务。已有授权保留；管理员可到“透传服务”添加或启用。"</p></Show>
     <Show when=move||!service_options(&policy.get(),&services.get()).1.is_empty()><details><summary>"已有停用或不在目录中的服务授权"</summary><div class="policy-options">{move||service_options(&policy.get(),&services.get()).1.into_iter().map(|id|view!{<div class="account-check"><span>{format!("服务 #{id}（当前不可用）")}</span><button type="button" class="ghost danger" on:click=move |_|policy.update(|p|revoke_service(p,id))>"撤销授权"</button></div>}).collect_view()}</div></details></Show></Show>
-    <label class="account-check"><input type="checkbox" prop:checked=move||policy.get()["allow_paid"].as_bool().unwrap_or(true) on:change=move|e|policy.update(|p|p["allow_paid"]=json!(event_target_checked(&e)))/>"允许使用付费来源（仍受用户和 Key 余额共同约束）"</label>
+    <label class="account-check"><input type="checkbox" prop:checked=move||policy.get()["allow_paid"].as_bool().unwrap_or(true) on:change=move|e|policy.update(|p|p["allow_paid"]=json!(event_target_checked(&e)))/>"允许使用付费来源（仍需用户和 Key 授权）"</label>
     </Show><Show when=move||show_limits><div class="policy-limits">{[("rpm","每分钟请求数"),("tpm","每分钟 Token 上限"),("max_concurrent","最大并发")].into_iter().map(|(key,label)|view!{<label class="account-field"><span>{label}</span><input type="number" min="1" step="1" placeholder="继承 / 不额外限制" prop:value=move||policy.get()[key].as_u64().map(|n|n.to_string()).unwrap_or_default() on:input=move|e|{let s=event_target_value(&e);policy.update(|p|p[key]=if s.is_empty(){Value::Null}else{s.parse::<u64>().map(|n|json!(n)).unwrap_or_else(|_|json!(s))})}/></label>}).collect_view()}</div>
     </Show><Show when=move||show_access><details><summary>"高级：来源范围"</summary><label class="account-field"><span>"可用来源"</span><select prop:value=move||mode(&policy.get(),"allowed_channels") on:change=move|e|set_mode(policy,"allowed_channels",&event_target_value(&e))><option value="all">"继承 / 不额外限制"</option><option value="selected">"仅勾选的来源（未选即禁止）"</option></select></label><Show when=move||!policy.get()["allowed_channels"].is_null()><div class="policy-options">{move||{let p=policy.get();let current=p["allowed_channels"].as_array().cloned().unwrap_or_default();source_options(&channels.get(),&services.get(),&current).into_iter().map(|(id,label)|{let checked=current.contains(&json!(id));view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_channels",json!(id),event_target_checked(&e))/>{label}</label>}}).collect_view()}}</div></Show></details>
     <Show when=move||admin&&policy.get()["admin_access"]==true><p class="account-help">"此旧用户/密钥保留管理接口权限；本页面不会静默删除该权限。"</p></Show>
@@ -253,6 +253,14 @@ mod tests {
         assert_eq!(child["allowed_channels"], json!([]));
         assert_eq!(child["rpm"], 3);
         assert_eq!(child["admin_access"], false);
+    }
+    #[test]
+    fn consumption_summary_does_not_reapply_legacy_limits_or_freezes() {
+        let legacy=json!({"limit_micro":0,"frozen":true,"spent_micro":1200000,"reserved_micro":300000,"currency":"CNY"});
+        assert_eq!(budget_label(&legacy),"累计 1.2 · 历史预留 0.3 CNY");
+        let mut other=legacy.clone();other["limit_micro"]=json!(999999999);other["frozen"]=json!(false);
+        assert_eq!(budget_label(&legacy),budget_label(&other));
+        assert_eq!(budget_label(&Value::Null),"暂无消费记录");
     }
     #[test]
     fn money_zero_is_not_unlimited() {

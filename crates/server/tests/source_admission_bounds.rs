@@ -252,7 +252,7 @@ async fn default_output_cap_uses_source_ceiling_before_tpm_admission() {
 async fn default_parallel_output_cap_reserves_total_source_ceiling() {
     default_output(2).await;
 }
-async fn queued_price_growth(body: Value) {
+async fn queued_price_growth(body: Value, should_reject: bool) {
     let f = Fixture::new(&[None], Some(2000), Some(512)).await;
     let held = f
         .state
@@ -290,20 +290,28 @@ async fn queued_price_growth(body: Value) {
     Fixture::price(&f.state.conn(), f.ids[0], 1024);
     drop(held);
     let r = task.await.unwrap();
-    assert_eq!(r.status(), 400);
-    assert!(f.seen.lock().unwrap().is_empty());
-    assert_eq!(f.attempts(), 0);
-    assert!(db::billing::usage(&f.state.conn(), &Default::default())
-        .unwrap()
-        .is_empty());
+    if should_reject {
+        assert_eq!(r.status(), 400);
+        assert!(f.seen.lock().unwrap().is_empty());
+        assert_eq!(f.attempts(), 0);
+        assert!(db::billing::usage(&f.state.conn(), &Default::default()).unwrap().is_empty());
+    } else {
+        assert_eq!(r.status(), 200);
+        r.bytes().await.unwrap();
+        assert_eq!(f.seen.lock().unwrap().len(), 1);
+        assert_eq!(f.attempts(), 1);
+        let rows = db::billing::usage(&f.state.conn(), &Default::default()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].input_bound <= 512, "the actual image reservation still fits the admitted TPM hold");
+    }
 }
 #[tokio::test]
-async fn queued_image_price_context_growth_cannot_exceed_admitted_input() {
-    queued_price_growth(image()).await;
+async fn queued_image_price_growth_does_not_block_an_input_within_admitted_tpm_hold() {
+    queued_price_growth(image(), false).await;
 }
 #[tokio::test]
-async fn queued_audio_price_context_growth_cannot_exceed_admitted_input() {
-    queued_price_growth(audio()).await;
+async fn queued_audio_price_context_growth_cannot_exceed_admitted_tpm_input() {
+    queued_price_growth(audio(), true).await;
 }
 
 #[tokio::test]
@@ -317,4 +325,15 @@ async fn default_output_admission_uses_maximum_of_candidate_source_ceilings() {
     assert_eq!(f.reserved(), input + 128);
     assert_eq!(f.seen.lock().unwrap()[0].1["max_tokens"], 64);
     assert_eq!(f.attempts(), 1);
+}
+
+#[tokio::test]
+async fn real_source_output_window_remains_enforced_without_tpm() {
+    let f = Fixture::new(&[Some((512, 32))], None, None).await;
+    let response = f.send(json!({"model":"logical","messages":[{"role":"user","content":"hi"}],"max_tokens":64})).await;
+    assert_eq!(response.status(), 400);
+    let error: Value = response.json().await.unwrap();
+    assert_eq!(error["error"]["type"], "source_token_limit");
+    assert!(f.seen.lock().unwrap().is_empty());
+    assert_eq!(f.attempts(), 0);
 }

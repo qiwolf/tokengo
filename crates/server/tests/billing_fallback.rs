@@ -164,7 +164,7 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn local_billing_output_limit_skips_unsuitable_target_before_dispatch() {
+async fn price_output_estimate_does_not_skip_current_target() {
     for switch_on_400 in [false, true] {
         let mut f = Fixture::new().await;
         f.config.targets[0].switch_on_400 = switch_on_400;
@@ -174,13 +174,13 @@ async fn local_billing_output_limit_skips_unsuitable_target_before_dispatch() {
         let (status, body) = f.call("small request").await;
         assert_eq!(status, StatusCode::OK, "switch_on_400={switch_on_400}: {body}");
         assert_eq!(body["choices"][0]["message"]["content"], "fallback recovered");
-        assert_eq!(f.sources[0].count(), 0, "local capacity failure must not be sent upstream");
-        assert_eq!(f.sources[1].count(), 1, "next configured target must receive the original request");
-        assert_eq!(f.sources[1].state.seen.lock().unwrap()[0]["max_tokens"], 64, "explicit caller cap must not be reduced to fit the first target");
+        assert_eq!(f.sources[0].count(), 1, "price estimates do not block the current target");
+        assert_eq!(f.sources[1].count(), 0, "price estimates alone must not trigger fallback");
+        assert_eq!(f.sources[0].state.seen.lock().unwrap()[0]["max_tokens"], 64, "explicit caller cap must not be reduced to fit the first target");
         f.flush().await;
         let rows: Vec<i64> = f.state.conn().prepare("SELECT channel_id FROM billing_ledger WHERE request_id>0 ORDER BY id").unwrap()
             .query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(rows, vec![f.channels[1].0], "only the dispatched source owns a financial reservation");
+        assert_eq!(rows, vec![f.channels[0].0], "only the dispatched source owns a financial reservation");
     }
 }
 
@@ -199,18 +199,18 @@ async fn local_source_output_limit_skips_unsuitable_target_before_dispatch() {
 }
 
 #[tokio::test]
-async fn all_local_billing_output_limits_return_the_actual_bound_without_dispatch() {
+async fn all_price_output_estimates_below_request_still_allow_dispatch() {
     let f = Fixture::new().await;
     f.price(0, 100_000, 16);
     f.price(1, 100_000, 32);
     f.publish();
     let (status, body) = f.call("small request").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["type"], "billing_token_limit", "{body}");
-    let message = body["error"]["message"].as_str().unwrap().to_ascii_lowercase();
-    assert!(message.contains("output") && message.contains("64") && message.contains("32"), "the exhausted route must report the requested output and the final source's limit: {body}");
-    assert_eq!(f.sources.iter().map(Source::count).sum::<usize>(), 0);
-    assert_eq!(f.state.conn().query_row("SELECT count(*) FROM billing_ledger WHERE request_id>0", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(f.sources[0].count(), 1);
+    assert_eq!(f.sources[1].count(), 0);
+    assert_eq!(f.sources[0].state.seen.lock().unwrap()[0]["max_tokens"], 64);
+    f.flush().await;
+    assert_eq!(f.state.conn().query_row("SELECT count(*) FROM billing_ledger WHERE request_id>0", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
 }
 
 #[tokio::test]
@@ -231,7 +231,7 @@ async fn real_upstream_400_still_respects_the_target_switch() {
 }
 
 #[tokio::test]
-async fn billing_input_limit_skips_only_the_source_that_cannot_reserve_its_input() {
+async fn price_input_estimate_does_not_skip_current_source() {
     let f = Fixture::new().await;
     f.price(0, 128, 1024);
     f.price(1, 100_000, 1024);
@@ -240,14 +240,14 @@ async fn billing_input_limit_skips_only_the_source_that_cannot_reserve_its_input
     f.publish();
     let (status, body) = f.call(&"a".repeat(8000)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(f.sources[0].count(), 0);
-    assert_eq!(f.sources[1].count(), 1);
+    assert_eq!(f.sources[0].count(), 1);
+    assert_eq!(f.sources[1].count(), 0);
     f.flush().await;
     let (channel, input): (i64, i64) = f.state.conn().query_row(
         "SELECT channel_id,input_bound FROM billing_ledger WHERE request_id>0 ORDER BY id DESC LIMIT 1",
         [], |row| Ok((row.get(0)?, row.get(1)?)),
     ).unwrap();
-    assert_eq!(channel, f.channels[1].0);
+    assert_eq!(channel, f.channels[0].0);
     assert!(input >= 8000, "the financial reservation must not shrink to the first source's price cap: {input}");
 }
 
@@ -274,6 +274,8 @@ async fn private_alias_advances_target_after_local_capacity_rejection() {
     let f = Fixture::new().await;
     f.price(0, 100_000, 16);
     f.price(1, 100_000, 1024);
+    f.source_output(0, 16);
+    f.source_output(1, 128);
     f.publish_private();
     let (status, body) = f.call("small request").await;
     assert_eq!(status, StatusCode::OK, "a local capacity mismatch must advance the private alias cursor too: {body}");
@@ -288,6 +290,8 @@ async fn provider_credential_capacity_rejection_does_not_block_the_next_key() {
         let provider = f.combine_credentials();
         f.price(0, 100_000, 16);
         f.price(1, 100_000, 1024);
+        f.source_output(0, 16);
+        f.source_output(1, 128);
         f.config.targets.truncate(1);
         f.publish();
         let first = db::provider_pool::source_credential(&f.state.conn(), f.channels[0].0).unwrap().unwrap();
@@ -303,21 +307,22 @@ async fn provider_credential_capacity_rejection_does_not_block_the_next_key() {
         f.flush().await;
         let channel: i64 = f.state.conn().query_row("SELECT channel_id FROM billing_ledger WHERE request_id>0 ORDER BY id DESC LIMIT 1", [], |row| row.get(0)).unwrap();
         assert_eq!(channel, f.channels[1].0);
-        let after = db::provider_pool::affinity_token(&f.state.conn(), 1, provider).unwrap().unwrap();
-        if let Some(previous) = previous {
-            assert_eq!(after, previous, "request-local capacity rejection must not rotate persistent user affinity");
-        } else {
-            assert_eq!(after.credential_id, second.id, "new affinity belongs to the key actually dispatched");
+        let after = db::provider_pool::affinity_token(&f.state.conn(), 1, provider).unwrap();
+        assert_eq!(after, previous, "current selection must not create or rewrite legacy affinity");
+        if !preexisting_affinity {
+            assert!(after.is_none(), "a successful fallback must not create persistent affinity");
         }
     }
 }
 
 #[tokio::test]
-async fn pinned_native_source_does_not_cross_sources_after_local_capacity_rejection() {
+async fn legacy_native_pin_does_not_block_current_source_capacity_fallback() {
     use tokengo_server::{protocol::Protocol, protocol_sessions};
     let f = Fixture::new().await;
     f.price(0, 100_000, 16);
     f.price(1, 100_000, 1024);
+    f.source_output(0, 16);
+    f.source_output(1, 128);
     f.publish();
     let generation: i64 = f.state.conn().query_row(
         "SELECT binding_generation FROM channels WHERE id=?1", [f.channels[0].0], |row| row.get(0),
@@ -333,8 +338,10 @@ async fn pinned_native_source_does_not_cross_sources_after_local_capacity_reject
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
     let body: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["type"], "billing_token_limit", "{body}");
-    assert_eq!(f.sources.iter().map(Source::count).sum::<usize>(), 0, "a pinned session must not migrate to a larger source");
-    assert_eq!(protocol_sessions::load(&f.state.conn(), &owner).unwrap(), Some(pin));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(f.sources[0].count(), 0, "the current source window still rejects an oversized output");
+    assert_eq!(f.sources[1].count(), 1, "a legacy native pin must not block current fallback selection");
+    f.flush().await;
+    let channel: i64 = f.state.conn().query_row("SELECT channel_id FROM billing_ledger WHERE request_id>0 ORDER BY id DESC LIMIT 1", [], |row| row.get(0)).unwrap();
+    assert_eq!(channel, f.channels[1].0);
 }

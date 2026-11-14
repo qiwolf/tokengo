@@ -183,8 +183,8 @@ async fn rerank_missing_id_gets_fresh_uuid_and_unknown_usage_stays_unknown() {
     assert_eq!(first["meta"], json!({"billed_units":{},"tokens":{}}));
     let entry = f.latest();
     assert_eq!(entry.input_tokens, None);
-    assert_eq!(entry.usage_certainty, "estimated");
-    assert!(entry.debit_micro.unwrap() > 0);
+    assert_eq!(entry.usage_certainty, "unknown");
+    assert_eq!(entry.debit_micro, None);
 }
 #[tokio::test]
 async fn rerank_keeps_existing_null_missing_and_empty_document_refill_contract() {
@@ -227,6 +227,6 @@ async fn rerank_negative_total_tokens_is_rejected_and_never_billed_as_reported_z
     let entry = f.latest();
     assert_ne!(entry.usage_certainty, "reported");
     assert_eq!(entry.input_tokens, None);
-    assert!(entry.debit_micro.unwrap() > 0);
+    assert_eq!(entry.debit_micro, None);
     assert_eq!(f.calls.load(Ordering::SeqCst), 1);
 }

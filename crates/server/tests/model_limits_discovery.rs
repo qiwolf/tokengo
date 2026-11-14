@@ -71,17 +71,26 @@ async fn failed_discovery_audit_rolls_back_the_cache_replacement(){
  let option=f.option().await;assert_eq!(option["max_input_tokens"],1000000);assert_eq!(option["max_output_tokens"],16000);
 }
 
-#[tokio::test]
-async fn queued_discovery_input_window_growth_cannot_exceed_the_admitted_text_reservation(){
+async fn queued_discovery_input_window_growth(tpm:Option<u64>){
  let f=Fixture::new(json!({"data":[{"id":"native-model","limit":{"context":1000,"output":1024}}]})).await;
  f.state.routing().cfg.probe_enabled=false;f.state.routing().cfg.retry_times=0;
- let (key_id,key)={let c=f.state.conn();let row=db::channels::get(&c,f.channel).unwrap().unwrap();db::channels::update(&c,f.channel,&row.name,&row.base_url,true,false,1).unwrap();db::provider_pool::backfill(&c,&f.state.secrets).unwrap();let(k,key)=db::identity::create_key(&c,1,"tpm-source-context",&db::identity::Policy{tpm:Some(20000),..Default::default()},None,None).unwrap();db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:f.channel.0,model:"logical".into(),input_micro_per_million:1000000,output_micro_per_million:1000000,max_input_tokens:50000,max_output_tokens:5000},"fixture").unwrap();(k.id,key)};
+ let (key_id,key)={let c=f.state.conn();let row=db::channels::get(&c,f.channel).unwrap().unwrap();db::channels::update(&c,f.channel,&row.name,&row.base_url,true,false,1).unwrap();db::provider_pool::backfill(&c,&f.state.secrets).unwrap();let(k,key)=db::identity::create_key(&c,1,"tpm-source-context",&db::identity::Policy{tpm,..Default::default()},None,None).unwrap();db::billing::create_price(&c,&db::billing::Price{currency:"CNY".into(),id:0,channel_id:f.channel.0,model:"logical".into(),input_micro_per_million:1000000,output_micro_per_million:1000000,max_input_tokens:50000,max_output_tokens:5000},"fixture").unwrap();(k.id,key)};
  let(s,v)=f.discover().await;assert_eq!(s,StatusCode::OK,"{v}");
  let gate=f.state.channel_gate(f.channel.0,1).unwrap();let held=gate.try_acquire_owned().unwrap();
  let body=json!({"model":"logical","messages":[{"role":"user","content":"x".repeat(3000)}],"max_tokens":64});let state=f.state.clone();let request=Request::builder().method("POST").uri("/v1/chat/completions").header("authorization",format!("Bearer {key}")).header("content-type","application/json").body(Body::from(body.to_string())).unwrap();let task=tokio::spawn(async move{app(state).oneshot(request).await.unwrap()});
  let admitted=tokio::time::timeout(std::time::Duration::from_secs(5),async {loop {let tokens:Option<i64>=f.state.conn().query_row("SELECT tokens FROM quota_events WHERE scope='key' AND scope_id=?1 ORDER BY at_ms DESC LIMIT 1",[key_id],|r|r.get(0)).optional().unwrap();if let Some(tokens)=tokens{break tokens;}tokio::time::sleep(std::time::Duration::from_millis(5)).await;}}).await.expect("request must enter admission before source queue");
  assert!(admitted<(body.to_string().len() as i64),"old source window must clip the conservative input reservation");
  *f.catalog.body.lock().unwrap()=json!({"data":[{"id":"native-model","limit":{"context":10000,"output":1024}}]});let(s,v)=f.discover().await;assert_eq!(s,StatusCode::OK,"{v}");drop(held);
- let response=tokio::time::timeout(std::time::Duration::from_secs(5),task).await.unwrap().unwrap();assert_eq!(response.status(),StatusCode::BAD_REQUEST);let raw=to_bytes(response.into_body(),1<<20).await.unwrap();let v:Value=serde_json::from_slice(&raw).unwrap();assert_eq!(v["error"]["type"],"source_context_changed","{v}");assert_eq!(f.catalog.inference_calls.load(Ordering::SeqCst),0,"the larger execution reservation must not bypass the admitted TPM hold");
- let recorded:i64=f.state.conn().query_row("SELECT tokens FROM quota_events WHERE scope='key' AND scope_id=?1 ORDER BY at_ms DESC LIMIT 1",[key_id],|r|r.get(0)).unwrap();assert_eq!(recorded,admitted);
+ let response=tokio::time::timeout(std::time::Duration::from_secs(5),task).await.unwrap().unwrap();
+ let status=response.status();let raw=to_bytes(response.into_body(),1<<20).await.unwrap();let v:Value=serde_json::from_slice(&raw).unwrap();
+ if tpm.is_some(){
+  assert_eq!(status,StatusCode::BAD_REQUEST,"{v}");assert_eq!(v["error"]["type"],"source_context_changed","{v}");assert_eq!(f.catalog.inference_calls.load(Ordering::SeqCst),0,"the larger execution reservation must not bypass the admitted TPM hold");
+  let recorded:i64=f.state.conn().query_row("SELECT tokens FROM quota_events WHERE scope='key' AND scope_id=?1 ORDER BY at_ms DESC LIMIT 1",[key_id],|r|r.get(0)).unwrap();assert_eq!(recorded,admitted);
+ }else{
+  assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(f.catalog.inference_calls.load(Ordering::SeqCst),1,"without a TPM limit a larger current source window must remain usable");
+ }
 }
+#[tokio::test]
+async fn queued_discovery_input_window_growth_cannot_exceed_the_admitted_tpm_reservation(){queued_discovery_input_window_growth(Some(20000)).await;}
+#[tokio::test]
+async fn queued_discovery_input_window_growth_without_tpm_forwards_normally(){queued_discovery_input_window_growth(None).await;}

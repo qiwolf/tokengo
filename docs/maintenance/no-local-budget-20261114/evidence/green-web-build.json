@@ -1,0 +1,13 @@
+{
+  "host": "build-test",
+  "source_phase": "green",
+  "source_manifest_sha256": "ea633929b6793e124e6f8e11d17ae6e4caeaf736c474073b0587a20088e42e07",
+  "command": [
+    "trunk",
+    "build",
+    "--release"
+  ],
+  "cwd": "/srv/build/tokengo-no-local-budget-20261114/source/crates/web",
+  "exit_code": 0,
+  "seconds": 141.75678157806396
+}

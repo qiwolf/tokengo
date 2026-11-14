@@ -1,0 +1,201 @@
+{
+  "host": "build-test",
+  "server_passed": 926,
+  "server_failed": 0,
+  "server_ignored": 4,
+  "suite_count": 30,
+  "suites": {
+    "lib": {
+      "passed": 636,
+      "failed": 0,
+      "ignored": 4,
+      "log": "release-release-tests.log"
+    },
+    "billing": {
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "billing_fallback": {
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "billing_observation_only": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "channel_protocol_patch": {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "chat_opaque_ownership": {
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0,
+      "log": "accepted-accept-tests.log"
+    },
+    "identity": {
+      "passed": 12,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "identity_proxy": {
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "managed_users": {
+      "passed": 24,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "model_limits_discovery": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "model_routing": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "native_audio": {
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "native_reservation_estimates": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "operations_tokens": {
+      "passed": 20,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "panel_accounts": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "pricing_lifecycle": {
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "protocol_routes": {
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "protocol_safety": {
+      "passed": 12,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "protocol_selection_matrix": {
+      "passed": 28,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "provider_parameter_combinations": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "log": "accepted-accept-tests.log"
+    },
+    "provider_pool": {
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "log": "accepted-accept-tests.log"
+    },
+    "request_billing": {
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "rerank_compat": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "responses_source_budgets": {
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "search_routes": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "sessions": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "source_admission_bounds": {
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "log": "accepted-accept-tests.log"
+    },
+    "source_context_bounds": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "tool_unit_permissions": {
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log": "release-release-tests.log"
+    },
+    "proxy-filtered": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log": "accepted-proxy-switch.log",
+      "filter": "explicit_400_is_request_local_and_disabled_switches_stop"
+    }
+  },
+  "reused_passing_broad_suites_production_identical": true,
+  "only_followup_changes": [
+    "crates/server/tests/chat_opaque_ownership.rs",
+    "crates/server/tests/provider_parameter_combinations.rs",
+    "crates/server/tests/provider_pool.rs",
+    "crates/server/tests/source_admission_bounds.rs"
+  ],
+  "web_passed": 223,
+  "browser_cases": 10,
+  "browser_checks": 118,
+  "note": "Broad release run had 5 obsolete assertions in 4 suites. Only these suites were updated and rerun; production source and previously passing suites unchanged."
+}

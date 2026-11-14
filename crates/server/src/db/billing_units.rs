@@ -37,22 +37,8 @@ pub fn create_unit_price(c:&Connection,p:&UnitPrice,actor:&str)->Result<UnitPric
     audit(&c,"unit_price_created",actor,&out.id.to_string(),&serde_json::to_string(&out).map_err(|_|bad("unit price serialization"))?)?;
     c.commit()?;Ok(out)
 }
-fn hold_unit_scopes(c:&Connection,user:i64,key:i64,amount:i64,priced:bool)->Result<Vec<(&'static str,i64)>> {
-    let scopes=allocation_scopes(c,user,key)?;
-    for (scope,id) in &scopes {
-        reject_frozen_scope(c,scope,*id)?;
-        c.execute("INSERT OR IGNORE INTO billing_budgets(scope,scope_id,currency) VALUES(?1,?2,'CNY')",params![scope,id])?;
-        let budget=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",params![scope,id],budget_row)?;
-        if !priced&&budget.limit_micro.is_some() {return Err(bad("config_required: budgeted attempts require explicit pricing"));}
-        let held=budget.reserved_micro.checked_add(amount).ok_or_else(||bad("unit reservation overflow"))?;
-        let total=budget.spent_micro.checked_add(held).ok_or_else(||bad("unit budget overflow"))?;
-        if budget.limit_micro.is_some_and(|limit|total>limit){return Err(bad("billing budget exhausted"));}
-        c.execute("UPDATE billing_budgets SET reserved_micro=?3 WHERE scope=?1 AND scope_id=?2 AND currency='CNY'",params![scope,id,held])?;
-    }
-    Ok(scopes)
-}
 pub fn reserve_units(c:&Connection,user:i64,key:i64,request:i64,attempt:&str,p:&UnitPrice,bound_quantity_milli:i64)->Result<i64> {
-    if p.currency!="CNY"||bound_quantity_milli<0||bound_quantity_milli>p.max_quantity_milli {return Err(bad("invalid unit reservation bound or currency"));}
+    if p.currency!="CNY"||bound_quantity_milli<0 {return Err(bad("invalid unit reservation bound or currency"));}
     reserve_unit_inner(c,user,key,request,attempt,p.channel_id,&p.model,&p.unit,bound_quantity_milli,Some(p))
 }
 pub fn reserve_units_unpriced(c:&Connection,user:i64,key:i64,request:i64,attempt:&str,channel:i64,model:&str,bound_quantity_milli:i64)->Result<i64> {
@@ -72,14 +58,14 @@ fn reserve_unit_inner(c:&Connection,user:i64,key:i64,request:i64,attempt:&str,ch
         let stored=c.query_row(&format!("{UNIT_PRICE_SELECT} WHERE id=?1"),[price.id],unit_price_row).optional()?.ok_or_else(||bad("unknown unit price version"))?;
         if stored!=*price {return Err(bad("unit price snapshot mismatch"));}
     }
-    let scopes=hold_unit_scopes(&c,user,key,amount,price.is_some())?;
+    let scopes=observation_scopes(&c,user,key)?;
     let auth=super::identity::context(&c,key)?.ok_or_else(||bad("inactive gateway key"))?;
     let raw=price.map(serde_json::to_string).transpose().map_err(|_|bad("unit price serialization"))?;
     // The legacy CHECK retains token/request as storage discriminator; pricing_unit
     // is the authoritative measured unit and is serialized as billing_unit.
     c.execute("INSERT INTO billing_ledger(attempt_id,user_id,key_id,request_id,channel_id,model,input_bound,output_bound,reserved_micro,created_ms,billing_unit,currency,pricing_unit,unit_price_id,unit_price_snapshot,bound_quantity_milli,auth_snapshot) VALUES(?1,?2,?3,?4,?5,?6,0,0,?7,?8,'request','CNY',?9,?10,?11,?12,?13)",params![attempt,user,key,request,channel,model,amount,now_ms(),unit,price.map(|p|p.id),raw,bound,serde_json::to_string(&auth).map_err(|_|bad("unit auth serialization"))?])?;
     let id=c.last_insert_rowid();
-    for (scope,scope_id) in scopes {c.execute("INSERT INTO billing_allocations(reservation_id,scope,scope_id,reserved_micro) VALUES(?1,?2,?3,?4)",params![id,scope,scope_id,amount])?;}
+    for (scope,scope_id) in scopes {c.execute("INSERT INTO billing_allocations(reservation_id,scope,scope_id,reserved_micro) VALUES(?1,?2,?3,?4)",params![id,scope,scope_id,0])?;}
     c.commit()?;Ok(id)
 }
 pub fn settle_units(c:&Connection,id:i64,quantity_milli:Option<i64>,status:&str)->Result<()> {finish_units(c,id,quantity_milli,status,false)}
@@ -91,17 +77,11 @@ fn finish_units(c:&Connection,id:i64,quantity:Option<i64>,status:&str,release:bo
     if row.status!="reserved" {c.commit()?;return Ok(());}
     let observed=if release {Some(0)}else{match(&row.unit_price_snapshot,quantity){(Some(p),Some(n))=>Some(unit_cost(p,n)?),_=>None}};
     let overrun=observed.is_some_and(|n|n>row.reserved_micro);
-    let debit=if release {0}else{observed.unwrap_or(row.reserved_micro).min(row.reserved_micro)};
-    let scopes=c.prepare("SELECT scope,scope_id FROM billing_allocations WHERE reservation_id=?1")?.query_map([id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    for (scope,scope_id) in scopes {
-        let budget=c.query_row("SELECT scope,scope_id,limit_micro,spent_micro,reserved_micro,frozen,currency FROM billing_budgets WHERE scope=?1 AND scope_id=?2 AND currency=?3",params![scope,scope_id,row.currency],budget_row)?;
-        let held=budget.reserved_micro.checked_sub(row.reserved_micro).filter(|n|*n>=0).ok_or_else(||bad("inconsistent unit hold"))?;
-        let spent=budget.spent_micro.checked_add(debit).ok_or_else(||bad("unit spend overflow"))?;
-        c.execute("UPDATE billing_budgets SET reserved_micro=?3,spent_micro=?4,frozen=MAX(frozen,?5) WHERE scope=?1 AND scope_id=?2 AND currency=?6",params![scope,scope_id,held,spent,overrun,row.currency])?;
-    }
+    let debit=if release {Some(0)}else{observed};
+    settle_observation_scopes(&c,id,&row.currency,debit)?;
     let unpriced=row.unit_price_snapshot.is_none()&&!release;
-    let certainty=if release {"not_sent"}else if unpriced {"unpriced"}else if observed.is_some(){"measured"}else{"estimated"};
-    c.execute("UPDATE billing_ledger SET quantity_milli=?2,debit_micro=?3,observed_cost_micro=?4,usage_certainty=?5,status=?6,outcome=?7,overrun=?8,settled_ms=?9 WHERE id=?1",params![id,quantity,if unpriced{None}else{Some(debit)},observed,certainty,if unpriced{"unpriced"}else{status},status,overrun,now_ms()])?;
+    let certainty=if release {"not_sent"}else if unpriced {"unpriced"}else if observed.is_some(){"measured"}else{"unknown"};
+    c.execute("UPDATE billing_ledger SET quantity_milli=?2,debit_micro=?3,observed_cost_micro=?4,usage_certainty=?5,status=?6,outcome=?7,overrun=?8,settled_ms=?9 WHERE id=?1",params![id,quantity,if unpriced{None}else{debit},observed,certainty,if unpriced{"unpriced"}else{status},status,overrun,now_ms()])?;
     c.commit()?;Ok(())
 }
 
@@ -123,35 +103,35 @@ mod currency_unit_tests {
         let id=reserve_units(&c,1,key,1,"asr",&p,2500).unwrap();
         assert_eq!(reserve_units(&c,1,key,1,"asr",&p,2500).unwrap(),id);
         assert!(reserve_units(&c,1,key,1,"asr",&p,2501).is_err());
-        assert_eq!(budgets(&c,Some("user"),Some(1)).unwrap()[0].reserved_micro,5000);
+        assert_eq!(budgets(&c,Some("user"),Some(1)).unwrap()[0].reserved_micro,0);
         settle_units(&c,id,Some(2000),"ok").unwrap();settle_units(&c,id,Some(2500),"ok").unwrap();
         let row=usage(&c,&UsageQuery::default()).unwrap().remove(0);
         assert_eq!((row.currency.as_str(),row.billing_unit.as_str(),row.quantity_milli,row.debit_micro,row.observed_cost_micro,row.usage_certainty.as_str()),("CNY","minute",Some(2000),Some(4000),Some(4000),"measured"));
         let summary=usage_summary(&c,&UsageQuery::default()).unwrap();assert_eq!((summary.unknown_input_entries,summary.unknown_output_entries,summary.total_tokens,summary.known_debit_micro),(0,0,0,None));assert_eq!(summary.amounts_by_currency[0].known_debit_micro,4000);
         assert_eq!(budgets(&c,Some("user"),Some(1)).unwrap()[0].spent_micro,4000);
-        assert!(reserve_units(&c,1,key,2,"too-large",&p,60001).is_err());
+        assert!(reserve_units(&c,1,key,2,"above-estimate",&p,60001).is_ok());
     }
     #[test]
-    fn unknown_measured_usage_keeps_hold_and_not_sent_is_known_zero() {
+    fn unknown_measured_usage_keeps_estimate_and_not_sent_is_known_zero() {
         let(c,key,p)=fixture();
         let id=reserve_units(&c,1,key,1,"unknown",&p,2500).unwrap();
         recover(&c).unwrap();let row=usage(&c,&UsageQuery::default()).unwrap().remove(0);
-        assert_eq!((row.quantity_milli,row.debit_micro,row.observed_cost_micro,row.usage_certainty.as_str()),(None,Some(5000),None,"estimated"));
+        assert_eq!((row.quantity_milli,row.debit_micro,row.observed_cost_micro,row.usage_certainty.as_str()),(None,None,None,"unknown"));
         assert_eq!(row.id,id);
         let id=reserve_units_unpriced(&c,1,key,2,"not-sent",1,"unknown",2500).unwrap();
         settle_units(&c,id,Some(0),"not_sent").unwrap();
         let row=usage(&c,&UsageQuery::default()).unwrap().remove(0);
         assert_eq!((row.debit_micro,row.observed_cost_micro,row.usage_certainty.as_str()),(Some(0),Some(0),"not_sent"));
         set_budget(&c,"key",key,Some(100),"test").unwrap();
-        assert!(reserve_units_unpriced(&c,1,key,3,"capped-unknown",1,"unknown",2500).is_err());
+        assert!(reserve_units_unpriced(&c,1,key,3,"capped-unknown",1,"unknown",2500).is_ok());
     }
     #[test]
-    fn unit_overrun_keeps_observed_cost_caps_debit_and_freezes() {
+    fn unit_estimate_overrun_records_full_observed_cost_without_freezing() {
         let(c,key,p)=fixture();let id=reserve_units(&c,1,key,1,"overrun",&p,1000).unwrap();
         settle_units(&c,id,Some(2500),"ok").unwrap();
         let row=usage(&c,&UsageQuery::default()).unwrap().remove(0);
-        assert_eq!((row.debit_micro,row.observed_cost_micro,row.overrun),(Some(2000),Some(5000),true));
-        assert!(reserve_units(&c,1,key,2,"blocked",&p,1000).is_err());
+        assert_eq!((row.debit_micro,row.observed_cost_micro,row.overrun),(Some(5000),Some(5000),true));
+        assert!(reserve_units(&c,1,key,2,"after-overrun",&p,1000).is_ok());
     }
     #[test]
     fn scalar_units_and_currency_queries_do_not_mix_money() {
@@ -165,9 +145,9 @@ mod currency_unit_tests {
         assert_eq!(usage_summary(&c,&UsageQuery::default()).unwrap().known_debit_micro,None);assert_eq!(usage_summary(&c,&UsageQuery::default()).unwrap().amounts_by_currency[0].known_debit_micro,999999);
         assert_eq!(usage(&c,&UsageQuery{currency:Some("all".into()),..Default::default()}).unwrap().len(),1);
         c.execute("INSERT INTO billing_budgets(scope,scope_id,currency,limit_micro,frozen) VALUES('user',1,'USD',NULL,1)",[]).unwrap();
-        assert!(reserve_units_unpriced(&c,1,key,2,"frozen-dollar",1,"x",1).is_err());
-        crate::db::billing_management::update_budget_currency(&c,"user",1,None,Some(false),"test","USD").unwrap();
-        reserve_units_unpriced(&c,1,key,2,"unfrozen",1,"x",1).unwrap();
+        assert!(reserve_units_unpriced(&c,1,key,2,"legacy-frozen-dollar",1,"x",1).is_ok());
+        assert!(crate::db::billing_management::update_budget_currency(&c,"user",1,None,Some(false),"test","USD").is_err());
+        reserve_units_unpriced(&c,1,key,3,"still-callable",1,"x",1).unwrap();
     }
     #[test]
     fn migration_preserves_usd_snapshots_pending_holds_and_is_idempotent() {

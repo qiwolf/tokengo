@@ -30,7 +30,7 @@ fn forbidden() -> ApiError {
     ApiError::new(
         axum::http::StatusCode::FORBIDDEN,
         "policy_broadening",
-        "只能在本人授权和现有密钥限制内缩小权限、额度或有效期",
+        "只能在本人授权和现有密钥限制内缩小权限或有效期",
     )
 }
 fn dbbad(e: impl std::fmt::Display) -> db::DbError {
@@ -88,11 +88,13 @@ fn user_view(c: &Connection, u: &identity::User) -> db::Result<Value> {
             .collect::<Vec<_>>()
     );
     value["budget"] = json!(budget(c, "user", u.id)?);
+    value["budget_enforcement"] = json!(false);
     Ok(value)
 }
 fn key_view(c: &Connection, k: &identity::VKey) -> db::Result<Value> {
     let mut value = serde_json::to_value(k).map_err(dbbad)?;
     value["budget"] = json!(budget(c, "key", k.id)?);
+    value["budget_enforcement"] = json!(false);
     value["can_reveal"]=json!(db::gateway_keys::can_reveal(c,k.id)?);
     let paused=identity::self_paused(c,k)?;
     let user_valid=identity::user(c,k.user_id)?.is_some_and(|u|u.enabled);
@@ -101,22 +103,6 @@ fn key_view(c: &Connection, k: &identity::VKey) -> db::Result<Value> {
     value["self_paused"]=json!(paused);
     value["can_enable"]=json!(user_valid && parent_valid && capacity && k.revoked_at.is_none() && k.expires_at.is_none_or(|t|t>db::now_ms()) && (k.enabled || paused));
     Ok(value)
-}
-// Called only inside the caller's atomic user/key write. Preserve all counters.
-// Do not call billing::set_budget here: it would open a nested transaction.
-fn set_budget(
-    c: &Connection,
-    scope: &str,
-    id: i64,
-    limit: Option<i64>,
-    actor: &str,
-) -> db::Result<()> {
-    if limit.is_some_and(|n| n < 0) {
-        return Err(dbbad("费用上限不能为负数"));
-    }
-    c.execute("INSERT INTO billing_budgets(scope,scope_id,limit_micro) VALUES(?1,?2,?3) ON CONFLICT(scope,scope_id,currency) DO UPDATE SET limit_micro=excluded.limit_micro", params![scope,id,limit])?;
-    c.execute("INSERT INTO billing_audit(event,actor,object,detail,created_ms) VALUES('budget_updated',?1,?2,?3,?4)",params![actor,format!("{scope}:{id}"),json!({"limit_micro":limit}).to_string(),db::now_ms()])?;
-    Ok(())
 }
 fn audit(c: &Connection, actor: i64, event: &str, kind: &str, id: i64) -> db::Result<()> {
     c.execute("INSERT INTO audit_events(ts_ms,action,target_type,target_id,metadata_json) VALUES(?1,?2,?3,?4,?5)", params![db::now_ms(),event,kind,id,json!({"actor_account_id":actor}).to_string()])?;
@@ -145,8 +131,9 @@ struct NewUser {
     display_name: String,
     #[serde(default)]
     policy: Policy,
-    #[serde(default)]
-    limit_micro: Option<i64>,
+    // Compatibility only: local money limits no longer enforce admission.
+    #[serde(default, rename = "limit_micro")]
+    _limit_micro: Option<Value>,
 }
 async fn create(
     root: ManagementGrant,
@@ -159,9 +146,8 @@ async fn create(
     body.policy.validate().map_err(invalid)?;
     if matches!(name.as_str(), "admin" | "root")
         || body.policy.admin_access
-        || body.limit_micro.is_some_and(|n| n < 0)
     {
-        return Err(invalid("普通用户资料或费用上限无效"));
+        return Err(invalid("普通用户资料无效"));
     }
     let hash = accounts::hash(&state, body.password).await?;
     let c = state.conn();
@@ -171,9 +157,6 @@ async fn create(
         db::passthrough::validate_service_grants(&c,None,body.policy.allowed_services.as_deref())?;
         let u = identity::create_user(&c, &body.display_name, "user", &body.policy)?;
         credentials::create(&c, &name, &body.display_name, u.id, &hash)?;
-        if body.limit_micro.is_some() {
-            set_budget(&c, "user", u.id, body.limit_micro, "root")?;
-        }
         audit(
             &c,
             root.actor_account_id(),
@@ -204,8 +187,9 @@ struct UserPatch {
     enabled: Option<bool>,
     policy: Option<Policy>,
     password: Option<String>,
-    #[serde(default, deserialize_with = "nullable")]
-    limit_micro: Option<Option<i64>>,
+    // Accept legacy clients without applying or persisting their money limit.
+    #[serde(default, rename = "limit_micro")]
+    _limit_micro: Option<Value>,
 }
 async fn update(
     root: ManagementGrant,
@@ -218,9 +202,6 @@ async fn update(
     }
     if let Some(v) = &body.policy {
         v.validate().map_err(invalid)?;
-    }
-    if body.limit_micro.flatten().is_some_and(|n| n < 0) {
-        return Err(invalid("费用上限不能为负数"));
     }
     let hash = if let Some(p) = body.password {
         credentials::password(&p).map_err(invalid)?;
@@ -261,7 +242,6 @@ async fn update(
             if let Some(v)=body.enabled{c.execute("UPDATE panel_accounts SET enabled=?1 WHERE id=?2",params![v,a.id])?;}
             if let Some(v)=&hash{c.execute("UPDATE panel_accounts SET password_hash=?1 WHERE id=?2",params![v,a.id])?;}
         }
-        if let Some(limit)=body.limit_micro{set_budget(&c,"user",id,limit,"root")?;}
         c.execute("INSERT INTO audit_events(ts_ms,action,target_type,target_id,metadata_json) VALUES(?1,'managed_user.update','user',?2,?3)",params![db::now_ms(),id,json!({"actor_account_id":root.actor_account_id()}).to_string()])?;
         user_view(&c,&u)
     }).map_err(invalid)?;
@@ -382,7 +362,7 @@ async fn own_keys(
         .map(|k| key_view(&c, k))
         .collect::<db::Result<Vec<_>>>()?;
     Ok(Json(
-        json!({"keys":keys,"services":db::passthrough::services_for_user(&c,u.id)?,"policy":policy,"budget":budget(&c,"user",u.id)?,"models":models,"max_active_keys":MAX_ACTIVE_KEYS}),
+        json!({"keys":keys,"services":db::passthrough::services_for_user(&c,u.id)?,"policy":policy,"budget":budget(&c,"user",u.id)?,"budget_enforcement":false,"models":models,"max_active_keys":MAX_ACTIVE_KEYS}),
     ))
 }
 #[derive(Deserialize)]
@@ -391,42 +371,9 @@ struct NewKey {
     name: String,
     policy: Option<Policy>,
     expires_at: Option<i64>,
-    #[serde(default, deserialize_with = "nullable")]
-    limit_micro: Option<Option<i64>>,
-}
-fn check_limit(
-    c: &Connection,
-    u: &identity::User,
-    old: Option<&identity::VKey>,
-    limit: Option<i64>,
-) -> Result<(), ApiError> {
-    if limit.is_some_and(|n| n < 0) {
-        return Err(invalid("费用上限不能为负数"));
-    }
-    let mut caps = vec![budget(c, "user", u.id)?.and_then(|b| b.limit_micro)];
-    if let Some(k) = old {
-        caps.push(budget(c, "key", k.id)?.and_then(|b| b.limit_micro));
-        let mut parent = k.parent_key_id;
-        let mut seen = std::collections::HashSet::new();
-        while let Some(id) = parent {
-            if !seen.insert(id) || seen.len() > 32 {
-                return Err(forbidden());
-            }
-            let p = identity::key(c, id)?
-                .filter(|k| k.user_id == u.id)
-                .ok_or_else(forbidden)?;
-            caps.push(budget(c, "key", id)?.and_then(|b| b.limit_micro));
-            parent = p.parent_key_id;
-        }
-    }
-    if caps
-        .into_iter()
-        .flatten()
-        .any(|cap| limit.is_none_or(|n| n > cap))
-    {
-        return Err(forbidden());
-    }
-    Ok(())
+    // Accept legacy clients without applying or persisting their money limit.
+    #[serde(default, rename = "limit_micro")]
+    _limit_micro: Option<Value>,
 }
 async fn own_create(
     browser: Browser,
@@ -443,10 +390,6 @@ async fn own_create(
     if legacy_service_escalation || p.admin_access || !p.no_broader_than(&safe_policy(&u)) {
         return Err(forbidden());
     }
-    let limit = body
-        .limit_micro
-        .unwrap_or(budget(&c, "user", u.id)?.and_then(|b| b.limit_micro));
-    check_limit(&c, &u, None, limit)?;
     let value = credentials::atomic(&c, || {
         let now = db::now_ms();
         let active = identity::keys(&c, u.id)?
@@ -457,15 +400,6 @@ async fn own_create(
             return Err(dbbad("活动密钥已达32把，请先停用或撤销旧密钥"));
         }
         let (key, secret) = identity::create_key_recoverable(&c, &state.secrets, u.id, &body.name, &p, body.expires_at, None)?;
-        if limit.is_some() {
-            set_budget(
-                &c,
-                "key",
-                key.id,
-                limit,
-                &format!("account:{}", browser.credential.account.id),
-            )?;
-        }
         audit(
             &c,
             browser.credential.account.id,
@@ -486,8 +420,9 @@ struct KeyPatch {
     enabled: Option<bool>,
     #[serde(default, deserialize_with = "nullable")]
     expires_at: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "nullable")]
-    limit_micro: Option<Option<i64>>,
+    // Accept legacy clients without applying or persisting their money limit.
+    #[serde(default, rename = "limit_micro")]
+    _limit_micro: Option<Value>,
     #[serde(default)]
     revoke: bool,
 }
@@ -560,9 +495,6 @@ async fn own_update(
         }
         row.expires_at = expiry;
     }
-    if let Some(limit) = body.limit_micro {
-        check_limit(&c, &u, Some(&row), limit)?;
-    }
     if body.enabled == Some(false) {
         row.enabled = false;
     }
@@ -576,15 +508,6 @@ async fn own_update(
             db::settings::set(&c,&format!("self_paused_key:{id}"),&u.id.to_string())?;
         }
         if body.revoke { identity::clear_self_pause(&c,id)?; }
-        if let Some(limit) = body.limit_micro {
-            set_budget(
-                &c,
-                "key",
-                id,
-                limit,
-                &format!("account:{}", browser.credential.account.id),
-            )?;
-        }
         audit(
             &c,
             browser.credential.account.id,

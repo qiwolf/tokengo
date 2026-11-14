@@ -314,8 +314,9 @@ async fn machine_self_check_channel_roundtrip_and_actor_audit() {
             json!({"limit_micro":1000}),
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{b}");
-    assert_eq!(b["budgets"][0]["limit_micro"], 1000);
+    assert_eq!(s, StatusCode::GONE, "{b}");
+    let mutations:i64=f.state.conn().query_row("SELECT COUNT(*) FROM billing_budgets WHERE scope='user' AND scope_id=?1",[uid],|r|r.get(0)).unwrap();
+    assert_eq!(mutations,0,"operations tokens cannot recreate local budget gates");
     let (s, a, _) = f
         .req("GET", "/api/ops/audit", None, Some(token), json!({}))
         .await;

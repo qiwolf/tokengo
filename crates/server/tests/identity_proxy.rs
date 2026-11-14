@@ -220,16 +220,16 @@ async fn real_usage_settles_both_budgets_with_identity_and_price_snapshot() {
     assert_eq!(row, (1, 1));
 }
 #[tokio::test]
-async fn budget_denial_precedes_any_provider_call() {
+async fn legacy_budget_does_not_block_provider_call() {
     let f = Fixture::new().await;
     tariff(&f);
     db::billing::set_budget(&f.state.conn(), "key", 1, Some(10), "test").unwrap();
     let (s, v) = f.send("/v1/chat/completions", body("allowed")).await;
-    assert_eq!(s, 429, "{v}");
-    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
-async fn unpriced_usage_is_unknown_and_finite_budget_requires_pricing() {
+async fn unpriced_usage_remains_unknown_with_a_legacy_finite_budget() {
     let f = Fixture::new().await;
     assert_eq!(f.send("/v1/chat/completions", body("allowed")).await.0, 200);
     {
@@ -242,8 +242,8 @@ async fn unpriced_usage_is_unknown_and_finite_budget_requires_pricing() {
         db::billing::set_budget(&c, "key", 1, Some(100), "test").unwrap();
     }
     let (s, _) = f.send("/v1/chat/completions", body("allowed")).await;
-    assert_eq!(s, 403);
-    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(s, 200);
+    assert_eq!(f.calls.load(Ordering::SeqCst), 2);
 }
 #[tokio::test]
 async fn key_request_rate_is_enforced_before_forwarding() {
@@ -486,13 +486,13 @@ async fn missing_provider_usage_never_becomes_zero_cost() {
     let rows = db::billing::usage(&f.state.conn(), &Default::default()).unwrap();
     assert_eq!(rows.len(), 1);
     let e = &rows[0];
-    assert_eq!(e.usage_certainty, "estimated");
+    assert_eq!(e.usage_certainty, "unknown");
     assert_eq!(e.observed_cost_micro, None);
-    assert_eq!(e.debit_micro, Some(e.reserved_micro));
+    assert_eq!(e.debit_micro, None);
     assert!(e.reserved_micro > 0);
 }
 #[tokio::test]
-async fn unaffordable_source_is_skipped_without_poisoning_health_when_free_fallback_exists() {
+async fn legacy_zero_budget_does_not_skip_a_priced_source_for_free_fallback() {
     let f = Fixture::new().await;
     tariff(&f);
     {
@@ -539,32 +539,32 @@ async fn unaffordable_source_is_skipped_without_poisoning_health_when_free_fallb
     let c = f.state.conn();
     let rows = db::billing::usage(&c, &Default::default()).unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].channel_id, 2);
-    assert_eq!(rows[0].debit_micro, Some(0));
+    assert_eq!(rows[0].channel_id, 1);
+    assert_eq!(rows[0].debit_micro, Some(14));
     assert!(
         db::policy::rows(&c, "allowed")
             .unwrap()
             .iter()
             .all(|r| r.failures == 0),
-        "quota refusal is not a provider health failure"
+        "legacy budgets do not affect provider health"
     );
 }
 #[tokio::test]
-async fn multiple_choices_reserve_total_generation_and_cannot_bypass_budget() {
+async fn multiple_choices_ignore_legacy_money_budget_but_validate_choice_count() {
     let f = Fixture::new().await;
     tariff(&f);
     db::billing::set_budget(&f.state.conn(), "key", 1, Some(600), "test").unwrap();
     let mut b = body("allowed");
     b["n"] = json!(10);
     let (s, v) = f.send("/v1/chat/completions", b).await;
-    assert_eq!(s, 429, "{v}");
-    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
     for n in [json!(0), json!(-1), json!(129), json!("2"), Value::Null] {
         let mut b = body("allowed");
         b["n"] = n;
         assert_eq!(f.send("/v1/chat/completions", b).await.0, 400);
     }
-    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
 async fn immutable_identity_policy_snapshot_follows_each_billed_attempt() {
