@@ -1,0 +1,13 @@
+{
+  "host": "build-test",
+  "source_phase": "green",
+  "source_manifest_sha256": "b1ed43ad469b9f4578c170fbf1298a6aaca336be9f10e5a7d3b7cfff7c87d2db",
+  "command": [
+    "trunk",
+    "build",
+    "--release"
+  ],
+  "cwd": "/srv/build/tokengo-mobile-layout-20261114/source/crates/web",
+  "exit_code": 0,
+  "seconds": 17.365415573120117
+}

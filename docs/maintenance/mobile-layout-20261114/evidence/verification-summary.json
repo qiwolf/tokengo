@@ -1,0 +1,24 @@
+{
+  "host": "build-test",
+  "source_manifest_sha256": "b1ed43ad469b9f4578c170fbf1298a6aaca336be9f10e5a7d3b7cfff7c87d2db",
+  "accepted_source_manifest_sha256": "5d716422747d4c83580a32fbb8658f0d12ad996eec687d2f3ed304f77f6bf51f",
+  "changed_source_files": [
+    "crates/web/console-design.css"
+  ],
+  "rust_files_unchanged": true,
+  "web_archive_sha256": "969bc9bf859ad2495a9161a439cc13959eda930c72d2dd8e99f63886aee51318",
+  "web_archive_bytes": 1575345,
+  "archive_matches_remote_dist": true,
+  "current_mac_web_matches_source": true,
+  "cases": 20,
+  "checks": 88,
+  "failed_checks": 0,
+  "engines": [
+    "chromium",
+    "webkit"
+  ],
+  "screenshots": 96,
+  "script_sha256": "466e8ea02cd8503befdba41d46a356077804d3d38f35851e154937f829e7b2e8",
+  "initial_green_fixture_issue": "Menu reset and per-button scroll fixed in QA only; green/ is diagnostic, green-isolated/ is acceptance.",
+  "deployed": false
+}

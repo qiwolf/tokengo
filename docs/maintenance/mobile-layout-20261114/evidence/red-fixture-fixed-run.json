@@ -1,0 +1,14 @@
+{
+  "host": "build-test",
+  "command": [
+    "/srv/build/nanomuse-evaluation-20261024-tests/browser-venv/bin/python",
+    "/srv/build/tokengo-mobile-layout-20261114/browser/mobile-layout-qa.py",
+    "/srv/build/tokengo-no-local-budget-20261114/source/crates/web/dist",
+    "/srv/build/tokengo-mobile-layout-20261114/evidence/red-fixture-fixed"
+  ],
+  "cwd": "/srv/build/tokengo-mobile-layout-20261114",
+  "exit_code": 1,
+  "seconds": 43.417055423837155,
+  "script_sha256": "072c93935bc1a5239cf2bd32ccd6d9334beb63a30f6433adcc3d047330346785",
+  "expected": "red: reported price clipping and offscreen mobile navigation"
+}

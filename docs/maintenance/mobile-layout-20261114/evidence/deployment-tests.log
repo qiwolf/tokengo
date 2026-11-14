@@ -1,0 +1,9 @@
+test_external_runtime_drift_refuses_activation_without_restoring_configuration (test_web_only_deploy.WebOnlyDeploy.test_external_runtime_drift_refuses_activation_without_restoring_configuration) ... ok
+test_failed_served_assets_roll_back_only_web_and_keep_new_business_writes (test_web_only_deploy.WebOnlyDeploy.test_failed_served_assets_roll_back_only_web_and_keep_new_business_writes) ... ok
+test_invalid_bundle_and_path_traversal_fail_before_switch (test_web_only_deploy.WebOnlyDeploy.test_invalid_bundle_and_path_traversal_fail_before_switch) ... ok
+test_success_keeps_process_runtime_and_previous_hashed_assets (test_web_only_deploy.WebOnlyDeploy.test_success_keeps_process_runtime_and_previous_hashed_assets) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.060s
+
+OK
