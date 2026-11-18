@@ -1,0 +1,111 @@
+{
+  "tag": "v0.34.0-qiwolf.34",
+  "source_commit": "d9c423a10fa858a5ec71dafb98a8c8bce892f210",
+  "published_at": "2026-11-18T15:15:46Z",
+  "release": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.34",
+  "assets": [
+    {
+      "name": "compose.yaml",
+      "size": 797,
+      "digest": "sha256:1d165eb8516ce374275f56063f1f738466e1d54d17d8bd377e0c812c7880b619",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/compose.yaml"
+    },
+    {
+      "name": "container-deployment.md",
+      "size": 16013,
+      "digest": "sha256:53bdcf5d9d5a74feed8ef77e0825e255608d4bd4fb49e86ccb485f9e2bd4611c",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/container-deployment.md"
+    },
+    {
+      "name": "container.env.example",
+      "size": 316,
+      "digest": "sha256:5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/container.env.example"
+    },
+    {
+      "name": "image-manifest.json",
+      "size": 199,
+      "digest": "sha256:ac73b962fbf85004f14518e56a2bccbab4c545a67b2067e8b6b786c87efbedf1",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/image-manifest.json"
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "size": 564,
+      "digest": "sha256:ba17426958fc3ddd7ce260b5ab7302d2fa4d410717b95773a5bbd3fa90f3f8f4",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/image-SHA256SUMS"
+    },
+    {
+      "name": "registry-image.txt",
+      "size": 95,
+      "digest": "sha256:aab9b781ff32dc3c1319230c500d75014dc4fc791da16073b95e1548ba0ddb92",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/registry-image.txt"
+    },
+    {
+      "name": "tokengo-d9c423a10fa8-linux-x86_64.tar.gz",
+      "size": 36054783,
+      "digest": "sha256:58635120006cacf9154b16aaac4c58d4fae4e8ec166063f56448901500b56060",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/tokengo-d9c423a10fa8-linux-x86_64.tar.gz"
+    },
+    {
+      "name": "tokengo-d9c423a10fa8-linux-x86_64.tar.gz.sha256",
+      "size": 107,
+      "digest": "sha256:e3871ede28f94ea17e738da338079fac0ad24e37b21584a8750234000f93e85e",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/tokengo-d9c423a10fa8-linux-x86_64.tar.gz.sha256"
+    },
+    {
+      "name": "tokengo-d9c423a10fa858a5ec71dafb98a8c8bce892f210-linux-amd64.tar.gz",
+      "size": 41287658,
+      "digest": "sha256:e50f87d91d758f29569bca8ab420f48bc697c8e846de7e7c27bb69d14e11b7a2",
+      "browser_download_url": "https://github.com/qiwolf/tokengo/releases/download/v0.34.0-qiwolf.34/tokengo-d9c423a10fa858a5ec71dafb98a8c8bce892f210-linux-amd64.tar.gz"
+    }
+  ],
+  "independent_public_asset_verification": "passed",
+  "main_ci": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/44328046577",
+    "result": "success",
+    "native": {
+      "passed": 1782,
+      "failed": 0,
+      "ignored": 15,
+      "python": 13
+    },
+    "history": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "release_workflow": {
+    "url": "https://github.com/qiwolf/tokengo/actions/runs/44330789518",
+    "result": "success"
+  },
+  "verified_tag_documents": 838,
+  "schema": 50,
+  "native_and_restart": "passed",
+  "upgrade": {
+    "schema_before": 47,
+    "schema_after": 50,
+    "repeat_migration_idempotent": true,
+    "preserved_synthetic_price_count": 2,
+    "database_inode_and_master_key_preserved": true
+  },
+  "isolated_browser": [
+    {
+      "width": 390,
+      "passed": 12,
+      "engine": "156.0.8078.4"
+    },
+    {
+      "width": 1440,
+      "passed": 12,
+      "engine": "156.0.8078.4"
+    }
+  ],
+  "offline_container": "passed",
+  "registry": {
+    "image": "ghcr.io/qiwolf/tokengo@sha256:6c502d26cdd321341107ad99fd350d4592ab6e1da29d2489609ec784cbe5b077",
+    "verified_anonymous_layer_count": 8,
+    "method": "anonymous OCI Distribution HTTP; Docker daemon token connection returned EOF on build-test"
+  },
+  "production_deployment_in_release": false
+}

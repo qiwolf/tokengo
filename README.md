@@ -1,6 +1,8 @@
 # TokenGo
 
-**v0.34.0-qiwolf.34 发行准备中。** 本版包含模型规格目录、客户端规格 API、渠道模型配置、别名映射和原生 Responses 设置。GitHub 发行和公开产物验收待完成。[版本说明](docs/releases/v0.34.0-qiwolf.34.md) · [发行收据](docs/acceptance/2026-11-18-qiwolf34-release/README.md)。
+**当前正式版：[v0.34.0-qiwolf.34](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.34)** — 模型规格目录、渠道模型配置与定价参考值、独立映射弹窗及原生 Responses 配置。[版本说明](docs/releases/v0.34.0-qiwolf.34.md) · [发行收据](docs/acceptance/2026-11-18-qiwolf34-release/README.md)。
+
+**Current stable release: [v0.34.0-qiwolf.34](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.34).** Model specifications, channel settings and pricing references, an upstream alias editor, and native Responses configuration. [Release notes](docs/releases/v0.34.0-qiwolf.34.md) · [Release receipt](docs/acceptance/2026-11-18-qiwolf34-release/README.md).
 
 2026-11-18 main 更新：模型规格、同上游映射弹窗与 Responses 配置已在 237 实测。[版本说明](docs/releases/main-2026-11-18.md) · [生产验收](docs/acceptance/2026-11-18-model-specifications-deploy237/README.md)。
 
@@ -8,9 +10,9 @@
 
 2026-11-14 后续修复：普通用户左侧新增 **API Key** 独立入口，“我的空间”顶部可直达；已完成桌面/手机验证并更新线上，见[修复记录](docs/maintenance/personal-key-entry-20261114/README.md)。
 
-**当前正式版：[v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33)** — 普通用户 API Key 独立入口、用量失败隔离与离页任务取消，程序内版本号同步更新。见[版本说明](docs/releases/v0.34.0-qiwolf.33.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。
+**上一正式版：[v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33)** — 普通用户 API Key 独立入口、用量失败隔离与离页任务取消，程序内版本号同步更新。见[版本说明](docs/releases/v0.34.0-qiwolf.33.md)及[发行收据](docs/acceptance/2026-11-14-qiwolf33-release/README.md)。
 
-**Current stable release: [v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33).** Direct personal API Key navigation and cancellation of page-owned requests. [Release notes](docs/releases/v0.34.0-qiwolf.33.md) · [Receipt](docs/acceptance/2026-11-14-qiwolf33-release/README.md).
+**Previous stable release: [v0.34.0-qiwolf.33](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.33).** Direct personal API Key navigation and cancellation of page-owned requests. [Release notes](docs/releases/v0.34.0-qiwolf.33.md) · [Receipt](docs/acceptance/2026-11-14-qiwolf33-release/README.md).
 
 .33发行源码 `390c9ad52e17e95015062b06bf990b02d48421fb`，2026-11-14 12:47:08 UTC公开。精确 main CI与九项附件、828份包内文档、原生/容器及公开WASM浏览器76项验收通过，详见发行收据。
 

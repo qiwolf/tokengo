@@ -1,8 +1,8 @@
 # 模型兼容核实清单
 
-## v0.34.0-qiwolf.34 — 发行准备（2026-11-18）
+## v0.34.0-qiwolf.34 — 已正式发行（2026-11-18）
 
-GitHub 发行与公开产物验收待完成。真实模型调用的已核实范围见下方 237 记录。[.34 版本说明](releases/v0.34.0-qiwolf.34.md) · [.34 发行收据](acceptance/2026-11-18-qiwolf34-release/README.md)
+GitHub 于北京时间 23:15:46 公开本版。九项附件与原生包、旧库升级、公开 WebAssembly、离线容器及匿名 OCI 镜像独立验收通过。真实模型调用的已核实范围见下方 237 记录。[.34 版本说明](releases/v0.34.0-qiwolf.34.md) · [.34 发行收据](acceptance/2026-11-18-qiwolf34-release/README.md)
 
 ## 2026-11-18 模型规格与真实调用
 
