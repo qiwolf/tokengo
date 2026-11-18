@@ -2329,3 +2329,26 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
  .usage-filter-bar .usage-custom-range .billing-field { flex-direction:column; align-items:stretch; flex:1 1 calc(50% - 12px); gap:4px; }
  .usage-custom-range .usage-range-to { display:none; }
 }
+
+.model-specification-form > fieldset {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.model-specification-form > fieldset > :is(h3, p) { margin: 0; }
+.model-specification-form > fieldset > button { justify-self: start; }
+.model-specifications-list { margin-block-start: 12px; }
+.model-specifications-list table :is(th, td) { overflow-wrap: anywhere; }
+.console-layout .console-content .provider-model-mapping > .model-spec-edit { grid-column: 1 / -1; grid-row: auto; }
+
+.console-layout .console-content .model-specification-form select {
+  padding-inline-end: 32px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-2) 50%),
+    linear-gradient(135deg, var(--fg-2) 50%, transparent 50%);
+  background-position: right 17px center, right 12px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}

@@ -14,6 +14,7 @@ pub mod openai_transport;
 pub mod config;
 pub mod capability_detector;
 pub mod model_registry;
+mod model_specifications;
 pub mod crypto;
 pub mod db;
 pub mod billing_writer;

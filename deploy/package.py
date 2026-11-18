@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 49
 
 def digest(path):
     h = hashlib.sha256()
@@ -35,32 +35,40 @@ def stage_migrations(root, tree):
         '46': ('crates/server/src/db/usage_time.sql', 'deploy/migrations/46-usage-time.sql'),
         '47': ('crates/server/src/db/currency_units.sql', 'deploy/migrations/47-currency-units.sql'),
     }
-    parts = [
-        ('crates/server/src/db/query_performance.sql', 'deploy/migrations/45-query-performance.part.sql'),
-        ('crates/server/src/db/model_invocation_totals.sql', 'deploy/migrations/45-model-invocation-totals.part.sql'),
-    ]
+    composed = {
+        '45': ('deploy/migrations/45-query-performance.sql', [
+            ('crates/server/src/db/query_performance.sql', 'deploy/migrations/45-query-performance.part.sql'),
+            ('crates/server/src/db/model_invocation_totals.sql', 'deploy/migrations/45-model-invocation-totals.part.sql'),
+        ]),
+        '49': ('deploy/migrations/49-model-specifications.sql', [
+            ('crates/server/src/db/model_specifications.sql', 'deploy/migrations/49-model-specifications.part.sql'),
+            ('crates/server/src/db/model_specification_defaults.sql', 'deploy/migrations/49-model-specification-defaults.part.sql'),
+        ]),
+    }
     # Read every required part first; a missing migration must never produce a
     # distributable archive that silently omits part of the executed migration.
-    payloads = {source: (root / source).read_bytes() for source, _ in [*sources.values(), *parts]}
+    paths = [*sources.values(), *(part for _, parts in composed.values() for part in parts)]
+    payloads = {source: (root / source).read_bytes() for source, _ in paths}
     metadata = {}
-    for version, (source, archive) in sources.items():
+
+    def stage_file(source, archive):
         target = tree / archive
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(payloads[source])
-        metadata[version] = {'source_path': source, 'archive_path': archive,
-                             'sha256': hashlib.sha256(payloads[source]).hexdigest()}
-    part_metadata = []
-    for source, archive in parts:
-        (tree / archive).write_bytes(payloads[source])
-        part_metadata.append({'source_path': source, 'archive_path': archive,
-                              'sha256': hashlib.sha256(payloads[source]).hexdigest()})
+        raw = payloads[source]
+        target.write_bytes(raw)
+        return {'source_path': source, 'archive_path': archive,
+                'sha256': hashlib.sha256(raw).hexdigest()}
+
+    for version, (source, archive) in sources.items():
+        metadata[version] = stage_file(source, archive)
     # schema.rs uses concat!(include_str!(part0), "\n", include_str!(part1)).
     # In particular, do not strip a final newline or normalize source line ends.
-    combined = payloads[parts[0][0]] + b'\n' + payloads[parts[1][0]]
-    archive = 'deploy/migrations/45-query-performance.sql'
-    (tree / archive).write_bytes(combined)
-    metadata['45'] = {'archive_path': archive, 'sha256': hashlib.sha256(combined).hexdigest(),
-                      'parts': part_metadata, 'composition': 'parts[0] + "\\n" + parts[1]'}
+    for version, (archive, parts) in composed.items():
+        part_metadata = [stage_file(source, part) for source, part in parts]
+        combined = b'\n'.join(payloads[source] for source, _ in parts)
+        (tree / archive).write_bytes(combined)
+        metadata[version] = {'archive_path': archive, 'sha256': hashlib.sha256(combined).hexdigest(),
+                             'parts': part_metadata, 'composition': 'parts[0] + "\\n" + parts[1]'}
     return metadata
 
 def main():

@@ -84,15 +84,15 @@ fn usable(l: &channels::ChannelRow) -> bool {
 ///
 /// 行的顺序是稳定的（按名字），刷新前后不会跳；`declared_by` / `channels` 里是渠道顺序。
 pub fn list(conn: &Connection) -> Result<Vec<NameRoute>> {
-    build_routes(conn, channels::list(conn)?)
+    build_routes(conn, &channels::list(conn)?)
 }
 
 // One implementation preserves list and point-lookup routing semantics. Runtime
 // callers supply only channels/mappings for the requested normalized name.
-pub(crate) fn build_routes(conn: &Connection, chans: Vec<channels::ChannelRow>) -> Result<Vec<NameRoute>> {
+pub(crate) fn build_routes(conn: &Connection, chans: &[channels::ChannelRow]) -> Result<Vec<NameRoute>> {
     let kind_of = kinds::all(conn)?;
     let mut out: Vec<NameRoute> = Vec::new();
-    for l in &chans {
+    for l in chans {
         for m in &l.models {
             let raw = m.model.trim();
             // 保留名 auto 不是「一个模型」：它由 auto_candidates 现场算，不占一行。
@@ -193,7 +193,7 @@ pub(crate) fn build_routes(conn: &Connection, chans: Vec<channels::ChannelRow>) 
             reasons.into_iter().take(8).collect::<Vec<_>>().join("; ")
         };
         let mut claims = Vec::new();
-        for ch in &chans {
+        for ch in chans {
             if !r.declared_by.contains(&ch.id) { continue; }
             let catalog = &catalogs[&ch.id];
             for m in &ch.models {
@@ -228,7 +228,7 @@ pub fn servable(conn: &Connection) -> Result<Vec<NameRoute>> {
 /// 一个名字在哪几行上写的（面板要显示「谁勾了它」），按渠道顺序。
 pub fn routes_for(conn: &Connection, name: &str) -> Result<Option<NameRoute>> {
     if name.trim().is_empty() || is_auto(name) { return Ok(None); }
-    Ok(build_routes(conn, channels::for_model(conn,name)?)?
+    Ok(build_routes(conn, &channels::for_model(conn,name)?)?
         .into_iter()
         .find(|r| same_model_name(&r.name, name)))
 }
@@ -814,7 +814,7 @@ mod management_preview_tests {
             let p=super::super::policy::Policy {strategy:strategy.into(),explore:false};
             super::super::policy::save(&c,&p).unwrap();
             let channels=channels::list(&c).unwrap();
-            let routes=build_routes(&c,channels.clone()).unwrap();
+            let routes=build_routes(&c,&channels).unwrap();
             let now=super::super::now_ms();
             let scores=super::super::scores::all(&c,now).unwrap();
             assert_eq!(scores[&normalize_model_name("model-04")].samples,4);

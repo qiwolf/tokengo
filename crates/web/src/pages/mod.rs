@@ -30,6 +30,7 @@ pub mod billing;
 pub mod usage_period;
 pub mod usage_dashboard;
 pub mod models;
+mod model_specifications;
 pub mod route_policy;
 pub mod logs;
 pub mod overview;

@@ -65,6 +65,7 @@ async fn rewrite_deserialize_error(resp: Response) -> Response {
 fn router_inner() -> Router<SharedState> {
     Router::new()
         .merge(super::provider_diagnostics::router())
+        .merge(super::model_specifications::router())
         // —— 无鉴权 ——
         .route("/ping", get(ping))
         .route("/auth/status", get(auth_status))
@@ -1533,7 +1534,7 @@ async fn model_routes_list(
     let (routes, channels, scores, totals, auto) = {
         let conn = state.conn();
         let channels = channels::list(&conn)?;
-        let routes = model_routes::build_routes(&conn, channels.clone())?;
+        let routes = model_routes::build_routes(&conn, &channels)?;
         let scores = crate::db::scores::all(&conn, now_ms())?;
         let totals = crate::db::scores::total_calls(&conn)?;
         let cand = |kind| {

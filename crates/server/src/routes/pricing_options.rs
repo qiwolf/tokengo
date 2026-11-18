@@ -1,4 +1,4 @@
-//! Model-bound pricing metadata. Reads configured source limits; never edits model configuration.
+//! Model-bound pricing metadata and estimate defaults.
 use crate::db::{self, channels};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
@@ -62,8 +62,20 @@ fn task(c:&Connection,channel:ChannelId,mapping:&channels::ModelMapping)->db::Re
     }
     Ok((if kind.is_set(){kind.as_str()}else{"unknown"}.into(),origin.into()))
 }
-pub(super) fn for_mapping(c:&Connection,channel:ChannelId,mapping:&channels::ModelMapping)->db::Result<PricingOption> {
-    let (task_type,task_source)=task(c,channel,mapping)?;
+pub(super) fn for_mapping(
+    c: &Connection,
+    source: &channels::ChannelRow,
+    mapping: &channels::ModelMapping,
+) -> db::Result<PricingOption> {
+    let channel = source.id;
+    let (mut task_type, mut task_source) = task(c, channel, mapping)?;
+    let specification = crate::model_specifications::for_mapping(c, source, mapping)?;
+    if task_type == "unknown" {
+        if let Some(spec) = specification.as_ref().filter(|spec| spec.kind != "unknown") {
+            task_type = spec.kind.clone();
+            task_source = "model_specification".into();
+        }
+    }
     let (pricing_kind,allowed_pricing_kinds,recommended_unit,allowed_units,automatic_settlement)=match task_type.as_str(){
         "chat"|"embeddings"|"rerank"=>("token",vec!["token","request"],None,vec![],true),
         "asr"=>("unit",vec!["unit"],Some("second"),vec!["second","minute","hour"],true),
@@ -93,7 +105,35 @@ pub(super) fn for_mapping(c:&Connection,channel:ChannelId,mapping:&channels::Mod
             input=Some(value);input_source=Some(if manual.is_some(){"model_context_override"}else{"upstream_catalog"});
         }
     }
-    // Fresh, same-source supplier declarations fill only missing administrator values.
+    // An explicit usage reference replaces the configured estimate default.
+    // Existing price references remain first where there is a maintained value.
+    let specification = specification.as_ref().filter(|spec| {
+        spec.kind == "unknown" || task_type == "unknown" || spec.kind == task_type
+    });
+    let input_reference = specification.and_then(|spec| spec.input_usage_reference);
+    let output_reference = specification.and_then(|spec| spec.output_usage_reference);
+    if (input.is_none() || output.is_none() || input_reference.is_some() || output_reference.is_some())
+        && matches!(task_type.as_str(), "chat" | "embeddings" | "rerank" | "unknown")
+    {
+        let price = db::billing::price(c, &mapping.model, channel.0)?;
+        let saved_input = price.as_ref().map(|row| row.max_input_tokens).filter(|value| *value > 0);
+        let saved_output = price.map(|row| row.max_output_tokens).filter(|value| *value > 0);
+        if let Some(value) = saved_input.filter(|_| input.is_none() || input_reference.is_some()) {
+            input = Some(value);
+            input_source = Some("existing_price");
+        } else if let Some(value) = input_reference {
+            input = Some(value);
+            input_source = Some("model_specification");
+        }
+        if let Some(value) = saved_output.filter(|_| output.is_none() || output_reference.is_some()) {
+            output = Some(value);
+            output_source = Some("existing_price");
+        } else if let Some(value) = output_reference {
+            output = Some(value);
+            output_source = Some("model_specification");
+        }
+    }
+    // Fresh, same-source supplier declarations fill remaining missing values.
     let limits_discovery=super::model_limits::saved_discovery(c,channel.0,&mapping.model,crate::model_registry::upstream(mapping))?;
     if let Some(discovery)=limits_discovery.as_ref() {
         if input.is_none(){input=discovery["limits"]["max_input_tokens"].as_i64().filter(|v|*v>0);input_source=input.map(|_|"source_model_discovery");}
@@ -111,7 +151,7 @@ pub(super) fn list(c:&Connection)->db::Result<Vec<PricingOption>> {
         if !channel.enabled||!channel.provider_enabled||(linked&&credential.as_ref().is_none_or(|v|!v.enabled)){continue;}
         for mapping in channel.models.iter().filter(|m|m.enabled) {
             if db::model_routes::is_auto(&mapping.model)||!db::model_routes::enabled(c,&mapping.model)? {continue;}
-            out.push(for_mapping(c,channel.id,mapping)?);
+            out.push(for_mapping(c,&channel,mapping)?);
         }
     }
     Ok(out)
@@ -127,7 +167,7 @@ pub(super) fn for_pair(c:&Connection,channel:i64,model:&str)->db::Result<Option<
         }
         if let Some(mapping)=row.models.iter().find(|m|same_model_name(&m.model,model)){
             if !mapping.enabled||!db::model_routes::enabled(c,model)? {return Err(db::DbError::Other("模型已停用，请刷新模型配置。".into()));}
-            return for_mapping(c,row.id,mapping).map(Some);
+            return for_mapping(c,&row,mapping).map(Some);
         }
     }
     Ok(None)

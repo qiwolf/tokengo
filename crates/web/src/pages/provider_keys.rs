@@ -182,6 +182,57 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
     let picker_open = RwSignal::new(false);
     let catalog_attempted = RwSignal::new(false);
     let draft = RwSignal::new(fresh());
+    let channel_spec_editor = RwSignal::new(None::<super::model_specifications::ChannelSpecDraft>);
+    let spec_revision = RwSignal::new(0u64);
+    let spec_names = Memo::new(move |_| {
+        if !open.get() || !form_open.get() || modal_view.get() != "models" {
+            return Vec::new();
+        }
+        api::rows(&draft.get(), "models").iter().map(upstream_name).map(str::trim)
+            .filter(|name| !name.is_empty()).map(str::to_owned)
+            .collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>()
+    });
+    let spec_endpoint = Memo::new(move |_| {
+        draft.with(|row| row["base_url"].as_str().filter(|url| !url.trim().is_empty()).map(str::to_owned))
+    });
+    let specifications = RwSignal::new(std::collections::BTreeMap::<String, Value>::new());
+    let spec_generation = RwSignal::new(0u64);
+    let spec_busy = RwSignal::new(false);
+    let spec_error = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        spec_revision.get();
+        let names = spec_names.get();
+        let provider = active_provider.get();
+        let base_url = spec_endpoint.get();
+        spec_generation.update(|value| *value += 1);
+        let generation = spec_generation.get_untracked();
+        specifications.update(|rows| rows.clear());
+        spec_error.set(String::new());
+        spec_busy.set(!names.is_empty());
+        if names.is_empty() { return; }
+        leptos::task::spawn_local(async move {
+            for batch in names.chunks(250) {
+                let result = api::request("POST", "/api/model-specifications/resolve",
+                    Some(json!({"provider_id": (provider > 0).then_some(provider), "model_ids": batch, "base_url": base_url}))).await;
+                if spec_generation.try_get_untracked() != Some(generation) { return; }
+                match result {
+                    Ok(result) => specifications.update(|rows| {
+                        for row in api::rows(&result, "specifications") {
+                            if let Some(id) = row["model_id"].as_str() {
+                                rows.insert(id.to_owned(), row);
+                            }
+                        }
+                    }),
+                    Err(e) => {
+                        ctx.note_err(&e);
+                        spec_error.set(format!("无法读取模型规格：{}", e.message));
+                        break;
+                    }
+                }
+            }
+            spec_busy.set(false);
+        });
+    });
     let is_local=move || local || (create_provider && draft.get()["_endpoint_mode"]=="local");
     let secret = RwSignal::new(String::new());
     let original_models = RwSignal::new(Vec::<Value>::new());
@@ -399,15 +450,52 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
     <div class="upstream-model-picker"><label class="account-field"><span>"添加上游模型"</span><input id=format!("provider-model-query-{provider_id}") type="text" autocomplete="off" aria-controls=format!("key-model-options-{provider_id}") aria-expanded=move||picker_open.get().to_string() aria-describedby=format!("key-model-help-{provider_id}") placeholder="选择上游模型，或输入名称后按回车" prop:value=catalog_query on:focus=move |_|{picker_open.set(true);discover.run(false);} on:click=move |_|{picker_open.set(true);discover.run(false);} on:input=move|e|{catalog_query.set(event_target_value(&e));picker_open.set(true);} on:keydown=move|e|{if e.key()=="Enter"{e.prevent_default();let name=catalog_query.get_untracked();draft.update(|d|{model_note.set(choose_model(d,&name,true));});catalog_query.set(String::new());}else if e.key()=="Escape"&&picker_open.get_untracked(){e.prevent_default();e.stop_propagation();picker_open.set(false);}}/></label><p id=format!("key-model-help-{provider_id}") class="account-help">"选择可添加或重新启用模型；也可输入名称后按回车。停用保留映射，明确移除后才能重新配置。所有改动保存后生效，目录探测不发送推理请求。"</p>
     <Show when=move||picker_open.get()><div class="upstream-model-options" role="group" aria-label="上游模型选择" id=format!("key-model-options-{provider_id}")><div class="upstream-model-options-head"><span>{move||if catalog_busy.get(){"正在读取此 Key 的模型…"}else{"可选上游模型（可多选）"}}</span><button type="button" class="ghost" aria-label="关闭上游模型列表" on:click=move |_|picker_open.set(false)>"关闭"</button></div><Show when=move||!catalog_error.get().is_empty()><p role="alert">{move||catalog_error.get()}</p></Show><Show when=move||catalog_loaded.get()&&catalog.get().is_empty()><p role="status">"此 Key 未返回模型目录，可直接输入模型名。"</p></Show><Show when=move||catalog_truncated.get()&&catalog_loaded.get()><p class="account-help">"目录可能不完整，未列出的模型可手工输入。"</p></Show><Show when=move||catalog_loaded.get()&&!catalog.get().is_empty()&&!catalog.get().iter().any(|name|name.to_lowercase().contains(&catalog_query.get().to_lowercase()))><p class="account-help">"未找到匹配项，可按回车添加输入的模型名。"</p></Show><div class="upstream-model-choice-list">{move||{let query=catalog_query.get().to_lowercase();catalog.get().into_iter().filter(|n|n.to_lowercase().contains(&query)).map(|name|{let check=name.clone();let locked=name.clone();let status=name.clone();let update=name.clone();view!{<label class="account-check"><input type="checkbox" prop:checked=move||api::rows(&draft.get(),"models").iter().any(|m|(upstream_name(m)==check||m["_picker_origin"].as_str()==Some(check.as_str()))&&m["enabled"]!=false) disabled=move||api::rows(&draft.get(),"models").iter().any(|m|upstream_name(m)==locked&&m["conflict"]==true) on:change=move|e|{let checked=event_target_checked(&e);draft.update(|d|{model_note.set(choose_model(d,&update,checked));});}/><span>{name}{move||if api::rows(&draft.get(),"models").iter().any(|m|upstream_name(m)==status&&m["_picker_origin"].is_null()){"（已配置）"}else{""}}</span></label>}}).collect_view()}}</div><Show when=move||!catalog_busy.get()><button type="button" class="ghost" on:click=move |_|discover.run(true)>"重新读取模型目录"</button></Show></div></Show></div>
     <p role="status" aria-live="polite">{move||model_note.get()}</p>
+    <Show when=move || spec_busy.get()><p class="account-help" role="status">"正在匹配模型规格…"</p></Show>
+    <Show when=move || !spec_error.get().is_empty()><p class="account-error" role="alert">{move || spec_error.get()}</p></Show>
     {move||api::rows(&draft.get(),"models").into_iter().enumerate().map(|(i,m)|{
         let existing = original_models.get().iter().any(|o|o["model"]==m["model"]);
         let model=api::text(&m,"model");let up=m["upstream"].as_str().filter(|s|!s.is_empty()).unwrap_or(&model).to_string();
         let mapping=if model==up&&!existing{String::new()}else{model.clone()};
+        let spec_name = up.trim().to_owned();
+        let edit_spec_name = spec_name.clone();
         let remove_name=model.clone();let confirm_name=StoredValue::new(model.clone());let pending_name=model.clone();let note_name=StoredValue::new(model.clone());let alias_up=up.clone();
         view!{<div class="policy-limits provider-model-mapping"><label class="account-field"><span>"上游模型名"</span><input required on:keydown=move|e|{if e.key()=="Enter"{e.prevent_default();}else if e.key()=="Escape"&&picker_open.get_untracked(){e.prevent_default();e.stop_propagation();picker_open.set(false);}} readonly=m["conflict"]==true prop:value=up on:change=move|e|draft.update(|d|d["models"][i]["upstream"]=json!(event_target_value(&e)))/></label><label class="account-field"><span>"本地映射名"</span><input id=format!("model-alias-{provider_id}-{i}") readonly=existing||m["conflict"]==true placeholder="留空沿用上游名称" prop:value=mapping on:change=move|e|draft.update(|d|d["models"][i]["model"]=json!(event_target_value(&e)))/></label><label class="account-check"><input type="checkbox" disabled=m["conflict"]==true prop:checked=m["enabled"]!=false on:change=move|e|draft.update(|d|d["models"][i]["enabled"]=json!(event_target_checked(&e)))/>"模型启用"</label><div class="account-actions"><button type="button" class="ghost" disabled=m["conflict"]==true on:click=move |_|{let mut added=None;draft.update(|d|{model_note.set(add_model_alias(d,&alias_up));added=api::rows(d,"models").iter().position(|row|upstream_name(row)==alias_up&&row["model"].as_str().unwrap_or("").is_empty());});if let Some(index)=added{focus_model_control(format!("model-alias-{provider_id}-{index}"));}}>"添加同上游映射"</button>{if existing {view!{<button id=format!("remove-model-{provider_id}-{i}") type="button" class="ghost danger" disabled=m["conflict"]==true on:click=move |_|{removal_pending.set(Some(remove_name.clone()));focus_model_control(format!("confirm-model-remove-{provider_id}-{i}"));}>"移除映射"</button>}.into_any()}else{view!{<button type="button" class="ghost danger" on:click=move |_|{draft.update(|d|{if let Some(a)=d["models"].as_array_mut(){a.remove(i);}});model_note.set("已移除未保存的模型草稿。".into());focus_model_control(format!("provider-model-query-{provider_id}"));}>"移除此模型"</button>}.into_any()}}</div>
+        <p class="account-help">{move || specifications.with(|rows| {
+            match rows.get(&spec_name) {
+                Some(spec) => {
+                    let origin = match spec["origin"].as_str() {
+                        Some("official") => "已带入官方默认",
+                        Some("relay_official") => "已带入中转渠道规格",
+                        _ if spec["provider_id"].as_i64().is_some() => "已带入本渠道规格",
+                        _ => "已带入模型默认",
+                    };
+                    let details = super::model_specifications::summary(spec);
+                    if details.is_empty() { origin.into() } else { format!("{origin}：{details}") }
+                }
+                None if !spec_busy.get() && spec_error.get().is_empty() => "暂无匹配的模型规格。".into(),
+                None => String::new(),
+            }
+        })}</p>
+        <div class="account-actions model-spec-edit">
+            <button type="button" class="ghost" aria-haspopup="dialog"
+                disabled=move || spec_busy.get() || !spec_error.get().is_empty()
+                on:click=move |_| {
+                    let provider_id = active_provider.get_untracked();
+                    if provider_id <= 0 || edit_spec_name.is_empty() { return; }
+                    let matched = specifications.with_untracked(|rows| rows.get(&edit_spec_name).cloned());
+                    channel_spec_editor.set(Some(super::model_specifications::ChannelSpecDraft {
+                        model_id: edit_spec_name.clone(),
+                        provider_id,
+                        matched,
+                    }));
+                }>"编辑渠道规格"</button>
+        </div>
         {existing.then(||view!{<p class="account-help">"已有本地名称不直接改名。停用保留配置；移除只解除当前 Key 的映射，不删除调用与账务历史。保存时会检查共享虚拟模型等引用。"</p>})}
         <Show when=move||removal_pending.get().as_deref()==Some(pending_name.as_str())><div role="group" aria-label="确认移除映射"><p role="alert">{format!("确认从当前 Key 移除映射 {}？保存模型配置后生效；历史记录保留。",note_name.get_value())}</p><div class="account-actions"><button id=format!("confirm-model-remove-{provider_id}-{i}") type="button" class="ghost danger" on:click=move |_|{draft.update(|d|remove_mapping(d,&confirm_name.get_value()));removal_pending.set(None);model_note.set("已从草稿移除映射；保存模型配置后生效，取消将保留原配置。".into());focus_model_control(format!("provider-model-query-{provider_id}"));}>"确认移除映射"</button><button type="button" class="ghost" on:click=move |_|{removal_pending.set(None);focus_model_control(format!("remove-model-{provider_id}-{i}"));}>"保留映射"</button></div></div></Show>{(m["conflict"]==true).then(||view!{<p class="account-help">"旧来源映射存在差异，保留原配置；可先独立编辑 Key，模型差异请在诊断与分组中核对。"</p>})}</div>}}).collect_view()}
-    </Show><p role="alert" class="account-error">{move||error.get()}</p><div class="account-actions provider-editor-footer"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|leave_editor.run(())>"取消"</button><button type="submit" class="primary" disabled=move||save_uncertain.get()>{move||if busy.get(){"正在保存…"}else if wizard.get()&&modal_view.get()=="models"{"保存模型并继续"}else if wizard.get(){"保存凭据并继续"}else if modal_view.get()=="models"{"保存模型配置"}else{"保存 Key"}}</button></div></fieldset></form></Show><Show when=move||form_open.get()&&modal_view.get()=="parameters"><ConnectionParameters ctx=ctx source_ids=parameter_sources.get_untracked()/><div class="account-actions provider-editor-footer"><button type="button" class="ghost" on:click=move |_|modal_view.set("models")>"← 返回模型选择"</button><button type="button" class="primary" on:click=move |_|leave_editor.run(())>"完成接入配置"</button></div></Show></Show></div></dialog></div>}
+    </Show><p role="alert" class="account-error">{move||error.get()}</p><div class="account-actions provider-editor-footer"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|leave_editor.run(())>"取消"</button><button type="submit" class="primary" disabled=move||save_uncertain.get()>{move||if busy.get(){"正在保存…"}else if wizard.get()&&modal_view.get()=="models"{"保存模型并继续"}else if wizard.get(){"保存凭据并继续"}else if modal_view.get()=="models"{"保存模型配置"}else{"保存 Key"}}</button></div></fieldset></form></Show><Show when=move||form_open.get()&&modal_view.get()=="parameters"><ConnectionParameters ctx=ctx source_ids=parameter_sources.get_untracked()/><div class="account-actions provider-editor-footer"><button type="button" class="ghost" on:click=move |_|modal_view.set("models")>"← 返回模型选择"</button><button type="button" class="primary" on:click=move |_|leave_editor.run(())>"完成接入配置"</button></div></Show></Show></div></dialog>
+    <super::model_specifications::ModelSpecifications ctx=ctx channel_editor=channel_spec_editor
+        on_saved=Callback::new(move |()| spec_revision.update(|value| *value += 1))/>
+    </div>}
 }
 
 #[cfg(test)]

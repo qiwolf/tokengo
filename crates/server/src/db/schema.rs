@@ -451,4 +451,6 @@ END;
     (45, concat!(include_str!("query_performance.sql"), "\n", include_str!("model_invocation_totals.sql"))),
     (46, include_str!("usage_time.sql")),
     (47, include_str!("currency_units.sql")),
+    // v48 is reserved by the parallel OAuth capacity migration.
+    (49, concat!(include_str!("model_specifications.sql"), "\n", include_str!("model_specification_defaults.sql"))),
 ];

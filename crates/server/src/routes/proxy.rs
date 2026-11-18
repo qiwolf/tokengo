@@ -24,7 +24,8 @@ use axum::{Json, Router};
 use serde_json::Value;
 
 use super::{client_ip, ApiError};
-use crate::db::model_routes;
+use crate::db::{channels, model_routes};
+use crate::model_specifications::{self, PublicSpecification};
 use crate::gateway::{self, EndpointKind, ForwardRequest};
 use crate::SharedState;
 use tokengo_shared::ModelKind;
@@ -301,9 +302,8 @@ async fn rerank(
 /// 清单里就给它标**这一刻最能干的那一类**（对话 > 嵌入 > 重排）—— 客户端普遍按类型
 /// 过滤清单，标成「没有类型」会被整条滤掉（2026-10-18 实测：某客户端只留 `kind=chat` 的行）。
 ///
-/// 这一条只写标准字段 + `vision` / `kind` 两个增项：客户端各写各的解析，多出来的
-/// 自定义字段（早先这里塞过 `auto` / `picks`）会让整条被丢掉。候选顺序改从
-/// `GET /api/model-routes` 的 `auto` 对象读，面板「模型」页看的就是它。
+/// `specifications` 仅在可用来源有一致规格时输出，渠道容量保留在顶层 `context_window`。
+/// 候选顺序可从 `GET /api/model-routes` 的 `auto` 对象读取。
 async fn models(
     _key: GatewayKey,
     State(state): State<SharedState>,
@@ -312,16 +312,17 @@ async fn models(
     let created = crate::db::now_ms() / 1000;
     let (servable, auto_rows) = {
         let conn = state.conn();
-        let mut servable = model_routes::servable(&conn)?;
-        let mut allowed = Vec::new();
-        for model in servable.drain(..) {
-            if model_routes::visible(&conn, &model.name)?
+        let channel_rows = channels::list(&conn)?;
+        let mut servable = Vec::new();
+        for model in model_routes::build_routes(&conn, &channel_rows)? {
+            if model.routed()
+                && model_routes::visible(&conn, &model.name)?
                 && gateway::permitted_model(&conn, &_key.auth, &model.name)?
             {
-                allowed.push(model);
+                let specification = client_model_specification(&conn, &_key.auth, &model, &channel_rows)?;
+                servable.push((model, specification));
             }
         }
-        let servable = allowed;
         let auto_rows = if _key.auth.permits_model(model_routes::AUTO_NAME)
             && model_routes::auto_available(&conn)?
         {
@@ -331,7 +332,7 @@ async fn models(
                 .any(|n| {
                     servable
                         .iter()
-                        .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                        .any(|(m, _)| tokengo_shared::same_model_name(n, &m.name))
                 });
             let embeddings =
                 model_routes::auto_candidates(&conn, ModelKind::Embeddings, false, now)?
@@ -339,21 +340,21 @@ async fn models(
                     .any(|n| {
                         servable
                             .iter()
-                            .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                            .any(|(m, _)| tokengo_shared::same_model_name(n, &m.name))
                     });
             let rerank = model_routes::auto_candidates(&conn, ModelKind::Rerank, false, now)?
                 .iter()
                 .any(|n| {
                     servable
                         .iter()
-                        .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                        .any(|(m, _)| tokengo_shared::same_model_name(n, &m.name))
                 });
             let vision = model_routes::auto_candidates(&conn, ModelKind::Chat, true, now)?
                 .iter()
                 .any(|n| {
                     servable
                         .iter()
-                        .any(|m| tokengo_shared::same_model_name(n, &m.name))
+                        .any(|(m, _)| tokengo_shared::same_model_name(n, &m.name))
                 });
             let kind = if chat {
                 ModelKind::Chat
@@ -367,7 +368,7 @@ async fn models(
             let context = crate::capability_detector::conservative_context(
                 servable
                     .iter()
-                    .filter(|m| {
+                    .filter(|(m, _)| {
                         matches!(
                             m.kind,
                             ModelKind::Chat
@@ -376,7 +377,7 @@ async fn models(
                                 | ModelKind::Rerank
                         )
                     })
-                    .map(|m| m.context_window),
+                    .map(|(m, _)| m.context_window),
             );
             if !chat && !embeddings && !rerank {
                 Vec::new()
@@ -392,7 +393,7 @@ async fn models(
                     "context_window": context,
                     "context_length": context,
                     "context_source": context.map(|_| {
-                        let sources=servable.iter().filter_map(|m|m.context_source.as_deref()).collect::<std::collections::HashSet<_>>();
+                        let sources=servable.iter().filter_map(|(m, _)|m.context_source.as_deref()).collect::<std::collections::HashSet<_>>();
                         if sources.len()==1 { *sources.iter().next().unwrap() } else { "user_confirmed+upstream" }
                     }),
                 })]
@@ -403,8 +404,8 @@ async fn models(
         (servable, auto_rows)
     };
     let mut data: Vec<Value> = auto_rows;
-    data.extend(servable.iter().map(|m| {
-        serde_json::json!({
+    data.extend(servable.iter().map(|(m, specification)| {
+        let mut row = serde_json::json!({
             "id": m.name,
             "object": "model",
             "created": created,
@@ -416,7 +417,11 @@ async fn models(
             "context_window": m.context_window,
             "context_length": m.context_window,
             "context_source": m.context_source,
-        })
+        });
+        if let Some(specification) = specification {
+            row["specifications"] = serde_json::json!(specification);
+        }
+        row
     }));
     {
         let conn = state.conn();
@@ -469,6 +474,34 @@ async fn models(
         }
     }
     Ok(Json(serde_json::json!({ "object": "list", "data": data })))
+}
+
+fn client_model_specification(
+    conn: &rusqlite::Connection,
+    auth: &crate::db::identity::AuthContext,
+    route: &model_routes::NameRoute,
+    channels: &[channels::ChannelRow],
+) -> Result<Option<PublicSpecification>, ApiError> {
+    let mut agreed: Option<PublicSpecification> = None;
+    for channel in channels.iter().filter(|channel| route.channels.contains(&channel.id)) {
+        if !gateway::permitted_candidate(conn, auth, &route.name, channel.id.0)? {
+            continue;
+        }
+        for mapping in channel.models.iter().filter(|mapping| {
+            mapping.enabled && tokengo_shared::same_model_name(&mapping.model, &route.name)
+        }) {
+            let Some(specification) =
+                model_specifications::for_mapping(conn, channel, mapping)?
+            else {
+                return Ok(None);
+            };
+            match &mut agreed {
+                Some(current) => current.retain_agreed(specification),
+                None => agreed = Some(specification),
+            }
+        }
+    }
+    Ok(agreed.filter(PublicSpecification::has_metadata))
 }
 
 /// Resolve client conversation identity without forwarding arbitrary client headers.

@@ -62,7 +62,7 @@ pub(crate) fn source_json_from_channels(c: &Connection, name: &str, chans: &[sup
 }
 pub fn one(c: &Connection, id: i64) -> Result<Value> {
     let channels = super::channels::list(c)?;
-    let routes = super::model_routes::build_routes(c, channels.clone())?;
+    let routes = super::model_routes::build_routes(c, &channels)?;
     one_from_snapshot(c, id, &channels, &routes)
 }
 
@@ -132,7 +132,7 @@ pub fn list(c: &Connection) -> Result<Value> {
         .query_map([], |r| r.get::<_, i64>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let channels = super::channels::list(c)?;
-    let routes = super::model_routes::build_routes(c, channels.clone())?;
+    let routes = super::model_routes::build_routes(c, &channels)?;
     let providers = ids
         .into_iter()
         .map(|id| one_from_snapshot(c, id, &channels, &routes))
