@@ -3,6 +3,32 @@ use crate::{Ctx, admin_api as api};
 use leptos::prelude::*;
 use serde_json::{Value, json};
 
+const PROTOCOLS: [&str; 3] = ["chat", "responses", "messages"];
+
+fn native_protocol_state(raw: &str, protocol: &str) -> (bool, bool) {
+    let Ok(config) = serde_json::from_str::<Value>(raw) else { return (false, false); };
+    let Some(native) = config["native"].as_array() else { return (false, false); };
+    let checked = native.iter().any(|entry| entry.as_str() == Some(protocol));
+    let chat_required = protocol == "chat"
+        && (config["native_input_audio"] == true || config["chat_reasoning_replay"] == true);
+    (checked, PROTOCOLS.contains(&protocol) && (!checked || (native.len() > 1 && !chat_required)))
+}
+
+fn toggle_native_protocol(raw: &str, protocol: &str, enable: bool) -> String {
+    let (checked, changeable) = native_protocol_state(raw, protocol);
+    if checked == enable || !changeable {
+        return raw.into();
+    }
+    let Ok(mut config) = serde_json::from_str::<Value>(raw) else { return raw.into(); };
+    let Some(native) = config["native"].as_array_mut() else { return raw.into(); };
+    if enable {
+        native.push(json!(protocol));
+    } else {
+        native.retain(|entry| entry.as_str() != Some(protocol));
+    }
+    config.to_string()
+}
+
 fn primary(raw: &str) -> String {
     serde_json::from_str::<Value>(raw).ok().and_then(|v|v["native"].as_array().and_then(|v|v.first()).and_then(Value::as_str).map(str::to_owned)).unwrap_or_default()
 }
@@ -26,10 +52,31 @@ fn protocol_save_payload(row: &Value, protocols: Value) -> Result<Value, String>
         "expected_protocols_sha256": expected_protocols_sha256}))
 }
 fn protocol_label(protocol: &str) -> &str {match protocol{"chat"=>"Chat Completions","responses"=>"Responses","messages"=>"Messages",_=>"尚未确认"}}
-fn client_protocol_status(raw:&str, protocol:&str)->(&'static str,bool) {
-    let Ok(value)=serde_json::from_str::<Value>(raw)else{return ("不可用",false);};
-    if value["native"].as_array().is_some_and(|rows|rows.iter().any(|v|v.as_str()==Some(protocol))){("原生",true)}
-    else if value["allow_conversion"]==true{("经转换",true)}else{("不可用",false)}
+fn protocol_path(protocol: &str) -> &'static str {
+    match protocol {
+        "chat" => "/v1/chat/completions",
+        "responses" => "/v1/responses",
+        "messages" => "/v1/messages",
+        _ => "",
+    }
+}
+fn supplier_protocol(raw: &str, client: &str) -> Option<String> {
+    let config: Value = serde_json::from_str(raw).ok()?;
+    let native = config["native"].as_array()?;
+    if native.iter().any(|entry| entry.as_str() == Some(client)) {
+        return Some(client.to_owned());
+    }
+    if config["allow_conversion"] == true {
+        return native.first().and_then(Value::as_str).map(str::to_owned);
+    }
+    None
+}
+fn client_protocol_status(raw: &str, protocol: &str) -> (&'static str, bool) {
+    match supplier_protocol(raw, protocol) {
+        Some(native) if native == protocol => ("原生", true),
+        Some(_) => ("经转换", true),
+        None => ("不可用", false),
+    }
 }
 fn effort_key(protocol: &str) -> &str {match protocol{"chat"=>"reasoning_effort","responses"=>"reasoning.effort","messages"=>"output_config.effort",_=>"由来源确认"}}
 fn cap_key(protocol: &str) -> &str {match protocol{"chat"=>"max_tokens / max_completion_tokens","responses"=>"max_output_tokens","messages"=>"max_tokens",_=>"由来源确认"}}
@@ -58,6 +105,13 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
     let model=RwSignal::new(String::new());
     let protocols=RwSignal::new(String::new());
     let client=RwSignal::new("chat".to_string());
+    let oauth_bound = Memo::new(move |_| {
+        let id = selected.get();
+        channels.get().iter().any(|row| {
+            row["id"].as_i64() == id && row["authentication_line"]["kind"] == "oauth"
+        })
+    });
+    let supplier = Memo::new(move |_| supplier_protocol(&protocols.get(), &client.get()).unwrap_or_default());
     let loading=RwSignal::new(false);let busy=RwSignal::new(false);
     let error=RwSignal::new(String::new());let note=RwSignal::new(String::new());
     let load_generation=RwSignal::new(0u64);let discovery_generation=RwSignal::new(0u64);let discovering=RwSignal::new(false);let declaration=RwSignal::new(None::<Value>);let discovery_note=RwSignal::new(String::new());let last_discovered=RwSignal::new(None::<(i64,String)>);
@@ -125,16 +179,56 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
         <Show when=move||!loading.get()&&channels.get().is_empty()><p role="alert">"没有可配置的已保存来源，请返回列表重新打开此凭据。"</p></Show>
         <Show when=move||{channels.get().len()>1}><label class="account-field"><span>"当前来源"</span><select aria-label="当前来源" prop:value=move||selected.get().map(|id|id.to_string()).unwrap_or_default() on:change=move|e|selected.set(event_target_value(&e).parse().ok())>{move||channels.get().into_iter().map(|c|view!{<option value=c["id"].to_string()>{api::text(&c,"name")}</option>}).collect_view()}</select><span class="account-help">"本页只修改所选来源，不批量覆盖同凭据的其他来源。"</span></label></Show>
         <div class="policy-limits"><label class="account-field"><span>"当前模型"</span><select aria-label="当前模型" prop:value=model on:change=move|e|model.set(event_target_value(&e))>{move||channels.get().into_iter().find(|r|r["id"].as_i64()==selected.get()).map(|r|api::rows(&r,"models").into_iter().map(|m|{let name=api::text(&m,"model");view!{<option value=name.clone()>{name.clone()}</option>}}).collect_view())}</select></label>
-        <label class="account-field"><span>"客户端接入协议"</span><select aria-label="客户端接入协议" prop:value=client on:change=move|e|client.set(event_target_value(&e))>{move||["chat","responses","messages"].into_iter().map(|kind|{let (status,available)=client_protocol_status(&protocols.get(),kind);view!{<option value=kind disabled=!available>{format!("{} · {status}",protocol_label(kind))}</option>}}).collect_view()}</select><span class="account-help">"仅预览转发方式，例如 /v1/chat/completions；不会修改来源或客户端配置。"</span></label></div>
-        <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()><label class="account-field"><span>"供应方接口协议"</span><select prop:value=move||primary(&protocols.get()) on:change=move|e|protocols.update(|raw|*raw=choose_primary(raw,&event_target_value(&e)))>{move||serde_json::from_str::<Value>(&protocols.get()).ok().map(|v|api::rows(&v,"native").into_iter().filter_map(|v|v.as_str().map(str::to_owned)).map(|p|view!{<option value=p.clone()>{protocol_label(&p).to_string()}</option>}).collect_view())}</select><span class="account-help">"优先使用已声明的原生协议，例如供应方 /responses；OAuth 线路仍受服务端固定传输约束。"</span></label>
+        <label class="account-field"><span>"客户端接入协议"</span>
+            <select aria-label="客户端接入协议" prop:value=client on:change=move |e| client.set(event_target_value(&e))>
+                {move || PROTOCOLS.into_iter().map(|kind| {
+                    let (status, available) = client_protocol_status(&protocols.get(), kind);
+                    view! { <option value=kind disabled=!available>
+                        {format!("{} {} · {status}", protocol_label(kind), protocol_path(kind))}
+                    </option> }
+                }).collect_view()}
+            </select>
+            <span class="account-help">"选择要预览的客户端请求路径。"</span>
+        </label></div>
+        <form class="account-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()>
+        <Show when=move || !oauth_bound.get()>
+            <div class="account-field" role="group" aria-labelledby="source-native-protocols" aria-describedby="source-native-protocols-help">
+                <span id="source-native-protocols">"供应方原生协议"</span>
+                <div class="policy-limits">
+                    {PROTOCOLS.into_iter().map(|kind| view! {
+                        <label class="account-check">
+                            <input type="checkbox"
+                                prop:checked=move || native_protocol_state(&protocols.get(), kind).0
+                                disabled=move || !native_protocol_state(&protocols.get(), kind).1
+                                on:change=move |e| protocols.update(|raw| {
+                                    *raw = toggle_native_protocol(raw, kind, event_target_checked(&e));
+                                }) />
+                            <span>{protocol_label(kind)}</span>
+                        </label>
+                    }).collect_view()}
+                </div>
+                <span class="account-help" id="source-native-protocols-help">"勾选供应方实际支持的协议，至少保留一个。启用 Chat 音频输入或推理回放时须保留 Chat Completions。"</span>
+            </div>
+            <label class="account-field"><span>"转换优先协议"</span>
+                <select prop:value=move || primary(&protocols.get())
+                    on:change=move |e| protocols.update(|raw| *raw = choose_primary(raw, &event_target_value(&e)))>
+                    {move || PROTOCOLS.into_iter().filter(|kind| native_protocol_state(&protocols.get(), kind).0)
+                        .map(|kind| view! { <option value=kind>{protocol_label(kind)}</option> }).collect_view()}
+                </select>
+                <span class="account-help">"客户端协议由供应方原生支持时直接转发，需要转换时使用此协议。"</span>
+            </label>
+        </Show>
+        <Show when=move || oauth_bound.get()>
+            <p class="account-help">{move || format!("OAuth 账号固定使用 {}。", protocol_label(&primary(&protocols.get())))}</p>
+        </Show>
         <div class="policy-limits"><label class="account-field"><span>"来源输入窗口（Token）"</span><input id="source-max-input" type="text" inputmode="numeric" prop:value=move||capacity_value(&protocols.get(),"max_input_tokens") on:input=move|e|protocols.update(|raw|*raw=edit_capacity(raw,"max_input_tokens",&event_target_value(&e)))/><span class="account-help">"按当前模型的目录声明自动补缺；保存来源设置会作用于该来源全部模型。"</span></label>
         <label class="account-field"><span>"来源最大输出（Token）"</span><input id="source-max-output" type="text" inputmode="numeric" prop:value=move||capacity_value(&protocols.get(),"max_output_tokens") on:input=move|e|protocols.update(|raw|*raw=edit_capacity(raw,"max_output_tokens",&event_target_value(&e)))/><span class="account-help">"保留未知，不把默认值当作供应方声明。"</span></label></div>
         <div class="account-actions"><button type="button" class="ghost" disabled=move||discovering.get() on:click=move |_|discover.run(true)>"重新探测并填入"</button></div><p role="status" class="account-help">{move||discovery_note.get()}</p>{move||declaration.get().map(|v|view!{<p class="account-help">{format!("探测来源：{}",api::text(&v,"source_url"))}</p>})}
         <label class="account-check"><input type="checkbox" prop:checked=move||{serde_json::from_str::<Value>(&protocols.get()).ok().is_some_and(|v|v["allow_conversion"]==true)} on:change=move|e|protocols.update(|raw|*raw=patch_flag(raw,"allow_conversion",event_target_checked(&e)))/>"允许在可无损表达的协议之间转换"</label>
         <div class="table-wrap"><table><thead><tr><th>"参数"</th><th>"客户端请求"</th><th>"供应方接收"</th><th>"处理规则"</th></tr></thead><tbody>
-        <tr><td>"推理强度"</td><td><code>{move||effort_key(&client.get()).to_string()}</code></td><td><code>{move||effort_key(&primary(&protocols.get())).to_string()}</code></td><td>"保留显式档位；按来源能力校验，不自动降档"</td></tr>
-        <tr><td>"结构化输出"</td><td>{move||if client.get()=="chat"{"response_format"}else if client.get()=="responses"{"text.format"}else{"Messages 原生格式"}}</td><td>{move||match primary(&protocols.get()).as_str(){"chat"=>"response_format","responses"=>"text.format",_=>"来源原生格式"}}</td><td>"仅转换可等价表达的格式；不模拟或弱化 Schema"</td></tr>
-        <tr><td>"输出上限"</td><td>{move||cap_key(&client.get()).to_string()}</td><td>{move||cap_key(&primary(&protocols.get())).to_string()}</td><td>"核对是否包含推理；不静默缩小客户端显式上限"</td></tr>
+        <tr><td>"推理强度"</td><td><code>{move||effort_key(&client.get()).to_string()}</code></td><td><code>{move||effort_key(&supplier.get()).to_string()}</code></td><td>"保留显式档位；按来源能力校验，不自动降档"</td></tr>
+        <tr><td>"结构化输出"</td><td>{move||if client.get()=="chat"{"response_format"}else if client.get()=="responses"{"text.format"}else{"Messages 原生格式"}}</td><td>{move||match supplier.get().as_str(){"chat"=>"response_format","responses"=>"text.format",_=>"来源原生格式"}}</td><td>"仅转换可等价表达的格式；不模拟或弱化 Schema"</td></tr>
+        <tr><td>"输出上限"</td><td>{move||cap_key(&client.get()).to_string()}</td><td>{move||cap_key(&supplier.get()).to_string()}</td><td>"核对是否包含推理；不静默缩小客户端显式上限"</td></tr>
         <tr><td>"无等价参数"</td><td>"客户端显式字段"</td><td>"无等价字段"</td><td>"明确报错并说明原因"</td></tr>
         </tbody></table></div><p class="account-help">{move||{let p=serde_json::from_str::<Value>(&protocols.get()).unwrap_or(Value::Null);if p["native"].as_array().is_some_and(|rows|rows.iter().any(|v|v.as_str()==Some(client.get().as_str()))){"当前客户端协议已在来源原生协议中声明；仍需模型和参数校验。"}else if p["allow_conversion"]==true{"当前组合将尝试协议转换；表中的字段位置不是所有取值均支持的承诺。"}else{"当前来源未声明此客户端协议且未允许转换，此组合会被拒绝。"}}}</p>
         <details><summary>"输出边界与完整协议配置"</summary><label class="account-field"><span>"协议配置 JSON"</span><textarea rows="9" spellcheck="false" maxlength="65536" prop:value=protocols on:input=move|e|protocols.set(event_target_value(&e))/><span class="account-help">"保留所有已有字段；max_input_tokens 与 max_output_tokens 必须使用成对的已验证边界。人工参数适配不授予认证能力。"</span></label></details>
@@ -146,6 +240,41 @@ pub fn ConnectionParameters(ctx: Ctx, source_ids: Vec<i64>) -> impl IntoView {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test]
+    fn native_checkbox_keeps_order_and_unrelated_source_fields() {
+        let original = json!({
+            "native":["chat"], "allow_conversion":false,
+            "parameter_profile":"openai", "max_input_tokens":1000, "max_output_tokens":400,
+        }).to_string();
+        assert_eq!(toggle_native_protocol(&original, "chat", false), original);
+        assert_eq!(toggle_native_protocol(&original, "invalid", true), original);
+        let both = toggle_native_protocol(&original, "responses", true);
+        assert_eq!(toggle_native_protocol(&both, "responses", true), both);
+        let responses_first = choose_primary(&both, "responses");
+        assert_eq!(supplier_protocol(&responses_first, "chat").as_deref(), Some("chat"));
+        assert_eq!(supplier_protocol(&responses_first, "responses").as_deref(), Some("responses"));
+        let only_responses = toggle_native_protocol(&responses_first, "chat", false);
+        assert_eq!(client_protocol_status(&only_responses, "chat"), ("不可用", false));
+        let value: Value = serde_json::from_str(&only_responses).unwrap();
+        assert_eq!(value, json!({
+            "native":["responses"], "allow_conversion":false,
+            "parameter_profile":"openai", "max_input_tokens":1000, "max_output_tokens":400,
+        }));
+        assert_eq!(supplier_protocol(&patch_flag(&only_responses, "allow_conversion", true), "chat").as_deref(), Some("responses"));
+    }
+
+    #[test]
+    fn chat_native_checkbox_stays_enabled_for_required_chat_features() {
+        for flag in ["native_input_audio", "chat_reasoning_replay"] {
+            let mut original = json!({"native":["chat","responses"]});
+            original[flag] = json!(true);
+            let raw = original.to_string();
+            assert_eq!(native_protocol_state(&raw, "chat"), (true, false));
+            assert_eq!(toggle_native_protocol(&raw, "chat", false), raw);
+            assert_eq!(native_protocol_state(&raw, "responses"), (true, true));
+        }
+    }
+
     #[test] fn save_payload_copies_both_versions_from_the_read_row() {
         let row=json!({"binding_generation":7,"protocols_sha256":"ab".repeat(32),"protocols":{"max_input_tokens":100,"max_output_tokens":100}});
         let edited=json!({"native":["responses"],"max_input_tokens":272000,"max_output_tokens":272000});

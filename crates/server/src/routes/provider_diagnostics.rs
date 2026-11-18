@@ -52,7 +52,7 @@ async fn verify(_auth:ManagementAuth,State(state):State<SharedState>,Path(id):Pa
   let cap_key=crate::parameter_budgets::default_output_key(&ctx);
   // This is an API request-shape minimum, not model-capability evidence.
   // Unknown deployed models must receive the same legal Responses shape.
-  let minimum=if crate::parameter_contracts::provider(&ctx)=="dashscope"&&native==Protocol::Responses{16}else{1};
+  let minimum = if native == Protocol::Responses { crate::prober::RESPONSES_PROBE_OUTPUT_TOKENS } else { 1 };
   request[cap_key]=json!(minimum);
   crate::parameter_contracts_china::adapt(&ctx,&mut request).map_err(|_|ApiError::bad_request("来源合同不允许此最小请求，请使用对应原生诊断"))?;
   crate::parameter_contracts::validate(&ctx,&request).and_then(|_|crate::parameter_contracts_china::validate(&ctx,&request)).map_err(|_|ApiError::bad_request("来源合同不允许此最小请求，请使用对应原生诊断"))?;

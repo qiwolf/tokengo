@@ -238,6 +238,9 @@ pub fn probe_model(
 }
 
 /// 探活请求体：小到不能再小。
+/// The Responses request schema requires a minimum max_output_tokens of 16.
+pub(crate) const RESPONSES_PROBE_OUTPUT_TOKENS: i64 = 16;
+
 pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
     let v = match endpoint {
         EndpointKind::Chat => serde_json::json!({
@@ -246,7 +249,7 @@ pub fn probe_body(endpoint: EndpointKind, model: &str) -> bytes::Bytes {
             "max_tokens": 1,
             "stream": false,
         }),
-        EndpointKind::Responses => serde_json::json!({"model":model,"input":"ping","max_output_tokens":1,"stream":false,"store":false}),
+        EndpointKind::Responses => serde_json::json!({"model":model,"input":"ping","max_output_tokens":RESPONSES_PROBE_OUTPUT_TOKENS,"stream":false,"store":false}),
         EndpointKind::Messages => serde_json::json!({"model":model,"messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}),
         EndpointKind::Embeddings => serde_json::json!({
             "model": model,
@@ -344,6 +347,11 @@ mod tests {
         assert_eq!(v["max_tokens"], 1);
         assert_eq!(v["model"], "m");
         assert_eq!(v["stream"], false);
+
+        let responses: serde_json::Value =
+            serde_json::from_slice(&probe_body(EndpointKind::Responses, "m")).unwrap();
+        assert_eq!(responses["max_output_tokens"], 16);
+        assert_eq!(responses["store"], false);
 
         let emb = probe_body(EndpointKind::Embeddings, "bge-m3");
         let v: serde_json::Value = serde_json::from_slice(&emb).unwrap();
