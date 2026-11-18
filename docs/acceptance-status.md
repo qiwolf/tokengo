@@ -1,12 +1,16 @@
 # 功能与验收状态
 
+## v0.34.0-qiwolf.34 — 发行准备（2026-11-18）
+
+GitHub 发行与公开产物验收待完成。237 专项验收对应下方列出的生产构建。[.34 版本说明](releases/v0.34.0-qiwolf.34.md) · [.34 发行收据](acceptance/2026-11-18-qiwolf34-release/README.md)
+
 ## 2026-11-18 模型规格、渠道配置与 Responses 已在 237 验收
 
 模型规格目录和客户端发现接口已部署，数据库从 schema 47 升至 50。生产管理员页面验证了模型规格自动带入、渠道覆盖保存并读回，以及价格页面只读显示用量参考值。临时配置清理完成，44 条价格版本及 96 条官方规格核对一致。已有客户端 Key 从 `/v1/models` 读回原有可见的 7 个模型及相应规格。
 
 237 最终运行提交 `a6e3e85` 的服务端和 Web，实际 Web 制品与 build-test 产物一致。管理员页面通过三项检查。新渠道保存并读回原生 Responses，两个上游模型的独立别名在一次保存中提交，重新打开后两条映射均可读回。临时配置已清理，原有模型映射和业务配置保留。DSH 通过来源 66 的 OpenAI 官方 API Key，以 `Codex-gpt-6.2-sol` 在 `medium` 档位完成原生 Responses 工具往返，工具结果零重试。OAuth 生产调用和其他档位未纳入本轮验收。
 
-最新正式公开发行仍为 `v0.34.0-qiwolf.33`。本次记录主分支变更及 237 专项验收。[主分支更新说明](releases/main-2026-11-18.md) · [237 实际验收](acceptance/2026-11-18-model-specifications-deploy237/README.md)
+专项收据记录主分支变更及 237 生产验收。[主分支更新说明](releases/main-2026-11-18.md) · [237 实际验收](acceptance/2026-11-18-model-specifications-deploy237/README.md)
 
 2026-11-14 列表交互更新：四处游标列表改为向下连续加载、固定图标回到最新及错误图标重试，见[验证与上线记录](maintenance/infinite-scroll-20261114/README.md)。
 

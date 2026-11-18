@@ -1,5 +1,7 @@
 # TokenGo
 
+**v0.34.0-qiwolf.34 is in release preparation.** This version includes the model specifications catalog and client API, channel model settings, alias mappings, and native Responses configuration. GitHub publication and public artifact verification are pending. [Release notes](docs/releases/v0.34.0-qiwolf.34.md) · [Release receipt](docs/acceptance/2026-11-18-qiwolf34-release/README.md).
+
 2026-11-18 main update: model specifications, same-upstream mapping dialog, and Responses configuration. Verified on the designated 237 deployment. [Version notes](docs/releases/main-2026-11-18.md) · [Production receipt](docs/acceptance/2026-11-18-model-specifications-deploy237/README.md).
 
 2026-11-14 后续Web交互更新：四处列表连续滚动及图标导航，见[验证与上线记录](docs/maintenance/infinite-scroll-20261114/README.md)。

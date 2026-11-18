@@ -1,5 +1,7 @@
 # TokenGo
 
+**v0.34.0-qiwolf.34 发行准备中。** 本版包含模型规格目录、客户端规格 API、渠道模型配置、别名映射和原生 Responses 设置。GitHub 发行和公开产物验收待完成。[版本说明](docs/releases/v0.34.0-qiwolf.34.md) · [发行收据](docs/acceptance/2026-11-18-qiwolf34-release/README.md)。
+
 2026-11-18 main 更新：模型规格、同上游映射弹窗与 Responses 配置已在 237 实测。[版本说明](docs/releases/main-2026-11-18.md) · [生产验收](docs/acceptance/2026-11-18-model-specifications-deploy237/README.md)。
 
 2026-11-14 后续Web交互更新：四处列表连续滚动及图标导航，见[验证与上线记录](docs/maintenance/infinite-scroll-20261114/README.md)。

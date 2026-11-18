@@ -1,10 +1,10 @@
 # 更新日志 / Changelog
 
-## 2026-11-18 main 更新：模型规格、渠道映射与 Responses
+## v0.34.0-qiwolf.34 — 发行准备（2026-11-18）
 
 支持维护 96 条官方模型规格和明确的中转差异。添加渠道模型时自动带入规格，客户端可通过 `/v1/models` 读取。模型价格只编辑单价和单位，用量参考值从渠道模型带入。为连续配置多个上游增加独立映射弹窗，并为来源设置增加原生 Responses 勾选与合法的探测参数。
 
-237 已完成迁移、界面保存读回、配置保留和 DSH 实际工具调用核验。正式下载仍为 v0.34.0-qiwolf.33。[版本说明](docs/releases/main-2026-11-18.md) · [237 实测收据](docs/acceptance/2026-11-18-model-specifications-deploy237/README.md)
+GitHub 发行和公开产物验收待完成。237 已完成迁移、界面保存读回、配置保留和 DSH 实际工具调用核验。[.34 版本说明](docs/releases/v0.34.0-qiwolf.34.md) · [.34 发行收据](docs/acceptance/2026-11-18-qiwolf34-release/README.md) · [237 实测收据](docs/acceptance/2026-11-18-model-specifications-deploy237/README.md)
 
 2026-11-14 列表交互更新：四处游标列表改为向下连续加载、固定图标回到最新及错误图标重试，见[验证与上线记录](docs/maintenance/infinite-scroll-20261114/README.md)。
 
