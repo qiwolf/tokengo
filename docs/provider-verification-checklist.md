@@ -1,5 +1,11 @@
 # 模型兼容核实清单
 
+## 2026-11-18 模型规格与真实调用
+
+237 已部署 96 条官方模型规格、18 条别名索引和 19 条已核对的渠道差异。以原厂公布规格作默认值，OpenCode 和 Command Code 仅记录公开资料确认的差异。现有客户端 Key 调用 `GET /v1/models` 返回 200，模型可见范围保持为 7 个。生产返回的 `gpt-6-luna`、`gpt-6.1-sol`、`gpt-6.1-terra` 均为上下文 1,050,000、输入参考 922,000、输出参考 128,000 Token。目录及接口读回里的用量参考值未经容量压测。
+
+在 237 上，来源 66 使用 OpenAI 官方 API Key，同时支持原生 Chat 和 Responses。DSH 通过别名 `Codex-gpt-6.2-sol` 对 GPT-6.2 Sol 发出一次原生 Responses 调用，在 `medium` 推理档位完成一轮工具调用、工具结果回传和最终输出，工具结果零重试。该记录仅覆盖这个来源、型号、协议和档位，本轮未新增 OAuth 生产调用核验。页面中验证的 `gpt-6.1-sol` 与 `gpt-6-luna` 是别名保存和读回样本。[主分支更新说明](releases/main-2026-11-18.md) · [237 实际验收](acceptance/2026-11-18-model-specifications-deploy237/README.md)
+
 2026-11-14 连续滚动更新仅调整四处Web列表及导航，没有新增供应商或真实模型调用验收，详见[专项记录](maintenance/infinite-scroll-20261114/README.md)。
 
 ## v0.34.0-qiwolf.33 — 已正式发行（2026-11-14）

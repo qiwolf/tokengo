@@ -1,5 +1,7 @@
 # TokenGo
 
+2026-11-18 main update: model specifications, same-upstream mapping dialog, and Responses configuration. Verified on the designated 237 deployment. [Version notes](docs/releases/main-2026-11-18.md) · [Production receipt](docs/acceptance/2026-11-18-model-specifications-deploy237/README.md).
+
 2026-11-14 后续Web交互更新：四处列表连续滚动及图标导航，见[验证与上线记录](docs/maintenance/infinite-scroll-20261114/README.md)。
 
 2026-11-14 follow-up: users can open **API Key** directly from navigation or the portal header. The independent `#keys` page and page-owned async cancellation are verified and live; see the [repair receipt](docs/maintenance/personal-key-entry-20261114/README.md). The qiwolf.32 tag and assets remain unchanged.

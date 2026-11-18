@@ -1,5 +1,13 @@
 # 功能与验收状态
 
+## 2026-11-18 模型规格、渠道配置与 Responses 已在 237 验收
+
+模型规格目录和客户端发现接口已部署，数据库从 schema 47 升至 50。生产管理员页面验证了模型规格自动带入、渠道覆盖保存并读回，以及价格页面只读显示用量参考值。临时配置清理完成，44 条价格版本及 96 条官方规格核对一致。已有客户端 Key 从 `/v1/models` 读回原有可见的 7 个模型及相应规格。
+
+237 最终运行提交 `a6e3e85` 的服务端和 Web，实际 Web 制品与 build-test 产物一致。管理员页面通过三项检查。新渠道保存并读回原生 Responses，两个上游模型的独立别名在一次保存中提交，重新打开后两条映射均可读回。临时配置已清理，原有模型映射和业务配置保留。DSH 通过来源 66 的 OpenAI 官方 API Key，以 `Codex-gpt-6.2-sol` 在 `medium` 档位完成原生 Responses 工具往返，工具结果零重试。OAuth 生产调用和其他档位未纳入本轮验收。
+
+最新正式公开发行仍为 `v0.34.0-qiwolf.33`。本次记录主分支变更及 237 专项验收。[主分支更新说明](releases/main-2026-11-18.md) · [237 实际验收](acceptance/2026-11-18-model-specifications-deploy237/README.md)
+
 2026-11-14 列表交互更新：四处游标列表改为向下连续加载、固定图标回到最新及错误图标重试，见[验证与上线记录](maintenance/infinite-scroll-20261114/README.md)。
 
 ## v0.34.0-qiwolf.33 — 已正式发行（2026-11-14）
@@ -102,7 +110,7 @@ build-test基础workspace **1636通过、0失败、15忽略**，Python13通过�
 
 历史公开版 **[v0.34.0-qiwolf.14](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.14)**，发行源码`1386fa2d410e`，Cargo0.34.0/schema40。包含账务管理、模型映射移除与重加、共享候选与执行一致性修复；main CI及发布工作流成功，9个公开资产已发布。build-test完整Rust1182通过、0失败、3忽略，另Python22项；最终发行提交的native/WASM及原生/容器隔离运行已通过。公开9资产匿名校验、GHCR按digest实际匿名拉取、固定SHA Compose及原生/容器独立运行全部通过，见[版本说明](releases/v0.34.0-qiwolf.14.md)和[发行收据](acceptance/2026-10-24-qiwolf14-release/README.md)。237的真实推理与未定价账本验收属于此前私有修复构建，见[生产收据](maintenance/shared-deepseek-live-20261024/README.md)；本次公开发行没有再次升级237。标签/下载包文档为构建快照，后补收据维护于main和Release页面。
 
-更新日期：2026-11-07。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
+更新日期为 2026-11-18。本文区分代码实现、隔离验证和真实供应商验收，不提供机器专用部署信息。Cargo版本保留上游0.34.0；fork双版本分发标签、原生包和离线镜像以[GitHub Releases](https://github.com/qiwolf/tokengo/releases)实际附件为准，不从文档标题推定发布完成。
 
 ## 当前代码、部署与发布分界
 
