@@ -72,15 +72,126 @@ fn choose_model(d: &mut Value, name: &str, checked: bool) -> String {
     d["models"]=json!(models);
     message
 }
-fn add_model_alias(d:&mut Value,upstream:&str)->String {
-    let upstream=upstream.trim();
-    if upstream.is_empty(){return "请先填写上游模型名。".into();}
-    let mut models=api::rows(d,"models");
-    if models.iter().any(|m|upstream_name(m)==upstream&&m["model"].as_str().unwrap_or("").is_empty()){
-        return "此上游已有待填写名称的映射，请先填写不同的本地映射名。".into();
+fn local_mapping_name(row: &Value) -> &str {
+    row["model"].as_str().map(str::trim).filter(|name| !name.is_empty())
+        .unwrap_or_else(|| upstream_name(row).trim())
+}
+
+fn add_model_alias(draft: &mut Value, upstream: &str, name: &str, enabled: bool) -> Result<(), String> {
+    let name = name.trim();
+    if tokengo_shared::normalize_model_name(name).is_empty() {
+        return Err("请填写有效的新本地映射名。".into());
     }
-    models.push(json!({"model":"","upstream":upstream,"enabled":true}));d["models"]=json!(models);
-    "已添加同上游映射草稿，请填写不同的本地映射名，再保存。".into()
+    let mut models = api::rows(draft, "models");
+    let Some(after) = models.iter().rposition(|row| upstream_name(row).trim() == upstream) else {
+        return Err("找不到此上游模型，请重新打开映射窗口。".into());
+    };
+    if models.iter().any(|row| tokengo_shared::same_model_name(local_mapping_name(row), name)) {
+        return Err(format!("本地映射名 {name} 已存在，请换一个名称。"));
+    }
+    models.insert(after + 1, json!({"model":name,"upstream":upstream,"enabled":enabled}));
+    draft["models"] = json!(models);
+    Ok(())
+}
+
+fn key_model_body(provider: i64) -> Option<web_sys::Element> {
+    web_sys::window()?.document()?.get_element_by_id(&format!("provider-key-dialog-{provider}"))?
+        .query_selector(".provider-key-modal-body").ok().flatten()
+}
+
+#[component]
+fn ModelAliases(
+    provider: i64,
+    draft: RwSignal<Value>,
+    open: RwSignal<bool>,
+    target: RwSignal<Option<(String, usize, i32)>>,
+    model_note: RwSignal<String>,
+) -> impl IntoView {
+    let name = RwSignal::new(String::new());
+    let enabled = RwSignal::new(true);
+    let error = RwSignal::new(String::new());
+    let input_id = StoredValue::new(format!("new-model-alias-{provider}"));
+    let error_id = StoredValue::new(format!("model-alias-error-{provider}"));
+
+    Effect::new(move |_| {
+        if open.get() {
+            name.set(String::new());
+            enabled.set(true);
+            error.set(String::new());
+            focus_model_control(input_id.get_value());
+        } else if let Some((_, row, scroll)) = target.get_untracked() {
+            let focus = wasm_bindgen::closure::Closure::once_into_js(move || {
+                let Some(body) = key_model_body(provider) else { return; };
+                let selector = format!("#add-model-alias-{provider}-{row}");
+                if let Some(button) = body.query_selector(&selector).ok().flatten()
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                {
+                    let _ = button.focus();
+                }
+                body.set_scroll_top(scroll);
+            });
+            if let Some(window) = web_sys::window() {
+                let _ = window.request_animation_frame(focus.unchecked_ref());
+            }
+        }
+    });
+
+    let submit = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        let Some((upstream, _, _)) = target.get_untracked() else { return; };
+        let new_name = name.get_untracked();
+        let mut next = draft.get_untracked();
+        match add_model_alias(&mut next, &upstream, &new_name, enabled.get_untracked()) {
+            Ok(()) => {
+                draft.set(next);
+                model_note.set(format!("已添加 {} 到模型草稿。保存模型配置后生效。", new_name.trim()));
+                open.set(false);
+            }
+            Err(message) => {
+                error.set(message);
+                focus_model_control(input_id.get_value());
+            }
+        }
+    };
+
+    view! {
+        <super::ModuleDialog open=open title="同上游映射".to_string()>
+            <div class="provider-alias-editor">
+                <p>"上游模型 "<strong>{move || target.get().map(|(upstream, _, _)| upstream).unwrap_or_default()}</strong></p>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th scope="col">"本地映射名"</th><th scope="col">"状态"</th></tr></thead>
+                        <tbody>{move || {
+                            let upstream = target.get().map(|(name, _, _)| name).unwrap_or_default();
+                            draft.with(|draft| api::rows(draft, "models")).into_iter()
+                                .filter(|row| upstream_name(row).trim() == upstream)
+                                .map(|row| {
+                                    let current_name = local_mapping_name(&row).to_string();
+                                    view! { <tr><td>{current_name}</td>
+                                        <td>{if row["enabled"] == false { "停用" } else { "启用" }}</td></tr> }
+                                }).collect_view()
+                        }}</tbody>
+                    </table>
+                </div>
+                <form class="account-form" on:submit=submit>
+                    <label class="account-field"><span>"新本地映射名"</span>
+                        <input id=input_id.get_value() autocomplete="off" required prop:value=name
+                            aria-describedby=error_id.get_value()
+                            aria-invalid=move || (!error.get().is_empty()).to_string()
+                            on:input=move |event| { name.set(event_target_value(&event)); error.set(String::new()); }/>
+                    </label>
+                    <label class="account-check"><input type="checkbox" prop:checked=enabled
+                        on:change=move |event| enabled.set(event_target_checked(&event))/>"模型启用"</label>
+                    <p id=error_id.get_value() class="account-error" role="alert">{move || error.get()}</p>
+                    <p class="account-help">"确认后可继续配置其他模型。模型配置保存后生效。"</p>
+                    <div class="account-actions">
+                        <button type="button" class="ghost" on:click=move |_| open.set(false)>"取消"</button>
+                        <button type="submit" class="primary">"确认添加"</button>
+                    </div>
+                </form>
+            </div>
+        </super::ModuleDialog>
+    }
 }
 fn remove_mapping(d:&mut Value,model:&str){
     if let Some(models)=d["models"].as_array_mut(){models.retain(|m|m["model"].as_str()!=Some(model));}
@@ -182,6 +293,8 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
     let picker_open = RwSignal::new(false);
     let catalog_attempted = RwSignal::new(false);
     let draft = RwSignal::new(fresh());
+    let alias_open = RwSignal::new(false);
+    let alias_target = RwSignal::new(None::<(String, usize, i32)>);
     let channel_spec_editor = RwSignal::new(None::<super::model_specifications::ChannelSpecDraft>);
     let spec_revision = RwSignal::new(0u64);
     let spec_names = Memo::new(move |_| {
@@ -438,7 +551,7 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
     view! {<div class="provider-key-pool" class:card-body=!create_provider><button class={if create_provider{"primary"}else{"ghost"}} aria-haspopup="dialog" on:click=move |_|{open.set(true);if create_provider{clear_private.run(());save_uncertain.set(false);active_provider.set(0);draft.set(fresh());editing.set(None);original_models.set(vec![]);wizard.set(true);parameters_ready.set(false);parameter_sources.set(vec![]);form_open.set(true);modal_view.set("key");error.set(String::new());}else{modal_view.set("list");}if let Some(cb)=on_open{cb.run(false);}modal_command(provider_id,"showModal");}>{if create_provider{"新建渠道"}else{"管理上游 Key"}}</button>
     <dialog id=format!("provider-key-dialog-{provider_id}") class="provider-key-modal console-content" aria-labelledby=format!("provider-key-title-{provider_id}") on:cancel=move |e: leptos::ev::Event|{if busy.get_untracked(){e.prevent_default();}} on:close=move |_|{clear_private.run(());open.set(false);form_open.set(false);modal_view.set("list");editing.set(None);if changed.get_untracked(){changed.set(false);on_changed.run(());}}><header class="provider-key-modal-head"><h2 id=format!("provider-key-title-{provider_id}")>{move||match modal_view.get(){"models"=>"选择模型","parameters"=>"参数与转发","key"=>if editing.get().is_some(){"编辑接入凭据"}else if create_provider{"新建渠道"}else{"添加模型接入"},_=>"管理上游 Key"}}</h2><button type="button" class="ghost" aria-label={if create_provider{"关闭新建渠道"}else{"关闭上游 Key 管理"}} data-key-focus="" autofocus disabled=move||busy.get() on:click=move |_|modal_command(provider_id,"close")>"关闭"</button></header><div class="provider-key-modal-body"><Show when=move||open.get()><Show when=move||modal_view.get()=="list"><p class="account-help">"每个 Key 可配置多个模型。按当前 Key 策略、顺序与可用容量选择来源；顺序数值越小越优先。停用保留账单与历史。"</p><Show when=move||loading.get()><p role="status">"正在读取已配置的上游 Key…"</p></Show><Show when=move||!load_error.get().is_empty()><p role="alert">{move||format!("读取上游 Key 失败：{}",load_error.get())}</p><button type="button" class="ghost" on:click=move |_|rev.update(|v|*v+=1)>"重新读取"</button></Show><Show when=move||!loading.get()&&load_error.get().is_empty()&&rows.get().is_empty()><p class="account-help">"此渠道尚未配置上游 Key。点击添加后填写凭据和模型。"</p></Show><div class="table-wrap"><table><thead><tr><th>"Key备注"</th><th>"类型 / 状态"</th><th>"优先顺序"</th><th>"操作"</th></tr></thead><tbody>{move||rows.get().into_iter().enumerate().map(|(position,row)|{let item=row.clone();let model_item=row.clone();let id=row["id"].as_i64().unwrap_or(0);let is_enabled=row["enabled"]==true;view!{<tr><td data-label="Key备注">{crate::provider_api::credential_label(&row,position)}{is_local().then(||view!{<p class="provider-url muted small">{row["base_urls"].as_array().map(|a|a.iter().filter_map(|v|v.as_str()).collect::<Vec<_>>().join(" / ")).unwrap_or_default()}</p>})}</td><td data-label="类型 / 状态">{format!("{} · {}",match row["kind"].as_str(){Some("oauth")=>"账号授权",Some("anonymous")=>"免认证",_=>"API Key"},if row["enabled"]==true{"启用"}else{"停用"})}<p class="muted small">{match row["kind"].as_str(){Some("oauth")=>if row["oauth_account_id"].is_number(){"已绑定授权账号"}else{"授权账号待确认"},Some("anonymous")=>"无需密钥",_=>if row["has_secret"]==true{"密钥已配置"}else{"密钥待配置"}}}</p></td><td data-label="优先顺序">{row["priority"].to_string()}</td><td data-label="操作"><div class="provider-key-row-actions"><button class="ghost" disabled=move||busy.get()||loading.get()||!load_error.get().is_empty() on:click=move |_|{clear_private.run(());modal_view.set("key");form_open.set(true);catalog_generation.update(|n|*n+=1);catalog.set(vec![]);catalog_attempted.set(false);catalog_busy.set(false);picker_open.set(false);catalog_query.set(String::new());catalog_loaded.set(false);catalog_error.set(String::new());catalog_query.set(String::new());wizard.set(false);editing.set(Some(id));let sources=saved_parameter_sources(&item);parameters_ready.set(!sources.is_empty());parameter_sources.set(sources);original_models.set(api::rows(&item,"models"));let mut d=item.clone();if is_local() {d["base_url"]=d["base_urls"].as_array().and_then(|a|if a.len()==1{a.first().cloned()}else{None}).unwrap_or(json!(""));}draft.set(d);secret.set(String::new());error.set(String::new());}>"编辑 Key"</button><button class="ghost" disabled=move||busy.get()||loading.get()||!load_error.get().is_empty() on:click=move |_|{clear_private.run(());modal_view.set("models");form_open.set(true);catalog_generation.update(|n|*n+=1);catalog.set(vec![]);catalog_attempted.set(false);catalog_busy.set(false);picker_open.set(false);catalog_query.set(String::new());catalog_loaded.set(false);catalog_error.set(String::new());catalog_query.set(String::new());wizard.set(false);editing.set(Some(id));let sources=saved_parameter_sources(&model_item);parameters_ready.set(!sources.is_empty());parameter_sources.set(sources);original_models.set(api::rows(&model_item,"models"));let mut d=model_item.clone();if is_local() {d["base_url"]=d["base_urls"].as_array().and_then(|a|if a.len()==1{a.first().cloned()}else{None}).unwrap_or(json!(""));}draft.set(d);secret.set(String::new());error.set(String::new());}>"选择模型"</button><button class="ghost danger" disabled=move||busy.get() on:click=move |_|{if busy.get_untracked(){return}busy.set(true);leptos::task::spawn_local(async move{let provider_id=active_provider.get_untracked();match api::request("PATCH",&format!("/api/providers/{provider_id}/credentials/{id}"),Some(json!({"enabled":!is_enabled}))).await{Ok(_)=>{rev.update(|r|*r+=1);changed.set(true);},Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>{if is_enabled{"停用"}else{"启用"}}</button></div></td></tr>}}).collect_view()}</tbody></table></div>
     <button type="button" class="ghost" disabled=move||busy.get()||loading.get()||!load_error.get().is_empty() on:click=move |_|{clear_private.run(());modal_view.set("key");form_open.set(true);catalog_generation.update(|n|*n+=1);catalog.set(vec![]);catalog_attempted.set(false);catalog_busy.set(false);picker_open.set(false);catalog_query.set(String::new());catalog_loaded.set(false);catalog_error.set(String::new());catalog_query.set(String::new());wizard.set(true);parameters_ready.set(false);parameter_sources.set(vec![]);editing.set(None);draft.set(fresh());original_models.set(vec![]);secret.set(String::new());error.set(String::new());}>"添加模型接入"</button></Show>
-    <Show when=move||!form_open.get()&&!error.get().is_empty()><p role="alert" class="account-error">{move||error.get()}</p></Show><Show when=move||form_open.get()&&(wizard.get()||editing.get().is_some())><nav class="provider-enrollment-steps" aria-label="接入配置步骤">{[("key","1 家族与认证"),("models","2 选择模型"),("parameters","3 参数与转发")].into_iter().map(|(stage,label)|view!{<button type="button" class:is-active=move||modal_view.get()==stage disabled=move||stage=="models"&&editing.get().is_none()||stage=="parameters"&&!parameters_ready.get() aria-current=move||if modal_view.get()==stage{Some("step")}else{None} on:click=move |_|modal_view.set(stage)>{label}</button>}).collect_view()}</nav><p class="account-help" role="status">{move||match modal_view.get(){"key"=>if editing.get().is_some(){"凭据已保存；调整设置会作用于此已保存接入。"}else{"先保存真实凭据，随后读取该账号的模型目录；此时尚未启用模型。"},"models"=>if parameters_ready.get(){"已保存接入可直接切换参数与转发，无需重新保存凭据或模型。"}else{"凭据已保存。请选择并保存真实模型映射，再检查参数与转发。"},_=>"协议与容量设置作用于所选接入来源及其全部模型。"}}</p></Show><Show when=move||form_open.get()&&modal_view.get()!="parameters"><button type="button" class="ghost" data-key-focus="" on:click=move |_|leave_editor.run(())>{if create_provider{"关闭接入流程"}else{"返回 Key 列表"}}</button><Show when=move||editing.get().is_some()><p class="account-help">{move||format!("当前 Key：{}",api::text(&draft.get(),"label"))}</p></Show><form class="account-form provider-key-editor" class:provider-mapping-editor=move||modal_view.get()=="models" on:submit=save on:keydown=move|e|{if e.key()=="Escape"&&picker_open.get_untracked(){e.prevent_default();e.stop_propagation();picker_open.set(false);}}><fieldset disabled=move||busy.get()><Show when=move||modal_view.get()=="key"><h3>{move||if editing.get().is_some(){"编辑接入凭据"}else{"家族与认证"}}</h3><Show when=move||editing.get().is_none()><Show when=move||create_provider><super::provider_presets::ProviderPresetPicker draft=draft on_changed=Callback::new(move |()|clear_private.run(()))/></Show><FamilyPicker draft=draft on_changed=Callback::new(move |()|{clear_private.run(());if create_provider{draft.update(|d|{let current=d["_provider_base_url"].as_str().unwrap_or("");let is_default=super::family_picker::FAMILIES.iter().any(|(f,_)|family_api_base(f)==current)||super::provider_presets::is_preset_api_base(current);if current.is_empty()||is_default{d["_provider_base_url"]=json!(family_api_base(d["_model_family"].as_str().unwrap_or("")));}});}})/></Show><p class="label">"认证线路"</p><div class="provider-auth-choices"><button type="button" class="provider-auth-choice" class:is-selected=move||draft.get()["kind"]=="api_key" aria-pressed=move||(draft.get()["kind"]=="api_key").to_string() disabled=move||editing.get().is_some() on:click=move |_|{draft.update(|d|{d["kind"]=json!("api_key");d["oauth_account_id"]=Value::Null;});clear_private.run(());}>"API 接入"<span>"使用供应方 API Key"</span></button><Show when=move||!local><button type="button" class="provider-auth-choice" class:is-selected=move||draft.get()["kind"]=="oauth" aria-pressed=move||(draft.get()["kind"]=="oauth").to_string() disabled=move||editing.get().is_some() on:click=move |_|{draft.update(|d|{d["kind"]=json!("oauth");d["_provider_preset"]=Value::Null;d["_endpoint_mode"]=json!("single");d["oauth_account_id"]=Value::Null;});clear_private.run(());}>"订阅 OAuth"<span>"使用已授权账号与专属模型目录"</span></button></Show><Show when=move||is_local()><button type="button" class="provider-auth-choice" class:is-selected=move||draft.get()["kind"]=="anonymous" aria-pressed=move||(draft.get()["kind"]=="anonymous").to_string() disabled=move||editing.get().is_some() on:click=move |_|{draft.update(|d|d["kind"]=json!("anonymous"));clear_private.run(());}>"本地免密"<span>"仅用于无需认证的模型服务"</span></button></Show></div><Show when=move||create_provider&&editing.get().is_none()><label class="account-field"><span>"渠道名称"</span><input required maxlength="128" placeholder="如 DeepSeek 官方、团队订阅账号" prop:value=move||api::text(&draft.get(),"_provider_name") on:input=move|e|draft.update(|d|d["_provider_name"]=json!(event_target_value(&e)))/></label><Show when=move||draft.get()["kind"]!="oauth"><p class="label">"服务地址类型"</p><div class="provider-auth-choices"><button type="button" class="provider-auth-choice" class:is-selected=move||!is_local() aria-pressed=move||(!is_local()).to_string() on:click=move |_|draft.update(|d|{d["_endpoint_mode"]=json!("single");if d["kind"]=="anonymous"{d["kind"]=json!("api_key");}})>"在线 API"<span>"供应方或兼容服务地址"</span></button><button type="button" class="provider-auth-choice" class:is-selected=move||is_local() aria-pressed=move||is_local().to_string() on:click=move |_|draft.update(|d|d["_endpoint_mode"]=json!("local"))>"本地模型服务"<span>"同一渠道可包含多个地址"</span></button></div><Show when=move||!is_local()><label class="account-field"><span>"供应方 API URL"</span><input required type="url" placeholder="https://api.example.com/v1" prop:value=move||api::text(&draft.get(),"_provider_base_url") on:input=move|e|draft.update(|d|d["_provider_base_url"]=json!(event_target_value(&e)))/><p class="account-help">"默认地址可以修改；第三方兼容服务请填写其实际地址。"</p></label></Show></Show></Show><div class="policy-limits"><label class="account-field"><span>"Key备注"</span><input required maxlength="128" placeholder="如 主账号、备用账号" prop:value=move||api::text(&draft.get(),"label") on:input=move|e|draft.update(|d|d["label"]=json!(event_target_value(&e)))/></label></div>
+    <Show when=move||!form_open.get()&&!error.get().is_empty()><p role="alert" class="account-error">{move||error.get()}</p></Show><Show when=move||form_open.get()&&(wizard.get()||editing.get().is_some())><nav class="provider-enrollment-steps" aria-label="接入配置步骤">{[("key","1 家族与认证"),("models","2 选择模型"),("parameters","3 参数与转发")].into_iter().map(|(stage,label)|view!{<button type="button" class:is-active=move||modal_view.get()==stage disabled=move||stage=="models"&&editing.get().is_none()||stage=="parameters"&&!parameters_ready.get() aria-current=move||if modal_view.get()==stage{Some("step")}else{None} on:click=move |_|modal_view.set(stage)>{label}</button>}).collect_view()}</nav><p class="account-help" role="status">{move||match modal_view.get(){"key"=>if editing.get().is_some(){"凭据已保存；调整设置会作用于此已保存接入。"}else{"先保存真实凭据，随后读取该账号的模型目录；此时尚未启用模型。"},"models"=>if parameters_ready.get(){"已保存接入可直接切换参数与转发，无需重新保存凭据或模型。"}else{"凭据已保存。请选择并保存真实模型映射，再检查参数与转发。"},_=>"协议与容量设置作用于所选接入来源及其全部模型。"}}</p></Show><Show when=move||form_open.get()&&modal_view.get()!="parameters"><Show when=move||editing.get().is_some()><p class="account-help">{move||format!("当前 Key：{}",api::text(&draft.get(),"label"))}</p></Show><form class="account-form provider-key-editor" class:provider-mapping-editor=move||modal_view.get()=="models" on:submit=save on:keydown=move|e|{if e.key()=="Escape"&&picker_open.get_untracked(){e.prevent_default();e.stop_propagation();picker_open.set(false);}}><fieldset disabled=move||busy.get()><Show when=move||modal_view.get()=="key"><h3>{move||if editing.get().is_some(){"编辑接入凭据"}else{"家族与认证"}}</h3><Show when=move||editing.get().is_none()><Show when=move||create_provider><super::provider_presets::ProviderPresetPicker draft=draft on_changed=Callback::new(move |()|clear_private.run(()))/></Show><FamilyPicker draft=draft on_changed=Callback::new(move |()|{clear_private.run(());if create_provider{draft.update(|d|{let current=d["_provider_base_url"].as_str().unwrap_or("");let is_default=super::family_picker::FAMILIES.iter().any(|(f,_)|family_api_base(f)==current)||super::provider_presets::is_preset_api_base(current);if current.is_empty()||is_default{d["_provider_base_url"]=json!(family_api_base(d["_model_family"].as_str().unwrap_or("")));}});}})/></Show><p class="label">"认证线路"</p><div class="provider-auth-choices"><button type="button" class="provider-auth-choice" class:is-selected=move||draft.get()["kind"]=="api_key" aria-pressed=move||(draft.get()["kind"]=="api_key").to_string() disabled=move||editing.get().is_some() on:click=move |_|{draft.update(|d|{d["kind"]=json!("api_key");d["oauth_account_id"]=Value::Null;});clear_private.run(());}>"API 接入"<span>"使用供应方 API Key"</span></button><Show when=move||!local><button type="button" class="provider-auth-choice" class:is-selected=move||draft.get()["kind"]=="oauth" aria-pressed=move||(draft.get()["kind"]=="oauth").to_string() disabled=move||editing.get().is_some() on:click=move |_|{draft.update(|d|{d["kind"]=json!("oauth");d["_provider_preset"]=Value::Null;d["_endpoint_mode"]=json!("single");d["oauth_account_id"]=Value::Null;});clear_private.run(());}>"订阅 OAuth"<span>"使用已授权账号与专属模型目录"</span></button></Show><Show when=move||is_local()><button type="button" class="provider-auth-choice" class:is-selected=move||draft.get()["kind"]=="anonymous" aria-pressed=move||(draft.get()["kind"]=="anonymous").to_string() disabled=move||editing.get().is_some() on:click=move |_|{draft.update(|d|d["kind"]=json!("anonymous"));clear_private.run(());}>"本地免密"<span>"仅用于无需认证的模型服务"</span></button></Show></div><Show when=move||create_provider&&editing.get().is_none()><label class="account-field"><span>"渠道名称"</span><input required maxlength="128" placeholder="如 DeepSeek 官方、团队订阅账号" prop:value=move||api::text(&draft.get(),"_provider_name") on:input=move|e|draft.update(|d|d["_provider_name"]=json!(event_target_value(&e)))/></label><Show when=move||draft.get()["kind"]!="oauth"><p class="label">"服务地址类型"</p><div class="provider-auth-choices"><button type="button" class="provider-auth-choice" class:is-selected=move||!is_local() aria-pressed=move||(!is_local()).to_string() on:click=move |_|draft.update(|d|{d["_endpoint_mode"]=json!("single");if d["kind"]=="anonymous"{d["kind"]=json!("api_key");}})>"在线 API"<span>"供应方或兼容服务地址"</span></button><button type="button" class="provider-auth-choice" class:is-selected=move||is_local() aria-pressed=move||is_local().to_string() on:click=move |_|draft.update(|d|d["_endpoint_mode"]=json!("local"))>"本地模型服务"<span>"同一渠道可包含多个地址"</span></button></div><Show when=move||!is_local()><label class="account-field"><span>"供应方 API URL"</span><input required type="url" placeholder="https://api.example.com/v1" prop:value=move||api::text(&draft.get(),"_provider_base_url") on:input=move|e|draft.update(|d|d["_provider_base_url"]=json!(event_target_value(&e)))/><p class="account-help">"默认地址可以修改；第三方兼容服务请填写其实际地址。"</p></label></Show></Show></Show><div class="policy-limits"><label class="account-field"><span>"Key备注"</span><input required maxlength="128" placeholder="如 主账号、备用账号" prop:value=move||api::text(&draft.get(),"label") on:input=move|e|draft.update(|d|d["label"]=json!(event_target_value(&e)))/></label></div>
     <Show when=move||editing.get().is_none()><p class="account-help">"家族、认证来源、供应方接口协议与具体模型共同确定参数规则。尚未完成授权的来源不能绑定成可用账号。"</p></Show><details><summary>"网络与代理"</summary><p class="account-help">"渠道或来源覆盖模型家族默认代理。多家族授权来源请先保存此渠道的网络家族；未配置时按继承策略执行。"</p>{move||{let d=draft.get();let provider_family=d["_model_family"].as_str().unwrap_or("other").to_string();let family=network_policy_family(&d).to_string();let network_help=if d["kind"]=="oauth"{format!("当前认证来源的默认网络家族：{}。首次授权使用此策略；已保存的渠道或模型接入代理覆盖会优先执行。",super::family_picker::family_label(&family))}else{format!("当前模型家族默认策略：{}。已保存的渠道或模型接入代理覆盖会优先执行。",super::family_picker::family_label(&family))};view!{<p class="account-help">{network_help}</p><Show when=move||{active_provider.get()>0}><super::proxy_settings::ProxySettings ctx=ctx scope="provider".to_string() id=active_provider.get_untracked().to_string() network_family=provider_family.clone()/></Show><Show when=move||{active_provider.get()<=0}><p class="account-help">"保存凭据前可设置家族默认代理；保存后可在此覆盖当前渠道。"</p></Show><super::proxy_settings::ProxySettings ctx=ctx scope="family".to_string() id=family/>}}}</details>
     <Show when=move||is_local()><label class="account-field"><span>"模型服务 API URL"</span><input type="url" required=move||editing.get().is_none() placeholder="http://192.168.1.10:8001/v1" prop:value=move||api::text(&draft.get(),"base_url") on:input=move|e|{draft.update(|d|d["base_url"]=json!(event_target_value(&e)));revealed.set(String::new());reveal_generation.update(|n|*n+=1);copy_note.set(String::new());catalog_generation.update(|n|*n+=1);catalog.set(vec![]);catalog_attempted.set(false);catalog_busy.set(false);picker_open.set(false);catalog_query.set(String::new());catalog_loaded.set(false);}/></label><p class="account-help">"同一供应方可添加多个服务地址，每个地址分别设置凭据和模型。IP 相同、端口不同也可以。"</p></Show>
     <Show when=move||draft.get()["kind"]=="api_key"><Show when=move||editing.get().is_some()><p class="account-help">"原密钥已配置。查看或复制不会替换密钥；下面留空保存会继续使用原值。"</p><div class="provider-key-original"><label class="account-field"><span>"原 API Key"</span><input readonly autocomplete="off" type=move||if revealed.get().is_empty(){"password"}else{"text"} prop:value=move||if revealed.get().is_empty(){"••••••••••••••••".to_string()}else{revealed.get()}/></label><div class="provider-key-row-actions"><button type="button" class="ghost" aria-disabled=move||reveal_busy.get().to_string() on:click=move |_|reveal_key.run(false)>{move||if revealed.get().is_empty(){"显示原 Key"}else{"隐藏原 Key"}}</button><button type="button" class="ghost" aria-disabled=move||reveal_busy.get().to_string() on:click=move |_|reveal_key.run(true)>"复制原 Key"</button></div><p role="status">{move||copy_note.get()}</p></div></Show><label class="account-field"><span>{move||if editing.get().is_some(){"替换上游Key（留空保留）"}else{"上游API Key"}}</span><input type="password" autocomplete="new-password" prop:value=secret on:input=move|e|{secret.set(event_target_value(&e));revealed.set(String::new());reveal_generation.update(|n|*n+=1);copy_note.set(String::new());catalog_generation.update(|n|*n+=1);catalog.set(vec![]);catalog_attempted.set(false);catalog_busy.set(false);picker_open.set(false);catalog_query.set(String::new());catalog_loaded.set(false);}/></label></Show>
@@ -459,7 +572,17 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
         let spec_name = up.trim().to_owned();
         let edit_spec_name = spec_name.clone();
         let remove_name=model.clone();let confirm_name=StoredValue::new(model.clone());let pending_name=model.clone();let note_name=StoredValue::new(model.clone());let alias_up=up.clone();
-        view!{<div class="policy-limits provider-model-mapping"><label class="account-field"><span>"上游模型名"</span><input required on:keydown=move|e|{if e.key()=="Enter"{e.prevent_default();}else if e.key()=="Escape"&&picker_open.get_untracked(){e.prevent_default();e.stop_propagation();picker_open.set(false);}} readonly=m["conflict"]==true prop:value=up on:change=move|e|draft.update(|d|d["models"][i]["upstream"]=json!(event_target_value(&e)))/></label><label class="account-field"><span>"本地映射名"</span><input id=format!("model-alias-{provider_id}-{i}") readonly=existing||m["conflict"]==true placeholder="留空沿用上游名称" prop:value=mapping on:change=move|e|draft.update(|d|d["models"][i]["model"]=json!(event_target_value(&e)))/></label><label class="account-check"><input type="checkbox" disabled=m["conflict"]==true prop:checked=m["enabled"]!=false on:change=move|e|draft.update(|d|d["models"][i]["enabled"]=json!(event_target_checked(&e)))/>"模型启用"</label><div class="account-actions"><button type="button" class="ghost" disabled=m["conflict"]==true on:click=move |_|{let mut added=None;draft.update(|d|{model_note.set(add_model_alias(d,&alias_up));added=api::rows(d,"models").iter().position(|row|upstream_name(row)==alias_up&&row["model"].as_str().unwrap_or("").is_empty());});if let Some(index)=added{focus_model_control(format!("model-alias-{provider_id}-{index}"));}}>"添加同上游映射"</button>{if existing {view!{<button id=format!("remove-model-{provider_id}-{i}") type="button" class="ghost danger" disabled=m["conflict"]==true on:click=move |_|{removal_pending.set(Some(remove_name.clone()));focus_model_control(format!("confirm-model-remove-{provider_id}-{i}"));}>"移除映射"</button>}.into_any()}else{view!{<button type="button" class="ghost danger" on:click=move |_|{draft.update(|d|{if let Some(a)=d["models"].as_array_mut(){a.remove(i);}});model_note.set("已移除未保存的模型草稿。".into());focus_model_control(format!("provider-model-query-{provider_id}"));}>"移除此模型"</button>}.into_any()}}</div>
+        view!{<div class="policy-limits provider-model-mapping"><label class="account-field"><span>"上游模型名"</span><input required on:keydown=move|e|{if e.key()=="Enter"{e.prevent_default();}else if e.key()=="Escape"&&picker_open.get_untracked(){e.prevent_default();e.stop_propagation();picker_open.set(false);}} readonly=m["conflict"]==true prop:value=up on:change=move|e|draft.update(|d|d["models"][i]["upstream"]=json!(event_target_value(&e)))/></label><label class="account-field"><span>"本地映射名"</span><input id=format!("model-alias-{provider_id}-{i}") readonly=existing||m["conflict"]==true placeholder="留空沿用上游名称" prop:value=mapping on:change=move|e|draft.update(|d|d["models"][i]["model"]=json!(event_target_value(&e)))/></label><label class="account-check"><input type="checkbox" disabled=m["conflict"]==true prop:checked=m["enabled"]!=false on:change=move|e|draft.update(|d|d["models"][i]["enabled"]=json!(event_target_checked(&e)))/>"模型启用"</label><div class="account-actions"><button id=format!("add-model-alias-{provider_id}-{i}") type="button" class="ghost" aria-haspopup="dialog"
+            disabled=m["conflict"]==true on:click=move |_| {
+                let upstream = alias_up.trim();
+                if upstream.is_empty() {
+                    model_note.set("请先填写上游模型名。".into());
+                    return;
+                }
+                let scroll = key_model_body(provider_id).map(|body| body.scroll_top()).unwrap_or(0);
+                alias_target.set(Some((upstream.to_string(), i, scroll)));
+                alias_open.set(true);
+            }>"添加同上游映射"</button>{if existing {view!{<button id=format!("remove-model-{provider_id}-{i}") type="button" class="ghost danger" disabled=m["conflict"]==true on:click=move |_|{removal_pending.set(Some(remove_name.clone()));focus_model_control(format!("confirm-model-remove-{provider_id}-{i}"));}>"移除映射"</button>}.into_any()}else{view!{<button type="button" class="ghost danger" on:click=move |_|{draft.update(|d|{if let Some(a)=d["models"].as_array_mut(){a.remove(i);}});model_note.set("已移除未保存的模型草稿。".into());focus_model_control(format!("provider-model-query-{provider_id}"));}>"移除此模型"</button>}.into_any()}}</div>
         <p class="account-help">{move || specifications.with(|rows| {
             match rows.get(&spec_name) {
                 Some(spec) => {
@@ -493,6 +616,7 @@ pub fn ProviderKeys(ctx: Ctx, provider_id: i64, on_changed: Callback<()>, #[prop
         {existing.then(||view!{<p class="account-help">"已有本地名称不直接改名。停用保留配置；移除只解除当前 Key 的映射，不删除调用与账务历史。保存时会检查共享虚拟模型等引用。"</p>})}
         <Show when=move||removal_pending.get().as_deref()==Some(pending_name.as_str())><div role="group" aria-label="确认移除映射"><p role="alert">{format!("确认从当前 Key 移除映射 {}？保存模型配置后生效；历史记录保留。",note_name.get_value())}</p><div class="account-actions"><button id=format!("confirm-model-remove-{provider_id}-{i}") type="button" class="ghost danger" on:click=move |_|{draft.update(|d|remove_mapping(d,&confirm_name.get_value()));removal_pending.set(None);model_note.set("已从草稿移除映射；保存模型配置后生效，取消将保留原配置。".into());focus_model_control(format!("provider-model-query-{provider_id}"));}>"确认移除映射"</button><button type="button" class="ghost" on:click=move |_|{removal_pending.set(None);focus_model_control(format!("remove-model-{provider_id}-{i}"));}>"保留映射"</button></div></div></Show>{(m["conflict"]==true).then(||view!{<p class="account-help">"旧来源映射存在差异，保留原配置；可先独立编辑 Key，模型差异请在诊断与分组中核对。"</p>})}</div>}}).collect_view()}
     </Show><p role="alert" class="account-error">{move||error.get()}</p><div class="account-actions provider-editor-footer"><button type="button" class="ghost" disabled=move||busy.get() on:click=move |_|leave_editor.run(())>"取消"</button><button type="submit" class="primary" disabled=move||save_uncertain.get()>{move||if busy.get(){"正在保存…"}else if wizard.get()&&modal_view.get()=="models"{"保存模型并继续"}else if wizard.get(){"保存凭据并继续"}else if modal_view.get()=="models"{"保存模型配置"}else{"保存 Key"}}</button></div></fieldset></form></Show><Show when=move||form_open.get()&&modal_view.get()=="parameters"><ConnectionParameters ctx=ctx source_ids=parameter_sources.get_untracked()/><div class="account-actions provider-editor-footer"><button type="button" class="ghost" on:click=move |_|modal_view.set("models")>"← 返回模型选择"</button><button type="button" class="primary" on:click=move |_|leave_editor.run(())>"完成接入配置"</button></div></Show></Show></div></dialog>
+    <ModelAliases provider=provider_id draft=draft open=alias_open target=alias_target model_note=model_note/>
     <super::model_specifications::ModelSpecifications ctx=ctx channel_editor=channel_spec_editor
         on_saved=Callback::new(move |()| spec_revision.update(|value| *value += 1))/>
     </div>}
@@ -647,11 +771,9 @@ mod tests {
     #[test]
     fn one_upstream_can_have_another_alias_without_changing_saved_alias() {
         let mut draft=json!({"label":"primary","kind":"api_key","models":[{"model":"saved","upstream":"vendor/a","enabled":true}]});
-        assert!(add_model_alias(&mut draft,"vendor/a").contains("草稿"));
+        assert!(add_model_alias(&mut draft, "vendor/a", "another", true).is_ok());
+        assert!(add_model_alias(&mut draft, "vendor/a", "ANOTHER", true).is_err());
         assert_eq!(api::rows(&draft,"models").len(),2);
-        assert!(add_model_alias(&mut draft,"vendor/a").contains("先填写"));
-        assert_eq!(api::rows(&draft,"models").len(),2);
-        draft["models"][1]["model"]=json!("another");
         let body=payload(&draft,"",true).unwrap();
         assert_eq!(body["models"][0]["model"],"saved");
         assert_eq!(body["models"][1],json!({"model":"another","upstream":"vendor/a","enabled":true}));

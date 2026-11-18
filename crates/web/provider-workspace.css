@@ -316,3 +316,9 @@
 .connection-parameters { display:grid; gap:18px; }
 .connection-parameters form { margin:0; }
 @media(max-width:600px) { .provider-enrollment-steps { gap:4px; }.provider-enrollment-steps button { font-size:12px; padding:8px 4px; } }
+
+.console-content .provider-alias-editor { max-width:38rem; }
+.console-content .provider-alias-editor strong,
+.console-content .provider-alias-editor td { overflow-wrap:anywhere; }
+.console-content .provider-alias-editor .table-wrap { margin-bottom:16px; }
+.console-content .provider-alias-editor .account-error:empty { display:none; }
