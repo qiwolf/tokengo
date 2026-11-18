@@ -165,7 +165,7 @@ mod tests {
         let before=rows(&c);
         migrate(&c).unwrap();migrate(&c).unwrap();
         // Current migration also adds the owner-history index after the path columns.
-        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),49);
+        assert_eq!(c.query_row("SELECT MAX(version) FROM schema_migrations",[],|r|r.get::<_,i64>(0)).unwrap(),50);
         assert_eq!(rows(&c),before,"all preexisting request columns remain byte/value-equivalent");
         assert_eq!(c.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version<=42 AND applied_at='preserved-v42'",[],|r|r.get::<_,i64>(0)).unwrap(),42);
         assert_eq!(c.query_row("SELECT request_path IS NULL AND upstream_path IS NULL FROM requests",[],|r|r.get::<_,bool>(0)).unwrap(),true);
@@ -173,6 +173,47 @@ mod tests {
         for name in ["request_path","upstream_path"] {
             let col=info.iter().find(|r|r.0==name).unwrap();assert_eq!((&col.1,col.2,&col.3),(&"TEXT".to_owned(),0,&None));
         }
+    }
+
+    #[test]
+    fn public_catalog_upgrade_preserves_existing_specs_and_resolves_new_models() {
+        use crate::model_specifications::{self, SpecificationInput};
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+        ).unwrap();
+        for (version, sql) in schema::MIGRATIONS.iter().filter(|(version, _)| *version < 50) {
+            conn.execute_batch(sql).unwrap();
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (?1)", [version]).unwrap();
+        }
+
+        let before = serde_json::json!({
+            "model_id": "gpt-6.2-astra", "kind": "chat", "input_usage_reference": 101
+        });
+        let edited = serde_json::from_value::<SpecificationInput>(before).unwrap().validate().unwrap();
+        model_specifications::save(&conn, &edited).unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let rows = model_specifications::list(&conn, None).unwrap();
+        assert_eq!(rows.len(), 96);
+        for row in rows {
+            assert!(serde_json::from_value::<SpecificationInput>(serde_json::to_value(row).unwrap())
+                .unwrap().validate().is_ok());
+        }
+
+        let get = |id, endpoint| model_specifications::resolve(&conn, id, None, endpoint).unwrap().unwrap().public;
+        assert_eq!(get("gpt-6.2-astra", None).input_usage_reference, Some(101));
+        assert_eq!(get("gpt-5.6", None), get("gpt-5.6-sol", None));
+        assert_eq!(get("gemini-4-argon", None).context_window, Some(1_048_576));
+        let open_code = get("qwen3.8-max", Some("https://opencode.ai/zen/v1"));
+        assert_eq!(open_code.context_window, Some(262_144));
+        assert_eq!(get("qwen3.8-max", None).context_window, Some(1_000_000));
+        let command_code = get("gpt-5.5", Some("https://api.commandcode.ai/provider/v1"));
+        assert_eq!(command_code.context_window, Some(400_000));
+        assert_eq!(command_code.output_usage_reference, None);
+        assert_eq!(get("BAAI/bge-reranker-v2-m3", None).output_usage_reference, Some(0));
     }
 
     #[test]

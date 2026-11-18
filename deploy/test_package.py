@@ -26,6 +26,7 @@ SINGLE_MIGRATIONS={
     '44':'account_overview.sql',
     '46':'usage_time.sql',
     '47':'currency_units.sql',
+    '50':'model_specification_catalog.sql',
 }
 COMPOSED_MIGRATIONS={
     '45':('query_performance.sql','model_invocation_totals.sql'),
@@ -80,12 +81,12 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(commit,COMMIT)
         return root,json.loads((root/'manifest.json').read_text())
 
-    def test_actual_archive_manifest_schema49_matches_schema_rs_and_all_checksums(self):
+    def test_actual_archive_manifest_matches_schema_rs_and_all_checksums(self):
         archive=self.build_package();root,manifest=self.unpack_verified(archive)
         schema=(SOURCE_ROOT/'crates/server/src/db/schema.rs').read_text()
         latest=max(map(int,re.findall(r'^\s*\((\d+),',schema,re.MULTILINE)))
         self.assertEqual(manifest['schema_version'],latest)
-        self.assertEqual(latest,49,'a new migration requires a deliberate packaging-contract update')
+        self.assertEqual(latest,50,'a new migration requires a deliberate packaging-contract update')
         self.assertEqual(manifest['commit'],COMMIT)
         self.assertEqual(manifest['target'],'x86_64-unknown-linux-gnu')
         self.assertEqual(set(manifest['migrations']),set(SINGLE_MIGRATIONS)|set(COMPOSED_MIGRATIONS))

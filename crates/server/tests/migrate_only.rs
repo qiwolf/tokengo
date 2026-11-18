@@ -23,7 +23,7 @@ fn migrate_only_preserves_business_rows_and_never_initializes_runtime_services()
             .output().unwrap();
         assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
         let result:serde_json::Value=serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["mode"],"migrate-only");assert_eq!(result["schema_version"],49);
+        assert_eq!(result["mode"],"migrate-only");assert_eq!(result["schema_version"],50);
     }
     let c=rusqlite::Connection::open(&path).unwrap();
     assert_eq!(c.query_row("SELECT status||':'||error FROM requests WHERE id=1",[],|r|r.get::<_,String>(0)).unwrap(),"running:keep unchanged");
