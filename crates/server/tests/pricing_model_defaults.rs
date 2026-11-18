@@ -44,17 +44,17 @@ async fn model_pricing_metadata_is_admin_only_type_aware_and_source_bound(){
     db::model_routes::set_enabled(&f.state.conn(),"chat",false).unwrap();let(_,v)=f.call("/api/pricing/options",None,true).await;assert!(v["options"].as_array().unwrap().iter().all(|r|r["model"]!="chat"));
 }
 #[tokio::test]
-async fn creating_token_price_uses_current_config_and_prompts_only_for_missing_bounds(){
+async fn rate_only_updates_keep_saved_references_when_protocol_limits_change(){
     let f=Fixture::new();
     let(status,_)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::BAD_REQUEST);
     let mut manual=f.price("chat");manual["max_input_tokens"]=json!(1000);manual["max_output_tokens"]=json!(2000);let(status,v)=f.call("/api/pricing",Some(manual.clone()),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],1000);
     f.configure_bounds(128000,32000);
     let raw_before=db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap();
-    let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],128000);assert_eq!(v["price"]["max_output_tokens"],32000);
+    let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],1000);assert_eq!(v["price"]["max_output_tokens"],2000);
     // Administrators may adjust prefilled price bounds without rewriting the
-    // source protocol parameters. Omitted fields still inherit current metadata.
+    // source protocol parameters. Omitted fields carry forward the latest saved reference.
     let(status,v)=f.call("/api/pricing",Some(manual),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],1000);assert_eq!(v["price"]["max_output_tokens"],2000);assert_eq!(raw_before,db::settings::get(&f.state.conn(),&format!("channel_protocols:{}",f.channel)).unwrap());
-    f.configure_bounds(256000,64000);let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],256000);assert_eq!(v["price"]["max_output_tokens"],64000);
+    f.configure_bounds(256000,64000);let(status,v)=f.call("/api/pricing",Some(f.price("chat")),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],1000);assert_eq!(v["price"]["max_output_tokens"],2000);
     for name in ["voice","speak","picture","movie","tool","audio"]{let(status,_)=f.call("/api/pricing",Some(f.price(name)),true).await;assert_eq!(status,StatusCode::BAD_REQUEST,"{name}");}
 }
 #[tokio::test]
@@ -65,7 +65,7 @@ async fn source_model_context_and_oauth_bounds_are_not_replaced_by_another_model
     let mut body=f.price("chat");body["max_output_tokens"]=json!(1024);let(status,v)=f.call("/api/pricing",Some(body),true).await;assert_eq!(status,StatusCode::OK,"{v}");assert_eq!(v["price"]["max_input_tokens"],8192);
     f.configure_bounds(128000,32000);let(_,v)=f.call("/api/pricing/options",None,true).await;assert_eq!(v["options"].as_array().unwrap().iter().find(|r|r["model"]=="chat").unwrap()["max_input_tokens"],8192);
     {let c=f.state.conn();c.execute("INSERT INTO oauth_accounts(label,issuer,subject,client_id,status,scopes_json,expires_at,earliest_refresh_at) VALUES('synthetic','https://auth.openai.com','synthetic','synthetic','active','[]',?1,0)",[db::now_ms()+60000]).unwrap();let account=c.last_insert_rowid();c.execute("INSERT INTO oauth_channel_bindings(channel_id,account_id,max_input_tokens,max_output_tokens) VALUES(?1,?2,4096,2048)",rusqlite::params![f.channel,account]).unwrap();}
-    let(_,v)=f.call("/api/pricing/options",None,true).await;let chat=v["options"].as_array().unwrap().iter().find(|r|r["model"]=="chat").unwrap();assert_eq!(chat["max_input_tokens"],4096);assert_eq!(chat["max_output_tokens"],2048);assert_eq!(chat["input_bound_source"],"oauth_binding");
+    let(_,v)=f.call("/api/pricing/options",None,true).await;let chat=v["options"].as_array().unwrap().iter().find(|r|r["model"]=="chat").unwrap();assert_eq!(chat["input_usage_reference"],8192);assert_eq!(chat["output_usage_reference"],1024);assert_eq!(chat["input_bound_source"],"existing_price");
 }
 #[tokio::test]
 async fn units_follow_model_type_and_cannot_create_accidental_token_prices(){

@@ -1,4 +1,4 @@
-use super::{PageHead, policy_editor};
+use super::{PageHead, model_specifications::quantity_milli_input, policy_editor};
 use super::usage_dashboard::UsageDashboard;
 use super::usage_period::{UsagePeriod, period_query, default_period_query, applied_period};
 use crate::{admin_api as api, Ctx};
@@ -23,6 +23,25 @@ fn price_options_from_channels(rows:&[Value],credentials:&std::collections::BTre
     }
     unique.into_values().collect()
 }
+fn apply_price_metadata(options: &mut [PriceOption], response: &Value) {
+    let metadata = api::rows(response, "options");
+    for option in options {
+        option.metadata = metadata.iter().find(|row| {
+            row["channel_id"].as_i64() == Some(option.source_id)
+                && row["model"].as_str().is_some_and(|name| tokengo_shared::same_model_name(name, &option.model))
+        }).cloned().unwrap_or(Value::Null);
+    }
+}
+
+async fn refresh_price_metadata(options: RwSignal<Vec<PriceOption>>) -> Result<(), crate::api::ApiErr> {
+    if options.try_get_untracked().is_none_or(|values| values.is_empty()) {
+        return Ok(());
+    }
+    let result = api::request("GET", "/api/pricing/options", None).await;
+    options.try_update(|values| apply_price_metadata(values, result.as_ref().unwrap_or(&Value::Null)));
+    result.map(|_| ())
+}
+
 fn price_sources(ctx:Ctx)->RwSignal<Vec<PriceOption>> {
     let options=RwSignal::new(Vec::new());
     leptos::task::spawn_local(async move {
@@ -37,9 +56,8 @@ fn price_sources(ctx:Ctx)->RwSignal<Vec<PriceOption>> {
                 }
             }
             let metadata=api::request("GET","/api/pricing/options",None).await?;
-            let metadata=api::rows(&metadata,"options");
             let mut options=price_options_from_channels(&rows,&credentials);
-            for option in &mut options {option.metadata=metadata.iter().find(|m|m["channel_id"].as_i64()==Some(option.source_id)&&m["model"].as_str().is_some_and(|name|tokengo_shared::normalize_model_name(name)==option.model)).cloned().unwrap_or(Value::Null);}
+            apply_price_metadata(&mut options, &metadata);
             Ok::<_,crate::api::ApiErr>(options)
         }.await;
         match result {Ok(v)=>options.set(v),Err(e)=>ctx.note_err(&e)}
@@ -72,9 +90,6 @@ fn row_money(row:&Value,field:&str)->String {money_for(&row[field],row_currency(
 fn unit_label(unit:&str)->&str {match unit {"second"=>"秒","minute"=>"分钟","hour"=>"小时","character"=>"字符","byte"=>"字节","image"=>"张图","video"=>"段视频",_=>"单位"}}
 fn duration_unit(unit:&str)->bool {matches!(unit,"second"|"minute"|"hour")}
 fn duration_subject(task:&str)->&'static str {match task{"video"=>"视频","asr"|"audio"=>"音频",_=>"媒体"}}
-fn configured_duration_bound(option:&PriceOption)->Option<i64>{if option.metadata["task_type"]=="video"{None}else{metadata_bound(option,"max_audio_seconds")}}
-fn quantity_milli_input(n:i64)->String {let whole=n/1000;let fraction=n%1000;if fraction==0{whole.to_string()}else{format!("{whole}.{fraction:03}").trim_end_matches('0').to_string()}}
-fn quantity_milli(s:&str)->Result<i64,String> {let v=policy_editor::optional_limit(s)?.ok_or_else(||"请填写用量参考值".to_string())?;if v<=0||v%1000!=0{return Err("用量参考值须大于0，最多3位小数。".into());}Ok(v/1000)}
 
 // Native dialogs keep editing focused and provide Escape, focus trapping and
 // return to the button that opened them without custom keyboard handlers.
@@ -204,42 +219,89 @@ fn price_scheme(option:&PriceOption,manual:&str)->String {
 }
 fn pricing_scheme_label(kind:&str)->&str {match kind{"token"=>"按 Token 计价","unit"=>"按时长或数量计价","request"=>"按次计价",_=>"请选择计价方式"}}
 fn task_label(task:&str)->&str {match task{"chat"=>"对话 / 推理","embeddings"=>"向量","rerank"=>"重排","asr"=>"语音识别（ASR）","tts"=>"语音合成（TTS）","audio"=>"音频","image"=>"图像","video"=>"视频","tools"=>"工具",_=>"类型未配置"}}
-fn metadata_bound(option:&PriceOption,field:&str)->Option<i64>{option.metadata[field].as_i64().filter(|n|*n>0||(field=="max_output_tokens"&&*n==0))}
-fn model_price_payload(option:&PriceOption,manual_kind:&str,input:&str,output:&str,max_input:&str,max_output:&str,unit:&str)->Result<(&'static str,&'static str,Value),String> {
-    if option.metadata.is_null(){return Err("未能读取该模型的计价配置，请刷新后重试。".into());}
-    let kind=price_scheme(option,manual_kind);
-    let amount=policy_editor::optional_limit(input)?.ok_or_else(||"请填写人民币价格；免费请填 0。".to_string())?;
-    let mut body=json!({"channel_id":option.source_id,"model":option.model,"currency":"CNY"});
-    match kind.as_str(){
-        "token"=>{
-            body["input_micro_per_million"]=json!(amount);body["output_micro_per_million"]=json!(if metadata_bound(option,"max_output_tokens")==Some(0){0}else{policy_editor::optional_limit(output)?.ok_or_else(||"请填写输出价格；免费请填 0。".to_string())?});
-            body["max_input_tokens"]=json!(if max_input.trim().is_empty(){metadata_bound(option,"max_input_tokens").ok_or_else(||"请填写输入用量参考值（Token）".to_string())?}else{api::integer(max_input,"输入用量参考值（Token）",true)?});
-            body["max_output_tokens"]=json!(if metadata_bound(option,"max_output_tokens")==Some(0){0}else if max_output.trim().is_empty(){metadata_bound(option,"max_output_tokens").ok_or_else(||"请填写总输出用量参考值（Token）".to_string())?}else{api::integer(max_output,"总输出用量参考值（Token）",true)?});
-            Ok(("/api/pricing","price",body))
-        },
-        "unit"=>{
-            if !api::rows(&option.metadata,"allowed_units").iter().any(|value|value.as_str()==Some(unit)){return Err("请选择该模型支持的计价单位。".into());}
-            body["unit"]=json!(unit);body["micro_per_unit"]=json!(amount);
-            body["max_quantity_milli"]=json!(if duration_unit(unit){match configured_duration_bound(option).and_then(|n|n.checked_mul(1000)){Some(n)=>n,None=>quantity_milli(max_input)?}}else{quantity_milli(max_input)?});
-            Ok(("/api/unit-pricing","unit_price",body))
-        },
-        "request"=>{body["micro_per_call"]=json!(amount);Ok(("/api/request-pricing","request_price",body))},
-        _=>Err("该模型尚未配置类型，请先选择计价方式。".into()),
+fn usage_reference(option: &PriceOption, field: &str) -> Option<i64> {
+    option.metadata[field].as_i64()
+}
+
+fn model_price_payload(
+    option: &PriceOption,
+    manual_kind: &str,
+    input: &str,
+    output: &str,
+    unit: &str,
+) -> Result<(&'static str, &'static str, Value), String> {
+    if option.metadata.is_null() {
+        return Err("未能读取该模型的计价配置，请刷新后重试。".into());
+    }
+    let kind = price_scheme(option, manual_kind);
+    let amount = policy_editor::optional_limit(input)?
+        .ok_or_else(|| "请填写人民币价格，免费请填 0。".to_string())?;
+    let mut body = json!({"channel_id": option.source_id, "model": option.model, "currency": "CNY"});
+    match kind.as_str() {
+        "token" => {
+            let output = if usage_reference(option, "output_usage_reference") == Some(0) {
+                0
+            } else {
+                policy_editor::optional_limit(output)?
+                    .ok_or_else(|| "请填写输出价格，免费请填 0。".to_string())?
+            };
+            body["input_micro_per_million"] = json!(amount);
+            body["output_micro_per_million"] = json!(output);
+            Ok(("/api/pricing", "price", body))
+        }
+        "unit" => {
+            if !api::rows(&option.metadata, "allowed_units").iter().any(|value| value.as_str() == Some(unit)) {
+                return Err("请选择该模型支持的计价单位。".into());
+            }
+            body["unit"] = json!(unit);
+            body["micro_per_unit"] = json!(amount);
+            Ok(("/api/unit-pricing", "unit_price", body))
+        }
+        "request" => {
+            body["micro_per_call"] = json!(amount);
+            Ok(("/api/request-pricing", "request_price", body))
+        }
+        _ => Err("该模型尚未配置类型，请先选择计价方式。".into()),
     }
 }
+
+fn reference_origin(value: &Value) -> &'static str {
+    match value.as_str() {
+        Some("channel_model") => "渠道模型",
+        Some("existing_price") => "沿用已有价格配置",
+        Some("model_specification") => "模型规格",
+        Some("non_generation_model") => "模型类型",
+        Some("source_model_discovery" | "upstream_catalog") => "上游目录",
+        Some("oauth_binding" | "source_protocols" | "model_context_override") => "来源配置",
+        _ => "",
+    }
+}
+
+#[component]
+fn PriceUsageReferences(ctx: Ctx, rows: Vec<(String, Option<String>, &'static str)>) -> impl IntoView {
+    view! {
+        <div id="price-model-bounds" class="billing-selected-object" style="grid-column:1 / -1">
+            <dl class="billing-price-references">{rows.into_iter().map(|(label, value, source)| view! {
+                <dt>{label}</dt><dd>
+                    {value.unwrap_or_else(|| "未配置".into())}
+                    {(!source.is_empty()).then(|| view! { <span class="muted small">" · "{source}</span> })}
+                </dd>
+            }).collect_view()}</dl>
+            <p class="muted small">"用量参考值用于费用估算，可在渠道模型中修改。"</p>
+            <button type="button" class="ghost" on:click=move |_| {
+                billing_dialog("price-dialog", false);
+                ctx.go(crate::Page::Channels);
+            }>"前往渠道模型配置"</button>
+        </div>
+    }
+}
+
 fn compatible_price_unit(row:&Value,option:&PriceOption)->bool {
     price_row_kind(row)!="unit"||api::rows(&option.metadata,"allowed_units").iter().any(|unit|unit==&row["unit"])
 }
 fn compatible_price_kind(row:&Value,options:&[PriceOption])->bool {
     if service_price(row){return true;}
     options.iter().find(|o|row["channel_id"].as_i64()==Some(o.source_id)&&row["model"].as_str()==Some(o.model.as_str())).is_none_or(|o|{let configured=o.metadata["pricing_kind"].as_str().unwrap_or("unknown");compatible_price_unit(row,o)&&(configured=="unknown"||price_row_kind(row)==configured||api::rows(&o.metadata,"allowed_pricing_kinds").iter().any(|k|k.as_str()==Some(price_row_kind(row))))})
-}
-// Unknown discovery may invalidate a previous automatic prefill, but it must
-// never erase an existing price bound or an administrator's edited draft.
-fn discovered_price_bound(current:&str,declared:&Value,replace:bool,dirty:bool,automatic:bool)->String {
-    if !replace&&(dirty||!automatic){return current.into();}
-    if let Some(value)=declared.as_i64().filter(|value|*value>0){return value.to_string();}
-    if automatic&&!dirty{String::new()}else{current.into()}
 }
 fn model_price_endpoint(kind:&str)->&'static str {match kind{"unit"=>"/api/unit-pricing","request"=>"/api/request-pricing",_=>"/api/pricing"}}
 async fn load_model_prices()->Result<Vec<Value>,crate::api::ApiErr> {
@@ -257,55 +319,34 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
     let sources=price_sources(ctx);let versions=RwSignal::new("current".to_string());let rows=RwSignal::new(Vec::<Value>::new());
     let busy=RwSignal::new(false);let error=RwSignal::new(String::new());let message=RwSignal::new(String::new());
     let edit_target=RwSignal::new(None::<(&'static str,i64)>);let pending_delete=RwSignal::new(None::<Value>);
-    let channel=RwSignal::new(String::new());let model=RwSignal::new(String::new());let input=RwSignal::new(String::new());let output=RwSignal::new(String::new());let max_in=RwSignal::new(String::new());let max_out=RwSignal::new(String::new());let unit=RwSignal::new(String::new());let manual_kind=RwSignal::new(String::new());
-    let limit_dirty_in=RwSignal::new(false);let limit_dirty_out=RwSignal::new(false);let detecting=RwSignal::new(false);let detection=RwSignal::new(None::<Value>);let detection_note=RwSignal::new(String::new());let last_detection=RwSignal::new(None::<(i64,String)>);let detection_generation=RwSignal::new(0u64);let limit_edit_revision=RwSignal::new(0u64);
-    let selected=Memo::new(move |_|selected_price_option(&channel.get(),&model.get(),&sources.get(),&objects.get()));
-    let scheme=Memo::new(move |_|selected.get().map(|option|price_scheme(&option,&manual_kind.get())).unwrap_or_default());
-    let on_selection=Callback::new(move|()|{input.set(String::new());output.set(String::new());limit_dirty_in.set(false);limit_dirty_out.set(false);detection_generation.update(|v|*v+=1);detecting.set(false);detection.set(None);detection_note.set(String::new());max_in.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|metadata_bound(&o,"max_input_tokens")).map(|n|n.to_string()).unwrap_or_default());max_out.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|metadata_bound(&o,"max_output_tokens")).map(|n|n.to_string()).unwrap_or_default());manual_kind.set(String::new());error.set(String::new());message.set(String::new());unit.set(selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked()).and_then(|o|o.metadata["recommended_unit"].as_str().map(str::to_string)).unwrap_or_default());});
-    let detect_limits=Callback::new(move|replace:bool|{
-        let Some(option)=selected.get_untracked()else{return;};
-        if price_scheme(&option,&manual_kind.get_untracked())!="token" {return;}
-        let pair=(option.source_id,option.model.clone());last_detection.set(Some(pair.clone()));detection_generation.update(|v|*v+=1);let sequence=detection_generation.get_untracked();let edit_revision=limit_edit_revision.get_untracked();detecting.set(true);detection_note.set("正在读取供应方模型目录…".into());
-        leptos::task::spawn_local(async move {
-            let result=api::request("POST",&format!("/api/channels/{}/limits/discover",pair.0),Some(json!({"model":pair.1}))).await;
-            if detection_generation.try_get_untracked()!=Some(sequence)||selected.try_get_untracked().flatten().map(|v|(v.source_id,v.model))!=Some(pair.clone()){return;}
-            match result {
-                Ok(value)=>{
-                    let limits=&value["limits"];
-                    let unchanged=limit_edit_revision.get_untracked()==edit_revision;
-                    let auto_in=metadata_bound(&option,"max_input_tokens").is_none()||option.metadata["input_bound_source"]=="source_model_discovery";
-                    let auto_out=metadata_bound(&option,"max_output_tokens").is_none()||option.metadata["output_bound_source"]=="source_model_discovery";
-                    if unchanged {
-                        max_in.set(discovered_price_bound(&max_in.get_untracked(),&limits["max_input_tokens"],replace,limit_dirty_in.get_untracked(),auto_in));
-                        if metadata_bound(&option,"max_output_tokens")!=Some(0) {
-                            max_out.set(discovered_price_bound(&max_out.get_untracked(),&limits["max_output_tokens"],replace,limit_dirty_out.get_untracked(),auto_out));
-                        }
-                    }
-                    sources.update(|all|{if let Some(option)=all.iter_mut().find(|v|v.source_id==pair.0&&v.model==pair.1){for (field,origin) in [("max_input_tokens","input_bound_source"),("max_output_tokens","output_bound_source")] {if option.metadata[field].is_null()||option.metadata[origin]=="source_model_discovery"{option.metadata[field]=limits[field].clone();option.metadata[origin]=if limits[field].is_null(){Value::Null}else{json!("source_model_discovery")};}}option.metadata["limits_discovery"]=value.clone();}});
-                    let time=value["discovered_at_ms"].as_f64().map(|ms|js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms)).to_locale_string("zh-CN",&wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default()).unwrap_or_default();
-                    detection_note.set(if value["status"]=="supplier_declared"{if replace{format!("供应方目录声明 · {time}；探测值已填入，可继续调整。")}else{format!("供应方目录声明 · {time}；已填入未手工修改的项目，可继续调整。")}}else{"供应方目录未声明这些用量；保留现有参考值，未知项目请补填。".into()});detection.set(Some(value));
-                },
-                Err(e)=>{ctx.note_err(&e);detection_note.set(format!("未能探测：{}；可保留或手工填写用量参考值。",e.message));}
-            }detecting.set(false);
-        });
+    let channel = RwSignal::new(String::new());
+    let model = RwSignal::new(String::new());
+    let input = RwSignal::new(String::new());
+    let output = RwSignal::new(String::new());
+    let unit = RwSignal::new(String::new());
+    let manual_kind = RwSignal::new(String::new());
+    let selected = Memo::new(move |_| selected_price_option(&channel.get(), &model.get(), &sources.get(), &objects.get()));
+    let scheme = Memo::new(move |_| selected.get().map(|option| price_scheme(&option, &manual_kind.get())).unwrap_or_default());
+    let on_selection = Callback::new(move |()| {
+        input.set(String::new());
+        output.set(String::new());
+        manual_kind.set(String::new());
+        error.set(String::new());
+        message.set(String::new());
+        unit.set(selected.get_untracked().and_then(|option| {
+            option.metadata["recommended_unit"].as_str().map(str::to_owned)
+        }).unwrap_or_default());
     });
-    Effect::new(move |_|{
-        let Some(option)=selected.get()else{return;};
-        if price_scheme(&option,&manual_kind.get())!="token" {return;}
-        let pair=(option.source_id,option.model.clone());
-        if last_detection.get_untracked().as_ref()!=Some(&pair)&&["max_input_tokens","max_output_tokens"].iter().any(|field|metadata_bound(&option,field).is_none()) {
-            detect_limits.run(false);
-        }
-    });
-    let shown_discovery=Memo::new(move |_|detection.get().or_else(||selected.get().and_then(|o|o.metadata.get("limits_discovery").filter(|v|v.is_object()).cloned())));
     let load=move |_| {if busy.get_untracked(){return;}busy.set(true);error.set(String::new());leptos::task::spawn_local(async move {
-        let result=load_model_prices().await;
-        match result {Ok(v)=>rows.set(v),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);
+        let (result, metadata) = futures_util::join!(load_model_prices(), refresh_price_metadata(sources));
+        match result {Ok(v)=>rows.set(v),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}
+        if let Err(e) = metadata {ctx.note_err(&e);error.set(format!("刷新用量参考值失败，{}", e.message));}
+        busy.set(false);
     });};load(());
     let save=move|ev:leptos::ev::SubmitEvent| {
         ev.prevent_default();if busy.get_untracked(){return;}
         let Some(option)=selected_price_option(&channel.get_untracked(),&model.get_untracked(),&sources.get_untracked(),&objects.get_untracked())else{error.set("请选择当前有效渠道上已配置的模型。".into());return;};
-        let (path,item,body)=match model_price_payload(&option,&manual_kind.get_untracked(),&input.get_untracked(),&output.get_untracked(),&max_in.get_untracked(),&max_out.get_untracked(),&unit.get_untracked()){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
+        let (path,item,body)=match model_price_payload(&option,&manual_kind.get_untracked(),&input.get_untracked(),&output.get_untracked(),&unit.get_untracked()){Ok(v)=>v,Err(e)=>{error.set(e);return;}};
         busy.set(true);error.set(String::new());message.set(String::new());
         let editing=edit_target.get_untracked();let save_path=editing.map(|(path,id)|format!("{path}/{id}")).unwrap_or_else(||path.to_owned());
         leptos::task::spawn_local(async move {match api::request(if editing.is_some(){"PUT"}else{"POST"},&save_path,Some(body)).await {
@@ -320,11 +361,8 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
         if target==kind&&unit_valid {
             input.set(if legacy{String::new()}else{r[match kind{"token"=>"input_micro_per_million","unit"=>"micro_per_unit",_=>"micro_per_call"}].as_i64().map(policy_editor::money_input).unwrap_or_default()});
             output.set(if legacy{String::new()}else{r["output_micro_per_million"].as_i64().map(policy_editor::money_input).unwrap_or_default()});
-            max_in.set(if kind=="unit"{r["max_quantity_milli"].as_i64().map(quantity_milli_input).unwrap_or_default()}else{r["max_input_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default()});
-            max_out.set(r["max_output_tokens"].as_i64().map(|n|n.to_string()).unwrap_or_default());
             if selected.as_ref().is_some_and(|o|api::rows(&o.metadata,"allowed_units").iter().any(|u|u==&r["unit"])){unit.set(api::text(&r,"unit"));}
         }
-        limit_dirty_in.set(true);limit_dirty_out.set(true);
         edit_target.set((!legacy&&price_is_current(&r,&rows.get_untracked())&&target==kind&&unit_valid&&r["deleted"]!=true).then(||(model_price_endpoint(kind),r["id"].as_i64().unwrap_or(0))));
         message.set(if target!=kind{"模型类型已变更，请按当前计价方式重新填写。"}else if !unit_valid{"原计价单位不适用于当前模型，请确认新单位并重新填写。"}else if legacy{"请重新填写人民币价格，旧美元单价不会直接复制。"}else{"修改后生成新版本，后续调用使用新价格，历史账目保留。"}.into());
         billing_dialog("price-dialog",true);
@@ -344,7 +382,14 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
         let path=format!("{}/{}",model_price_endpoint(price_row_kind(&r)),api::text(&r,"id"));
         leptos::task::spawn_local(async move {
             match api::request("DELETE",&path,None).await {
-                Ok(_)=>{match load_model_prices().await {Ok(all)=>rows.set(all),Err(e)=>error.set(format!("价格已删除，刷新列表失败：{}",e.message))}message.set("价格已删除，可在“已删除”范围查看；历史账目保留。".into());pending_delete.set(None);billing_dialog("price-delete-dialog",false);},
+                Ok(_) => {
+                    let (prices, metadata) = futures_util::join!(load_model_prices(), refresh_price_metadata(sources));
+                    match prices {Ok(all)=>rows.set(all),Err(e)=>error.set(format!("价格已删除，刷新列表失败：{}",e.message))}
+                    if let Err(e) = metadata {ctx.note_err(&e);error.set(format!("价格已删除，刷新用量参考值失败，{}", e.message));}
+                    message.set("价格已删除，可在“已删除”范围查看；历史账目保留。".into());
+                    pending_delete.set(None);
+                    billing_dialog("price-delete-dialog", false);
+                },
                 Err(e)=>{ctx.note_err(&e);error.set(e.message);}
             }busy.set(false);
         });
@@ -370,26 +415,41 @@ fn ModelPricing(ctx:Ctx,objects:RwSignal<Value>)->impl IntoView {
             <BillingDialog id="price-dialog" title="配置人民币价格" busy=busy><form on:submit=save><fieldset disabled=move||busy.get()><div class="form-grid">
                 {move||if edit_target.get().is_some(){view!{<div class="billing-selected-object" style="grid-column:1 / -1"><strong>{model.get()}</strong><p class="muted small">{selected.get().map(|o|o.channel).unwrap_or_default()}</p><p class="muted small">"修改当前模型和来源的价格；保存后生成新版本。"</p></div>}.into_any()}else{view!{<PriceModelSource prefix="price" channel=channel model=model options=sources objects=objects on_selection=on_selection/>}.into_any()}}
                 {move||selected.get().map(|option|{
-                    let metadata=option.metadata.clone();let kind=scheme.get();let input_bound=metadata_bound(&option,"max_input_tokens");let output_bound=metadata_bound(&option,"max_output_tokens");let duration_bound=configured_duration_bound(&option);let subject=duration_subject(metadata["task_type"].as_str().unwrap_or(""));let selected_unit=unit.get();let duration=duration_unit(&selected_unit);
+                    let metadata = &option.metadata;
+                    let kind = scheme.get();
+                    let input_reference = usage_reference(&option, "input_usage_reference");
+                    let output_reference = usage_reference(&option, "output_usage_reference");
+                    let subject = duration_subject(metadata["task_type"].as_str().unwrap_or(""));
+                    let selected_unit = unit.get();
                     view!{
                         <div id="price-scheme-summary" class="billing-selected-object" style="grid-column:1 / -1"><p><strong>{format!("{} · {}",task_label(metadata["task_type"].as_str().unwrap_or("unknown")),pricing_scheme_label(&kind))}</strong></p>{if metadata.is_null(){view!{<p role="alert">"未能读取模型计价配置，请刷新后重试。"</p>}.into_any()}else{().into_any()}}</div>
-                        {if metadata["pricing_kind"]=="unknown"{view!{<label for="price-kind">"计价方式（模型类型未配置）"</label><select id="price-kind" required prop:value=manual_kind on:change=move|e|{manual_kind.set(event_target_value(&e));input.set(String::new());output.set(String::new());max_in.set(String::new());max_out.set(String::new());unit.set(String::new());}><option value="">"请选择供应方实际计价方式"</option><option value="token">"按 Token"</option><option value="unit">"按时长 / 数量"</option><option value="request">"按次"</option></select>}.into_any()}else{().into_any()}}
-                        {if kind=="unit"{let units=api::rows(&metadata,"allowed_units");view!{<label for="price-unit">"计价单位"</label><select id="price-unit" required prop:value=unit on:change=move|e|{unit.set(event_target_value(&e));max_in.set(String::new());input.set(String::new());}><option value="">"请选择供应方实际使用的单位"</option>{units.into_iter().filter_map(|u|u.as_str().map(str::to_string)).map(|u|{let label=if duration_unit(&u){format!("{subject}{}",unit_label(&u))}else{unit_label(&u).to_string()};view!{<option value=u>{label}</option>}}).collect_view()}</select>}.into_any()}else{().into_any()}}
+                        {if metadata["pricing_kind"]=="unknown"{view!{<label for="price-kind">"计价方式（模型类型未配置）"</label><select id="price-kind" required prop:value=manual_kind on:change=move|e|{manual_kind.set(event_target_value(&e));input.set(String::new());output.set(String::new());unit.set(String::new());}><option value="">"请选择供应方实际计价方式"</option><option value="token">"按 Token"</option><option value="unit">"按时长 / 数量"</option><option value="request">"按次"</option></select>}.into_any()}else{().into_any()}}
+                        {if kind=="unit"{let units=api::rows(&metadata,"allowed_units");view!{<label for="price-unit">"计价单位"</label><select id="price-unit" required prop:value=unit on:change=move|e|{unit.set(event_target_value(&e));input.set(String::new());}><option value="">"请选择供应方实际使用的单位"</option>{units.into_iter().filter_map(|u|u.as_str().map(str::to_string)).map(|u|{let label=if duration_unit(&u){format!("{subject}{}",unit_label(&u))}else{unit_label(&u).to_string()};view!{<option value=u>{label}</option>}}).collect_view()}</select>}.into_any()}else{().into_any()}}
                         {if !kind.is_empty(){let price_label=match kind.as_str(){"token"=>"输入价格（元 / 百万 Token）".to_string(),"unit"=>format!("价格（元 / {}）",if selected_unit.is_empty(){"所选单位"}else{unit_label(&selected_unit)}),_=>"价格（元 / 次）".into()};view!{<label for="price-in">{price_label}</label><input id="price-in" required type="text" inputmode="decimal" prop:value=input aria-describedby="price-error" on:input=move|e|input.set(event_target_value(&e))/ >}.into_any()}else{().into_any()}}
                         {if kind=="token"{view!{
-                            {if output_bound==Some(0){view!{<p class="muted small" style="grid-column:1 / -1">"该模型不生成输出 Token，仅配置输入价格；输出价格为 0。"</p>}.into_any()}else{view!{<label for="price-out">"输出价格（元 / 百万 Token）"</label><input id="price-out" required type="text" inputmode="decimal" prop:value=output aria-describedby="price-error" on:input=move|e|output.set(event_target_value(&e))/>}.into_any()}}
-                            <div id="price-model-bounds" class="billing-selected-object" style="grid-column:1 / -1"><p class="muted small">"自动带入现有价格或匹配到的模型用量参考值，缺项可从来源配置与供应方目录补充。可按本次定价调整，结算按实际用量。"</p><p class="muted small">{format!("参考输入：{}；参考总输出：{}。",input_bound.map(|n|format!("{n} Token")).unwrap_or_else(||"未知".into()),output_bound.map(|n|format!("{n} Token")).unwrap_or_else(||"未知".into()))}</p>
-                            <button type="button" class="ghost" disabled=move||detecting.get()||busy.get() on:click=move |_|detect_limits.run(true)>"重新探测并填入"</button><p role="status" class="muted small">{move||{let note=detection_note.get();if !note.is_empty(){note}else{shown_discovery.get().map(|v|{let time=v["discovered_at_ms"].as_f64().map(|ms|js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms)).to_locale_string("zh-CN",&wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default()).unwrap_or_default();format!("供应方目录声明 · {time}；管理员可调整。")}).unwrap_or_default()}}}</p>{move||shown_discovery.get().map(|v|view!{<p class="muted small">{format!("探测来源：{}",api::text(&v,"source_url"))}</p>})}</div>
-                            <label for="price-max-in">"输入用量参考值（Token）"</label><input id="price-max-in" required inputmode="numeric" prop:value=max_in aria-describedby="price-input-help price-error" on:input=move|e|{limit_dirty_in.set(true);limit_edit_revision.update(|v|*v+=1);max_in.set(event_target_value(&e));}/><small id="price-input-help" class="muted" style="grid-column:1 / -1">"系统自动带入可用值，可由管理员调整；仅供费用估算，不限制调用。"</small>
-                            {if output_bound!=Some(0){view!{<label for="price-max-out">"总输出用量参考值（Token）"</label><input id="price-max-out" required inputmode="numeric" prop:value=max_out aria-describedby="price-output-help price-error" on:input=move|e|{limit_dirty_out.set(true);limit_edit_revision.update(|v|*v+=1);max_out.set(event_target_value(&e));}/><small id="price-output-help" class="muted" style="grid-column:1 / -1">"总输出包含生成结果与上游计入输出的推理用量；参考值仅供费用估算，不限制调用。"</small>}.into_any()}else{().into_any()}}
+                            {if output_reference==Some(0){view!{<p class="muted small" style="grid-column:1 / -1">"该模型不生成输出 Token，仅配置输入价格；输出价格为 0。"</p>}.into_any()}else{view!{<label for="price-out">"输出价格（元 / 百万 Token）"</label><input id="price-out" required type="text" inputmode="decimal" prop:value=output aria-describedby="price-error" on:input=move|e|output.set(event_target_value(&e))/>}.into_any()}}
+                            <PriceUsageReferences ctx=ctx rows=vec![
+                                ("输入用量参考值".into(), input_reference.map(|value| format!("{value} Token")), reference_origin(&metadata["input_bound_source"])),
+                                ("输出用量参考值".into(), output_reference.map(|value| format!("{value} Token")), reference_origin(&metadata["output_bound_source"])),
+                            ]/>
                         }.into_any()}else if kind=="unit"{view!{
-                            {if duration&&duration_bound.is_some(){view!{<p id="price-model-bounds" class="muted small" style="grid-column:1 / -1">{format!("{subject}时长参考值：{} 秒（来自模型配置）。",duration_bound.unwrap())}</p>}.into_any()}else{let cap_label=if duration{format!("{subject}时长参考值（秒）")}else{format!("数量参考值（{}）",if selected_unit.is_empty(){"所选单位"}else{unit_label(&selected_unit)})};view!{<label for="price-max-quantity">{cap_label}</label><div class="billing-field"><input id="price-max-quantity" required inputmode="decimal" prop:value=max_in aria-describedby="price-quantity-help price-error" on:input=move|e|max_in.set(event_target_value(&e))/><small id="price-quantity-help" class="muted">{if duration{format!("请补填{subject}秒数参考值；最多3位小数，仅供估算，不限制调用。单价按所选秒、分钟或小时换算。")}else{"请按所选单位补填数量参考值，最多3位小数；仅供估算，不限制调用。".into()}}</small></div>}.into_any()}}
+                            {(!selected_unit.is_empty()).then(|| {
+                                let (name, label) = if duration_unit(&selected_unit) {
+                                    (format!("{subject}时长参考值"), "秒")
+                                } else {
+                                    ("数量参考值".into(), unit_label(&selected_unit))
+                                };
+                                let value = metadata["quantity_usage_references"][selected_unit.as_str()]
+                                    .as_i64().map(|value| format!("{} {label}", quantity_milli_input(value)));
+                                let source = reference_origin(&metadata["quantity_reference_sources"][selected_unit.as_str()]);
+                                view! { <PriceUsageReferences ctx=ctx rows=vec![(name,value,source)]/> }
+                            })}
                             <p class="muted small" style="grid-column:1 / -1">{if metadata["task_type"]=="asr"{"语音识别按音频实际时长结算，使用秒、分钟或小时单价；不使用 Token 或接口响应耗时。"}else if metadata["task_type"]=="tts"{"请按供应方选择字符或 UTF-8 字节单价，二者不可混用。"}else if metadata["task_type"]=="video"{"请按供应方选择每段视频或视频时长单价；时长参考值始终填写视频秒数。"}else{"计价单位须与供应方实际账单一致。"}}</p>
                             {if metadata["automatic_settlement"]==false{view!{<p class="muted small" style="grid-column:1 / -1">"当前可保存此类价格；对应调用接口尚未接入自动计量和结算。"</p>}.into_any()}else{().into_any()}}
                         }.into_any()}else{().into_any()}}
                     }
                 })}
-            </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("price-dialog",false)>"取消"</button><button type="submit" class="primary" disabled=move||busy.get()||detecting.get()||scheme.get().is_empty()>{move||if edit_target.get().is_some(){"保存修改"}else{"创建人民币价格版本"}}</button></div></fieldset></form></BillingDialog>
+            </div><p id="price-error" role="alert">{move||error.get()}</p><p role="status">{move||message.get()}</p><div class="module-dialog-actions"><button type="button" class="ghost" on:click=move |_|billing_dialog("price-dialog",false)>"取消"</button><button type="submit" class="primary" disabled=move||busy.get()||scheme.get().is_empty()>{move||if edit_target.get().is_some(){"保存修改"}else{"创建人民币价格版本"}}</button></div></fieldset></form></BillingDialog>
             <BillingDialog id="price-delete-dialog" title="删除价格配置" busy=busy>
                 <p>{move||pending_delete.get().map(|r|format!("删除 {} · 版本 {}？",price_model_name(&r),api::text(&r,"id"))).unwrap_or_default()}</p>
                 <p class="muted small">"删除后不再用于后续调用，旧版本不会自动恢复。历史账目及原价格快照保留。"</p>
@@ -566,7 +626,7 @@ fn Usage(ctx: Ctx,objects:RwSignal<Value>) -> impl IntoView {
   let active=json!({"channels":[{"id":12,"state":"active"}]});assert!(selected_price_pair("12","ASR",&options,&active));assert!(!selected_price_pair("3","ASR",&options,&active));assert!(!selected_price_pair("12","other",&options,&active));
   let expired=json!({"channels":[{"id":12,"state":"historical"}]});assert!(available_price_options(&options,&expired).is_empty());
  }
- #[test] fn unit_quantities_preserve_audio_milliseconds_and_reject_too_many_decimals(){assert_eq!(quantity_milli("61.234").unwrap(),61234);assert_eq!(quantity_milli_input(61234),"61.234");assert!(quantity_milli("0").is_err());assert!(quantity_milli("1.2345").is_err());}
+ #[test] fn unit_quantity_display_preserves_audio_milliseconds(){assert_eq!(quantity_milli_input(61234),"61.234");}
  #[test] fn legacy_money_is_never_relabelled_as_cny(){let old=json!({"debit_micro":1230000});assert_eq!(row_money(&old,"debit_micro"),"1.23 USD");let new=json!({"currency":"CNY","debit_micro":1230000});assert_eq!(row_money(&new,"debit_micro"),"1.23 元");}
 
 }
@@ -614,63 +674,50 @@ mod automatic_price_form_tests {
         let mut result=price_options_from_channels(&rows,&Default::default()).remove(0);result.metadata=metadata;result
     }
     #[test]
-    fn configured_model_bounds_are_automatically_submitted_with_price() {
-        let p=option(json!({"pricing_kind":"token","max_input_tokens":128000,"max_output_tokens":8192}));
-        let (path,_,body)=model_price_payload(&p,"","1.5","6","","","").unwrap();
-        assert_eq!(path,"/api/pricing");assert_eq!(body["max_input_tokens"],128000);assert_eq!(body["max_output_tokens"],8192);assert_eq!(body["input_micro_per_million"],1500000);
+    fn token_price_body_contains_only_rates_and_identity() {
+        let p = option(json!({"pricing_kind":"token","input_usage_reference":128000,"output_usage_reference":8192}));
+        let (path, _, body) = model_price_payload(&p, "", "1.5", "6", "").unwrap();
+        assert_eq!(path, "/api/pricing");
+        assert_eq!(body, json!({"channel_id":5,"model":"test model","currency":"CNY",
+            "input_micro_per_million":1500000,"output_micro_per_million":6000000}));
     }
+
     #[test]
-    fn non_generating_models_use_zero_output_without_repeated_parameter_input() {
-        let p=option(json!({"task_type":"embeddings","pricing_kind":"token","max_input_tokens":8192,"max_output_tokens":0}));
-        assert_eq!(metadata_bound(&p,"max_output_tokens"),Some(0));
-        let (_,_,body)=model_price_payload(&p,"","0.2","","","","").unwrap();assert_eq!(body["output_micro_per_million"],0);assert_eq!(body["max_output_tokens"],0);
+    fn input_only_models_submit_zero_output_rate_without_a_usage_reference() {
+        let p = option(json!({"task_type":"embeddings","pricing_kind":"token","input_usage_reference":8192,"output_usage_reference":0}));
+        let (_, _, body) = model_price_payload(&p, "", "0.2", "", "").unwrap();
+        assert_eq!(body["output_micro_per_million"], 0);
+        assert!(body.get("max_output_tokens").is_none());
     }
+
     #[test]
     fn existing_valid_by_call_scheme_can_be_edited_while_new_defaults_to_tokens() {
-        let p=option(json!({"task_type":"chat","pricing_kind":"token","allowed_pricing_kinds":["token","request"],"max_input_tokens":128000,"max_output_tokens":8192}));
-        assert_eq!(price_scheme(&p,""),"token");assert_eq!(model_price_payload(&p,"request","0.01","","","","").unwrap().0,"/api/request-pricing");
-        let row=json!({"channel_id":5,"model":p.model,"micro_per_call":10000});assert!(compatible_price_kind(&row,&[p]));
+        let p = option(json!({"task_type":"chat","pricing_kind":"token","allowed_pricing_kinds":["token","request"]}));
+        assert_eq!(price_scheme(&p, ""), "token");
+        assert_eq!(model_price_payload(&p, "request", "0.01", "", "").unwrap().0, "/api/request-pricing");
+        let row = json!({"channel_id":5,"model":p.model,"micro_per_call":10000});
+        assert!(compatible_price_kind(&row, &[p]));
     }
+
     #[test]
-    fn administrator_output_override_is_preserved_while_input_requires_a_value() {
-        let p=option(json!({"pricing_kind":"token","max_input_tokens":null,"max_output_tokens":4096}));
-        assert!(model_price_payload(&p,"","1","2","","","").is_err());
-        let (_,_,body)=model_price_payload(&p,"","1","2","32000","123","").unwrap();
-        assert_eq!(body["max_input_tokens"],32000);assert_eq!(body["max_output_tokens"],123);
-        let (_,_,automatic)=model_price_payload(&p,"","1","2","32000","","").unwrap();assert_eq!(automatic["max_output_tokens"],4096);
+    fn unit_price_body_contains_rate_and_selected_unit_without_quantity() {
+        let p = option(json!({"task_type":"asr","pricing_kind":"unit","allowed_units":["second","minute","hour"],
+            "quantity_usage_references":{"minute":61234}}));
+        let (path, _, body) = model_price_payload(&p, "", "0.12", "", "minute").unwrap();
+        assert_eq!(path, "/api/unit-pricing");
+        assert_eq!(body, json!({"channel_id":5,"model":"test model","currency":"CNY",
+            "unit":"minute","micro_per_unit":120000}));
+        assert!(model_price_payload(&p, "", "0.12", "", "character").is_err());
     }
-    #[test]
-    fn model_task_selects_matching_price_api_and_unit() {
-        let p=option(json!({"task_type":"asr","pricing_kind":"unit","allowed_units":["second","minute","hour"],"max_audio_seconds":null}));
-        let (path,_,body)=model_price_payload(&p,"token","0.12","9","61.234","999","minute").unwrap();
-        assert_eq!(path,"/api/unit-pricing");assert_eq!(body["max_quantity_milli"],61234);assert_eq!(body["unit"],"minute");assert!(body.get("input_micro_per_million").is_none());
-        assert!(model_price_payload(&p,"","0.12","","60","","character").is_err());
-        let p=option(json!({"task_type":"tts","pricing_kind":"unit","allowed_units":["character","byte"]}));
-        assert!(model_price_payload(&p,"","1","","100","","").is_err());
-        assert_eq!(model_price_payload(&p,"","1","","100","","byte").unwrap().2["max_quantity_milli"],100000);
-        for (task,unit) in [("image","image"),("video","video")] {let p=option(json!({"task_type":task,"pricing_kind":"unit","allowed_units":[unit]}));assert_eq!(model_price_payload(&p,"","1","","3","",unit).unwrap().0,"/api/unit-pricing");}
-        let p=option(json!({"task_type":"tools","pricing_kind":"request"}));let (path,_,body)=model_price_payload(&p,"","1","","","","").unwrap();assert_eq!(path,"/api/request-pricing");assert_eq!(body["micro_per_call"],1000000);
-    }
-    #[test]
-    fn video_duration_uses_video_units_and_does_not_reuse_audio_bounds() {
-        let p=option(json!({"task_type":"video","pricing_kind":"unit","allowed_units":["video","second","minute","hour"],"max_audio_seconds":600}));
-        assert_eq!(duration_subject("video"),"视频");assert_eq!(duration_subject("asr"),"音频");assert_eq!(configured_duration_bound(&p),None);
-        assert!(model_price_payload(&p,"","1","","","","minute").is_err());
-        let (_,_,body)=model_price_payload(&p,"","1","","61.234","","minute").unwrap();assert_eq!(body["max_quantity_milli"],61234);assert_eq!(body["unit"],"minute");
-        let (_,_,body)=model_price_payload(&p,"","1","","3","","video").unwrap();assert_eq!(body["max_quantity_milli"],3000);
-    }
-    #[test]
-    fn configured_audio_duration_needs_no_manual_cap() {
-        let p=option(json!({"task_type":"asr","pricing_kind":"unit","allowed_units":["second","minute","hour"],"max_audio_seconds":600}));
-        let (_,_,body)=model_price_payload(&p,"","1","","","","second").unwrap();assert_eq!(body["max_quantity_milli"],600000);
-    }
+
     #[test]
     fn unknown_models_require_explicit_scheme_and_missing_metadata_cannot_submit() {
-        let p=option(json!({"task_type":"unknown","pricing_kind":"unknown","allowed_units":["image"],"allowed_pricing_kinds":["token","unit","request"]}));
-        assert!(model_price_payload(&p,"","1","","","","").is_err());
-        assert_eq!(model_price_payload(&p,"request","1","","","","").unwrap().0,"/api/request-pricing");
-        let p=option(Value::Null);assert!(model_price_payload(&p,"token","1","2","30000","4000","").is_err());
+        let p = option(json!({"task_type":"unknown","pricing_kind":"unknown","allowed_units":["image"],"allowed_pricing_kinds":["token","unit","request"]}));
+        assert!(model_price_payload(&p, "", "1", "", "").is_err());
+        assert_eq!(model_price_payload(&p, "request", "1", "", "").unwrap().0, "/api/request-pricing");
+        assert!(model_price_payload(&option(Value::Null), "token", "1", "2", "").is_err());
     }
+
     #[test]
     fn obsolete_unit_price_is_historical_and_cannot_seed_a_new_unit_price() {
         let p=option(json!({"task_type":"asr","pricing_kind":"unit","allowed_pricing_kinds":["unit"],"allowed_units":["second","minute","hour"],"recommended_unit":"second"}));
@@ -705,45 +752,5 @@ mod price_lifecycle_tests {
     fn backend_latest_identity_prevents_hidden_archive_reviving_an_older_price() {
         let old=json!({"id":1,"channel_id":1,"model":"test","currency":"CNY","input_micro_per_million":100,"is_latest":false});
         assert!(!price_is_current(&old,std::slice::from_ref(&old)));
-    }
-}
-
-#[cfg(test)]
-mod automatic_limit_input_tests {
-    use super::*;
-    fn option()->PriceOption {PriceOption{source_id:1,model:"chat".into(),upstream:"chat".into(),provider:"provider".into(),channel:"source".into(),credential:"key".into(),base_url:"https://synthetic.invalid/v1".into(),metadata:json!({"pricing_kind":"token","max_input_tokens":1000000,"max_output_tokens":384000})}}
-    #[test]
-    fn administrator_adjusted_limits_are_submitted_instead_of_discarded() {
-        let (_,_,body)=model_price_payload(&option(),"","1","4","64000","128000","").unwrap();
-        assert_eq!(body["max_input_tokens"],64000);assert_eq!(body["max_output_tokens"],128000);
-    }
-    #[test]
-    fn automatic_limits_are_used_when_the_administrator_has_not_changed_them() {
-        let (_,_,body)=model_price_payload(&option(),"","1","4","1000000","384000","").unwrap();
-        assert_eq!(body["max_input_tokens"],1000000);assert_eq!(body["max_output_tokens"],384000);
-    }
-}
-
-#[cfg(test)]
-mod price_discovery_draft_tests {
-    use super::*;
-    #[test]
-    fn unknown_discovery_preserves_existing_prices_and_administrator_edits() {
-        for unknown in [Value::Null,json!(0),json!(-1),json!("1000000")] {
-            // Editing loads persisted limits with dirty=true; even the explicit
-            // refresh button cannot replace a valid bound with an unknown value.
-            assert_eq!(discovered_price_bound("512000",&unknown,true,true,true),"512000");
-            assert_eq!(discovered_price_bound("128000",&unknown,false,true,true),"128000");
-            // Configured administrator metadata is preserved without local edits.
-            assert_eq!(discovered_price_bound("64000",&unknown,true,false,false),"64000");
-        }
-    }
-    #[test]
-    fn stale_automatic_prefills_clear_and_positive_explicit_refresh_remains_available() {
-        assert_eq!(discovered_price_bound("512000",&Value::Null,true,false,true),"");
-        assert_eq!(discovered_price_bound("512000",&Value::Null,false,false,true),"");
-        assert_eq!(discovered_price_bound("512000",&json!(1000000),false,true,true),"512000");
-        assert_eq!(discovered_price_bound("512000",&json!(1000000),true,true,true),"1000000");
-        assert_eq!(discovered_price_bound("",&json!(1000000),false,false,true),"1000000");
     }
 }

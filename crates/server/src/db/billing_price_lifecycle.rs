@@ -20,6 +20,47 @@ fn latest_price_id(c:&Connection,kind:&str,identity:&(i64,String,String))->Resul
  let table=pricing_table(kind)?;
  Ok(c.query_row(&format!("SELECT id FROM {table} WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1"),params![identity.0,identity.1,identity.2],|r|r.get(0))?)
 }
+// A configuration-only fallback may use the last nondeleted snapshot, including
+// a disabled rate or a USD reference when there is no current CNY reference.
+// The price amounts and all historical rows remain unchanged.
+pub fn latest_token_reference(c: &Connection, channel: i64, model: &str) -> Result<Option<(i64, i64)>> {
+    let model = tokengo_shared::normalize_model_name(model);
+    let mut query = c.prepare_cached(
+        "SELECT id,max_input_tokens,max_output_tokens FROM billing_prices
+         WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",
+    )?;
+    for currency in ["CNY", "USD"] {
+        let row = query.query_row(params![channel, model, currency], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?))
+        }).optional()?;
+        if let Some((id, input, output)) = row {
+            if !price_lifecycle(c, "token", id)?.deleted {
+                return Ok(Some((input, output)));
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub fn latest_quantity_reference(c: &Connection, channel: i64, model: &str) -> Result<Option<(String, i64)>> {
+    let model = tokengo_shared::normalize_model_name(model);
+    let mut query = c.prepare_cached(
+        "SELECT id,unit,max_quantity_milli FROM billing_unit_prices
+         WHERE channel_id=?1 AND model=?2 AND currency=?3 ORDER BY id DESC LIMIT 1",
+    )?;
+    for currency in ["CNY", "USD"] {
+        let row = query.query_row(params![channel, model, currency], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?))
+        }).optional()?;
+        if let Some((id, unit, quantity)) = row {
+            if !price_lifecycle(c, "unit", id)?.deleted {
+                return Ok(Some((unit, quantity)));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Validate the price selected for replacement. Call while holding the control-plane DB lock.
 pub fn require_current_price(c:&Connection,kind:&str,id:i64,channel:i64,model:&str,currency:&str)->Result<()> {
  let identity=price_identity(c,kind,id)?;

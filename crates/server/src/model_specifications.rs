@@ -17,9 +17,13 @@ pub(crate) struct PublicSpecification {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input_usage_reference: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_usage_reference: Option<i64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub quantity_usage_references: BTreeMap<String, i64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metrics: BTreeMap<String, Metric>,
     pub origin: String,
@@ -43,8 +47,11 @@ pub(crate) struct SpecificationInput {
     pub source_url: Option<String>,
     pub kind: String,
     pub context_window: Option<i64>,
+    pub max_input_tokens: Option<i64>,
     pub input_usage_reference: Option<i64>,
     pub output_usage_reference: Option<i64>,
+    #[serde(default)]
+    pub quantity_usage_references: BTreeMap<String, i64>,
     #[serde(default)]
     pub metrics: BTreeMap<String, Metric>,
     // A read-back row may round-trip through PUT. The server assigns origin.
@@ -66,15 +73,22 @@ impl SpecificationInput {
             return Err("模型类型无效");
         }
         if self.context_window.is_some_and(|value| value <= 0)
+            || self.max_input_tokens.is_some_and(|value| value <= 0)
             || self.input_usage_reference.is_some_and(|value| value <= 0)
         {
-            return Err("上下文窗口和输入用量参考值须为正整数");
+            return Err("上下文窗口、最大输入和输入用量参考值须为正整数");
         }
         let non_generation = matches!(self.kind.as_str(), "embeddings" | "rerank");
         if self.output_usage_reference.is_some_and(|value| {
             if non_generation { value != 0 } else { value <= 0 }
         }) {
             return Err("向量和重排的输出参考值须为 0，其他类型须为正整数");
+        }
+        if self.quantity_usage_references.iter().any(|(unit, value)| {
+            *value <= 0 || !matches!(unit.as_str(),
+                "second" | "minute" | "hour" | "character" | "byte" | "image" | "video")
+        }) {
+            return Err("数量用量参考值须使用支持的计价单位和正整数千分值");
         }
         if self.metrics.len() > 32 {
             return Err("单个模型最多可维护 32 个扩展指标");
@@ -116,8 +130,10 @@ impl SpecificationInput {
             public: PublicSpecification {
                 kind: self.kind,
                 context_window: self.context_window,
+                max_input_tokens: self.max_input_tokens,
                 input_usage_reference: self.input_usage_reference,
                 output_usage_reference: self.output_usage_reference,
+                quantity_usage_references: self.quantity_usage_references,
                 metrics: self.metrics,
                 origin: "maintained".into(),
             },
@@ -270,30 +286,83 @@ pub(crate) fn resolve(
     Ok(None)
 }
 
+/// Editable channel fields and lower defaults are separate so each consumer can
+/// apply its own precedence without promoting inherited values into the override.
+pub(crate) struct MappingSpecifications {
+    pub scoped: Option<PublicSpecification>,
+    pub defaults: Option<PublicSpecification>,
+}
+
 /// Explicit registry associations may bridge a source's upstream ID to a canonical ID.
 pub(crate) fn for_mapping(
     conn: &Connection,
     channel: &db::channels::ChannelRow,
     mapping: &db::channels::ModelMapping,
-) -> db::Result<Option<PublicSpecification>> {
+) -> db::Result<MappingSpecifications> {
     let id = model_registry::upstream(mapping);
-    let base_url = Some(channel.base_url.as_str());
-    if let Some(row) = resolve(conn, id, channel.provider_id, base_url)? {
-        return Ok(Some(row.public));
-    }
-    let Some(canonical) = model_registry::associated(conn, channel.id, mapping)? else {
-        return Ok(None);
+    let scoped = match channel.provider_id {
+        Some(provider) => maintained(conn, id, Some(provider))?.map(|row| row.public),
+        None => None,
     };
-    // A registry association makes the official default discoverable for a
-    // renamed model. Scoped exceptions still apply only to the actual upstream ID.
-    Ok(resolve(conn, &canonical, None, None)?.map(|row| row.public))
+    let base_url = Some(channel.base_url.as_str());
+    let mut defaults = resolve(conn, id, None, base_url)?;
+    if defaults.is_none() {
+        if let Some(canonical) = model_registry::associated(conn, channel.id, mapping)? {
+            // An association identifies the lower model default, not a different relay route.
+            defaults = resolve(conn, &canonical, None, None)?;
+        }
+    }
+    Ok(MappingSpecifications { scoped, defaults: defaults.map(|row| row.public) })
+}
+
+pub(crate) fn compatible_kind(a: &str, b: &str) -> bool {
+    a == b || a == "unknown" || b == "unknown"
+        || (a == "audio" && matches!(b, "asr" | "tts"))
+        || (b == "audio" && matches!(a, "asr" | "tts"))
+}
+
+pub(crate) fn duration_unit(unit: &str) -> bool {
+    matches!(unit, "second" | "minute" | "hour")
+}
+
+impl MappingSpecifications {
+    pub fn public(self) -> Option<PublicSpecification> {
+        let Some(mut scoped) = self.scoped else { return self.defaults; };
+        if let Some(defaults) = self.defaults.filter(|defaults| compatible_kind(&scoped.kind, &defaults.kind)) {
+            if scoped.kind == "unknown" {
+                scoped.kind = defaults.kind;
+            }
+            scoped.context_window = scoped.context_window.or(defaults.context_window);
+            scoped.max_input_tokens = scoped.max_input_tokens.or(defaults.max_input_tokens);
+            scoped.input_usage_reference = scoped.input_usage_reference.or(defaults.input_usage_reference);
+            scoped.output_usage_reference = scoped.output_usage_reference.or(defaults.output_usage_reference);
+            for (unit, value) in defaults.quantity_usage_references {
+                if scoped.quantity_reference(&unit).is_none() {
+                    scoped.quantity_usage_references.insert(unit, value);
+                }
+            }
+            for (metric, value) in defaults.metrics {
+                scoped.metrics.entry(metric).or_insert(value);
+            }
+        }
+        Some(scoped)
+    }
 }
 
 impl PublicSpecification {
+    pub fn quantity_reference(&self, unit: &str) -> Option<i64> {
+        self.quantity_usage_references.get(unit).or_else(|| {
+            if duration_unit(unit) { self.quantity_usage_references.get("second") } else { None }
+        }).copied()
+    }
+
     /// Client metadata must apply to every eligible source behind its logical ID.
     pub fn retain_agreed(&mut self, other: Self) {
         if self.context_window != other.context_window {
             self.context_window = None;
+        }
+        if self.max_input_tokens != other.max_input_tokens {
+            self.max_input_tokens = None;
         }
         if self.input_usage_reference != other.input_usage_reference {
             self.input_usage_reference = None;
@@ -307,14 +376,19 @@ impl PublicSpecification {
         if self.origin != other.origin {
             self.origin = "multiple_sources".into();
         }
+        self.quantity_usage_references.retain(|unit, value| {
+            other.quantity_usage_references.get(unit) == Some(value)
+        });
         self.metrics.retain(|key, metric| other.metrics.get(key) == Some(metric));
     }
 
     pub fn has_metadata(&self) -> bool {
         self.kind != "unknown"
             || self.context_window.is_some()
+            || self.max_input_tokens.is_some()
             || self.input_usage_reference.is_some()
             || self.output_usage_reference.is_some()
+            || !self.quantity_usage_references.is_empty()
             || !self.metrics.is_empty()
     }
 }

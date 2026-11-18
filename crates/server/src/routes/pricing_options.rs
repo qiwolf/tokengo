@@ -1,7 +1,9 @@
 //! Model-bound pricing metadata and estimate defaults.
 use crate::db::{self, channels};
+use crate::model_specifications::{self, compatible_kind, duration_unit};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use tokengo_shared::{same_model_name, ChannelId, ModelKind};
 
 #[derive(Debug, Clone, Serialize)]
@@ -17,12 +19,24 @@ pub(super) struct PricingOption {
     pub allowed_units:Vec<&'static str>,
     pub max_input_tokens:Option<i64>,
     pub max_output_tokens:Option<i64>,
+    pub input_usage_reference: Option<i64>,
+    pub output_usage_reference: Option<i64>,
+    pub quantity_usage_references: BTreeMap<&'static str, i64>,
+    pub quantity_reference_sources: BTreeMap<&'static str, &'static str>,
     pub max_audio_seconds:Option<i64>,
     pub input_bound_source:Option<&'static str>,
     pub output_bound_source:Option<&'static str>,
     pub automatic_settlement:bool,
     pub limits_discovery:Option<serde_json::Value>,
 }
+fn usage_reference(explicit: Option<i64>, saved: Option<i64>, default: Option<i64>)
+    -> Option<(i64, &'static str)>
+{
+    explicit.map(|value| (value, "channel_model"))
+        .or_else(|| saved.map(|value| (value, "existing_price")))
+        .or_else(|| default.map(|value| (value, "model_specification")))
+}
+
 fn subtype(raw:&str)->Option<&'static str> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "asr"|"transcription"|"audio_transcription"|"speech_recognition"=>Some("asr"),
@@ -69,9 +83,11 @@ pub(super) fn for_mapping(
 ) -> db::Result<PricingOption> {
     let channel = source.id;
     let (mut task_type, mut task_source) = task(c, channel, mapping)?;
-    let specification = crate::model_specifications::for_mapping(c, source, mapping)?;
+    let specifications = model_specifications::for_mapping(c, source, mapping)?;
     if task_type == "unknown" {
-        if let Some(spec) = specification.as_ref().filter(|spec| spec.kind != "unknown") {
+        if let Some(spec) = specifications.scoped.iter().chain(specifications.defaults.iter())
+            .find(|spec| spec.kind != "unknown")
+        {
             task_type = spec.kind.clone();
             task_source = "model_specification".into();
         }
@@ -95,8 +111,8 @@ pub(super) fn for_mapping(
         let caps=crate::protocol_config::load(c,channel.0)?;
         (caps.max_input_tokens,caps.max_output_tokens,Some("source_protocols"),Some("source_protocols"))
     };
-    // A model-specific context restriction may be narrower than a shared source
-    // allowance; never let a price snapshot accidentally widen it.
+    // A source context may be a narrower initial estimate when references are
+    // missing. Execution limits are resolved separately by the gateway.
     let manual=crate::model_registry::context_override(c,channel,mapping)?.filter(|v|*v>0);
     let entries=db::catalog::routing_entries(c,channel,&[crate::model_registry::upstream(mapping)])?;
     let mapped=manual.or_else(||crate::capability_detector::mapped_context(&entries,mapping));
@@ -105,32 +121,41 @@ pub(super) fn for_mapping(
             input=Some(value);input_source=Some(if manual.is_some(){"model_context_override"}else{"upstream_catalog"});
         }
     }
-    // An explicit usage reference replaces the configured estimate default.
-    // Existing price references remain first where there is a maintained value.
-    let specification = specification.as_ref().filter(|spec| {
-        spec.kind == "unknown" || task_type == "unknown" || spec.kind == task_type
-    });
-    let input_reference = specification.and_then(|spec| spec.input_usage_reference);
-    let output_reference = specification.and_then(|spec| spec.output_usage_reference);
-    if (input.is_none() || output.is_none() || input_reference.is_some() || output_reference.is_some())
-        && matches!(task_type.as_str(), "chat" | "embeddings" | "rerank" | "unknown")
-    {
-        let price = db::billing::price(c, &mapping.model, channel.0)?;
-        let saved_input = price.as_ref().map(|row| row.max_input_tokens).filter(|value| *value > 0);
-        let saved_output = price.map(|row| row.max_output_tokens).filter(|value| *value > 0);
-        if let Some(value) = saved_input.filter(|_| input.is_none() || input_reference.is_some()) {
-            input = Some(value);
-            input_source = Some("existing_price");
-        } else if let Some(value) = input_reference {
-            input = Some(value);
-            input_source = Some("model_specification");
+    let scoped = specifications.scoped.as_ref().filter(|spec| compatible_kind(&task_type, &spec.kind));
+    let defaults = specifications.defaults.as_ref().filter(|spec| compatible_kind(&task_type, &spec.kind));
+    if matches!(task_type.as_str(), "chat" | "embeddings" | "rerank" | "unknown") {
+        let latest = db::billing::latest_token_reference(c, channel.0, &mapping.model)?;
+        let saved_input = latest.map(|(input, _)| input).filter(|n| *n > 0);
+        let saved_output = latest.map(|(_, output)| output)
+            .filter(|n| *n > 0 || (*n == 0 && task_type == "unknown"));
+        for (value, origin, explicit, saved, default) in [
+            (&mut input, &mut input_source, scoped.and_then(|spec| spec.input_usage_reference),
+                saved_input, defaults.and_then(|spec| spec.input_usage_reference)),
+            (&mut output, &mut output_source, scoped.and_then(|spec| spec.output_usage_reference),
+                saved_output, defaults.and_then(|spec| spec.output_usage_reference)),
+        ] {
+            if let Some((reference, source)) = usage_reference(explicit, saved, default) {
+                *value = Some(reference);
+                *origin = Some(source);
+            }
         }
-        if let Some(value) = saved_output.filter(|_| output.is_none() || output_reference.is_some()) {
-            output = Some(value);
-            output_source = Some("existing_price");
-        } else if let Some(value) = output_reference {
-            output = Some(value);
-            output_source = Some("model_specification");
+    }
+    let mut quantity_usage_references = BTreeMap::new();
+    let mut quantity_reference_sources = BTreeMap::new();
+    if !allowed_units.is_empty() {
+        let latest = db::billing::latest_quantity_reference(c, channel.0, &mapping.model)?;
+        for &unit in &allowed_units {
+            let saved = latest.as_ref().filter(|(saved_unit, _)| {
+                saved_unit.as_str() == unit || (duration_unit(saved_unit) && duration_unit(unit))
+            }).map(|(_, quantity)| *quantity);
+            if let Some((quantity, origin)) = usage_reference(
+                scoped.and_then(|spec| spec.quantity_reference(unit)),
+                saved,
+                defaults.and_then(|spec| spec.quantity_reference(unit)),
+            ) {
+                quantity_usage_references.insert(unit, quantity);
+                quantity_reference_sources.insert(unit, origin);
+            }
         }
     }
     // Fresh, same-source supplier declarations fill remaining missing values.
@@ -141,7 +166,7 @@ pub(super) fn for_mapping(
     }
     if matches!(task_type.as_str(),"embeddings"|"rerank") {output=Some(0);output_source=Some("non_generation_model");}
     if input.is_none(){input_source=None;}if output.is_none(){output_source=None;}
-    Ok(PricingOption{channel_id:channel.0,model:tokengo_shared::normalize_model_name(&mapping.model),upstream:crate::model_registry::upstream(mapping).into(),task_type,task_source,pricing_kind:pricing_kind.into(),allowed_pricing_kinds,recommended_unit,allowed_units,max_input_tokens:input,max_output_tokens:output,max_audio_seconds:None,input_bound_source:input_source,output_bound_source:output_source,automatic_settlement,limits_discovery})
+    Ok(PricingOption{channel_id:channel.0,model:tokengo_shared::normalize_model_name(&mapping.model),upstream:crate::model_registry::upstream(mapping).into(),task_type,task_source,pricing_kind:pricing_kind.into(),allowed_pricing_kinds,recommended_unit,allowed_units,max_input_tokens:input,max_output_tokens:output,input_usage_reference:input,output_usage_reference:output,quantity_usage_references,quantity_reference_sources,max_audio_seconds:None,input_bound_source:input_source,output_bound_source:output_source,automatic_settlement,limits_discovery})
 }
 pub(super) fn list(c:&Connection)->db::Result<Vec<PricingOption>> {
     let mut out=Vec::new();

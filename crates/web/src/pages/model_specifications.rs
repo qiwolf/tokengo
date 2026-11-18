@@ -3,8 +3,9 @@ use leptos::prelude::*;
 use serde_json::{Value, json};
 
 const PATH: &str = "/api/model-specifications";
-const TOKEN_FIELDS: [(&str, &str); 3] = [
+const TOKEN_FIELDS: [(&str, &str); 4] = [
     ("context_window", "上下文窗口"),
+    ("max_input_tokens", "最大输入"),
     ("input_usage_reference", "输入用量参考值"),
     ("output_usage_reference", "输出用量参考值"),
 ];
@@ -19,6 +20,45 @@ const UNITS: [(&str, &str); 13] = [
     ("byte", "字节"), ("image", "张"), ("video", "段"), ("pixel", "像素"),
     ("frame", "帧"), ("frame_per_second", "帧/秒"),
 ];
+
+const QUANTITY_FIELDS: [(&str, &str); 7] = [
+    ("second", "时长（秒）"),
+    ("minute", "按分钟计费的时长（秒）"),
+    ("hour", "按小时计费的时长（秒）"),
+    ("character", "字符数"),
+    ("byte", "字节数"),
+    ("image", "图像张数"),
+    ("video", "视频段数"),
+];
+
+fn quantity_applies(kind: &str, unit: &str) -> bool {
+    match kind {
+        "asr" | "audio" => unit == "second",
+        "tts" => matches!(unit, "character" | "byte"),
+        "image" => unit == "image",
+        "video" => matches!(unit, "second" | "video"),
+        "unknown" => !matches!(unit, "minute" | "hour"),
+        _ => false,
+    }
+}
+
+pub(super) fn quantity_milli_input(value: i64) -> String {
+    let whole = value / 1000;
+    let fraction = value % 1000;
+    if fraction == 0 {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction:03}").trim_end_matches('0').to_owned()
+    }
+}
+
+fn quantity_milli(raw: &str, name: &str) -> Result<i64, String> {
+    super::policy_editor::optional_limit(raw).ok().flatten()
+        .filter(|value| *value > 0 && *value % 1000 == 0
+            && raw.split_once('.').is_none_or(|(_, fraction)| fraction.len() <= 3))
+        .map(|value| value / 1000)
+        .ok_or_else(|| format!("{name}须大于 0，最多 3 位小数。"))
+}
 
 fn label<'a>(options: &[(&str, &'a str)], key: &str) -> &'a str {
     options.iter().find(|(id, _)| *id == key).map(|(_, label)| *label).unwrap_or("")
@@ -40,6 +80,11 @@ pub(super) fn summary(spec: &Value) -> String {
     for (key, name) in TOKEN_FIELDS {
         if let Some(value) = spec[key].as_i64() {
             parts.push(format!("{name} {value} Token"));
+        }
+    }
+    for (unit, name) in QUANTITY_FIELDS {
+        if let Some(value) = spec["quantity_usage_references"][unit].as_i64() {
+            parts.push(format!("{name} {}", quantity_milli_input(value)));
         }
     }
     if let Some(metrics) = spec["metrics"].as_object() {
@@ -172,7 +217,13 @@ pub(super) fn ModelSpecifications(
             let source = input_value(&draft["source_url"]).trim().to_string();
             if !source.is_empty() { body["source_url"] = json!(source); }
             for (key, caption) in TOKEN_FIELDS {
-                let raw = input_value(&draft[key]);
+                let field = &draft[key];
+                if embedded && !existing.get_untracked() && field.is_number()
+                    && matches!(key, "input_usage_reference" | "output_usage_reference")
+                {
+                    continue;
+                }
+                let raw = input_value(field);
                 if !raw.trim().is_empty() {
                     let input_only = matches!(draft["kind"].as_str(), Some("embeddings" | "rerank"));
                     let zero_allowed = key == "output_usage_reference" && input_only;
@@ -183,6 +234,18 @@ pub(super) fn ModelSpecifications(
                     body[key] = json!(amount);
                 }
             }
+            let mut quantities = serde_json::Map::new();
+            for (unit, name) in QUANTITY_FIELDS {
+                let field = &draft["quantity_usage_references"][unit];
+                if let Some(value) = field.as_i64() {
+                    if !embedded || existing.get_untracked() {
+                        quantities.insert(unit.into(), json!(value));
+                    }
+                } else if let Some(raw) = field.as_str().map(str::trim).filter(|raw| !raw.is_empty()) {
+                    quantities.insert(unit.into(), json!(quantity_milli(raw, name)?));
+                }
+            }
+            body["quantity_usage_references"] = Value::Object(quantities);
             let mut values = serde_json::Map::new();
             for (_, metric) in metrics.get_untracked() {
                 let MetricInput { name, value, unit } = metric.get_untracked();
@@ -290,7 +353,7 @@ pub(super) fn ModelSpecifications(
                                 <input required maxlength="512" readonly=move || embedded || existing.get() prop:value=move || input_value(&draft.get()["model_id"])
                                     on:input=move |e| draft.update(|row| row["model_id"] = json!(event_target_value(&e))) />
                             </label>
-                            {embedded.then(|| view! {<p class="account-help">"规格适用于本渠道的同名上游模型。"</p>})}
+                            {embedded.then(|| view! {<p class="account-help">"规格适用于本渠道的同名上游模型。只调整用量参考值时，该渠道后续定价会使用你保存的值。"</p>})}
                             <Show when=move || !embedded><label class="account-field"><span>"适用渠道"</span>
                                 <select aria-label="适用渠道" disabled=existing prop:value=move || input_value(&draft.get()["provider_id"])
                                     on:change=move |e| draft.update(|row| row["provider_id"] = json!(event_target_value(&e).parse::<i64>().ok()))>
@@ -317,7 +380,37 @@ pub(super) fn ModelSpecifications(
                                 </label>
                             }).collect_view()}
                         </div>
-                        <p class="account-help">"上下文窗口填写模型规格。输入和输出用量参考值用于费用估算，也提供给客户端。"</p>
+                        <p class="account-help">"上下文窗口是输入与输出共用的容量，最大输入是单独公布的输入上限。输入和输出用量参考值会带入模型价格，用于费用估算。"</p>
+                        <Show when=move || {
+                            let record = draft.get();
+                            QUANTITY_FIELDS.iter().any(|(unit, _)| quantity_applies(
+                                record["kind"].as_str().unwrap_or("unknown"), unit
+                            ) || !record["quantity_usage_references"][*unit].is_null())
+                        }>
+                            <h3>"数量用量参考值"</h3>
+                            <p class="account-help">"填写单次调用的参考时长或数量。时长统一填写秒数，计费时按所选单位换算。"</p>
+                            <div class="policy-limits">
+                                {QUANTITY_FIELDS.into_iter().map(|(unit, name)| view! {
+                                    <Show when=move || {
+                                        let record = draft.get();
+                                        quantity_applies(record["kind"].as_str().unwrap_or("unknown"), unit)
+                                            || !record["quantity_usage_references"][unit].is_null()
+                                    }>
+                                        <label class="account-field"><span>{name}</span>
+                                            <input type="text" inputmode="decimal" placeholder="未知时留空"
+                                                prop:value=move || {
+                                                    let row = draft.get();
+                                                    let value = &row["quantity_usage_references"][unit];
+                                                    value.as_i64().map(quantity_milli_input).unwrap_or_else(|| input_value(value))
+                                                }
+                                                on:input=move |e| draft.update(|row| {
+                                                    row["quantity_usage_references"][unit] = json!(event_target_value(&e));
+                                                })/>
+                                        </label>
+                                    </Show>
+                                }).collect_view()}
+                            </div>
+                        </Show>
                         <label class="account-field"><span>"规格来源链接（选填）"</span>
                             <input type="url" maxlength="2048" prop:value=move || input_value(&draft.get()["source_url"])
                                 on:input=move |e| draft.update(|row| row["source_url"] = json!(event_target_value(&e))) />

@@ -90,10 +90,22 @@ fn store_token_price(c:&rusqlite::Connection,p:NewPrice,actor:&str,previous:Opti
     if non_generation&&p.max_output_tokens.is_some_and(|v|v!=0) {
         return Err(ApiError::bad_request("向量与重排模型没有生成输出，最大输出须为0。"));
     }
-    // Automatic source declarations prefill the form; submitted administrator
-    // values adjust this price version without rewriting source configuration.
-    let max_input_tokens=p.max_input_tokens.or_else(||option.as_ref().and_then(|v|v.max_input_tokens)).ok_or_else(||ApiError::bad_request("未找到模型的单次输入上限，请补充 token 数量。"))?;
-    let max_output_tokens=p.max_output_tokens.or_else(||option.as_ref().and_then(|v|v.max_output_tokens)).ok_or_else(||ApiError::bad_request("未找到模型的单次总输出上限，请补充 token 数量。"))?;
+    let inherited_input = option.as_ref().and_then(|v| v.input_usage_reference);
+    let inherited_output = option.as_ref().and_then(|v| v.output_usage_reference);
+    for (submitted, inherited, source) in [
+        (p.max_input_tokens, inherited_input, option.as_ref().and_then(|v| v.input_bound_source)),
+        (p.max_output_tokens, inherited_output, option.as_ref().and_then(|v| v.output_bound_source)),
+    ] {
+        if source == Some("channel_model") && submitted.is_some() && submitted != inherited {
+            return Err(ApiError::bad_request("用量参考值由渠道模型维护，请在渠道模型中修改。"));
+        }
+    }
+    // New callers submit rates. Keep the explicit legacy payload compatible where
+    // it does not override a reference explicitly maintained on the channel model.
+    let max_input_tokens = p.max_input_tokens.or(inherited_input)
+        .ok_or_else(|| ApiError::bad_request("请先在渠道模型中维护输入用量参考值。"))?;
+    let max_output_tokens = p.max_output_tokens.or(inherited_output)
+        .ok_or_else(|| ApiError::bad_request("请先在渠道模型中维护输出用量参考值。"))?;
     if max_input_tokens<=0||max_output_tokens<0||(generation&&max_output_tokens==0) {
         return Err(ApiError::bad_request("模型输入/输出窗口无效，请填写有效的token数量。"));
     }
@@ -163,7 +175,9 @@ async fn unit_prices(_auth:AdminAuth,State(state):State<SharedState>,Query(q):Qu
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewUnitPrice {
-    channel_id:i64,model:String,unit:String,micro_per_unit:i64,max_quantity_milli:i64,
+    channel_id:i64,model:String,unit:String,micro_per_unit:i64,
+    #[serde(default,deserialize_with="provided_token_bound")]
+    max_quantity_milli:Option<i64>,
     #[serde(default="billing::cny_currency")] currency:String,
 }
 async fn create_unit_price(auth:AdminAuth,State(state):State<SharedState>,payload:Result<Json<NewUnitPrice>,axum::extract::rejection::JsonRejection>)->Result<Json<Value>,ApiError> {
@@ -172,12 +186,19 @@ async fn create_unit_price(auth:AdminAuth,State(state):State<SharedState>,payloa
 }
 fn store_unit_price(c:&rusqlite::Connection,p:NewUnitPrice,actor:&str,previous:Option<i64>)->Result<Json<Value>,ApiError> {
     if let Some(id)=previous {billing::require_current_price(c,"unit",id,p.channel_id,&p.model,&p.currency).map_err(mutation_error)?;}
-    {
-        let option=super::pricing_options::for_pair(&c,p.channel_id,&p.model).map_err(mutation_error)?;
-        super::pricing_options::require_kind(option.as_ref(),"unit").map_err(mutation_error)?;
-        if option.as_ref().is_some_and(|v|!v.allowed_units.contains(&p.unit.as_str())) {return Err(ApiError::bad_request("所选计价单位不适用于该模型类型。"));}
+    let option=super::pricing_options::for_pair(c,p.channel_id,&p.model).map_err(mutation_error)?;
+    super::pricing_options::require_kind(option.as_ref(),"unit").map_err(mutation_error)?;
+    if option.as_ref().is_some_and(|v|!v.allowed_units.contains(&p.unit.as_str())) {
+        return Err(ApiError::bad_request("所选计价单位不适用于该模型类型。"));
     }
-    let p=billing::UnitPrice{id:0,channel_id:p.channel_id,model:p.model,currency:p.currency,unit:p.unit,micro_per_unit:p.micro_per_unit,max_quantity_milli:p.max_quantity_milli};
+    let inherited = option.as_ref().and_then(|v| v.quantity_usage_references.get(p.unit.as_str())).copied();
+    let source = option.as_ref().and_then(|v| v.quantity_reference_sources.get(p.unit.as_str())).copied();
+    if source == Some("channel_model") && p.max_quantity_milli.is_some() && p.max_quantity_milli != inherited {
+        return Err(ApiError::bad_request("用量参考值由渠道模型维护，请在渠道模型中修改。"));
+    }
+    let max_quantity_milli = p.max_quantity_milli.or(inherited)
+        .ok_or_else(|| ApiError::bad_request("请先在渠道模型中维护此计价单位的用量参考值。"))?;
+    let p=billing::UnitPrice{id:0,channel_id:p.channel_id,model:p.model,currency:p.currency,unit:p.unit,micro_per_unit:p.micro_per_unit,max_quantity_milli};
     let result=billing::create_unit_price(c,&p,actor).map_err(mutation_error)?;
     Ok(Json(json!({"unit_price":billing::enrich_price(c,"unit",serde_json::to_value(result).map_err(|_|ApiError::internal("price serialization failed"))?).map_err(mutation_error)?})))
 }

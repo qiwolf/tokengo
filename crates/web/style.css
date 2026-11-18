@@ -2193,6 +2193,8 @@ dialog.provider-key-modal::backdrop { background:rgba(0,0,0,.6); }
 .billing-page .module-dialog fieldset { display:flex; flex-direction:column; gap:20px; }
 .billing-page .module-dialog fieldset .module-dialog-actions { margin:0; }
 .billing-selected-object { margin:0; font-weight:600; }
+.billing-price-references { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:6px 16px; margin:0; }
+.billing-price-references dd { margin:0; overflow-wrap:anywhere; }
 .billing-filters { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
 .billing-filter { padding:18px; background:var(--surface); border:1px solid var(--line); border-radius:8px; }
 .billing-filter-actions { display:flex; gap:12px; margin-top:18px; }

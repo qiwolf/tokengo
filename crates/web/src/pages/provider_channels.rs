@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 pub(crate) fn model_connections(channels: &[Channel], provider: i64, model: &str) -> Vec<Channel> {
     channels
         .iter()
-        .filter(|c| c.provider_id == Some(provider) && c.models.iter().any(|m| m.model == model))
+        .filter(|c| c.provider_id == Some(provider) && c.models.iter().any(|m| tokengo_shared::same_model_name(&m.model, model)))
         .cloned()
         .collect()
 }
@@ -177,7 +177,7 @@ fn ProviderCard(
     <super::provider_keys::ProviderKeys ctx=ctx provider_id=id on_changed=reload local={provider.get_value().endpoint_mode=="local"} initially_open=key_panels.get_untracked().contains(&id) on_open=Callback::new(move |opened|key_panels.update(|ids|{if opened{ids.insert(id);}else{ids.remove(&id);}}))/>
     <super::ModuleDialog open=open title=format!("{} · 模型管理",provider.get_value().name)><Show when=move||open.get()><div class="card-body provider-model-management"><Show when=move||selected_detail.get().is_none()><Show when=move||!error.get().is_empty()><p class="banner bad" role="alert">{move||error.get()}</p></Show><p class="muted small">"在这里选择此供应方提供哪些模型。停用后暂停通过此供应方调用该模型，配置和历史保留；模型页可设置全局启停。"</p>
     <label class="pick"><input type="checkbox" prop:checked=show_compat on:change=move|e|show_compat.set(event_target_checked(&e))/>{format!("显示兼容隐藏模型（{}）",provider.get_value().models.iter().filter(|m|!m.visible).count())}</label><Show when=move||!show_compat.get()&&!provider.get_value().models.is_empty()&&provider.get_value().models.iter().all(|m|!m.visible)><p class="muted small">"没有公开展示的模型。可以显示兼容隐藏项，或在上游 Key 的模型选择中添加模型。"</p></Show>
-    {if provider.get_value().models.is_empty(){view!{<p class="account-empty">"尚未配置模型，请添加上游Key并配置可用模型。"</p>}.into_any()}else{view!{<div class="table-wrap"><table class="provider-model-table"><thead><tr><th>"上游模型名"</th><th>"展示名称与调用名"</th><th>"用途"</th><th>"原生协议"</th><th>"接入配置"</th><th>"此渠道内模型"</th><th>"详情"</th></tr></thead><tbody>{move||{let mut rows=provider.get_value().models;rows.sort_by(|a,b|catalog_purpose_label(a).cmp(catalog_purpose_label(b)).then(a.name.cmp(&b.name)));rows}.into_iter().filter(|m|m.visible||show_compat.get()).map(|m|{let purpose=catalog_purpose_label(&m).to_string();let connections=model_connections(&channels.get_value(),id,&m.name);let upstream:Vec<_>=connections.iter().flat_map(|c|c.models.iter().filter(|p|p.model==m.name).map(|p|p.upstream.clone().unwrap_or_else(||p.model.clone()))).collect::<BTreeSet<_>>().into_iter().collect();let protocols=protocol_names(&connections);let on=all_enabled(&m);let mixed=!m.enabled_connection_ids.is_empty()&&!on;let target=m.name.clone();let target_for_details=m.name.clone();let target_for_purpose=m.name.clone();let scope=m.declared_connection_ids.clone();view!{<tr><td data-label="上游模型名">{upstream.join(" / ")}</td><td data-label="展示名称与调用名"><strong>{if m.display_name.trim().is_empty(){m.name.clone()}else{m.display_name.clone()}}</strong><p class="muted small">"API 调用名："<code>{m.name}</code></p>{(!m.global_enabled).then(||view!{<span class="tag warn">"全局已停用"</span>})}</td><td data-label="用途"><div>{if purpose.trim().is_empty(){"未确定".to_string()}else{purpose}}</div><button type="button" class="ghost" aria-label=format!("配置模型 {} 的目录用途",target_for_purpose) on:click=move |_|selected_detail.set(Some(target_for_purpose.clone()))>"配置用途"</button></td><td data-label="原生协议">{protocols}</td><td data-label="接入配置">{format!("可用 {} / 已配置 {}",m.routable_connection_ids.len(),scope.len())}</td><td data-label="此渠道内模型"><div class="model-state-actions"><span class=if on{"tag ok"}else{"tag warn"}>{if on{"已启用"}else if mixed{"部分启用"}else{"已停用"}}</span><button type="button" class="ghost" disabled=move||busy.get() aria-label=format!("{}此渠道内模型 {} 的全部 {} 个上游接入",if on{"停用"}else{"启用"},target,scope.len()) on:click=move|_|{if busy.get_untracked(){return;}busy.set(true);let n=target.clone();let ids=scope.clone();leptos::task::spawn_local(async move{match p::toggle(id,&n,!on,&ids).await{Ok(())=>reload.run(()),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>{if on{"停用"}else if mixed{"全部启用"}else{"启用"}}</button></div></td><td data-label="详情"><button type="button" class="ghost" on:click=move |_|selected_detail.set(Some(target_for_details.clone()))>"接入设置"</button></td></tr>}}).collect_view()}</tbody></table></div>}.into_any()}}
+    {if provider.get_value().models.is_empty(){view!{<p class="account-empty">"尚未配置模型，请添加上游Key并配置可用模型。"</p>}.into_any()}else{view!{<div class="table-wrap"><table class="provider-model-table"><thead><tr><th>"上游模型名"</th><th>"展示名称与调用名"</th><th>"用途"</th><th>"原生协议"</th><th>"接入配置"</th><th>"此渠道内模型"</th><th>"详情"</th></tr></thead><tbody>{move||{let mut rows=provider.get_value().models;rows.sort_by(|a,b|catalog_purpose_label(a).cmp(catalog_purpose_label(b)).then(a.name.cmp(&b.name)));rows}.into_iter().filter(|m|m.visible||show_compat.get()).map(|m|{let purpose=catalog_purpose_label(&m).to_string();let connections=model_connections(&channels.get_value(),id,&m.name);let upstream:Vec<_>=connections.iter().flat_map(|c|c.models.iter().filter(|p|tokengo_shared::same_model_name(&p.model, &m.name)).map(|p|p.upstream.clone().unwrap_or_else(||p.model.clone()))).collect::<BTreeSet<_>>().into_iter().collect();let protocols=protocol_names(&connections);let on=all_enabled(&m);let mixed=!m.enabled_connection_ids.is_empty()&&!on;let target=m.name.clone();let target_for_details=m.name.clone();let target_for_purpose=m.name.clone();let scope=m.declared_connection_ids.clone();view!{<tr><td data-label="上游模型名">{upstream.join(" / ")}</td><td data-label="展示名称与调用名"><strong>{if m.display_name.trim().is_empty(){m.name.clone()}else{m.display_name.clone()}}</strong><p class="muted small">"API 调用名："<code>{m.name}</code></p>{(!m.global_enabled).then(||view!{<span class="tag warn">"全局已停用"</span>})}</td><td data-label="用途"><div>{if purpose.trim().is_empty(){"未确定".to_string()}else{purpose}}</div><button type="button" class="ghost" aria-label=format!("配置模型 {} 的目录用途",target_for_purpose) on:click=move |_|selected_detail.set(Some(target_for_purpose.clone()))>"配置用途"</button></td><td data-label="原生协议">{protocols}</td><td data-label="接入配置">{format!("可用 {} / 已配置 {}",m.routable_connection_ids.len(),scope.len())}</td><td data-label="此渠道内模型"><div class="model-state-actions"><span class=if on{"tag ok"}else{"tag warn"}>{if on{"已启用"}else if mixed{"部分启用"}else{"已停用"}}</span><button type="button" class="ghost" disabled=move||busy.get() aria-label=format!("{}此渠道内模型 {} 的全部 {} 个上游接入",if on{"停用"}else{"启用"},target,scope.len()) on:click=move|_|{if busy.get_untracked(){return;}busy.set(true);let n=target.clone();let ids=scope.clone();leptos::task::spawn_local(async move{match p::toggle(id,&n,!on,&ids).await{Ok(())=>reload.run(()),Err(e)=>{ctx.note_err(&e);error.set(e.message);}}busy.set(false);});}>{if on{"停用"}else if mixed{"全部启用"}else{"启用"}}</button></div></td><td data-label="详情"><button type="button" class="ghost" on:click=move |_|selected_detail.set(Some(target_for_details.clone()))>"接入设置"</button></td></tr>}}).collect_view()}</tbody></table></div>}.into_any()}}
     <div class="provider-model-footer"><button type="button" class="ghost" on:click=move |_|{open.set(false);connections_open.set(true);}>"诊断与分组"</button></div></Show>
     {move||selected_detail.get().map(|model|{
         let presentation=provider.get_value().models.into_iter().find(|m|m.name==model).map(|m|view!{
@@ -191,6 +191,33 @@ fn ProviderCard(
 /// The main UI identifies model access by the operator's credential label, never storage IDs.
 #[component]
 fn ModelAccessDetails(ctx: Ctx, provider_id: i64, connections: Vec<Channel>, model: String) -> impl IntoView {
+    use super::model_specifications::{ChannelSpecDraft, ModelSpecifications};
+    let spec_editor = RwSignal::new(None::<ChannelSpecDraft>);
+    let loading_spec = RwSignal::new(false);
+    let spec_error = RwSignal::new(String::new());
+    let open_spec = Callback::new(move |(model_id, base_url): (String, String)| {
+        if loading_spec.get_untracked() { return; }
+        loading_spec.set(true);
+        spec_error.set(String::new());
+        leptos::task::spawn_local(async move {
+            let query = format!("/api/model-specifications?provider_id={provider_id}&model_id={}&base_url={}",
+                crate::admin_api::encode(&model_id), crate::admin_api::encode(&base_url));
+            let result = crate::admin_api::request("GET", &query, None).await;
+            if loading_spec.try_get_untracked().is_none() { return; }
+            loading_spec.set(false);
+            match result {
+                Ok(response) => spec_editor.set(Some(ChannelSpecDraft {
+                    model_id,
+                    provider_id,
+                    matched: crate::admin_api::rows(&response, "specifications").into_iter().next(),
+                })),
+                Err(error) => {
+                    ctx.note_err(&error);
+                    spec_error.set(error.message);
+                }
+            }
+        });
+    });
     let credentials = RwSignal::new(Vec::<serde_json::Value>::new());
     let error = RwSignal::new(String::new());
     leptos::task::spawn_local(async move {
@@ -201,13 +228,43 @@ fn ModelAccessDetails(ctx: Ctx, provider_id: i64, connections: Vec<Channel>, mod
     });
     let connections=StoredValue::new(connections);
     let model=StoredValue::new(model);
-    view! {<div class="model-access-list"><Show when=move||!error.get().is_empty()><p class="account-error" role="alert">{move||error.get()}</p></Show>{move||connections.get_value().into_iter().map(|c|{
-        let credential=credentials.get().into_iter().enumerate().find(|(_,v)|v["source_ids"].as_array().is_some_and(|a|a.iter().any(|v|v.as_i64()==Some(c.id))));
-        let title=credential.as_ref().map(|(position,row)|p::credential_label(row,*position)).unwrap_or_else(||"模型接入配置".into());
-        let credential_enabled=credential.as_ref().map(|(_,v)|v["enabled"]==true);
-        let enabled=c.enabled&&credential_enabled==Some(true)&&c.models.iter().any(|m|m.model==model.get_value()&&m.enabled);
-        view! {<section class="model-access-item"><div class="model-state-actions"><strong>{title.clone()}</strong><span class=if enabled{"tag ok"}else{"tag warn"}>{if credential_enabled.is_none(){"凭据状态待确认"}else if enabled{"已启用"}else{"已停用"}}</span></div><p class="provider-url muted small">{c.base_url}</p><super::model_reasoning::ReasoningConfig ctx=ctx channel=Some(c.id) model=model.get_value() label=format!("{title} · 推理设置")/></section>}
-    }).collect_view()}</div>}
+    view! {
+        <div class="model-access-list">
+            <Show when=move || !error.get().is_empty()><p class="account-error" role="alert">{move || error.get()}</p></Show>
+            <Show when=move || !spec_error.get().is_empty()><p class="account-error" role="alert">{move || spec_error.get()}</p></Show>
+            {move || connections.get_value().into_iter().filter_map(|connection| {
+                let mapping = connection.models.iter().find(|mapping| tokengo_shared::same_model_name(&mapping.model, &model.get_value()))?;
+                let upstream = mapping.upstream.clone().unwrap_or_else(|| mapping.model.clone());
+                let credential = credentials.get().into_iter().enumerate().find(|(_, row)| {
+                    row["source_ids"].as_array().is_some_and(|ids| ids.iter().any(|id| id.as_i64() == Some(connection.id)))
+                });
+                let title = credential.as_ref().map(|(position, row)| p::credential_label(row, *position))
+                    .unwrap_or_else(|| "模型接入配置".into());
+                let credential_enabled = credential.as_ref().map(|(_, row)| row["enabled"] == true);
+                let enabled = connection.enabled && credential_enabled == Some(true) && mapping.enabled;
+                let base_url = connection.base_url;
+                let endpoint = base_url.clone();
+                Some(view! {
+                    <section class="model-access-item">
+                        <div class="model-state-actions">
+                            <strong>{title.clone()}</strong>
+                            <span class=if enabled { "tag ok" } else { "tag warn" }>
+                                {if credential_enabled.is_none() { "凭据状态待确认" } else if enabled { "已启用" } else { "已停用" }}
+                            </span>
+                        </div>
+                        <p class="provider-url muted small">{base_url}</p>
+                        <button type="button" class="ghost" aria-haspopup="dialog" disabled=loading_spec
+                            on:click=move |_| open_spec.run((upstream.clone(), endpoint.clone()))>
+                            "编辑渠道规格"
+                        </button>
+                        <super::model_reasoning::ReasoningConfig ctx=ctx channel=Some(connection.id)
+                            model=mapping.model.clone() label=format!("{title} · 推理设置")/>
+                    </section>
+                })
+            }).collect_view()}
+            <ModelSpecifications ctx=ctx channel_editor=spec_editor/>
+        </div>
+    }
 }
 #[component]
 pub(crate) fn Assignment(

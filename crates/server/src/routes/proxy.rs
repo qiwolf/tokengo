@@ -491,7 +491,7 @@ fn client_model_specification(
             mapping.enabled && tokengo_shared::same_model_name(&mapping.model, &route.name)
         }) {
             let Some(specification) =
-                model_specifications::for_mapping(conn, channel, mapping)?
+                model_specifications::for_mapping(conn, channel, mapping)?.public()
             else {
                 return Ok(None);
             };

@@ -174,7 +174,7 @@ fn pricing_option<'a>(response: &'a Value, model: &str) -> &'a Value {
 #[tokio::test]
 async fn pricing_reuses_usage_references_without_treating_context_as_a_reference() {
     let f = Fixture::new();
-    let (channel, _) = f.channel("first", "public-alias", "vendor/ExactChat");
+    let (channel, provider) = f.channel("first", "public-alias", "vendor/ExactChat");
     f.channel("vectors", "vector-alias", "vendor/ExactVector");
     assert_eq!(f.put(chat(None, 128_000)).await.0, StatusCode::OK);
     assert_eq!(f.put(json!({
@@ -196,13 +196,13 @@ async fn pricing_reuses_usage_references_without_treating_context_as_a_reference
     let (status, options) = f.call("GET", "/api/pricing/options", Some(&f.admin), None).await;
     assert_eq!(status, StatusCode::OK, "{options}");
     let chat_option = pricing_option(&options, "public-alias");
-    assert_eq!(chat_option["max_input_tokens"], 34_000);
-    assert_eq!(chat_option["max_output_tokens"], 7_000);
+    assert_eq!(chat_option["input_usage_reference"], 34_000);
+    assert_eq!(chat_option["output_usage_reference"], 7_000);
     assert_eq!(chat_option["input_bound_source"], "model_specification");
     let embedding_option = pricing_option(&options, "vector-alias");
     assert_eq!(embedding_option["task_type"], "embeddings");
     assert!(embedding_option["max_input_tokens"].is_null());
-    assert_eq!(embedding_option["max_output_tokens"], 0);
+    assert_eq!(embedding_option["output_usage_reference"], 0);
 
     let (status, price) = f.call("POST", "/api/pricing", Some(&f.admin), Some(json!({
         "channel_id":channel.0,"model":"public-alias",
@@ -213,21 +213,155 @@ async fn pricing_reuses_usage_references_without_treating_context_as_a_reference
     assert_eq!(price["price"]["max_input_tokens"], 12_000);
     assert_eq!(price["price"]["max_output_tokens"], 7_000);
 
-    let mut updated = chat(None, 64_000);
+    let mut updated = chat(Some(provider), 64_000);
+    updated["max_input_tokens"] = 60_000.into();
     updated["input_usage_reference"] = 44_000.into();
     updated["output_usage_reference"] = 9_000.into();
-    assert_eq!(f.put(updated).await.0, StatusCode::OK);
+    let (status, specification) = f.put(updated).await;
+    assert_eq!(status, StatusCode::OK, "{specification}");
+    assert_eq!(specification["specification"]["context_window"], 64_000);
+    assert_eq!(specification["specification"]["max_input_tokens"], 60_000);
+    let client = f.client_key(None);
+    let public = f.model(&client, "public-alias").await;
+    assert_eq!(public["specifications"]["max_input_tokens"], 60_000);
+    assert_eq!(public["specifications"]["input_usage_reference"], 44_000);
+
     let (status, options) = f.call("GET", "/api/pricing/options", Some(&f.admin), None).await;
     assert_eq!(status, StatusCode::OK, "{options}");
     let row = pricing_option(&options, "public-alias");
-    assert_eq!(row["max_input_tokens"], 12_000);
-    assert_eq!(row["max_output_tokens"], 7_000);
-    assert_eq!(row["input_bound_source"], "existing_price");
+    assert_eq!(row["input_usage_reference"], 44_000);
+    assert_eq!(row["output_usage_reference"], 9_000);
+    assert_eq!(row["input_bound_source"], "channel_model");
+    let rates = json!({
+        "channel_id":channel.0, "model":"public-alias",
+        "input_micro_per_million":11_000, "output_micro_per_million":22_000
+    });
+    let path = format!("/api/pricing/{}", price["price"]["id"]);
+    let mut conflicting = rates.clone();
+    conflicting["max_input_tokens"] = 1_000.into();
+    assert_eq!(f.call("PUT", &path, Some(&f.admin), Some(conflicting)).await.0, StatusCode::BAD_REQUEST);
+    let (status, revised) = f.call("PUT", &path, Some(&f.admin), Some(rates)).await;
+    assert_eq!(status, StatusCode::OK, "{revised}");
+    assert_eq!(revised["price"]["max_input_tokens"], 44_000);
+    assert_eq!(revised["price"]["max_output_tokens"], 9_000);
+
     let conn = f.state.conn();
-    assert_eq!(db::billing::list_prices(&conn).unwrap().len(), 1);
+    let history = db::billing::list_prices(&conn).unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].max_input_tokens, 12_000);
+    assert_eq!(history[1].max_output_tokens, 7_000);
     let configured = tokengo_server::protocol_config::load(&conn, channel.0).unwrap();
     assert_eq!(configured.max_input_tokens, Some(100_000));
     assert_eq!(configured.max_output_tokens, Some(16_000));
+}
+
+#[tokio::test]
+async fn partial_override_keeps_source_specific_references_and_lower_defaults() {
+    let f = Fixture::new();
+    let (legacy, provider) = f.channel("first", "mapped-chat", "vendor/ExactChat");
+    let (fresh, _) = f.channel("second", "mapped-chat", "vendor/ExactChat");
+    {
+        let conn = f.state.conn();
+        db::provider_channels::set_membership(&conn, fresh.0, Some(provider)).unwrap();
+        conn.execute(
+            "INSERT INTO billing_prices(channel_id,model,input_micro_per_million,output_micro_per_million,
+                max_input_tokens,max_output_tokens,created_ms,currency)
+             VALUES(?1,'mapped chat',123,456,12000,3000,1,'USD')",
+            [legacy.0],
+        ).unwrap();
+        let cny = db::billing::create_price(&conn, &db::billing::Price {
+            id: 0,
+            channel_id: fresh.0,
+            model: "mapped-chat".into(),
+            currency: "CNY".into(),
+            input_micro_per_million: 987,
+            output_micro_per_million: 654,
+            max_input_tokens: 88_000,
+            max_output_tokens: 17_000,
+        }, "fixture").unwrap();
+        db::billing::change_price_state(&conn, "token", cny.id, None, "fixture").unwrap();
+    }
+
+    assert_eq!(f.put(chat(None, 128_000)).await.0, StatusCode::OK);
+    assert_eq!(f.put(json!({
+        "model_id":"vendor/ExactChat", "provider_id":provider,
+        "kind":"chat", "max_input_tokens":100_000
+    })).await.0, StatusCode::OK);
+
+    let (status, options) = f.call("GET", "/api/pricing/options", Some(&f.admin), None).await;
+    assert_eq!(status, StatusCode::OK, "{options}");
+    let by_source = |channel: ChannelId| {
+        options["options"].as_array().unwrap().iter().find(|row| row["channel_id"] == channel.0).unwrap()
+    };
+    let historical = by_source(legacy);
+    assert_eq!(historical["input_usage_reference"], 12_000);
+    assert_eq!(historical["output_usage_reference"], 3_000);
+    assert_eq!(historical["input_bound_source"], "existing_price");
+    let inherited = by_source(fresh);
+    assert_eq!(inherited["input_usage_reference"], 34_000);
+    assert_eq!(inherited["output_usage_reference"], 7_000);
+    assert_eq!(inherited["input_bound_source"], "model_specification");
+
+    let (status, edit) = f.call(
+        "GET", &format!("/api/model-specifications?model_id=vendor%2FExactChat&provider_id={provider}"),
+        Some(&f.admin), None,
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{edit}");
+    assert!(edit["specifications"][0].get("input_usage_reference").is_none());
+    let client = f.client_key(None);
+    let published = f.model(&client, "mapped-chat").await;
+    assert_eq!(published["specifications"]["max_input_tokens"], 100_000);
+    assert_eq!(published["specifications"]["input_usage_reference"], 34_000);
+
+    let (status, cny) = f.call("POST", "/api/pricing", Some(&f.admin), Some(json!({
+        "channel_id":legacy.0, "model":"mapped-chat",
+        "input_micro_per_million":100, "output_micro_per_million":200
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{cny}");
+    assert_eq!(cny["price"]["currency"], "CNY");
+    assert_eq!(cny["price"]["input_micro_per_million"], 100);
+    assert_eq!(cny["price"]["max_input_tokens"], 12_000);
+    let history = db::billing::list_prices(&f.state.conn()).unwrap();
+    let usd = history.iter().find(|row| row.currency == "USD").unwrap();
+    assert_eq!(usd.input_micro_per_million, 123);
+    assert_eq!(usd.max_input_tokens, 12_000);
+}
+
+#[tokio::test]
+async fn unit_rate_versions_copy_channel_quantities_for_the_selected_unit() {
+    let f = Fixture::new();
+    let (channel, provider) = f.channel("audio provider", "speech-to-text", "vendor/ExactAsr");
+    let mut spec = json!({
+        "model_id":"vendor/ExactAsr", "provider_id":provider, "kind":"asr",
+        "quantity_usage_references":{"second":64_000, "hour":75_000}
+    });
+    assert_eq!(f.put(spec.clone()).await.0, StatusCode::OK);
+    let (status, options) = f.call("GET", "/api/pricing/options", Some(&f.admin), None).await;
+    assert_eq!(status, StatusCode::OK, "{options}");
+    let option = pricing_option(&options, "speech-to-text");
+    assert_eq!(option["quantity_usage_references"]["minute"], 64_000);
+    assert_eq!(option["quantity_usage_references"]["hour"], 75_000);
+    assert_eq!(option["quantity_reference_sources"]["minute"], "channel_model");
+
+    let rates = json!({
+        "channel_id":channel.0, "model":"speech-to-text", "unit":"minute", "micro_per_unit":25_000
+    });
+    let (status, original) = f.call("POST", "/api/unit-pricing", Some(&f.admin), Some(rates.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{original}");
+    assert_eq!(original["unit_price"]["max_quantity_milli"], 64_000);
+    let path = format!("/api/unit-pricing/{}", original["unit_price"]["id"]);
+
+    spec["quantity_usage_references"]["second"] = 80_000.into();
+    assert_eq!(f.put(spec).await.0, StatusCode::OK);
+    let mut invalid = rates.clone();
+    invalid["max_quantity_milli"] = 64_000.into();
+    assert_eq!(f.call("PUT", &path, Some(&f.admin), Some(invalid)).await.0, StatusCode::BAD_REQUEST);
+    let (status, revised) = f.call("PUT", &path, Some(&f.admin), Some(rates)).await;
+    assert_eq!(status, StatusCode::OK, "{revised}");
+    assert_eq!(revised["unit_price"]["max_quantity_milli"], 80_000);
+    let history = db::billing::list_unit_prices(&f.state.conn()).unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].max_quantity_milli, 64_000);
 }
 
 #[tokio::test]
