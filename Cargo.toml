@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.34.0-qiwolf.34"
+version = "0.34.0-qiwolf.35"
 edition = "2021"
 rust-version = "1.98"
 license = "MIT"

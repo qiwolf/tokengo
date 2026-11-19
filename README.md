@@ -1,5 +1,9 @@
 # TokenGo
 
+**v0.34.0-qiwolf.35 发行准备中。** 用量看板默认折叠超过图表高度的模型列表。管理员配置 API Key 时，模型候选按用户已保存的授权筛选。[版本说明](docs/releases/v0.34.0-qiwolf.35.md) · [发行收据](docs/acceptance/2026-11-20-qiwolf35-release/README.md)
+
+**v0.34.0-qiwolf.35 is in release preparation.** The usage dashboard collapses model rows that would extend past the chart. Admin API Key editors show candidates within the user’s saved model grants. [Release notes](docs/releases/v0.34.0-qiwolf.35.md) · [Release receipt](docs/acceptance/2026-11-20-qiwolf35-release/README.md)
+
 **当前正式版：[v0.34.0-qiwolf.34](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.34)** — 模型规格目录、渠道模型配置与定价参考值、独立映射弹窗及原生 Responses 配置。[版本说明](docs/releases/v0.34.0-qiwolf.34.md) · [发行收据](docs/acceptance/2026-11-18-qiwolf34-release/README.md)。
 
 **Current stable release: [v0.34.0-qiwolf.34](https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.34).** Model specifications, channel settings and pricing references, an upstream alias editor, and native Responses configuration. [Release notes](docs/releases/v0.34.0-qiwolf.34.md) · [Release receipt](docs/acceptance/2026-11-18-qiwolf34-release/README.md).

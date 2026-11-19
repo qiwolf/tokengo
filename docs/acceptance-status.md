@@ -1,8 +1,12 @@
 # 功能与验收状态
 
+## v0.34.0-qiwolf.35 — 发行准备（2026-11-20）
+
+用量模型列表折叠已用 237 的真实账目验收。API Key 模型候选筛选已通过 build-test 的 225 项前端单测、WASM 构建和 Chromium 合成账户回归。237 的 Key 候选从 31 项收至用户已授权的 18 项，未授权模型搜索结果为空。GitHub CI、正式发行和公开制品验收待完成。[Key 筛选的 237 收据](acceptance/2026-11-20-key-user-model-scope-deploy237/README.md)[版本说明](releases/v0.34.0-qiwolf.35.md) · [发行收据](acceptance/2026-11-20-qiwolf35-release/README.md) · [用量折叠的 237 收据](acceptance/2026-11-19-usage-model-collapse-deploy237/README.md)
+
 ## 2026-11-19 模型分布折叠已在 237 验收
 
-237 的 Web 已切换到 `6a2a19b`，服务端继续运行 `a6e3e85`。在管理员用量账本的真实当天数据上，右侧 9 项默认显示 4 项，可展开其余 5 项。1440px 视口下，图表说明下方空白由 280px 减至 17px。[237 上线收据](acceptance/2026-11-19-usage-model-collapse-deploy237/README.md)
+11 月 19 日验收时，237 的 Web 切换到 `6a2a19b`，服务端继续运行 `a6e3e85`。在管理员用量账本的真实当天数据上，右侧 9 项默认显示 4 项，可展开其余 5 项。1440px 视口下，图表说明下方空白由 280px 减至 17px。[237 上线收据](acceptance/2026-11-19-usage-model-collapse-deploy237/README.md)
 
 ## v0.34.0-qiwolf.34 — 已正式发行（2026-11-18）
 
