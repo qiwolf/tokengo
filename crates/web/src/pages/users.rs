@@ -82,6 +82,9 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
     let rows = RwSignal::new(Vec::<Value>::new());
     let roots = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
+    let owner_policy = Signal::derive(move || {
+        selected.with(|user| user.as_ref().map(|v| v["policy"].clone()).unwrap_or(Value::Null))
+    });
     let delete_target=RwSignal::new(None::<Value>);
     let delete_open=RwSignal::new(false);
     let owner = RwSignal::new(None::<i64>);
@@ -368,7 +371,7 @@ pub fn Users(ctx: Ctx) -> impl IntoView {
         <footer class="user-workspace-footer"><span>"保存会同时应用基本资料、授权和限流设置。"</span><div class="user-actions"><button type="button" class="ghost" on:click=move |_|editing.set(false)>"取消"</button><button type="submit" class="primary">{move||if busy.get(){"正在保存…"}else if selected.get().is_none(){"创建用户"}else{"保存修改"}}</button></div></footer>
         </fieldset></form>
         </Show>
-        <Show when=move||editing.get()&&section.get()==UserSection::Keys&&owner.get().is_some()><Show when=move||!key_editor_active.get()><p class="account-help">"Key 操作独立保存；其他分区的草稿保留，返回后可继续编辑。"</p></Show><KeyManager ctx=ctx owner=owner models=models channels=channels services=services form_busy=busy embedded=true editor_active=key_editor_active/></Show>
+        <Show when=move||editing.get()&&section.get()==UserSection::Keys&&owner.get().is_some()><Show when=move||!key_editor_active.get()><p class="account-help">"Key 操作独立保存；其他分区的草稿保留，返回后可继续编辑。"</p></Show><KeyManager ctx=ctx owner=owner models=models owner_policy=owner_policy channels=channels services=services form_busy=busy embedded=true editor_active=key_editor_active/></Show>
     </div>
     </super::ModuleDialog>
     <super::ModuleDialog open=delete_open busy=busy title="删除用户".to_string()>

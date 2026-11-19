@@ -40,6 +40,23 @@ fn new_key_policy(base: Value, personal: bool) -> Value {
     // The existing save path materializes that inheritance within the parent's bounds.
     let mut inherited = base; inherited["allowed_models"] = Value::Null; inherited["allowed_services"]=Value::Null; inherited
 }
+/// Admin Key choices use the saved user whitelist. Personal choices are already
+/// scoped by the account endpoint.
+fn models_in_user_scope(mut catalog: Vec<String>, policy: &Value) -> Vec<String> {
+    let Some(policy) = policy.as_object() else { return Vec::new() };
+    match policy.get("allowed_models") {
+        None | Some(Value::Null) => catalog,
+        Some(Value::Array(allowed)) => {
+            catalog.retain(|name| {
+                allowed.iter().filter_map(Value::as_str)
+                    .any(|model| tokengo_shared::same_model_name(model, name))
+            });
+            catalog
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// A Key task replaces its host panel when embedded, rather than stacking dialogs.
 #[component]
 fn KeyEditorSurface(open: RwSignal<bool>, busy: RwSignal<bool>, embedded: bool, children: ChildrenFn) -> impl IntoView {
@@ -57,11 +74,19 @@ pub fn KeyManager(
     models: RwSignal<Vec<String>>,
     channels: RwSignal<Vec<(i64, String)>>,
     services: RwSignal<Vec<Value>>,
+    #[prop(optional)] owner_policy: Option<Signal<Value>>,
     #[prop(default = false)] personal: bool,
     #[prop(default = false)] embedded: bool,
     #[prop(optional)] editor_active: Option<RwSignal<bool>>,
     #[prop(optional)] form_busy: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let key_models = Signal::derive(move || {
+        let catalog = models.get();
+        match owner_policy {
+            Some(policy) => models_in_user_scope(catalog, &policy.get()),
+            None => catalog,
+        }
+    });
     let tasks=crate::page_tasks::PageTasks::new();
     let rows = RwSignal::new(Vec::<Value>::new());
     let selected = RwSignal::new(None::<Value>);
@@ -391,8 +416,8 @@ pub fn KeyManager(
     <h3>{move||if selected.get().is_some(){"编辑 Key"}else{"创建 Key"}}</h3>
     <form class="account-form workspace-key-form" on:submit=save><fieldset disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())>
     <section class="workspace-form-section"><h3>"凭据设置"</h3><div class="workspace-field-grid">    <label class="account-field"><span>"名称"</span><input required type="text" maxlength="80" prop:value=name on:input=move|e|name.set(event_target_value(&e))/></label><label class="account-field"><span>"到期日期（本机时区）"</span><input type="datetime-local" prop:value=expiry on:input=move|e|expiry.set(event_target_value(&e))/></label></div></section>
-    <section class="workspace-form-section"><h3>"权限范围"</h3><p class="account-help">"Key 的权限只能缩小所属用户的授权范围。"</p><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal show_limits=false/></section>
-    <section class="workspace-form-section workspace-key-limits"><h3>"限流与消费记录"</h3><PolicyEditor policy=draft models=models channels=channels services=services prefix=if personal{"my-key-limits"}else{"admin-key-limits"} admin=!personal show_access=false show_validation=false/>
+    <section class="workspace-form-section"><h3>"权限范围"</h3><p class="account-help">"Key 的权限只能缩小所属用户的授权范围。"</p><PolicyEditor policy=draft models=key_models channels=channels services=services prefix=if personal{"my-key"}else{"admin-key"} admin=!personal key_scope=true show_limits=false/></section>
+    <section class="workspace-form-section workspace-key-limits"><h3>"限流与消费记录"</h3><PolicyEditor policy=draft models=key_models channels=channels services=services prefix=if personal{"my-key-limits"}else{"admin-key-limits"} admin=!personal show_access=false show_validation=false/>
     <BudgetUsage budget=Signal::derive(move||selected.get().map(|k|k["budget"].clone()).unwrap_or(Value::Null))/><p class="account-help">"本地预算门限已取消；历史限额和冻结标记不再限制调用。用量和费用继续记录。"</p></section>
     <p class="workspace-preservation-note">"编辑元数据和权限不会更换此 Key，已有调用凭据和历史保留。"</p>
     </fieldset><footer class="workspace-key-footer"><fieldset class="account-actions workspace-key-actions" disabled=move||busy.get()||loading.get()||(!personal&&owner.get().is_none())||selected.get().is_some_and(|k|!k["revoked_at"].is_null())><button class="primary" type="submit">{move||if busy.get(){"正在保存…"}else{"保存 Key"}}</button><button class="ghost danger" type="button" disabled=move||selected.get().is_none() on:click=revoke>"永久撤销"</button></fieldset><div class="account-actions workspace-key-cancel"><button class="ghost" type="button" disabled=move||busy.get() on:click=move |_|{if !busy.get_untracked(){editor_open.set(false);}}>"取消"</button></div></footer></form>
@@ -420,6 +445,20 @@ pub fn KeyManager(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn key_model_choices_intersect_the_visible_catalog_with_the_saved_user_scope() {
+        let catalog = vec!["direct".to_owned(), "unassigned".to_owned(), "shared".to_owned()];
+        assert_eq!(
+            models_in_user_scope(catalog.clone(), &json!({"allowed_models": ["shared", " DIRECT ", "hidden"]})),
+            vec!["direct", "shared"],
+        );
+        assert_eq!(models_in_user_scope(catalog.clone(), &json!({"allowed_models": null})), catalog);
+        assert_eq!(models_in_user_scope(catalog.clone(), &json!({})), catalog);
+        assert!(models_in_user_scope(catalog.clone(), &json!({"allowed_models": []})).is_empty());
+        assert!(models_in_user_scope(catalog.clone(), &Value::Null).is_empty());
+        assert!(models_in_user_scope(catalog, &json!({"allowed_models": "invalid"})).is_empty());
+    }
+
     #[test]
     fn key_lists_keep_legacy_accounting_without_requiring_budget_control_metadata() {
         let response = json!({"keys":[{"id":1,"budget":null},{"id":2,"budget":{"limit_micro":0,"spent_micro":17,"reserved_micro":3,"frozen":true}}]});

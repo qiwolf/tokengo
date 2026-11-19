@@ -1,6 +1,7 @@
 //! Typed, lossless policy controls shared by administrators and key owners.
 use leptos::prelude::*;
 use serde_json::{Value, json};
+use tokengo_shared::same_model_name;
 
 pub fn default_policy() -> Value {
     serde_json::from_str(crate::admin_api::POLICY).unwrap()
@@ -87,14 +88,14 @@ fn authorization_options(policy: &Value, visible: &[String]) -> (Vec<String>, Ve
     let mut choices = visible.iter().filter(|n|!n.is_empty()).cloned().collect::<Vec<_>>();
     choices.sort(); choices.dedup();
     let mut retained = policy["allowed_models"].as_array().into_iter().flatten()
-        .filter_map(Value::as_str).filter(|name| !choices.iter().any(|c|c.as_str()==*name))
+        .filter_map(Value::as_str).filter(|name| !choices.iter().any(|choice| same_model_name(choice, name)))
         .map(str::to_owned).collect::<Vec<_>>();
     retained.sort(); retained.dedup();
     (choices, retained)
 }
 fn revoke_model(policy: &mut Value, name: &str) {
     if let Some(models) = policy["allowed_models"].as_array_mut() {
-        models.retain(|model|model.as_str()!=Some(name));
+        models.retain(|model| !model.as_str().is_some_and(|old| same_model_name(old, name)));
     }
 }
 /// New users explicitly start without service grants; legacy null remains unchanged on edit.
@@ -178,11 +179,12 @@ pub fn BudgetUsage(budget: Signal<Value>) -> impl IntoView {
 #[component]
 pub fn PolicyEditor(
     policy: RwSignal<Value>,
-    models: RwSignal<Vec<String>>,
+    #[prop(into)] models: Signal<Vec<String>>,
     channels: RwSignal<Vec<(i64, String)>>,
     services: RwSignal<Vec<Value>>,
     prefix: &'static str,
     #[prop(default = false)] admin: bool,
+    #[prop(default = false)] key_scope: bool,
     #[prop(default = true)] show_access: bool,
     #[prop(default = true)] show_limits: bool,
     #[prop(default = true)] show_validation: bool,
@@ -190,22 +192,31 @@ pub fn PolicyEditor(
     let search = RwSignal::new(String::new());
     view! {<div class="policy-editor">
     <Show when=move||show_validation&&validate(&policy.get()).is_err()><p class="banner bad" role="alert">{move||validate(&policy.get()).err().unwrap_or_default()}</p></Show>
-    <Show when=move||show_access><div class="account-field"><label for=format!("{prefix}-models")>"模型授权"</label><select id=format!("{prefix}-models") prop:value=move||mode(&policy.get(),"allowed_models") on:change=move|e|set_mode(policy,"allowed_models",&event_target_value(&e))><option value="all">{if admin{"所有当前及未来模型"}else{"继承用户的模型权限"}}</option><option value="selected">"仅勾选的模型（未选即禁止）"</option></select></div>
+    <Show when=move||show_access><div class="account-field"><label for=format!("{prefix}-models")>"模型授权"</label><select id=format!("{prefix}-models") prop:value=move||mode(&policy.get(),"allowed_models") on:change=move|e|set_mode(policy,"allowed_models",&event_target_value(&e))><option value="all">{if key_scope{"继承用户的模型权限"}else{"所有当前及未来模型"}}</option><option value="selected">"仅勾选的模型（未选即禁止）"</option></select></div>
     <Show when=move||!policy.get()["allowed_models"].is_null()>
     <label class="account-field"><span>"搜索可见模型"</span><input type="search" prop:value=search on:input=move|e|search.set(event_target_value(&e))/></label>
     <div class="policy-options">{move||{
-        let p=policy.get(); let current=p["allowed_models"].as_array().cloned().unwrap_or_default();
+        let p=policy.get(); let current=p["allowed_models"].as_array();
         let (choices,_)=authorization_options(&p,&models.get()); let query=search.get().to_lowercase();
         choices.into_iter().filter(|n|n.to_lowercase().contains(&query)).map(|n|{
-            let checked=current.iter().any(|x|x.as_str()==Some(n.as_str()));let label=n.clone();
-            view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|toggle(policy,"allowed_models",json!(n),event_target_checked(&e))/>{label}</label>}
+            let checked=current.into_iter().flatten().filter_map(Value::as_str).any(|old|same_model_name(old,&n));let label=n.clone();
+            view!{<label class="account-check"><input type="checkbox" prop:checked=checked on:change=move|e|{
+                let enabled=event_target_checked(&e);
+                policy.update(|p| {
+                    revoke_model(p,&n);
+                    if let Some(models) = p["allowed_models"].as_array_mut().filter(|_| enabled) {
+                        models.push(json!(n));
+                    }
+                });
+            }/>{label}</label>}
         }).collect_view()
     }}</div>
-    <p class="account-help">"这里只列出可公开调用的模型及已启用的管理员共享模型；仅内部调用模型不能直接授权。未勾选任何模型且没有保留授权时，禁止调用。"</p>
+    <Show when=move || key_scope && models.with(Vec::is_empty)><p class="account-help" role="status">"该用户暂无可选模型。"</p></Show>
+    <p class="account-help">{if key_scope{"只可勾选用户已获授权且当前可选的模型。未勾选任何模型且没有保留授权时，禁止调用。"}else{"这里只列出可公开调用的模型及已启用的管理员共享模型；仅内部调用模型不能直接授权。未勾选任何模型且没有保留授权时，禁止调用。"}}</p>
     <Show when=move||!authorization_options(&policy.get(),&models.get()).1.is_empty()>
-    <details class="policy-retained-grants"><summary>{move||format!("已有兼容授权 {} 项",authorization_options(&policy.get(),&models.get()).1.len())}</summary>
-        <p class="account-help">"这些模型已隐藏、设为仅内部调用或不在当前目录中。保留旧授权不会解除仅内部调用限制；撤销后不再可选。"</p>
-        <div class="policy-options">{move||authorization_options(&policy.get(),&models.get()).1.into_iter().map(|n|{let label=n.clone();view!{<div class="account-check"><span>{label}</span><button type="button" class="ghost danger" aria-label=format!("撤销 {n} 的已有兼容授权") on:click=move |_|policy.update(|p|revoke_model(p,&n))>"撤销授权"</button></div>}}).collect_view()}</div>
+    <details class="policy-retained-grants"><summary>{move||format!("{} {} 项",if key_scope{"已有不可选授权"}else{"已有兼容授权"},authorization_options(&policy.get(),&models.get()).1.len())}</summary>
+        <p class="account-help">{if key_scope{"这些模型不在用户当前的可选范围内。已有的 Key 配置可撤销，实际调用仍受用户授权和模型访问限制。"}else{"这些模型已隐藏、设为仅内部调用或不在当前目录中。保留旧授权不会解除仅内部调用限制；撤销后不再可选。"}}</p>
+        <div class="policy-options">{move||authorization_options(&policy.get(),&models.get()).1.into_iter().map(|n|{let label=n.clone();view!{<div class="account-check"><span>{label}</span><button type="button" class="ghost danger" aria-label=format!("撤销 {n} 的已有授权") on:click=move |_|policy.update(|p|revoke_model(p,&n))>"撤销授权"</button></div>}}).collect_view()}</div>
     </details></Show></Show>
     <div class="account-field"><label for=format!("{prefix}-services")>"透传服务授权"</label><select id=format!("{prefix}-services") prop:value=move||mode(&policy.get(),"allowed_services") on:change=move|e|set_mode(policy,"allowed_services",&event_target_value(&e))><option value="all">{if admin{"保留逐 Key 授权 / 不额外限制"}else{"继承用户授权 / 不额外限制"}}</option><option value="selected">"仅勾选的服务（未选即禁止）"</option></select></div>
     <p class="account-help">{if admin{"为用户勾选服务后，其 Key 可继承使用；Key 中的勾选只会缩小范围。保留旧的逐 Key 模式不会自动授予全部服务。"}else{"服务和模型分别授权；此处只能缩小管理员授予的服务范围。"}}</p>
@@ -222,6 +233,15 @@ pub fn PolicyEditor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn model_options_and_revocation_follow_gateway_name_matching() {
+        let mut policy = json!({"allowed_models": [" MODEL-A ", "old"]});
+        let (choices, retained) = authorization_options(&policy, &["model-a".into()]);
+        assert_eq!(choices, vec!["model-a"]);
+        assert_eq!(retained, vec!["old"]);
+        revoke_model(&mut policy, "model-a");
+        assert_eq!(policy["allowed_models"], json!(["old"]));
+    }
     #[test]
     fn editing_other_fields_preserves_null_empty_and_hidden_acl() {
         let mut p = default_policy();
