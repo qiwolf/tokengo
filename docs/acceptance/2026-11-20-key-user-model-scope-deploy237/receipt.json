@@ -1,0 +1,37 @@
+{
+  "deployment_finished_utc": "2026-11-19T17:30:17Z",
+  "web_commit": "4172f826842b2d052b1c0a1fc904b4c5a28da41c",
+  "server_commit": "a6e3e856e7d2739609b6bb22c08ff9b2fd1e11ba",
+  "web_archive_sha256": "1e4bbd9a51bc4a9ff5cc47d36491725852832f0d1f43e625345ab935561e1b1d",
+  "build_host": "build-test",
+  "mode": "web-only-without-restart",
+  "database_schema": 50,
+  "verified_public_assets": 8,
+  "verified_retained_js_wasm": 2,
+  "live_before": {
+    "mode": "before",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "catalog_count": 31,
+    "saved_selectable_count": 18,
+    "picker_count": 31,
+    "unauthorized_visible_count": 13,
+    "read_only": true,
+    "filtered_search_confirmed": false
+  },
+  "live_after": {
+    "mode": "after",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "catalog_count": 31,
+    "saved_selectable_count": 18,
+    "picker_count": 18,
+    "unauthorized_visible_count": 0,
+    "read_only": true,
+    "filtered_search_confirmed": true
+  }
+}
