@@ -1,0 +1,67 @@
+{
+  "web_commit": "6a2a19bd0155b7098e9f614126bc342d549550ec",
+  "server_commit": "a6e3e856e7d2739609b6bb22c08ff9b2fd1e11ba",
+  "web_archive_sha256": "b98e72ce56ef86c92547539bba78c2932e7d5e6641f79546541ab87fcc94ea10",
+  "build_host": "build-test",
+  "mode": "web-only-without-restart",
+  "database_schema": 50,
+  "deployment_finished_utc": "2026-11-19T15:35:12Z",
+  "verified_public_assets": 8,
+  "verified_retained_js_wasm": 2,
+  "live_before": {
+    "mode": "before",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "period": "today",
+    "role": "root",
+    "analytics": {
+      "http_status": 200,
+      "start_at": 1795017600,
+      "end_at": 1795104000,
+      "models": 9,
+      "buckets": 24
+    },
+    "geometry": {
+      "panel_height_px": 722,
+      "trend_height_px": 720,
+      "blank_below_trend_px": 280,
+      "left_column_extra_px": 0,
+      "visible_rows": 9,
+      "total_rows": 9,
+      "two_columns": true,
+      "visible_last_row_within_chart": false,
+      "expanded": null
+    },
+    "expand_and_refold": false
+  },
+  "live_after": {
+    "mode": "after",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "period": "today",
+    "role": "root",
+    "analytics": {
+      "http_status": 200,
+      "start_at": 1795017600,
+      "end_at": 1795104000,
+      "models": 9,
+      "buckets": 24
+    },
+    "geometry": {
+      "panel_height_px": 459,
+      "trend_height_px": 457,
+      "blank_below_trend_px": 17,
+      "left_column_extra_px": 0,
+      "visible_rows": 4,
+      "total_rows": 9,
+      "two_columns": true,
+      "visible_last_row_within_chart": true,
+      "expanded": "false"
+    },
+    "expand_and_refold": true
+  }
+}
