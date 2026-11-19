@@ -1,0 +1,123 @@
+{
+  "tag": "v0.34.0-qiwolf.35",
+  "package_version": "0.34.0-qiwolf.35",
+  "commit": "69dce817c1322a2fff8411ea249394fb1e2cc52e",
+  "database_schema": 50,
+  "published_at": "2026-11-19T17:46:53Z",
+  "release_url": "https://github.com/qiwolf/tokengo/releases/tag/v0.34.0-qiwolf.35",
+  "main_ci": "https://github.com/qiwolf/tokengo/actions/runs/44578261603",
+  "release_ci": "https://github.com/qiwolf/tokengo/actions/runs/44578395371",
+  "native_runtime": true,
+  "packaged_documents": 845,
+  "ghcr_image": "ghcr.io/qiwolf/tokengo@sha256:4c7c943f69ec29fa238be15ef257c2746f9b6e02eb765340fee5a4d5fd7525af",
+  "registry_layers_verified": 8,
+  "assets": [
+    {
+      "name": "compose.yaml",
+      "size": 797,
+      "digest": "sha256:95257352edc2d88f6053108359c2c3543422e9dfff7aea487cda3124a22b9b8b"
+    },
+    {
+      "name": "container-deployment.md",
+      "size": 16013,
+      "digest": "sha256:53bdcf5d9d5a74feed8ef77e0825e255608d4bd4fb49e86ccb485f9e2bd4611c"
+    },
+    {
+      "name": "container.env.example",
+      "size": 316,
+      "digest": "sha256:5719f373c3e78bf5b75a9eac193af05b9e96c1c9dff18218d54e320d3c0caed4"
+    },
+    {
+      "name": "image-manifest.json",
+      "size": 199,
+      "digest": "sha256:163a36234c74f1d579e9d5dd5f8a1c0be833fa56b1edc352dec5f610bdad5793"
+    },
+    {
+      "name": "image-SHA256SUMS",
+      "size": 564,
+      "digest": "sha256:e757a98e796a7e49967a4a2004886b51e2c15fb20a3d46d3e8d890a76a67876e"
+    },
+    {
+      "name": "registry-image.txt",
+      "size": 95,
+      "digest": "sha256:d889e70e2b8d7b2e9af35e3abdea581df89b4a9395f0c5c2a4d97e122f521790"
+    },
+    {
+      "name": "tokengo-69dce817c132-linux-x86_64.tar.gz",
+      "size": 36070980,
+      "digest": "sha256:e91559d4ec347fedd80765abcfaa1d840814a2204693cd80a746cbc242b6e259"
+    },
+    {
+      "name": "tokengo-69dce817c132-linux-x86_64.tar.gz.sha256",
+      "size": 107,
+      "digest": "sha256:46476fa66aef5e8114dbd2139ec2474394228978e8e945dca8e5d20e342fb46e"
+    },
+    {
+      "name": "tokengo-69dce817c1322a2fff8411ea249394fb1e2cc52e-linux-amd64.tar.gz",
+      "size": 41292088,
+      "digest": "sha256:33bc252e43acc4b97bb721827f593b5e45e21ea22fec328de021af2ef3dd09fd"
+    }
+  ],
+  "public_browser_checks": {
+    "result": "passed",
+    "source_commit": "69dce817c1322a2fff8411ea249394fb1e2cc52e",
+    "host": "build-test",
+    "scope": "Chromium against exact public native-package Web with synthetic HTTP fixtures",
+    "web_files_verified": 29,
+    "key_model_scope": {
+      "result": "passed",
+      "checks": {
+        "admin": [
+          "saved subset",
+          "search scope",
+          "unsaved draft ignored",
+          "existing Key preserved",
+          "freshly saved grants",
+          "empty scope",
+          "unrestricted scope",
+          "internal model excluded"
+        ],
+        "personal": [
+          "personal endpoint catalog preserved"
+        ]
+      }
+    },
+    "usage_model_collapse": {
+      "result": "passed",
+      "roles": [
+        {
+          "role": "root",
+          "theme": "light",
+          "desktop_preview": 4,
+          "total": 9
+        },
+        {
+          "role": "user",
+          "theme": "dark",
+          "desktop_preview": 4,
+          "total": 9
+        }
+      ],
+      "checks": [
+        "desktop preview and expansion",
+        "keyboard disclosure",
+        "narrow and mobile list",
+        "short and empty lists",
+        "automatic collapse after refreshed data"
+      ]
+    }
+  },
+  "main_ci_checks": {
+    "native_rust": {
+      "passed": 1784,
+      "failed": 0,
+      "ignored": 15
+    },
+    "large_history_rust": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    "python_tests": 13
+  }
+}

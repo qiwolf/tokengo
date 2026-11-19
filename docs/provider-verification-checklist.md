@@ -1,8 +1,8 @@
 # 模型兼容核实清单
 
-## v0.34.0-qiwolf.35 — 发行准备（2026-11-20）
+## v0.34.0-qiwolf.35 — 已正式发行（2026-11-20）
 
-本版验证账务看板折叠与 API Key 模型候选筛选。237 用量验收读取已有真实账目。build-test 的 Key 浏览器检查使用合成账户和模型目录，覆盖授权保存前后、新建与编辑、空授权与隐式全授权。237 生产管理员只读验证候选与已保存的模型授权一致。[Key 筛选的 237 收据](acceptance/2026-11-20-key-user-model-scope-deploy237/README.md) 供应商协议、模型能力和实际推理结论沿用下方各次专项验证。[版本说明](releases/v0.34.0-qiwolf.35.md) · [发行收据](acceptance/2026-11-20-qiwolf35-release/README.md) · [用量折叠的 237 收据](acceptance/2026-11-19-usage-model-collapse-deploy237/README.md)
+GitHub 于北京时间 01:46:53 公开本版。同提交主分支 CI 和发行工作流通过，九项公开附件通过摘要核对。本版验证账务看板折叠与 API Key 模型候选筛选。237 用量验收读取已有真实账目。build-test 的 Key 浏览器检查使用合成账户和模型目录，覆盖授权保存前后、新建与编辑、空授权与隐式全授权。237 生产管理员只读验证候选与已保存的模型授权一致。[Key 筛选的 237 收据](acceptance/2026-11-20-key-user-model-scope-deploy237/README.md) 供应商协议、模型能力和实际推理结论沿用下方各次专项验证。[版本说明](releases/v0.34.0-qiwolf.35.md) · [发行收据](acceptance/2026-11-20-qiwolf35-release/README.md) · [用量折叠的 237 收据](acceptance/2026-11-19-usage-model-collapse-deploy237/README.md)
 
 ## v0.34.0-qiwolf.34 — 已正式发行（2026-11-18）
 

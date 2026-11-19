@@ -1,11 +1,11 @@
 # 更新日志 / Changelog
 
-## v0.34.0-qiwolf.35 — 发行准备（2026-11-20）
+## v0.34.0-qiwolf.35 — 已正式发行（2026-11-20）
 
 - 用量账本按趋势图与模型列表的实际高度决定默认折叠。用户可查看其余模型，再恢复折叠。
 - 管理员新建或编辑 API Key 时，按用户已保存的模型授权筛选候选。超出当前候选范围的已有显式授权可单独撤销。
 
-GitHub CI、正式发行和公开制品验收待完成。[版本说明](docs/releases/v0.34.0-qiwolf.35.md) · [发行收据](docs/acceptance/2026-11-20-qiwolf35-release/README.md)
+GitHub 于北京时间 01:46:53 公开本版。同提交主分支 CI 和发行工作流通过，九项公开附件通过摘要核对。[版本说明](docs/releases/v0.34.0-qiwolf.35.md) · [发行收据](docs/acceptance/2026-11-20-qiwolf35-release/README.md)
 
 ## v0.34.0-qiwolf.34 — 已正式发行（2026-11-18）
 
