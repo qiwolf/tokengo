@@ -2,6 +2,7 @@
 use crate::fmt;
 use leptos::prelude::*;
 use serde_json::Value;
+use wasm_bindgen::{closure::Closure, JsCast};
 
 fn value(row: &Value, name: &str) -> i64 { row[name].as_i64().unwrap_or(0) }
 fn count(row: &Value, name: &str) -> String {
@@ -80,11 +81,82 @@ fn granularity(seconds: i64) -> String {
     if seconds<86400 {format!("每 {} 小时",seconds/3600)}else if seconds==86400 {"每 24 小时（固定间隔）".into()}else{format!("每 {} 天（固定间隔）",seconds/86400)}
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct ModelListPreview {
+    visible_rows: u32,
+    hidden_rows: u32,
+    height: f64,
+}
+
+fn model_list_preview(
+    list: &web_sys::HtmlElement,
+    trend_end: &web_sys::HtmlElement,
+) -> Option<ModelListPreview> {
+    let rows = list.children();
+    let top = list.get_bounding_client_rect().top();
+    let available = trend_end.get_bounding_client_rect().bottom() - top;
+    if list.get_bounding_client_rect().height() <= available
+        || rows.item(0).is_none_or(|row| row.tag_name() != "DIV")
+    {
+        return None;
+    }
+
+    // The disclosure slot is 44px for the button and 8px above it (see CSS).
+    let budget = available - 52.0;
+    let mut visible_rows = 0;
+    let mut height = 0.0;
+    for index in 0..rows.length() {
+        let Some(row) = rows.item(index) else { break };
+        let bottom = row.get_bounding_client_rect().bottom() - top;
+        if bottom > budget { break; }
+        visible_rows += 1;
+        height = bottom;
+    }
+    Some(ModelListPreview { visible_rows, hidden_rows: rows.length() - visible_rows, height })
+}
+
 #[component]
 pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> impl IntoView {
     let metric=RwSignal::new("tokens");
     let selected=RwSignal::new(None::<usize>);
-    Effect::new(move |_| {analytics.track();selected.set(None);});
+    let models_expanded = RwSignal::new(false);
+    let preview = RwSignal::new(None::<ModelListPreview>);
+    let trend = NodeRef::<leptos::html::Section>::new();
+    let trend_end = NodeRef::<leptos::html::P>::new();
+    let model_list = NodeRef::<leptos::html::Div>::new();
+    let observer = StoredValue::new_local(
+        None::<(web_sys::ResizeObserver, Closure<dyn FnMut()>)>,
+    );
+    Effect::new(move |_| {
+        analytics.track();
+        selected.set(None);
+        models_expanded.set(false);
+    });
+    Effect::new(move |_| {
+        let (Some(trend), Some(trend_end), Some(list)) =
+            (trend.get(), trend_end.get(), model_list.get()) else { return };
+        // New rows can have the same total height but different individual heights.
+        analytics.track();
+        observer.update_value(|value| {
+            if let Some((resize, _callback)) = value.take() { resize.disconnect(); }
+        });
+        let measured_list = list.clone();
+        let callback = Closure::<dyn FnMut()>::new(move || {
+            let next = model_list_preview(&measured_list, &trend_end);
+            if preview.try_get_untracked().is_some_and(|current| current != next) {
+                let _ = preview.try_set(next);
+            }
+        });
+        if let Ok(resize) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) {
+            // The inner list keeps its natural height when the preview clips it.
+            resize.observe(&trend);
+            resize.observe(&list);
+            observer.set_value(Some((resize, callback)));
+        }
+    });
+    on_cleanup(move || observer.update_value(|value| {
+        if let Some((resize, _callback)) = value.take() { resize.disconnect(); }
+    }));
     view! {
     <section class="usage-dashboard" aria-label="所选区间用量看板">
         <div class="usage-kpis">
@@ -99,7 +171,7 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
         <p class="usage-fx-note">{move||reporting_fx_note(&summary.get(),&analytics.get())}</p>
         <div class="usage-dashboard-note"><span>"汇总覆盖全部匹配记录，翻页不改变统计区间。"</span><span>{move||format!("未定价 {} 笔；未知用量和未知金额未作为 0 计入。",count(&summary.get(),"unpriced_entries"))}</span></div>
         <div class="usage-analysis-grid">
-            <section class="usage-trend" aria-label="区间用量趋势">
+            <section class="usage-trend" aria-label="区间用量趋势" node_ref=trend>
                 <header class="usage-analysis-head"><div><h3>"用量趋势"</h3><span class="muted small">{move||if analytics.get().is_object(){"按调用开始时间 · 自动汇总所选范围".to_string()}else{"正在读取时间分布…".into()}}</span></div>
                     <div class="usage-metric-switch" aria-label="趋势统计指标">{[("tokens","Tokens"),("requests","调用次数"),("debit","扣款")].into_iter().map(|(key,label)|view!{<button type="button" class:active=move||metric.get()==key aria-pressed=move||(metric.get()==key).to_string() on:click=move |_|{metric.set(key);selected.set(None);}>{label}</button>}).collect_view()}</div>
                 </header>
@@ -137,17 +209,35 @@ pub fn UsageDashboard(summary: RwSignal<Value>, analytics: RwSignal<Value>) -> i
                         </div>
                     }.into_any()
                 }}
-                <p class="usage-bucket-detail" role="status" aria-live="polite">{move||{let a=analytics.get();selected.get().and_then(|i|rows(&a,"buckets").get(i).cloned()).map(|b|interval_detail(&b,&a)).unwrap_or_else(||"悬停或聚焦柱形，查看该区间用量。".into())}}</p>
+                <p class="usage-bucket-detail" node_ref=trend_end role="status" aria-live="polite">{move||{let a=analytics.get();selected.get().and_then(|i|rows(&a,"buckets").get(i).cloned()).map(|b|interval_detail(&b,&a)).unwrap_or_else(||"悬停或聚焦柱形，查看该区间用量。".into())}}</p>
             </section>
             <section class="usage-models" aria-label="模型用量分布"><header class="usage-analysis-head"><div><h3>"模型分布"</h3><span class="muted small">"所选区间 · 已知 tokens"</span></div></header>
-                <div class="usage-model-list">{move||{
+                <div id="usage-model-distribution" class="usage-model-preview"
+                    style:--preview-height=move || {
+                        preview.get().filter(|_| !models_expanded.get()).map(|p| format!("{}px", p.height))
+                    }>
+                <div class="usage-model-list" node_ref=model_list>{move||{
                     let all=rows(&analytics.get(),"models");let max=all.iter().map(|r|value(r,"total_tokens")).max().unwrap_or(0).max(1) as f64;
                     if all.is_empty(){return view!{<p class="muted small">"所选区间暂无模型用量。"</p>}.into_any();}
-                    all.into_iter().map(|row|{
+                    all.into_iter().enumerate().map(|(index, row)|{
                         let name=row["model"].as_str().unwrap_or("未记录模型").to_string();let tokens=count(&row,"total_tokens");let requests=count(&row,"ledger_count");let cost=money_for(&row,"known_debit_micro",fmt::currency_of(&analytics.get()));let width=(value(&row,"total_tokens") as f64/max*100.0).clamp(0.0,100.0);
-                        view!{<div class="usage-model-row"><div><strong title=name.clone()>{name.clone()}</strong><span>{tokens}" tokens"</span></div><div class="usage-model-track" aria-hidden="true"><span style=format!("width:{width:.3}%")></span></div><small>{requests}" 次调用 · "{cost}</small></div>}
+                        view!{<div class="usage-model-row" class:usage-model-folded=move || {
+                            !models_expanded.get() && preview.get().is_some_and(|p| index >= p.visible_rows as usize)
+                        }><div><strong title=name.clone()>{name.clone()}</strong><span>{tokens}" tokens"</span></div><div class="usage-model-track" aria-hidden="true"><span style=format!("width:{width:.3}%")></span></div><small>{requests}" 次调用 · "{cost}</small></div>}
                     }).collect_view().into_any()
-                }}</div>
+                }}</div></div>
+                <Show when=move || preview.get().is_some()>
+                    <button type="button" class="ghost usage-model-toggle"
+                        aria-controls="usage-model-distribution"
+                        aria-expanded=move || models_expanded.get().to_string()
+                        on:click=move |_| models_expanded.update(|open| *open = !*open)>
+                        {move || if models_expanded.get() {
+                            "收起模型".to_string()
+                        } else {
+                            format!("展开其余 {} 项", preview.get().map_or(0, |p| p.hidden_rows))
+                        }}
+                    </button>
+                </Show>
             </section>
         </div>
         <ModelCallAnalysis analytics=analytics/>

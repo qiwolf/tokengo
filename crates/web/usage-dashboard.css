@@ -10,6 +10,7 @@
 .usage-dashboard-note { display:flex; flex-wrap:wrap; gap:4px 16px; margin:8px 0 16px; color:var(--fg-2); font-size:12px; line-height:1.5; }
 .usage-analysis-grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(256px,1fr); border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface); }
 .usage-trend,.usage-models { min-width:0; padding:16px; }
+.usage-trend { align-self:start; }
 .usage-models { border-left:1px solid var(--line); }
 .usage-analysis-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:16px; }
 .usage-analysis-head h3 { margin:0 0 4px; font-size:16px; line-height:1.5; font-weight:600; }
@@ -46,6 +47,12 @@
 .usage-model-track { height:4px; background:var(--surface-2); border-radius:4px; overflow:hidden; margin:8px 0 4px; }
 .usage-model-track > span { display:block; height:100%; background:var(--accent); }
 .usage-model-row > small { color:var(--fg-2); font-size:12px; font-variant-numeric:tabular-nums; }
+.usage-model-toggle { display:none; }
+@media(width > 1200px) {
+ .usage-model-preview { max-height:var(--preview-height, none); overflow:clip; }
+ .usage-model-folded { visibility:hidden; }
+ .usage-analysis-grid .usage-models > button.usage-model-toggle { display:block; box-sizing:border-box; height:44px; margin-top:8px; }
+}
 @media(max-width:1200px) {
  .usage-kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }
  .usage-kpi:nth-child(4) { border-right:0; }
